@@ -36,6 +36,7 @@ public class CustomToolProxyTests
         _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();
         _sqlConcurrencyLimiterMock = new Mock<ISqlExecutionConcurrencyLimiter>();
         _typedQueryRuntimeMock = new Mock<ITypedQueryRuntime>();
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>();
         _sqlConcurrencyLimiterMock
             .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
@@ -131,7 +132,7 @@ public class CustomToolProxyTests
             .Returns("email");
 
         SetupPostgresProvider();
-        _typedQueryRuntimeMock.Setup(r => r.ExecuteWithFactsAsync(
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>().Setup(r => r.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
                 It.Is<string>(sql => sql.Contains("users", StringComparison.OrdinalIgnoreCase)),
@@ -174,7 +175,7 @@ public class CustomToolProxyTests
             cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("table authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        _typedQueryRuntimeMock.Verify(x => x.ExecuteWithFactsAsync(
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>().Verify(x => x.ExecuteWithFactsAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -342,7 +343,7 @@ public class CustomToolProxyTests
             .ReturnsAsync(tool);
 
         SetupPostgresProvider();
-        _typedQueryRuntimeMock.Setup(r => r.ExecuteWithFactsAsync(
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>().Setup(r => r.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(provider => provider.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
                 It.IsAny<string>(),

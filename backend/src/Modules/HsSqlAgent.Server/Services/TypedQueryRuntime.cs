@@ -22,7 +22,14 @@ public interface ITypedQueryRuntime
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default);
+}
 
+/// <summary>
+/// Optional additive runtime capability for callers that need compiler-derived query facts from the
+/// exact parser/binder pass used to build the executable command.
+/// </summary>
+public interface ITypedQueryRuntimeFacts
+{
     Task<QueryExecutionWithFacts> ExecuteWithFactsAsync(
         ISqlProvider provider,
         string connectionString,
@@ -37,7 +44,8 @@ public interface ITypedQueryRuntime
 /// Server-side SELECT execution boundary. SQL text enters the F# compiler facade directly; callers
 /// cannot construct or mutate a compatibility AST to bypass binding, validation, policy, or rendering.
 /// </summary>
-public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ITypedQueryRuntime
+public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEvidenceObserver = null)
+    : ITypedQueryRuntime, ITypedQueryRuntimeFacts
 {
     private static readonly CompiledSqlCommandExecutor QueryExecutor = new();
     private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;

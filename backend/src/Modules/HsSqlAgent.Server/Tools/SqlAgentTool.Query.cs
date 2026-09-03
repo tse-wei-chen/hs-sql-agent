@@ -41,16 +41,31 @@ public partial class SqlAgentTool
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                var compiledExecution = await _typedQueryRuntime.ExecuteWithFactsAsync(
-                    provider,
-                    sqlConfig.ConnectionString,
-                    sql,
-                    dbType,
-                    securityPolicy,
-                    allowedTables,
-                    cancellationToken);
-                auditFacts = compiledExecution.Facts;
-                execution = compiledExecution.Execution;
+                if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
+                {
+                    var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
+                        provider,
+                        sqlConfig.ConnectionString,
+                        sql,
+                        dbType,
+                        securityPolicy,
+                        allowedTables,
+                        cancellationToken);
+                    auditFacts = compiledExecution.Facts;
+                    execution = compiledExecution.Execution;
+                }
+                else
+                {
+                    auditFacts = SqlCoreInspection.GetQueryFacts(sql, dbType);
+                    execution = await _typedQueryRuntime.ExecuteAsync(
+                        provider,
+                        sqlConfig.ConnectionString,
+                        sql,
+                        dbType,
+                        securityPolicy,
+                        allowedTables,
+                        cancellationToken);
+                }
             }
 
             var result = JsonSerializer.Serialize(execution.Rows);

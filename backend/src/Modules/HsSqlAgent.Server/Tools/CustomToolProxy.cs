@@ -122,16 +122,34 @@ public class CustomToolProxy(
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                    var compiledExecution = await _typedQueryRuntime.ExecuteWithFactsAsync(
-                        provider,
-                        sqlConfig.ConnectionString,
-                        renderedSql,
-                        dbType,
-                        _securityPolicyRuntimeState.GetCurrent(),
-                        ResolveTableWhitelist(),
-                        cancellationToken);
-                    auditQueryFacts = compiledExecution.Facts;
-                    var execution = compiledExecution.Execution;
+                    QueryExecutionResult execution;
+                    var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
+                    var allowedTables = ResolveTableWhitelist();
+                    if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
+                    {
+                        var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
+                            provider,
+                            sqlConfig.ConnectionString,
+                            renderedSql,
+                            dbType,
+                            securityPolicy,
+                            allowedTables,
+                            cancellationToken);
+                        auditQueryFacts = compiledExecution.Facts;
+                        execution = compiledExecution.Execution;
+                    }
+                    else
+                    {
+                        auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
+                        execution = await _typedQueryRuntime.ExecuteAsync(
+                            provider,
+                            sqlConfig.ConnectionString,
+                            renderedSql,
+                            dbType,
+                            securityPolicy,
+                            allowedTables,
+                            cancellationToken);
+                    }
                     queryReturnedRows = execution.RowCount;
                     result = JsonSerializer.Serialize(execution.Rows);
                 }

@@ -46,6 +46,7 @@ public class SqlAgentToolExecutionTests
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
 
         typedQueryRuntime
+            .As<ITypedQueryRuntimeFacts>()
             .Setup(x => x.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 "Host=localhost;Database=testdb",
@@ -112,6 +113,7 @@ public class SqlAgentToolExecutionTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
+            .As<ITypedQueryRuntimeFacts>()
             .Setup(x => x.ExecuteWithFactsAsync(
                 It.Is<ISqlProvider>(candidate => candidate.Type == SqlAgentToolType.Postgres),
                 It.IsAny<string>(),
@@ -172,7 +174,7 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("tool authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        typedQueryRuntime.Verify(x => x.ExecuteWithFactsAsync(
+        typedQueryRuntime.As<ITypedQueryRuntimeFacts>().Verify(x => x.ExecuteWithFactsAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -215,7 +217,7 @@ public class SqlAgentToolExecutionTests
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
         Assert.Contains("authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
-        typedQueryRuntime.Verify(x => x.ExecuteWithFactsAsync(
+        typedQueryRuntime.As<ITypedQueryRuntimeFacts>().Verify(x => x.ExecuteWithFactsAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
             It.IsAny<string>(),
@@ -252,6 +254,7 @@ public class SqlAgentToolExecutionTests
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         typedQueryRuntime
+            .As<ITypedQueryRuntimeFacts>()
             .Setup(x => x.ExecuteWithFactsAsync(
                 provider.Object,
                 "Host=localhost;Database=testdb",
