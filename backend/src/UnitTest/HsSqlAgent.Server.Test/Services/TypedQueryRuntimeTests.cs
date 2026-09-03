@@ -156,7 +156,7 @@ public class TypedQueryRuntimeTests
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" },
                 TestContext.Current.CancellationToken));
 
-        Assert.Contains("not allowed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not authorized", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
