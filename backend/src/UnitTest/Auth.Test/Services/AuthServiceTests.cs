@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
+using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using Auth.Service.Services;
 using Microsoft.Extensions.Options;
@@ -233,6 +234,49 @@ public class AuthServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _service.SignUpFirstAdminAsync(new SignUpRequest { Email = "admin@test.com", Password = "admin123" }, TestContext.Current.CancellationToken));
+    }
+
+
+    [Fact]
+    public async Task RevokeSessionAsync_UsesFailClosedRuntimeStateBarrier()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            PasswordHash = "hash",
+            Username = "user"
+        };
+        var session = new AuthSession
+        {
+            Id = Guid.NewGuid(),
+            MemberId = member.Id,
+            ExpiresAt = DateTime.UtcNow.AddHours(1)
+        };
+        _sessions.Add(session);
+        var runtimeCache = new Mock<IAuthRuntimeStateCache>(MockBehavior.Strict);
+        runtimeCache
+            .Setup(cache => cache.RunWithBarrierAsync(
+                member.Id,
+                "User signed out.",
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<int, string, Func<CancellationToken, Task>, CancellationToken>(
+                (_, _, mutation, cancellationToken) => mutation(cancellationToken));
+        var service = new AuthService(
+            _contextMock.Object,
+            _jwtSettings,
+            enterpriseIdentitySettings: null,
+            runtimeCache.Object);
+
+        await service.RevokeSessionAsync(
+            member.Id,
+            session.Id,
+            "User signed out.",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(session.RevokedAt);
+        runtimeCache.VerifyAll();
     }
 
     [Fact]

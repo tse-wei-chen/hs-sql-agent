@@ -1,5 +1,6 @@
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
+using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using Auth.Service.Services;
 using Moq;
@@ -126,6 +127,43 @@ public class MemberServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _service.DeleteMemberAsync(999, TestContext.Current.CancellationToken));
+    }
+
+
+    [Fact]
+    public async Task UpdateMemberStatusAsync_UsesFailClosedRuntimeStateBarrier()
+    {
+        var member = new Member
+        {
+            Id = 1,
+            Mail = "user@test.com",
+            Username = "user",
+            PasswordHash = "h",
+            IsActive = true,
+            SecurityVersion = 3,
+            MemberRoles = []
+        };
+        _contextMock.Setup(c => c.Members).ReturnsDbSet(new List<Member> { member });
+        _contextMock.Setup(c => c.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        var runtimeCache = new Mock<IAuthRuntimeStateCache>(MockBehavior.Strict);
+        runtimeCache
+            .Setup(cache => cache.RunWithBarrierAsync(
+                1,
+                "Member account disabled.",
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<int, string, Func<CancellationToken, Task>, CancellationToken>(
+                (_, _, mutation, cancellationToken) => mutation(cancellationToken));
+        var service = new MemberService(_contextMock.Object, runtimeCache.Object);
+
+        var result = await service.UpdateMemberStatusAsync(
+            1,
+            new UpdateMemberStatusRequest { IsActive = false },
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsActive);
+        Assert.Equal(4, member.SecurityVersion);
+        runtimeCache.VerifyAll();
     }
 
     [Fact]

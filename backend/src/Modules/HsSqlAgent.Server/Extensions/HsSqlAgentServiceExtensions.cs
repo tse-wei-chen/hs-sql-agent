@@ -96,6 +96,7 @@ public static class HsSqlAgentServiceExtensions
         services.AddScoped<IMfaService, MfaService>();
         services.AddScoped<IPasswordResetService, PasswordResetService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
+        services.AddSingleton<IAuthRuntimeStateCache, AuthRuntimeStateCache>();
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
         services.AddSecurityPolicySync(

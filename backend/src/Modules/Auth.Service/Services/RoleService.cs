@@ -7,9 +7,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Auth.Service.Services;
 
-public class RoleService(IAuthContext context) : IRoleService
+public class RoleService(
+    IAuthContext context,
+    IAuthRuntimeStateCache? authRuntimeStateCache = null) : IRoleService
 {
     private readonly IAuthContext _context = context;
+    private readonly IAuthRuntimeStateCache? _authRuntimeStateCache = authRuntimeStateCache;
 
     private static bool IsSuperUser(string name) =>
         string.Equals(name, AuthService.SuperUserRoleName, StringComparison.OrdinalIgnoreCase);
@@ -90,7 +93,11 @@ public class RoleService(IAuthContext context) : IRoleService
         foreach (var member in affectedMembers)
             member.SecurityVersion++;
 
-        await _context.SaveChangesAsync();
+        await RunSecurityMutationsAsync(
+            affectedMembers.Select(member => member.Id).ToArray(),
+            "Role permissions changed.",
+            ct => _context.SaveChangesAsync(ct),
+            CancellationToken.None);
 
         return await _context.Roles
             .AsNoTracking()
@@ -139,9 +146,29 @@ public class RoleService(IAuthContext context) : IRoleService
             member.SecurityVersion++;
 
         _context.Roles.Remove(role);
-        await _context.SaveChangesAsync();
-        if (transaction is not null) await transaction.CommitAsync();
+        await RunSecurityMutationsAsync(
+            affectedMembers.Select(member => member.Id).ToArray(),
+            "Assigned role removed.",
+            async ct =>
+            {
+                await _context.SaveChangesAsync(ct);
+                if (transaction is not null) await transaction.CommitAsync(ct);
+            },
+            CancellationToken.None);
     }
+
+    private Task RunSecurityMutationsAsync(
+        IReadOnlyCollection<int> memberIds,
+        string reason,
+        Func<CancellationToken, Task> mutation,
+        CancellationToken cancellationToken) =>
+        _authRuntimeStateCache is null
+            ? mutation(cancellationToken)
+            : _authRuntimeStateCache.RunWithBarriersAsync(
+                memberIds,
+                reason,
+                mutation,
+                cancellationToken);
 
     public async Task<IEnumerable<PermissionActionTemplateVM>> GetPermissionActionTemplatesAsync()
     {

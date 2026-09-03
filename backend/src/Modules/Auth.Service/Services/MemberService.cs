@@ -7,9 +7,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Auth.Service.Services;
 
-public class MemberService(IAuthContext context) : IMemberService
+public class MemberService(
+    IAuthContext context,
+    IAuthRuntimeStateCache? authRuntimeStateCache = null) : IMemberService
 {
     private readonly IAuthContext _context = context;
+    private readonly IAuthRuntimeStateCache? _authRuntimeStateCache = authRuntimeStateCache;
 
     public async Task<IEnumerable<MemberVM>> GetMembersAsync(CancellationToken cancellationToken = default)
         => (await GetMembersAsync(new MemberQuery { PageSize = 100 }, cancellationToken)).Items;
@@ -78,7 +81,11 @@ public class MemberService(IAuthContext context) : IMemberService
         member.NormalizedMail = normalizedEmail;
         member.SecurityVersion++;
         await RevokeSessionsInternalAsync(id, "Account identity changed.", cancellationToken);
-        await _context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            id,
+            "Account identity changed.",
+            ct => _context.SaveChangesAsync(ct),
+            cancellationToken);
         return ToViewModel(member);
     }
 
@@ -98,7 +105,11 @@ public class MemberService(IAuthContext context) : IMemberService
         member.RequirePasswordChangeAtNextSignIn = false;
         member.SecurityVersion++;
         await RevokeSessionsInternalAsync(id, "Password changed.", cancellationToken);
-        await _context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            id,
+            "Password changed.",
+            ct => _context.SaveChangesAsync(ct),
+            cancellationToken);
     }
 
     public async Task SetPasswordChangeRequiredAsync(
@@ -111,7 +122,11 @@ public class MemberService(IAuthContext context) : IMemberService
         member.RequirePasswordChangeAtNextSignIn = required;
         member.SecurityVersion++;
         await RevokeSessionsInternalAsync(id, "Password change required by administrator.", cancellationToken);
-        await _context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            id,
+            "Password change requirement changed.",
+            ct => _context.SaveChangesAsync(ct),
+            cancellationToken);
     }
 
     public async Task<MemberVM> UpdateMemberRolesAsync(
@@ -148,7 +163,15 @@ public class MemberService(IAuthContext context) : IMemberService
         }
 
         member.SecurityVersion++;
-        await _context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            id,
+            "Member roles changed.",
+            async ct =>
+            {
+                await _context.SaveChangesAsync(ct);
+                if (transaction is not null) await transaction.CommitAsync(ct);
+            },
+            cancellationToken);
 
         var result = new MemberVM
         {
@@ -164,7 +187,6 @@ public class MemberService(IAuthContext context) : IMemberService
                 .OrderBy(x => x)
                 .ToArrayAsync(cancellationToken)
         };
-        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         return result;
     }
 
@@ -188,8 +210,15 @@ public class MemberService(IAuthContext context) : IMemberService
 
         member.IsActive = request.IsActive;
         member.SecurityVersion++;
-        await _context.SaveChangesAsync(cancellationToken);
-        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            id,
+            request.IsActive ? "Member account enabled." : "Member account disabled.",
+            async ct =>
+            {
+                await _context.SaveChangesAsync(ct);
+                if (transaction is not null) await transaction.CommitAsync(ct);
+            },
+            cancellationToken);
         return ToViewModel(member);
     }
 
@@ -205,8 +234,15 @@ public class MemberService(IAuthContext context) : IMemberService
         await EnsureAnotherActiveSuperUserAsync(member, cancellationToken);
 
         _context.Members.Remove(member);
-        await _context.SaveChangesAsync(cancellationToken);
-        if (transaction is not null) await transaction.CommitAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            id,
+            "Member account deleted.",
+            async ct =>
+            {
+                await _context.SaveChangesAsync(ct);
+                if (transaction is not null) await transaction.CommitAsync(ct);
+            },
+            cancellationToken);
     }
 
     public async Task<int> CreateMemberAsync(CreateMemberRequest request, CancellationToken cancellationToken = default)
@@ -316,6 +352,19 @@ public class MemberService(IAuthContext context) : IMemberService
             .OrderBy(x => x.Role.Name)
             .Select(x => x.Role.Name)]
     };
+
+    private Task RunSecurityMutationAsync(
+        int memberId,
+        string reason,
+        Func<CancellationToken, Task> mutation,
+        CancellationToken cancellationToken) =>
+        _authRuntimeStateCache is null
+            ? mutation(cancellationToken)
+            : _authRuntimeStateCache.RunWithBarrierAsync(
+                memberId,
+                reason,
+                mutation,
+                cancellationToken);
 
     private async Task RevokeSessionsInternalAsync(int memberId, string reason, CancellationToken cancellationToken)
     {

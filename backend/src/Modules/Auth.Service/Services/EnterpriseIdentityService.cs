@@ -13,9 +13,11 @@ namespace Auth.Service.Services;
 public class EnterpriseIdentityService(
     IAuthContext context,
     IAuthService authService,
-    IOptions<EnterpriseIdentitySettings> settings) : IEnterpriseIdentityService
+    IOptions<EnterpriseIdentitySettings> settings,
+    IAuthRuntimeStateCache? authRuntimeStateCache = null) : IEnterpriseIdentityService
 {
     private readonly EnterpriseIdentitySettings _settings = settings.Value;
+    private readonly IAuthRuntimeStateCache? _authRuntimeStateCache = authRuntimeStateCache;
 
     public async Task<string> CreateExternalLoginCodeAsync(
         string provider,
@@ -44,7 +46,7 @@ public class EnterpriseIdentityService(
         }
 
         if (!member.IsActive) throw new UnauthorizedAccessException("Account is disabled.");
-        await ApplyMappedRolesAsync(member, externalRoles, cancellationToken);
+        var rolesChanged = await ApplyMappedRolesAsync(member, externalRoles, cancellationToken);
 
         var rawCode = Base64UrlEncoder.Encode(RandomNumberGenerator.GetBytes(32));
         context.ExternalLoginCodes.Add(new ExternalLoginCode
@@ -53,7 +55,18 @@ public class EnterpriseIdentityService(
             CodeHash = Hash(rawCode),
             ExpiresAt = DateTime.UtcNow.AddMinutes(Math.Max(1, _settings.LoginCodeExpirationMinutes))
         });
-        await context.SaveChangesAsync(cancellationToken);
+        if (rolesChanged && _authRuntimeStateCache is not null)
+        {
+            await _authRuntimeStateCache.RunWithBarrierAsync(
+                member.Id,
+                "Enterprise identity role mapping changed.",
+                ct => context.SaveChangesAsync(ct),
+                cancellationToken);
+        }
+        else
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
         return rawCode;
     }
 
@@ -89,7 +102,7 @@ public class EnterpriseIdentityService(
         return member;
     }
 
-    private async Task ApplyMappedRolesAsync(Member member, IReadOnlyCollection<string> externalRoles, CancellationToken cancellationToken)
+    private async Task<bool> ApplyMappedRolesAsync(Member member, IReadOnlyCollection<string> externalRoles, CancellationToken cancellationToken)
     {
         var requestedNames = externalRoles
             .Select(role => _settings.RoleMappings.TryGetValue(role, out var mapped) ? mapped : null)
@@ -97,12 +110,13 @@ public class EnterpriseIdentityService(
             .Concat(_settings.DefaultRoleNames)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (requestedNames.Length == 0) return;
+        if (requestedNames.Length == 0) return false;
         var roleIds = await context.Roles.Where(x => requestedNames.Contains(x.Name)).Select(x => x.Id).ToListAsync(cancellationToken);
         var existingRoleIds = await context.MemberRoles.Where(x => x.MemberId == member.Id).Select(x => x.RoleId).ToListAsync(cancellationToken);
         var addedRoleIds = roleIds.Except(existingRoleIds).ToArray();
         foreach (var roleId in addedRoleIds) context.MemberRoles.Add(new MemberRole { Member = member, RoleId = roleId });
         if (addedRoleIds.Length > 0) member.SecurityVersion++;
+        return addedRoleIds.Length > 0;
     }
 
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));

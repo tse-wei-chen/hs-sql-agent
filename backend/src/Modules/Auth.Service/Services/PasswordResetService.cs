@@ -12,9 +12,13 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace Auth.Service.Services;
 
-public class PasswordResetService(IAuthContext context, IOptions<PasswordResetSettings> settings) : IPasswordResetService
+public class PasswordResetService(
+    IAuthContext context,
+    IOptions<PasswordResetSettings> settings,
+    IAuthRuntimeStateCache? authRuntimeStateCache = null) : IPasswordResetService
 {
     private readonly PasswordResetSettings _settings = settings.Value;
+    private readonly IAuthRuntimeStateCache? _authRuntimeStateCache = authRuntimeStateCache;
 
     public async Task RequestAsync(ForgotPasswordRequest request, CancellationToken cancellationToken = default)
     {
@@ -56,7 +60,19 @@ public class PasswordResetService(IAuthContext context, IOptions<PasswordResetSe
         token.Member.SecurityVersion++;
         var sessions = await context.AuthSessions.Where(x => x.MemberId == token.MemberId && x.RevokedAt == null).ToListAsync(cancellationToken);
         foreach (var session in sessions) { session.RevokedAt = now; session.RevocationReason = "Password reset."; }
-        await context.SaveChangesAsync(cancellationToken);
+
+        if (_authRuntimeStateCache is null)
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        else
+        {
+            await _authRuntimeStateCache.RunWithBarrierAsync(
+                token.MemberId,
+                "Password reset revoked authentication state.",
+                ct => context.SaveChangesAsync(ct),
+                cancellationToken);
+        }
     }
 
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));

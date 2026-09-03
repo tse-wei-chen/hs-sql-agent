@@ -4,6 +4,7 @@ using System.Security.Claims;
 using Auth.Service.Data;
 using Auth.Service.Data.Entites;
 using Auth.Service.Interfaces;
+using Auth.Service.Models;
 using Auth.Service.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
@@ -114,6 +115,82 @@ public class TokenRevocationMiddlewareTests
         _revocationMock.Verify(r => r.IsRevokedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+
+
+    [Fact]
+    public async Task InvokeAsync_CachedAuthState_AvoidsAuthDatabaseQuery()
+    {
+        var context = CreateContextWithJti("cached-jti");
+        _revocationMock.Setup(r => r.IsRevokedAsync("cached-jti", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var strictContext = new Mock<IAuthContext>(MockBehavior.Strict);
+        var runtimeCache = new Mock<IAuthRuntimeStateCache>(MockBehavior.Strict);
+        runtimeCache.Setup(cache => cache.GetOrLoadAsync(
+                strictContext.Object,
+                1,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthRuntimeState
+            {
+                Exists = true,
+                IsActive = true,
+                SecurityVersion = 1,
+                ActiveSessions =
+                [
+                    new AuthRuntimeSessionState
+                    {
+                        Id = ActiveSessionId,
+                        ExpiresAt = DateTime.UtcNow.AddMinutes(5)
+                    }
+                ]
+            });
+        var nextCalled = false;
+        var middleware = new TokenRevocationMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        await middleware.InvokeAsync(
+            context,
+            _revocationMock.Object,
+            strictContext.Object,
+            runtimeCache.Object);
+
+        Assert.True(nextCalled);
+        runtimeCache.VerifyAll();
+        strictContext.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task InvokeAsync_CacheBarrier_FailsClosedWithoutDatabaseRead()
+    {
+        var context = CreateContextWithJti("barrier-jti");
+        context.Response.Body = new MemoryStream();
+        _revocationMock.Setup(r => r.IsRevokedAsync("barrier-jti", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        var strictContext = new Mock<IAuthContext>(MockBehavior.Strict);
+        var runtimeCache = new Mock<IAuthRuntimeStateCache>(MockBehavior.Strict);
+        runtimeCache.Setup(cache => cache.GetOrLoadAsync(
+                strictContext.Object,
+                1,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AuthRuntimeState
+            {
+                Exists = true,
+                IsBarrier = true,
+                BarrierReason = "security state changing"
+            });
+        var middleware = new TokenRevocationMiddleware(_ => Task.CompletedTask);
+
+        await middleware.InvokeAsync(
+            context,
+            _revocationMock.Object,
+            strictContext.Object,
+            runtimeCache.Object);
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        strictContext.VerifyNoOtherCalls();
+    }
 
     [Fact]
     public async Task InvokeAsync_AuthenticatedRequest_LoadsMemberAndSessionStateWithOneSqlCommand()

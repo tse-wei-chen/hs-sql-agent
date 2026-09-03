@@ -13,9 +13,11 @@ namespace HsSqlAgent.Server.Services;
 public class MfaService(
     IAuthContext context,
     IDataProtectionProvider dataProtectionProvider,
-    IOptions<EnterpriseIdentitySettings> settings) : IMfaService
+    IOptions<EnterpriseIdentitySettings> settings,
+    IAuthRuntimeStateCache? authRuntimeStateCache = null) : IMfaService
 {
     private readonly IDataProtector _protector = dataProtectionProvider.CreateProtector("HsSqlAgent.MfaSecret.v1");
+    private readonly IAuthRuntimeStateCache? _authRuntimeStateCache = authRuntimeStateCache;
 
     public async Task<MfaSetupVM> BeginSetupAsync(int memberId, CancellationToken cancellationToken = default)
     {
@@ -48,7 +50,11 @@ public class MfaService(
             context.MfaRecoveryCodes.Add(new MfaRecoveryCode { MemberId = memberId, CodeHash = HashRecoveryCode(raw) });
         member.MfaEnabled = true;
         member.SecurityVersion++;
-        await context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            memberId,
+            "MFA enabled.",
+            ct => context.SaveChangesAsync(ct),
+            cancellationToken);
         return rawCodes;
     }
 
@@ -77,7 +83,11 @@ public class MfaService(
         member.SecurityVersion++;
         var recovery = await context.MfaRecoveryCodes.Where(x => x.MemberId == memberId).ToListAsync(cancellationToken);
         context.MfaRecoveryCodes.RemoveRange(recovery);
-        await context.SaveChangesAsync(cancellationToken);
+        await RunSecurityMutationAsync(
+            memberId,
+            "MFA disabled.",
+            ct => context.SaveChangesAsync(ct),
+            cancellationToken);
     }
 
     public async Task<MfaStatusVM> GetStatusAsync(int memberId, CancellationToken cancellationToken = default)
@@ -86,6 +96,19 @@ public class MfaService(
             Enabled = await context.Members.AsNoTracking().Where(x => x.Id == memberId).Select(x => x.MfaEnabled).FirstAsync(cancellationToken),
             RecoveryCodesRemaining = await context.MfaRecoveryCodes.CountAsync(x => x.MemberId == memberId && x.UsedAt == null, cancellationToken)
         };
+
+    private Task RunSecurityMutationAsync(
+        int memberId,
+        string reason,
+        Func<CancellationToken, Task> mutation,
+        CancellationToken cancellationToken) =>
+        _authRuntimeStateCache is null
+            ? mutation(cancellationToken)
+            : _authRuntimeStateCache.RunWithBarrierAsync(
+                memberId,
+                reason,
+                mutation,
+                cancellationToken);
 
     private bool VerifyTotp(string protectedSecret, string code)
     {

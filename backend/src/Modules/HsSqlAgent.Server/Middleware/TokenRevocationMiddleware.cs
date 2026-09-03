@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using Auth.Service.Data;
 using Auth.Service.Interfaces;
+using Auth.Service.Models;
 using Auth.Service.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,7 +14,8 @@ public class TokenRevocationMiddleware(RequestDelegate next)
     public async Task InvokeAsync(
         HttpContext context,
         ITokenRevocationService revocationService,
-        IAuthContext authContext)
+        IAuthContext authContext,
+        IAuthRuntimeStateCache? authRuntimeStateCache = null)
     {
         var jti = context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
 
@@ -40,39 +42,77 @@ public class TokenRevocationMiddleware(RequestDelegate next)
             }
 
             var now = DateTime.UtcNow;
-            var authState = await authContext.Members
-                .AsNoTracking()
-                .Where(member => member.Id == memberId)
-                .Select(member => new
-                {
-                    member.IsActive,
-                    member.SecurityVersion,
-                    SessionIsActive = member.AuthSessions.Any(session =>
-                        session.Id == sessionId &&
-                        session.RevokedAt == null &&
-                        session.ExpiresAt > now)
-                })
-                .FirstOrDefaultAsync(context.RequestAborted);
+            if (authRuntimeStateCache is not null)
+            {
+                var authState = await authRuntimeStateCache.GetOrLoadAsync(
+                    authContext,
+                    memberId,
+                    context.RequestAborted);
 
-            if (authState is null)
-            {
-                await WriteAuthFailureAsync(context, "session_invalid", "The account no longer exists.");
-                return;
+                if (authState.IsBarrier)
+                {
+                    await WriteAuthFailureAsync(context, "session_invalid", "Authentication state is changing. Try again.");
+                    return;
+                }
+                if (!authState.Exists)
+                {
+                    await WriteAuthFailureAsync(context, "session_invalid", "The account no longer exists.");
+                    return;
+                }
+                if (!authState.IsActive)
+                {
+                    await WriteAuthFailureAsync(context, "account_disabled", "This account has been disabled.");
+                    return;
+                }
+                if (authState.SecurityVersion != tokenSecurityVersion)
+                {
+                    await WriteAuthFailureAsync(context, "permissions_changed", "Account permissions changed. Sign in again.");
+                    return;
+                }
+                if (!authState.ActiveSessions.Any(session =>
+                        session.Id == sessionId &&
+                        session.ExpiresAt > now))
+                {
+                    await WriteAuthFailureAsync(context, "session_expired", "This session expired or was revoked.");
+                    return;
+                }
             }
-            if (!authState.IsActive)
+            else
             {
-                await WriteAuthFailureAsync(context, "account_disabled", "This account has been disabled.");
-                return;
-            }
-            if (authState.SecurityVersion != tokenSecurityVersion)
-            {
-                await WriteAuthFailureAsync(context, "permissions_changed", "Account permissions changed. Sign in again.");
-                return;
-            }
-            if (!authState.SessionIsActive)
-            {
-                await WriteAuthFailureAsync(context, "session_expired", "This session expired or was revoked.");
-                return;
+                var authState = await authContext.Members
+                    .AsNoTracking()
+                    .Where(member => member.Id == memberId)
+                    .Select(member => new
+                    {
+                        member.IsActive,
+                        member.SecurityVersion,
+                        SessionIsActive = member.AuthSessions.Any(session =>
+                            session.Id == sessionId &&
+                            session.RevokedAt == null &&
+                            session.ExpiresAt > now)
+                    })
+                    .FirstOrDefaultAsync(context.RequestAborted);
+
+                if (authState is null)
+                {
+                    await WriteAuthFailureAsync(context, "session_invalid", "The account no longer exists.");
+                    return;
+                }
+                if (!authState.IsActive)
+                {
+                    await WriteAuthFailureAsync(context, "account_disabled", "This account has been disabled.");
+                    return;
+                }
+                if (authState.SecurityVersion != tokenSecurityVersion)
+                {
+                    await WriteAuthFailureAsync(context, "permissions_changed", "Account permissions changed. Sign in again.");
+                    return;
+                }
+                if (!authState.SessionIsActive)
+                {
+                    await WriteAuthFailureAsync(context, "session_expired", "This session expired or was revoked.");
+                    return;
+                }
             }
 
             var passwordChangeRequired = context.User.FindFirst(AuthService.PasswordChangeRequiredClaim)?.Value;
