@@ -32,7 +32,7 @@ public sealed class CoreCompileQueryWithFactsTests
         Assert.Equal(command.Sql, combined.Command.Sql);
         Assert.Equal(command.PlanFingerprint, combined.Command.PlanFingerprint);
         Assert.Equal(command.Kind, combined.Command.Kind);
-        Assert.Equal(command.Parameters.Count, combined.Command.Parameters.Count);
+        Assert.Equal(command.Parameters.Length, combined.Command.Parameters.Length);
         Assert.Equal(
             facts.ReferencedTables.OrderBy(value => value, StringComparer.OrdinalIgnoreCase),
             combined.Facts.ReferencedTables.OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
