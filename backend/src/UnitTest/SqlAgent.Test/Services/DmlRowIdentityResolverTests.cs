@@ -1,3 +1,5 @@
+using System.Data.Common;
+using Moq;
 using SqlAgent.Service.Core.Execution;
 using Xunit;
 
@@ -130,6 +132,30 @@ public class DmlRowIdentityResolverTests
         Assert.Equal(0, metadata.GetTablesCalls);
     }
 
+
+    [Fact]
+    public async Task ResolveAsync_WithOpenMetadataConnection_UsesConnectionCapabilityOnly()
+    {
+        var metadata = new ConnectionAwareMetadataReader(
+            [new DatabaseTableMetadata("public", "users")],
+            [new DatabaseColumnMetadata("public", "users", "id", "int", true, 1)]);
+        var connection = new Mock<DbConnection>().Object;
+        var resolver = new DmlRowIdentityResolver(metadata);
+
+        var result = await resolver.ResolveTargetAsync(
+            connection,
+            "connection",
+            "users",
+            DmlRowIdentityAssurance.Strict,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal("public.users", result.QualifiedTableName);
+        Assert.Equal(["id"], result.Columns);
+        Assert.Equal(1, metadata.ConnectionFindTablesCalls);
+        Assert.Equal(1, metadata.ConnectionGetColumnsCalls);
+        Assert.Equal(0, metadata.StringMetadataCalls);
+    }
+
     [Fact]
     public async Task ResolveAsync_Strict_RejectsTableWithoutPrimaryKey()
     {
@@ -178,6 +204,70 @@ public class DmlRowIdentityResolverTests
         Assert.Contains("<table> or <schema>.<table>", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+
+
+    private sealed class ConnectionAwareMetadataReader(
+        IReadOnlyList<DatabaseTableMetadata> matches,
+        IReadOnlyList<DatabaseColumnMetadata> columns)
+        : IProviderMetadataReader, IProviderConnectionMetadataReader
+    {
+        public int ConnectionFindTablesCalls { get; private set; }
+        public int ConnectionGetColumnsCalls { get; private set; }
+        public int StringMetadataCalls { get; private set; }
+
+        public Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+            DbConnection connection,
+            string tableName,
+            CancellationToken cancellationToken = default)
+        {
+            ConnectionFindTablesCalls++;
+            return Task.FromResult(matches);
+        }
+
+        public Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+            DbConnection connection,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default)
+        {
+            ConnectionGetColumnsCalls++;
+            return Task.FromResult(columns);
+        }
+
+        public Task<IReadOnlyList<string>> GetSchemasAsync(
+            string connectionString,
+            CancellationToken cancellationToken = default)
+        {
+            StringMetadataCalls++;
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
+
+        public Task<IReadOnlyList<string>> GetTablesAsync(
+            string connectionString,
+            string schema,
+            CancellationToken cancellationToken = default)
+        {
+            StringMetadataCalls++;
+            return Task.FromResult<IReadOnlyList<string>>([]);
+        }
+
+        public Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+            string connectionString,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default)
+        {
+            StringMetadataCalls++;
+            return Task.FromResult<IReadOnlyList<DatabaseColumnMetadata>>([]);
+        }
+
+        public Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
+            string connectionString,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DatabaseUniqueKeyMetadata>>([]);
+    }
 
     private sealed class FastLookupMetadataReader(
         IReadOnlyList<DatabaseTableMetadata> matches,

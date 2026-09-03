@@ -5,6 +5,7 @@ global using ISqlProvider = HsSqlAgent.Provider.Abstractions.ISqlProvider;
 global using ISqlProviderFactory = HsSqlAgent.Provider.Abstractions.ISqlProviderFactory;
 global using IProviderMetadataReader = HsSqlAgent.Provider.Abstractions.IProviderMetadataReader;
 global using IProviderTableLookup = HsSqlAgent.Provider.Abstractions.IProviderTableLookup;
+global using IProviderConnectionMetadataReader = HsSqlAgent.Provider.Abstractions.IProviderConnectionMetadataReader;
 global using DatabaseTableMetadata = HsSqlAgent.Provider.Abstractions.DatabaseTableMetadata;
 global using DatabaseColumnMetadata = HsSqlAgent.Provider.Abstractions.DatabaseColumnMetadata;
 global using DatabaseUniqueKeyMetadata = HsSqlAgent.Provider.Abstractions.DatabaseUniqueKeyMetadata;

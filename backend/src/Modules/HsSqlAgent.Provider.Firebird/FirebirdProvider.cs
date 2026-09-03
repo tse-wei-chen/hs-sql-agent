@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.Firebird;
 
-public class FirebirdProvider : SqlProviderBase
+public class FirebirdProvider : SqlProviderBase, IProviderConnectionMetadataReader
 {
     private readonly IDmlPreviewTransactionFactory _previewTransactions =
         new FirebirdDmlPreviewTransactionFactory();
@@ -57,6 +57,25 @@ public class FirebirdProvider : SqlProviderBase
         return [.. tables.Select(table => new DatabaseTableMetadata("Default", table))];
     }
 
+    public async Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        DbConnection connection,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME
+            FROM RDB$RELATIONS
+            WHERE RDB$SYSTEM_FLAG = 0
+              AND RDB$VIEW_BLR IS NULL
+              AND UPPER(TRIM(RDB$RELATION_NAME)) = UPPER(@tableName);";
+        var tables = await connection.QueryAsync<string>(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. tables.Select(table => new DatabaseTableMetadata("Default", table))];
+    }
+
     public override async Task<List<ColumnInfo>> GetColumnsAsync(string connectionString, string schemaName, string tableName, CancellationToken cancellationToken = default)
     {
         using var connection = CreateConnection(connectionString);
@@ -93,6 +112,56 @@ public class FirebirdProvider : SqlProviderBase
             ORDER BY f.RDB$FIELD_POSITION;";
         var rows = await connection.QueryAsync(sql, new { tableName });
         return [.. rows.Select(r => new ColumnInfo(((string)r.COLUMN_NAME).TrimEnd(), ((string)r.DATA_TYPE).TrimEnd(),
+            Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
+            r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
+    }
+
+    public async Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        DbConnection connection,
+        string schemaName,
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        const string sql = @"
+            SELECT TRIM(f.RDB$FIELD_NAME) AS COLUMN_NAME,
+                   CASE t.RDB$TYPE_NAME
+                       WHEN 'SHORT' THEN 'SMALLINT'
+                       WHEN 'LONG' THEN 'INTEGER'
+                       WHEN 'INT64' THEN 'BIGINT'
+                       WHEN 'FLOAT' THEN 'FLOAT'
+                       WHEN 'DOUBLE' THEN 'DOUBLE PRECISION'
+                       WHEN 'VARYING' THEN 'VARCHAR'
+                       WHEN 'TEXT' THEN 'CHAR'
+                       WHEN 'BLOB' THEN 'BLOB'
+                       WHEN 'TIMESTAMP' THEN 'TIMESTAMP'
+                       WHEN 'SQL_DATE' THEN 'DATE'
+                       WHEN 'SQL_TIME' THEN 'TIME'
+                       WHEN 'BOOLEAN' THEN 'BOOLEAN'
+                       ELSE TRIM(t.RDB$TYPE_NAME)
+                   END AS DATA_TYPE,
+                   CASE WHEN pk.RDB$FIELD_NAME IS NULL THEN 0 ELSE 1 END AS IS_PRIMARY_KEY,
+                   CASE WHEN pk.RDB$FIELD_POSITION IS NULL THEN NULL ELSE pk.RDB$FIELD_POSITION + 1 END AS PRIMARY_KEY_ORDINAL
+            FROM RDB$RELATION_FIELDS f
+            JOIN RDB$FIELDS fs ON fs.RDB$FIELD_NAME = f.RDB$FIELD_SOURCE
+            JOIN RDB$TYPES t ON t.RDB$TYPE = fs.RDB$FIELD_TYPE AND t.RDB$FIELD_NAME = 'RDB$FIELD_TYPE'
+            LEFT JOIN (
+                SELECT rc.RDB$RELATION_NAME, seg.RDB$FIELD_NAME, seg.RDB$FIELD_POSITION
+                FROM RDB$RELATION_CONSTRAINTS rc
+                JOIN RDB$INDEX_SEGMENTS seg ON seg.RDB$INDEX_NAME = rc.RDB$INDEX_NAME
+                WHERE rc.RDB$CONSTRAINT_TYPE = 'PRIMARY KEY'
+            ) pk ON pk.RDB$RELATION_NAME = f.RDB$RELATION_NAME AND pk.RDB$FIELD_NAME = f.RDB$FIELD_NAME
+            WHERE f.RDB$RELATION_NAME = UPPER(@tableName)
+            ORDER BY f.RDB$FIELD_POSITION;";
+        var rows = await connection.QueryAsync(new CommandDefinition(
+            sql,
+            new { tableName },
+            cancellationToken: cancellationToken));
+        return [.. rows.Select(r => new DatabaseColumnMetadata(
+            schemaName,
+            tableName,
+            ((string)r.COLUMN_NAME).TrimEnd(),
+            ((string)r.DATA_TYPE).TrimEnd(),
             Convert.ToInt32(r.IS_PRIMARY_KEY) != 0,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
     }

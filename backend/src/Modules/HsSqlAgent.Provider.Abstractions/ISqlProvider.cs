@@ -1,3 +1,5 @@
+using System.Data.Common;
+
 namespace HsSqlAgent.Provider.Abstractions;
 
 public sealed record DatabaseTableMetadata(
@@ -44,6 +46,25 @@ public interface IProviderTableLookup
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Optional additive capability for metadata reads over an already-open provider connection.
+/// DML planning uses this to reuse the connection that already established the verified runtime
+/// profile instead of opening additional pooled connections for table and column metadata.
+/// </summary>
+public interface IProviderConnectionMetadataReader
+{
+    Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+        DbConnection connection,
+        string tableName,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+        DbConnection connection,
+        string schema,
+        string table,
+        CancellationToken cancellationToken = default);
+}
+
 public interface IProviderMetadataReader
 {
     Task<IReadOnlyList<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);
@@ -62,6 +83,19 @@ public interface IProviderDmlResultRowMetadataReader
 {
     Task<bool> HasEnabledDmlTriggerAsync(
         string connectionString,
+        string schema,
+        string table,
+        DmlOperation operation,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Optional additive result-row assurance contract over an already-open connection.
+/// </summary>
+public interface IProviderConnectionDmlResultRowMetadataReader
+{
+    Task<bool> HasEnabledDmlTriggerAsync(
+        DbConnection connection,
         string schema,
         string table,
         DmlOperation operation,

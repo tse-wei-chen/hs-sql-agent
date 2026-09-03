@@ -78,12 +78,6 @@ public sealed class TypedDmlRuntime(
         }
         var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
 
-        await using var verificationConnection = provider.Connections.Create(connectionString);
-        await verificationConnection.OpenAsync(cancellationToken);
-        var verifiedProfile = RuntimeServerProfileVerifier.Capture(
-            provider.Type,
-            verificationConnection);
-
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
@@ -93,25 +87,35 @@ public sealed class TypedDmlRuntime(
             policy.AllowFullTableUpdate,
             policy.AllowFullTableDelete);
 
+        VerifiedRuntimeServerProfile verifiedProfile;
         ValidatedDmlPlan plan;
-        try
+        await using (var verificationConnection = provider.Connections.Create(connectionString))
         {
-            plan = await new DmlPlanFactory(provider.Metadata).CreateAsync(
-                connectionString,
-                parsedMutation,
+            await verificationConnection.OpenAsync(cancellationToken);
+            verifiedProfile = RuntimeServerProfileVerifier.Capture(
                 provider.Type,
-                validationContext,
-                compilationPolicy,
-                DmlRowIdentityAssurance.Strict,
-                policy.DmlMaxAffectedRows,
-                cancellationToken: cancellationToken,
-                targetProfile: verifiedProfile.TargetProfile);
-            _compileEvidenceObserver?.Observe(plan.MutationCommand.CompileEvidence);
-        }
-        catch (Exception exception)
-        {
-            _compileEvidenceObserver?.Observe(exception);
-            throw;
+                verificationConnection);
+
+            try
+            {
+                plan = await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
+                    verificationConnection,
+                    connectionString,
+                    parsedMutation,
+                    provider.Type,
+                    validationContext,
+                    compilationPolicy,
+                    DmlRowIdentityAssurance.Strict,
+                    policy.DmlMaxAffectedRows,
+                    cancellationToken: cancellationToken,
+                    targetProfile: verifiedProfile.TargetProfile);
+                _compileEvidenceObserver?.Observe(plan.MutationCommand.CompileEvidence);
+            }
+            catch (Exception exception)
+            {
+                _compileEvidenceObserver?.Observe(exception);
+                throw;
+            }
         }
 
         var coordinator = new DmlCoordinator(

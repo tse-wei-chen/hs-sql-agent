@@ -94,16 +94,6 @@ public class TypedDmlRuntimeTests
     public async Task PreviewAsync_InsertValuesBuildsExactPayloadApproval()
     {
         var metadata = new Mock<IProviderMetadataReader>(MockBehavior.Strict);
-        metadata
-            .Setup(x => x.GetColumnsAsync(
-                "connection",
-                "public",
-                "users",
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new DatabaseColumnMetadata("public", "users", "id", "integer", false),
-                new DatabaseColumnMetadata("public", "users", "name", "text", false)
-            ]);
         var connections = new VersionedConnectionFactory("17.5 (Debian 17.5-1)");
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         provider.SetupGet(x => x.Metadata).Returns(metadata.Object);
@@ -148,7 +138,7 @@ public class TypedDmlRuntimeTests
             TypedDmlRuntime.ComputePolicyVersion(policy, allowedTables),
             session.Plan.PolicyVersion);
         Assert.Equal(1, connections.CreateCount);
-        metadata.VerifyAll();
+        metadata.VerifyNoOtherCalls();
     }
 
     [Fact]

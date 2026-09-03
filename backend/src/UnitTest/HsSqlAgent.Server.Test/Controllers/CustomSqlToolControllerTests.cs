@@ -247,15 +247,7 @@ public class CustomSqlToolControllerTests
         var crypto = CreateCrypto();
         var providerFactory = new Mock<ISqlProviderFactory>();
         var connectionStringFactory = new Mock<ISqlConnectionStringFactory>();
-        var metadata = new Mock<IProviderMetadataReader>();
-        metadata.Setup(x => x.GetColumnsAsync(
-                "connection",
-                "public",
-                "users",
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new DatabaseColumnMetadata("public", "users", "id", "integer", false)
-            ]);
+        var metadata = new Mock<IProviderMetadataReader>(MockBehavior.Strict);
         var verificationConnection = new Mock<DbConnection>();
         verificationConnection.SetupGet(x => x.State).Returns(System.Data.ConnectionState.Open);
         verificationConnection.SetupGet(x => x.ServerVersion).Returns("17.5");
@@ -298,7 +290,7 @@ public class CustomSqlToolControllerTests
         Assert.Equal(1, preview.RootElement.GetProperty("affectedRows").GetInt32());
         Assert.False(preview.RootElement.GetProperty("committed").GetBoolean());
         connections.Verify(x => x.Create("connection"), Times.Once);
-        metadata.VerifyAll();
+        metadata.VerifyNoOtherCalls();
         typedQueryRuntime.VerifyNoOtherCalls();
     }
 

@@ -1,3 +1,5 @@
+using System.Data.Common;
+using Moq;
 using SqlAgent.Service.Core.Execution;
 using Xunit;
 
@@ -145,6 +147,64 @@ public class DmlPlanFactoryTests
         Assert.Equal(("dbo", "users", DmlOperation.Update), metadata.LastTriggerRequest);
     }
 
+
+    [Fact]
+    public async Task CreateAsync_InsertValues_ResolvesTargetWithoutLoadingRowIdentityColumns()
+    {
+        var metadata = new StubMetadataReader([]);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (id, status) VALUES (1, 'active')",
+            SqlAgentToolType.Postgres);
+
+        var plan = await new DmlPlanFactory(metadata).CreateAsync(
+            "connection",
+            parsed,
+            SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext(
+                "insert-no-row-identity-metadata-v1",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(DmlApprovalMode.InsertValues, plan.ApprovalMode);
+        Assert.Equal("public.users", plan.TableName);
+        Assert.Equal(0, metadata.StringColumnRequests);
+    }
+
+    [Fact]
+    public async Task CreateWithMetadataConnectionAsync_UsesConnectionMetadataAndTriggerAssurance()
+    {
+        var metadata = new StubMetadataReader(
+        [
+            new DatabaseColumnMetadata("dbo", "users", "id", "int", true, 1),
+            new DatabaseColumnMetadata("dbo", "users", "status", "nvarchar", false)
+        ],
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["dbo"] = ["users"]
+        });
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE users SET status = 'disabled' OUTPUT INSERTED.id WHERE id = 7",
+            SqlAgentToolType.MsSqlServer);
+        var metadataConnection = new Mock<DbConnection>().Object;
+
+        var plan = await new DmlPlanFactory(metadata).CreateWithMetadataConnectionAsync(
+            metadataConnection,
+            "connection",
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext(
+                "connection-metadata-output-v1",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo.users" }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(plan.MutationCommand.ReturnsRows);
+        Assert.Equal(1, metadata.ConnectionFindTablesRequests);
+        Assert.Equal(1, metadata.ConnectionColumnRequests);
+        Assert.Equal(1, metadata.ConnectionTriggerRequests);
+        Assert.Equal(0, metadata.StringColumnRequests);
+        Assert.Equal(0, metadata.StringTriggerRequests);
+    }
+
     [Fact]
     public async Task CreateAsync_Strict_RejectsMissingPrimaryKey()
     {
@@ -185,12 +245,20 @@ public class DmlPlanFactoryTests
         IReadOnlyList<DatabaseColumnMetadata> columns,
         IReadOnlyDictionary<string, IReadOnlyList<string>>? tablesBySchema = null,
         bool hasEnabledDmlTrigger = false)
-        : IProviderMetadataReader, HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader
+        : IProviderMetadataReader,
+          HsSqlAgent.Provider.Abstractions.IProviderDmlResultRowMetadataReader,
+          IProviderConnectionMetadataReader,
+          HsSqlAgent.Provider.Abstractions.IProviderConnectionDmlResultRowMetadataReader
     {
         private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _tablesBySchema =
             tablesBySchema ?? new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 
         public (string Schema, string Table, DmlOperation Operation)? LastTriggerRequest { get; private set; }
+        public int StringColumnRequests { get; private set; }
+        public int StringTriggerRequests { get; private set; }
+        public int ConnectionFindTablesRequests { get; private set; }
+        public int ConnectionColumnRequests { get; private set; }
+        public int ConnectionTriggerRequests { get; private set; }
 
         public Task<IReadOnlyList<string>> GetSchemasAsync(
             string connectionString,
@@ -210,8 +278,35 @@ public class DmlPlanFactoryTests
             string connectionString,
             string schema,
             string table,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult(columns);
+            CancellationToken cancellationToken = default)
+        {
+            StringColumnRequests++;
+            return Task.FromResult(columns);
+        }
+
+        public Task<IReadOnlyList<DatabaseTableMetadata>> FindTablesAsync(
+            DbConnection connection,
+            string tableName,
+            CancellationToken cancellationToken = default)
+        {
+            ConnectionFindTablesRequests++;
+            var matches = _tablesBySchema
+                .SelectMany(pair => pair.Value
+                    .Where(table => string.Equals(table, tableName, StringComparison.OrdinalIgnoreCase))
+                    .Select(table => new DatabaseTableMetadata(pair.Key, table)))
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<DatabaseTableMetadata>>(matches);
+        }
+
+        public Task<IReadOnlyList<DatabaseColumnMetadata>> GetColumnsAsync(
+            DbConnection connection,
+            string schema,
+            string table,
+            CancellationToken cancellationToken = default)
+        {
+            ConnectionColumnRequests++;
+            return Task.FromResult(columns);
+        }
 
         public Task<IReadOnlyList<DatabaseUniqueKeyMetadata>> GetUniqueKeysAsync(
             string connectionString,
@@ -227,6 +322,19 @@ public class DmlPlanFactoryTests
             DmlOperation operation,
             CancellationToken cancellationToken = default)
         {
+            StringTriggerRequests++;
+            LastTriggerRequest = (schema, table, operation);
+            return Task.FromResult(hasEnabledDmlTrigger);
+        }
+
+        public Task<bool> HasEnabledDmlTriggerAsync(
+            DbConnection connection,
+            string schema,
+            string table,
+            DmlOperation operation,
+            CancellationToken cancellationToken = default)
+        {
+            ConnectionTriggerRequests++;
             LastTriggerRequest = (schema, table, operation);
             return Task.FromResult(hasEnabledDmlTrigger);
         }

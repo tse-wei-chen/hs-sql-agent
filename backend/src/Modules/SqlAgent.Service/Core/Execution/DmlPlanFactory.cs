@@ -1,5 +1,7 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.Provider.Abstractions;
 using System.Collections.Immutable;
+using System.Data.Common;
 using System.Text.Json;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -23,7 +25,32 @@ public sealed class DmlPlanFactory(
     private readonly CoreDmlCompiler? _dmlCompiler = dmlCompiler;
     private readonly CoreSqlCompiler? _queryCompiler = queryCompiler;
 
-    public async Task<ValidatedDmlPlan> CreateAsync(
+    public Task<ValidatedDmlPlan> CreateAsync(
+        string connectionString,
+        ParsedStatement parsedMutation,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy = null,
+        DmlRowIdentityAssurance assurance = DmlRowIdentityAssurance.Strict,
+        int maxAffectedRows = 0,
+        TimeSpan? approvalTtl = null,
+        CancellationToken cancellationToken = default,
+        SqlProviderCapabilityProfile? targetProfile = null) =>
+        CreateCoreAsync(
+            metadataConnection: null,
+            connectionString,
+            parsedMutation,
+            targetProvider,
+            validationContext,
+            compilationPolicy,
+            assurance,
+            maxAffectedRows,
+            approvalTtl,
+            cancellationToken,
+            targetProfile);
+
+    public Task<ValidatedDmlPlan> CreateWithMetadataConnectionAsync(
+        DbConnection metadataConnection,
         string connectionString,
         ParsedStatement parsedMutation,
         SqlAgentToolType targetProvider,
@@ -35,6 +62,34 @@ public sealed class DmlPlanFactory(
         CancellationToken cancellationToken = default,
         SqlProviderCapabilityProfile? targetProfile = null)
     {
+        ArgumentNullException.ThrowIfNull(metadataConnection);
+        return CreateCoreAsync(
+            metadataConnection,
+            connectionString,
+            parsedMutation,
+            targetProvider,
+            validationContext,
+            compilationPolicy,
+            assurance,
+            maxAffectedRows,
+            approvalTtl,
+            cancellationToken,
+            targetProfile);
+    }
+
+    private async Task<ValidatedDmlPlan> CreateCoreAsync(
+        DbConnection? metadataConnection,
+        string connectionString,
+        ParsedStatement parsedMutation,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy,
+        DmlRowIdentityAssurance assurance,
+        int maxAffectedRows,
+        TimeSpan? approvalTtl,
+        CancellationToken cancellationToken,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
         ArgumentNullException.ThrowIfNull(parsedMutation);
         ArgumentNullException.ThrowIfNull(validationContext);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -44,6 +99,7 @@ public sealed class DmlPlanFactory(
         if (parsedMutation.Statement is InsertStatement insert)
         {
             return await CreateInsertValuesPlanAsync(
+                metadataConnection,
                 connectionString,
                 parsedMutation,
                 insert,
@@ -61,11 +117,18 @@ public sealed class DmlPlanFactory(
         if (string.IsNullOrWhiteSpace(requestedTarget))
             throw new InvalidOperationException("DML target table must not be empty.");
 
-        var identity = await _rowIdentityResolver.ResolveTargetAsync(
-            connectionString,
-            requestedTarget,
-            assurance,
-            cancellationToken);
+        var identity = metadataConnection is null
+            ? await _rowIdentityResolver.ResolveTargetAsync(
+                connectionString,
+                requestedTarget,
+                assurance,
+                cancellationToken)
+            : await _rowIdentityResolver.ResolveTargetAsync(
+                metadataConnection,
+                connectionString,
+                requestedTarget,
+                assurance,
+                cancellationToken);
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(identity.Schema, identity.Table),
             target.Alias,
@@ -73,6 +136,7 @@ public sealed class DmlPlanFactory(
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedStatement);
         var effectiveValidationContext = await PrepareResultRowValidationContextAsync(
+            metadataConnection,
             connectionString,
             resolvedStatement,
             targetProvider,
@@ -157,6 +221,7 @@ public sealed class DmlPlanFactory(
     }
 
     private async Task<ValidatedDmlPlan> CreateInsertValuesPlanAsync(
+        DbConnection? metadataConnection,
         string connectionString,
         ParsedStatement parsedMutation,
         InsertStatement insert,
@@ -178,13 +243,18 @@ public sealed class DmlPlanFactory(
         if (string.IsNullOrWhiteSpace(requestedTarget))
             throw new InvalidOperationException("DML target table must not be empty.");
 
-        // INSERT VALUES needs physical-target resolution and authorization, but it does not need a
-        // pre-existing primary-key row set. CountOnly here intentionally disables the PK requirement.
-        var targetResolution = await _rowIdentityResolver.ResolveTargetAsync(
-            connectionString,
-            requestedTarget,
-            DmlRowIdentityAssurance.CountOnly,
-            cancellationToken);
+        // INSERT VALUES needs only physical-target resolution and authorization. It has no
+        // pre-existing target row set, so loading column/primary-key metadata here is pure overhead.
+        var targetResolution = metadataConnection is null
+            ? await _rowIdentityResolver.ResolvePhysicalTargetAsync(
+                connectionString,
+                requestedTarget,
+                cancellationToken)
+            : await _rowIdentityResolver.ResolvePhysicalTargetAsync(
+                metadataConnection,
+                connectionString,
+                requestedTarget,
+                cancellationToken);
         var resolvedTarget = new NamedTableSource(
             MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
             insert.Target.Alias,
@@ -192,6 +262,7 @@ public sealed class DmlPlanFactory(
         var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
         var resolvedMutation = CloneParsedWithStatement(parsedMutation, resolvedInsert);
         var effectiveValidationContext = await PrepareResultRowValidationContextAsync(
+            metadataConnection,
             connectionString,
             resolvedInsert,
             targetProvider,
@@ -235,6 +306,7 @@ public sealed class DmlPlanFactory(
     }
 
     private async Task<SqlPlanValidationContext> PrepareResultRowValidationContextAsync(
+        DbConnection? metadataConnection,
         string connectionString,
         SqlStatement resolvedStatement,
         SqlAgentToolType targetProvider,
@@ -253,12 +325,21 @@ public sealed class DmlPlanFactory(
                 "SQL Server OUTPUT requires provider trigger metadata support; no DML result-row metadata reader is available for the resolved target.");
         }
 
-        var hasEnabledTrigger = await _dmlResultRowMetadataReader.HasEnabledDmlTriggerAsync(
-            connectionString,
-            schema,
-            table,
-            operation,
-            cancellationToken);
+        var hasEnabledTrigger =
+            metadataConnection is not null
+            && _dmlResultRowMetadataReader is IProviderConnectionDmlResultRowMetadataReader connectionTriggerMetadata
+                ? await connectionTriggerMetadata.HasEnabledDmlTriggerAsync(
+                    metadataConnection,
+                    schema,
+                    table,
+                    operation,
+                    cancellationToken)
+                : await _dmlResultRowMetadataReader.HasEnabledDmlTriggerAsync(
+                    connectionString,
+                    schema,
+                    table,
+                    operation,
+                    cancellationToken);
 
         if (hasEnabledTrigger)
         {

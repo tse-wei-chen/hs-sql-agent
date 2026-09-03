@@ -113,17 +113,8 @@ internal static class SyntaxBoundaryTestSupport
                 schema,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync([table]);
-        metadata
-            .Setup(x => x.GetColumnsAsync(
-                "connection",
-                schema,
-                table,
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync([
-                new DatabaseColumnMetadata(schema, table, "id", "integer", false),
-                new DatabaseColumnMetadata(schema, table, "name", "text", false)
-            ]);
-
+        // INSERT VALUES approval has no pre-existing row identity; loading columns here would be
+        // an unnecessary metadata round trip. The strict mock guards that invariant.
         var connections = new BoundaryConnectionFactory(version);
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         provider.SetupGet(x => x.Type).Returns(type);
