@@ -6,7 +6,7 @@ metadata:
 spec:
   description: hs-sql-agent is an HTTP MCP server for relational databases with an integrated admin panel.
   coverImage: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/coverImage.png
-  icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.png
+  icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.svg
   variables:
     - key: PUBLIC_DOMAIN
       type: DOMAIN
@@ -154,7 +154,7 @@ spec:
     "
   services:
     - name: hs-sql-agent
-      icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.png
+      icon: https://raw.githubusercontent.com/tse-wei-chen/hs-sql-agent/main/miscellaneous/logo.svg
       template: PREBUILT_V2
       spec:
         id: hs-sql-agent
