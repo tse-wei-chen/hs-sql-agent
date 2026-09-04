@@ -17,6 +17,7 @@ public static class HsSqlAgentApplicationExtensions
     private const string McpMappedKey = "HsSqlAgent.Server.McpMapped";
     private const string AdminApiMappedKey = "HsSqlAgent.Server.AdminApiMapped";
     private const string AdminUiMappedKey = "HsSqlAgent.Server.AdminUiMapped";
+    private const string LegacySqliteIdentityTransferMigration = "20260627034600_MigrateSuperUsersToAuth";
 
     /// <summary>
     /// Compatibility preset: initialize the HsSqlAgent store, then mount the current /mcp and /api surfaces
@@ -50,7 +51,14 @@ public static class HsSqlAgentApplicationExtensions
             if (firstInitialization)
             {
                 if (useBuiltInAuth)
+                {
                     scope.ServiceProvider.GetRequiredService<Auth.Service.Data.AuthContext>().Database.Migrate();
+                }
+                else
+                {
+                    PrepareSqliteAdminHistoryForHostMode(adminDb);
+                }
+
                 adminDb.Database.Migrate();
 
                 var securityPolicy = adminDb.SecurityPolicySettings
@@ -234,6 +242,63 @@ public static class HsSqlAgentApplicationExtensions
             return new PhysicalFileProvider(uiRoot);
 
         return null;
+    }
+
+    private static void PrepareSqliteAdminHistoryForHostMode(Admin.Service.Data.AdminContext adminDb)
+    {
+        if (!string.Equals(
+                adminDb.Database.ProviderName,
+                "Microsoft.EntityFrameworkCore.Sqlite",
+                StringComparison.Ordinal))
+            return;
+
+        var pendingMigrations = adminDb.Database.GetPendingMigrations().ToHashSet(StringComparer.Ordinal);
+        if (!pendingMigrations.Contains(LegacySqliteIdentityTransferMigration))
+            return;
+
+        ThrowIfLegacySqliteUsersWouldBeDiscarded(adminDb);
+
+        adminDb.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
+                "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,
+                "ProductVersion" TEXT NOT NULL
+            );
+            """);
+
+        var productVersion = typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "10.0.0";
+        adminDb.Database.ExecuteSqlInterpolated($$"""
+            INSERT OR IGNORE INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
+            VALUES ({{LegacySqliteIdentityTransferMigration}}, {{productVersion}});
+            """);
+    }
+
+    private static void ThrowIfLegacySqliteUsersWouldBeDiscarded(Admin.Service.Data.AdminContext adminDb)
+    {
+        var connection = adminDb.Database.GetDbConnection();
+        var closeConnection = connection.State != System.Data.ConnectionState.Open;
+        if (closeConnection)
+            connection.Open();
+
+        try
+        {
+            using var exists = connection.CreateCommand();
+            exists.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'SuperUsers';";
+            if (Convert.ToInt64(exists.ExecuteScalar()) == 0)
+                return;
+
+            using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM SuperUsers;";
+            if (Convert.ToInt64(count.ExecuteScalar()) > 0)
+            {
+                throw new InvalidOperationException(
+                    "This SQLite admin database still contains legacy HsSqlAgent users. Enable built-in authentication once to migrate those identities before switching to host authorization.");
+            }
+        }
+        finally
+        {
+            if (closeConnection)
+                connection.Close();
+        }
     }
 
     private static void RequireFixedEndpoint(string value, string expected, string surface)
