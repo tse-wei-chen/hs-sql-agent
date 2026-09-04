@@ -18,21 +18,33 @@ namespace HsSqlAgent.Server.Extensions;
 
 public static class HsSqlAgentMcpServiceExtensions
 {
-    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentMcp(this HsSqlAgentRegistrationBuilder builder)
+    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentMcp(
+        this HsSqlAgentRegistrationBuilder builder,
+        Action<McpOptions>? configure = null)
     {
         builder.AddHsSqlAgentAdminStore();
+        builder.ThrowIfAlreadyConfigured("mcp", configure);
+        if (builder.IsRegistered("mcp")) return builder;
+
+        var options = builder.GetOrCreateOptions(() => builder.LegacyOptions is { } legacy
+            ? McpOptions.FromLegacy(legacy)
+            : new McpOptions());
+        configure?.Invoke(options);
         if (!builder.TryRegister("mcp")) return builder;
 
         var services = builder.Services;
-        var options = builder.Options;
         if (string.IsNullOrWhiteSpace(options.HmacSecretKey) || System.Text.Encoding.UTF8.GetByteCount(options.HmacSecretKey) < 32)
-            throw new InvalidOperationException("HmacSecretKey must be at least 32 bytes.");
-        if (!Uri.TryCreate(options.Mcp.PublicEndpoint, UriKind.Absolute, out var mcpPublicEndpoint)
+            throw new InvalidOperationException("Mcp HmacSecretKey must be at least 32 bytes.");
+        if (!Uri.TryCreate(options.PublicEndpoint, UriKind.Absolute, out var mcpPublicEndpoint)
             || mcpPublicEndpoint.Scheme is not ("http" or "https"))
-            throw new InvalidOperationException("Mcp:PublicEndpoint must be an absolute HTTP or HTTPS URL.");
+            throw new InvalidOperationException("Mcp PublicEndpoint must be an absolute HTTP or HTTPS URL.");
 
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
-        services.Configure<McpOptions>(mcp => mcp.PublicEndpoint = options.Mcp.PublicEndpoint);
+        services.Configure<McpOptions>(mcp =>
+        {
+            mcp.PublicEndpoint = options.PublicEndpoint;
+            mcp.HmacSecretKey = options.HmacSecretKey;
+        });
         services.AddTransient<McpIpRateLimitMiddleware>();
         services.AddScoped<McpAccessKeyAuthMiddleware>();
         services.AddTransient<McpKeyRateLimitMiddleware>();
