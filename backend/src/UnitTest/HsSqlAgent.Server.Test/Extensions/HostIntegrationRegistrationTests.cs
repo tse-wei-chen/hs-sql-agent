@@ -82,7 +82,7 @@ public class HostIntegrationRegistrationTests
         var roleView = authorization.GetPolicy("__perm__/auth/role.view");
         Assert.NotNull(roleView);
         Assert.Contains(HsSqlAgentAuthenticationSchemes.Bearer, roleView.AuthenticationSchemes);
-        Assert.Single(services.Where(x => x.ServiceType == typeof(IAuthorizationPolicyProvider)));
+        Assert.Single(services, x => x.ServiceType == typeof(IAuthorizationPolicyProvider));
     }
 
     private static HsSqlAgentServiceOptions CreateOptions() => new()
