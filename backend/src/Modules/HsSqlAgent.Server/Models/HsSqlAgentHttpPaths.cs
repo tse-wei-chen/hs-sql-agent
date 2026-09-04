@@ -9,4 +9,5 @@ public static class HsSqlAgentHttpPaths
     public const string AdminUi = "/";
     public const string AdminApi = "/api";
     public const string Mcp = "/mcp";
+    internal const string OidcSignInCallback = AdminApi + "/auth/oidc/signin";
 }

@@ -174,6 +174,17 @@ public static class HsSqlAgentApplicationExtensions
     {
         if (app.Properties.ContainsKey(AdminApiMappedKey)) return app;
 
+        var useBuiltInAuth = app.ApplicationServices
+            .GetServices<HsSqlAgentRegisteredFeature>()
+            .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
+
+        if (useBuiltInAuth)
+        {
+            app.UseWhen(
+                context => context.Request.Path == HsSqlAgentHttpPaths.OidcSignInCallback,
+                branch => branch.UseMiddleware<HsSqlAgentOidcCallbackMiddleware>());
+        }
+
         if (app is IEndpointRouteBuilder endpoints)
         {
             endpoints.MapControllers();
