@@ -4,8 +4,10 @@ using Admin.Service.Models;
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Filters;
+using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
@@ -57,6 +59,19 @@ public class HostMvcIsolationTests
         Assert.DoesNotContain(services, descriptor =>
             descriptor.ServiceType == typeof(IExceptionHandler) &&
             descriptor.ImplementationType?.Namespace == "HsSqlAgent.Server.Middleware");
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IProblemDetailsService));
+    }
+
+    [Fact]
+    public void AddHsSqlAgentStandalonePreset_OwnsExceptionFallback()
+    {
+        var services = new ServiceCollection();
+        services.AddHsSqlAgent(CreateStandaloneOptions());
+
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IExceptionHandler) &&
+            descriptor.ImplementationType == typeof(GlobalExceptionHandler));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IProblemDetailsService));
     }
 
     [Fact]
@@ -96,6 +111,13 @@ public class HostMvcIsolationTests
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
+    };
+
+    private static HsSqlAgentServiceOptions CreateStandaloneOptions() => new()
+    {
+        AdminConnectionString = "Data Source=:memory:",
+        HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
+        JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
     };
 }
 

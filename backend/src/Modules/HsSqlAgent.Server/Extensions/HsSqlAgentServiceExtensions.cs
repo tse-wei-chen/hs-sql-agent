@@ -1,3 +1,4 @@
+using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
 
 namespace HsSqlAgent.Server.Extensions;
@@ -32,6 +33,11 @@ public static class HsSqlAgentServiceExtensions
             .AddHsSqlAgentMcp()
             .AddHsSqlAgentAdminApi()
             .AddHsSqlAgentTelemetry();
+
+        // The compatibility preset is a complete standalone server and therefore owns its fallback
+        // exception response. Modular registrations deliberately do not install these host-wide services.
+        services.AddExceptionHandler<GlobalExceptionHandler>();
+        services.AddProblemDetails();
 
         return services;
     }
