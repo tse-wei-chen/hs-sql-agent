@@ -19,104 +19,72 @@ public static class HsSqlAgentApplicationExtensions
     private const string AdminUiMappedKey = "HsSqlAgent.Server.AdminUiMapped";
 
     /// <summary>
-    /// Compatibility preset: initialize the HsSqlAgent store, then mount the current /mcp and /api surfaces.
-    /// Admin UI remains opt-in through ServeAdminUi().
+    /// Compatibility preset: initialize the HsSqlAgent store, then mount the current /mcp and /api surfaces
+    /// when endpoint routing is available. Admin UI remains opt-in through ServeAdminUi().
     /// </summary>
     public static HsSqlAgentBuilder UseHsSqlAgent(this IApplicationBuilder app)
     {
-        app.UseHsSqlAgentMcp();
-        app.UseHsSqlAgentAdminApi();
+        app.InitializeHsSqlAgent();
+        UseHsSqlAgentMcpCore(app);
+        UseHsSqlAgentAdminApiCore(app);
         return new HsSqlAgentBuilder(app);
     }
 
     /// <summary>
-    /// Applies packaged migrations, loads the runtime security policy, and provisions configured bootstrap data.
-    /// Initialization is idempotent per application pipeline.
+    /// Applies packaged migrations, loads the runtime security policy, and synchronizes configured bootstrap data.
+    /// Schema/runtime initialization is idempotent per application pipeline; bootstrap declarations are re-applied on
+    /// each explicit initialization so configuration changes retain the existing reconciliation behavior.
     /// </summary>
     public static IApplicationBuilder InitializeHsSqlAgent(this IApplicationBuilder app)
     {
-        if (app.Properties.ContainsKey(InitializedKey)) return app;
+        var firstInitialization = !app.Properties.ContainsKey(InitializedKey);
 
         using (var scope = app.ApplicationServices.CreateScope())
         {
             var authDb = scope.ServiceProvider.GetRequiredService<Auth.Service.Data.AuthContext>();
-            authDb.Database.Migrate();
-
             var adminDb = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
-            adminDb.Database.Migrate();
 
-            var securityPolicy = adminDb.SecurityPolicySettings
-                .AsNoTracking()
-                .Single(x => x.Id == Admin.Service.Data.Entites.SecurityPolicySettings.SingletonId);
-            scope.ServiceProvider
-                .GetRequiredService<Admin.Service.Interfaces.ISecurityPolicyRuntimeState>()
-                .SetCurrent(Admin.Service.Models.SecurityPolicyModel.FromEntity(securityPolicy));
+            if (firstInitialization)
+            {
+                authDb.Database.Migrate();
+                adminDb.Database.Migrate();
+
+                var securityPolicy = adminDb.SecurityPolicySettings
+                    .AsNoTracking()
+                    .Single(x => x.Id == Admin.Service.Data.Entites.SecurityPolicySettings.SingletonId);
+                scope.ServiceProvider
+                    .GetRequiredService<Admin.Service.Interfaces.ISecurityPolicyRuntimeState>()
+                    .SetCurrent(Admin.Service.Models.SecurityPolicyModel.FromEntity(securityPolicy));
+
+                app.Properties[InitializedKey] = true;
+            }
 
             var bootstrapOptions = scope.ServiceProvider.GetService<IOptions<BootstrapOptions>>()?.Value;
             if (bootstrapOptions is { Enabled: true })
                 SeedBootstrapData(adminDb, scope.ServiceProvider, bootstrapOptions);
         }
 
-        app.Properties[InitializedKey] = true;
         return app;
     }
 
     /// <summary>
-    /// Mounts only the MCP surface at /mcp and its request middleware.
+    /// Initializes HsSqlAgent and mounts only the MCP surface at /mcp when endpoint routing is available.
     /// </summary>
     public static IApplicationBuilder UseHsSqlAgentMcp(this IApplicationBuilder app)
     {
         app.InitializeHsSqlAgent();
-        if (app.Properties.ContainsKey(McpMappedKey)) return app;
-
-        app.UseWhen(
-            context => context.Request.Path.StartsWithSegments(HsSqlAgentHttpPaths.Mcp),
-            branch =>
-            {
-                branch.UseMiddleware<McpRequestMetricsMiddleware>();
-                branch.UseMiddleware<McpIpRateLimitMiddleware>();
-                branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
-                branch.UseMiddleware<McpKeyRateLimitMiddleware>();
-                branch.UseMiddleware<McpStringifiedArrayMiddleware>();
-            });
-
-        if (app is not IEndpointRouteBuilder endpoints)
-            throw new InvalidOperationException("HsSqlAgent MCP mapping requires an endpoint route builder.");
-
-        endpoints.MapMcp(HsSqlAgentHttpPaths.Mcp).AllowAnonymous();
-        app.Properties[McpMappedKey] = true;
-        return app;
+        return UseHsSqlAgentMcpCore(app);
     }
 
     /// <summary>
-    /// Mounts only the administration API surface. Built-in token revocation middleware is installed
-    /// only when AddHsSqlAgentBuiltInAuth() was selected; host authentication can otherwise own auth.
+    /// Initializes HsSqlAgent and mounts only the administration API surface when endpoint routing is available.
+    /// Built-in token revocation middleware is installed only when AddHsSqlAgentBuiltInAuth() was selected;
+    /// host authentication can otherwise own authentication.
     /// </summary>
     public static IApplicationBuilder UseHsSqlAgentAdminApi(this IApplicationBuilder app)
     {
         app.InitializeHsSqlAgent();
-        if (app.Properties.ContainsKey(AdminApiMappedKey)) return app;
-
-        var useBuiltInAuth = app.ApplicationServices
-            .GetServices<HsSqlAgentRegisteredFeature>()
-            .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
-
-        app.UseWhen(
-            context => context.Request.Path.StartsWithSegments(HsSqlAgentHttpPaths.AdminApi),
-            branch =>
-            {
-                branch.UseAuthentication();
-                if (useBuiltInAuth)
-                    branch.UseMiddleware<TokenRevocationMiddleware>();
-                branch.UseAuthorization();
-            });
-
-        if (app is not IEndpointRouteBuilder endpoints)
-            throw new InvalidOperationException("HsSqlAgent administration API mapping requires an endpoint route builder.");
-
-        endpoints.MapControllers();
-        app.Properties[AdminApiMappedKey] = true;
-        return app;
+        return UseHsSqlAgentAdminApiCore(app);
     }
 
     /// <summary>
@@ -166,10 +134,60 @@ public static class HsSqlAgentApplicationExtensions
         return builder;
     }
 
+    private static IApplicationBuilder UseHsSqlAgentMcpCore(IApplicationBuilder app)
+    {
+        if (app.Properties.ContainsKey(McpMappedKey)) return app;
+
+        app.UseWhen(
+            context => context.Request.Path.StartsWithSegments(HsSqlAgentHttpPaths.Mcp),
+            branch =>
+            {
+                branch.UseMiddleware<McpRequestMetricsMiddleware>();
+                branch.UseMiddleware<McpIpRateLimitMiddleware>();
+                branch.UseMiddleware<McpAccessKeyAuthMiddleware>();
+                branch.UseMiddleware<McpKeyRateLimitMiddleware>();
+                branch.UseMiddleware<McpStringifiedArrayMiddleware>();
+            });
+
+        if (app is IEndpointRouteBuilder endpoints)
+        {
+            endpoints.MapMcp(HsSqlAgentHttpPaths.Mcp).AllowAnonymous();
+            app.Properties[McpMappedKey] = true;
+        }
+
+        return app;
+    }
+
+    private static IApplicationBuilder UseHsSqlAgentAdminApiCore(IApplicationBuilder app)
+    {
+        if (app.Properties.ContainsKey(AdminApiMappedKey)) return app;
+
+        var useBuiltInAuth = app.ApplicationServices
+            .GetServices<HsSqlAgentRegisteredFeature>()
+            .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
+
+        app.UseWhen(
+            context => context.Request.Path.StartsWithSegments(HsSqlAgentHttpPaths.AdminApi),
+            branch =>
+            {
+                branch.UseAuthentication();
+                if (useBuiltInAuth)
+                    branch.UseMiddleware<TokenRevocationMiddleware>();
+                branch.UseAuthorization();
+            });
+
+        if (app is IEndpointRouteBuilder endpoints)
+        {
+            endpoints.MapControllers();
+            app.Properties[AdminApiMappedKey] = true;
+        }
+
+        return app;
+    }
+
     private static void RegisterAdminUiFallback(IApplicationBuilder app, HsSqlAgentPipelineOptions options)
     {
-        if (app is not IEndpointRouteBuilder endpoints)
-            throw new InvalidOperationException("HsSqlAgent administration UI mapping requires an endpoint route builder.");
+        if (app is not IEndpointRouteBuilder endpoints) return;
 
         var fileProvider = ResolveUiFileProvider(options);
         if (fileProvider == null) return;
