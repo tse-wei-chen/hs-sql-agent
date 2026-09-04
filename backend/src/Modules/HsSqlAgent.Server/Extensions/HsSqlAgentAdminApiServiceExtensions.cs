@@ -3,10 +3,9 @@ using System.Text.Json.Serialization;
 using Admin.Service.Validators;
 using Auth.Service.Validators;
 using FluentValidation;
-using FluentValidation.AspNetCore;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Controllers;
-using HsSqlAgent.Server.Middleware;
+using HsSqlAgent.Server.Filters;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -21,6 +20,8 @@ public static class HsSqlAgentAdminApiServiceExtensions
 
         var services = builder.Services;
         services.TryAddScoped<IHsSqlAgentPermissionAuthorizer, MissingHsSqlAgentPermissionAuthorizer>();
+        services.AddScoped<HsSqlAgentValidationFilter>();
+        services.AddScoped<HsSqlAgentExceptionFilter>();
         services.AddControllers()
             .AddApplicationPart(typeof(RoleController).Assembly)
             .AddJsonOptions(json =>
@@ -32,11 +33,8 @@ public static class HsSqlAgentAdminApiServiceExtensions
             });
         services.Configure<MvcOptions>(mvc =>
             mvc.Conventions.Add(new HsSqlAgentControllerSurfaceConvention(builder)));
-        services.AddFluentValidationAutoValidation();
         services.AddValidatorsFromAssemblyContaining<IssueMcpAccessKeyRequestValidator>();
         services.AddValidatorsFromAssemblyContaining<SignInRequestValidator>();
-        services.AddExceptionHandler<GlobalExceptionHandler>();
-        services.AddProblemDetails();
 
         return builder;
     }
