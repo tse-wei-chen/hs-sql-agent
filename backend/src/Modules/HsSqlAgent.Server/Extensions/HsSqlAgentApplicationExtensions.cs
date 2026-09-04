@@ -15,19 +15,22 @@ public static class HsSqlAgentApplicationExtensions
 {
     private const string InitializedKey = "HsSqlAgent.Server.Initialized";
     private const string McpMappedKey = "HsSqlAgent.Server.McpMapped";
+    private const string AdminApiPipelineConfiguredKey = "HsSqlAgent.Server.AdminApiPipelineConfigured";
     private const string AdminApiMappedKey = "HsSqlAgent.Server.AdminApiMapped";
     private const string AdminUiMappedKey = "HsSqlAgent.Server.AdminUiMapped";
     private const string LegacySqliteIdentityTransferMigration = "20260627034600_MigrateSuperUsersToAuth";
 
     /// <summary>
     /// Compatibility preset: initialize the HsSqlAgent store, then mount the current /mcp and /api surfaces
-    /// when endpoint routing is available. Admin UI remains opt-in through ServeAdminUi().
+    /// when endpoint routing is available. This standalone-oriented preset maps attribute-routed controllers;
+    /// modular host integrations should use UseHsSqlAgentAdminApi() and let the host call MapControllers().
+    /// Admin UI remains opt-in through ServeAdminUi().
     /// </summary>
     public static HsSqlAgentBuilder UseHsSqlAgent(this IApplicationBuilder app)
     {
         app.InitializeHsSqlAgent();
         UseHsSqlAgentMcpCore(app);
-        UseHsSqlAgentAdminApiCore(app);
+        UseHsSqlAgentAdminApiCore(app, mapControllers: true);
         return new HsSqlAgentBuilder(app);
     }
 
@@ -89,14 +92,15 @@ public static class HsSqlAgentApplicationExtensions
     }
 
     /// <summary>
-    /// Initializes HsSqlAgent and maps the administration controllers when endpoint routing is available.
-    /// HsSqlAgent does not install an /api-wide authentication/authorization middleware branch; built-in
-    /// identity state checks are scoped to HsSqlAgent controllers and host authorization remains host-owned.
+    /// Initializes HsSqlAgent and installs only HsSqlAgent-owned administration pipeline behavior.
+    /// The host remains responsible for calling MapControllers(), so HsSqlAgent never implicitly enables
+    /// unrelated host attribute-routed controllers. Built-in identity state checks are scoped to HsSqlAgent
+    /// controllers and host authorization remains host-owned.
     /// </summary>
     public static IApplicationBuilder UseHsSqlAgentAdminApi(this IApplicationBuilder app)
     {
         app.InitializeHsSqlAgent();
-        return UseHsSqlAgentAdminApiCore(app);
+        return UseHsSqlAgentAdminApiCore(app, mapControllers: false);
     }
 
     /// <summary>
@@ -170,22 +174,27 @@ public static class HsSqlAgentApplicationExtensions
         return app;
     }
 
-    private static IApplicationBuilder UseHsSqlAgentAdminApiCore(IApplicationBuilder app)
+    private static IApplicationBuilder UseHsSqlAgentAdminApiCore(IApplicationBuilder app, bool mapControllers)
     {
-        if (app.Properties.ContainsKey(AdminApiMappedKey)) return app;
-
-        var useBuiltInAuth = app.ApplicationServices
-            .GetServices<HsSqlAgentRegisteredFeature>()
-            .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
-
-        if (useBuiltInAuth)
+        if (!app.Properties.ContainsKey(AdminApiPipelineConfiguredKey))
         {
-            app.UseWhen(
-                context => context.Request.Path == HsSqlAgentHttpPaths.OidcSignInCallback,
-                branch => branch.UseMiddleware<HsSqlAgentOidcCallbackMiddleware>());
+            var useBuiltInAuth = app.ApplicationServices
+                .GetServices<HsSqlAgentRegisteredFeature>()
+                .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
+
+            if (useBuiltInAuth)
+            {
+                app.UseWhen(
+                    context => context.Request.Path == HsSqlAgentHttpPaths.OidcSignInCallback,
+                    branch => branch.UseMiddleware<HsSqlAgentOidcCallbackMiddleware>());
+            }
+
+            app.Properties[AdminApiPipelineConfiguredKey] = true;
         }
 
-        if (app is IEndpointRouteBuilder endpoints)
+        if (mapControllers &&
+            !app.Properties.ContainsKey(AdminApiMappedKey) &&
+            app is IEndpointRouteBuilder endpoints)
         {
             endpoints.MapControllers();
             app.Properties[AdminApiMappedKey] = true;

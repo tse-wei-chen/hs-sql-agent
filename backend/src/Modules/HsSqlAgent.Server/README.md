@@ -41,11 +41,11 @@ app.UseHsSqlAgent().ServeAdminUi();
 app.Run();
 ```
 
-`AddHsSqlAgent()` remains a convenience preset. It is not the primitive integration API for an existing application.
+`AddHsSqlAgent()` remains a convenience preset. It is not the primitive integration API for an existing application. The matching `UseHsSqlAgent()` compatibility preset owns controller mapping for the standalone experience.
 
 ## Existing ASP.NET Core host
 
-Compose only the capabilities that the host needs. Host authentication and authorization stay host-owned.
+Compose only the capabilities that the host needs. Host authentication, authorization, and controller endpoint mapping stay host-owned.
 
 ```csharp
 using HsSqlAgent.Server.Extensions;
@@ -78,18 +78,21 @@ hs.AddHsSqlAgentRuntime()
 
 var app = builder.Build();
 
-// The host owns these middleware decisions.
+// The host owns these middleware and MVC routing decisions.
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.UseHsSqlAgentMcp();
 app.UseHsSqlAgentAdminApi();
+app.MapControllers();
 
 // Optional. The packaged SPA currently mounts only at `/`.
 // app.UseHsSqlAgentAdminUi();
 
 app.Run();
 ```
+
+`UseHsSqlAgentAdminApi()` initializes the HsSqlAgent administration pipeline but deliberately does not call `MapControllers()` in modular host mode. ASP.NET Core `MapControllers()` enables attribute-routed controllers for the MVC application as a whole, so the host must own that decision rather than a package implicitly enabling unrelated host controllers.
 
 In host-authorization mode HsSqlAgent does not publish its built-in `AuthController`, `MemberController`, or `RoleController`, does not install its JWT identity schema, and does not add an `/api`-wide authentication/authorization middleware branch. HsSqlAgent permission checks delegate to the configured host policy and pass the requested canonical permission keys as the authorization resource.
 
