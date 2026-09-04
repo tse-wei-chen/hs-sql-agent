@@ -15,46 +15,54 @@ namespace HsSqlAgent.Server.Extensions;
 
 public static class HsSqlAgentRuntimeServiceExtensions
 {
-    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(this HsSqlAgentRegistrationBuilder builder)
+    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
+        this HsSqlAgentRegistrationBuilder builder,
+        Action<HsSqlAgentRuntimeOptions>? configure = null)
     {
+        builder.ThrowIfAlreadyConfigured("runtime", configure);
+        if (builder.IsRegistered("runtime")) return builder;
+
+        var options = builder.GetOrCreateOptions(() => builder.LegacyOptions is { } legacy
+            ? HsSqlAgentRuntimeOptions.FromLegacy(legacy)
+            : new HsSqlAgentRuntimeOptions());
+        configure?.Invoke(options);
         if (!builder.TryRegister("runtime")) return builder;
 
         var services = builder.Services;
-        var options = builder.Options;
 
         ValidateWebhook("Operability Alert", options.Operability.AlertWebhookUrl, options.Operability.AlertWebhookSecret);
         ValidateWebhook("Operability SIEM", options.Operability.SiemWebhookUrl, options.Operability.SiemWebhookSecret);
         if (string.IsNullOrWhiteSpace(options.Operability.AuditFallbackPath))
             throw new InvalidOperationException("Operability AuditFallbackPath is required.");
 
-        services.AddCacheProvider(options.CacheProvider, options.CacheConnectionString, options.CacheKeyPrefix);
+        services.AddCacheProvider(options.Cache.Provider, options.Cache.ConnectionString, options.Cache.KeyPrefix);
         services.AddSingleton<IRateLimitingRuntimeState, RateLimitingRuntimeState>();
         services.AddSingleton<ISecurityPolicyRuntimeState, SecurityPolicyRuntimeState>();
         services.AddSecurityPolicySync(
-            options.SecurityPolicySyncProvider,
-            options.SecurityPolicySyncConnectionString,
-            options.SecurityPolicySyncKeyPrefix,
-            options.SecurityPolicySyncRefreshIntervalSeconds);
+            options.SecurityPolicySync.Provider,
+            options.SecurityPolicySync.ConnectionString,
+            options.SecurityPolicySync.KeyPrefix,
+            options.SecurityPolicySync.RefreshIntervalSeconds);
         services.AddRequestRateLimiter(
-            options.RateLimiterProvider,
-            options.RateLimiterConnectionString,
-            options.RateLimiterFailureMode,
-            options.RateLimiterKeyPrefix);
+            options.RateLimiter.Provider,
+            options.RateLimiter.ConnectionString,
+            options.RateLimiter.FailureMode,
+            options.RateLimiter.KeyPrefix);
         services.AddSingleton<ILayeredRateLimitService, LayeredRateLimitService>();
         services.AddSqlConcurrencyLimiter(
-            options.SqlConcurrencyProvider,
-            options.SqlConcurrencyConnectionString,
-            options.SqlConcurrencyFailureMode,
-            options.SqlConcurrencyKey,
-            options.SqlConcurrencyLeaseSeconds);
+            options.SqlConcurrency.Provider,
+            options.SqlConcurrency.ConnectionString,
+            options.SqlConcurrency.FailureMode,
+            options.SqlConcurrency.Key,
+            options.SqlConcurrency.LeaseSeconds);
         services.AddDmlApprovalChallengeStore(
-            options.DmlApprovalStoreProvider,
-            options.DmlApprovalStoreConnectionString,
-            options.DmlApprovalStoreKeyPrefix);
+            options.DmlApprovalStore.Provider,
+            options.DmlApprovalStore.ConnectionString,
+            options.DmlApprovalStore.KeyPrefix);
         services.AddOutboundDeliverySync(
-            options.OutboundDeliverySyncProvider,
-            options.OutboundDeliverySyncConnectionString,
-            options.OutboundDeliverySyncKeyPrefix);
+            options.OutboundDeliverySync.Provider,
+            options.OutboundDeliverySync.ConnectionString,
+            options.OutboundDeliverySync.KeyPrefix);
 
         services.AddSingleton<ICryptoService, CryptoService>();
         services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
@@ -105,8 +113,8 @@ public static class HsSqlAgentRuntimeServiceExtensions
         });
         services.Configure<RateLimitingSettings>(rl =>
         {
-            rl.PermitLimit = options.RateLimitPermitLimit;
-            rl.WindowSeconds = options.RateLimitWindowSeconds;
+            rl.PermitLimit = options.RateLimiter.PermitLimit;
+            rl.WindowSeconds = options.RateLimiter.WindowSeconds;
         });
 
         return builder;
