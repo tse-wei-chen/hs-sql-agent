@@ -7,8 +7,8 @@ using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 
 namespace HsSqlAgent.Server.Extensions;
@@ -17,6 +17,12 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
 {
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentBuiltInAuth(this HsSqlAgentRegistrationBuilder builder)
     {
+        if (builder.IsRegistered("host-authorization"))
+        {
+            throw new InvalidOperationException(
+                "HsSqlAgent built-in authentication and host authorization are mutually exclusive authorization modes.");
+        }
+
         builder.AddHsSqlAgentAdminStore();
         if (!builder.TryRegister("built-in-auth")) return builder;
 
@@ -164,10 +170,11 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
             {
                 policy.AddAuthenticationSchemes(HsSqlAgentAuthenticationSchemes.ExternalCookie);
                 policy.RequireAuthenticatedUser();
-            })
-            .AddHsSqlAgentPermissionPolicies();
+            });
 
-        services.AddScoped<IAuthorizationHandler, PermissionAuthorizationHandler>();
+        services.RemoveAll<IHsSqlAgentPermissionAuthorizer>();
+        services.AddScoped<PermissionAuthorizationHandler>();
+        services.AddScoped<IHsSqlAgentPermissionAuthorizer>(sp => sp.GetRequiredService<PermissionAuthorizationHandler>());
         services.AddHostedService<TokenBlacklistCleanupService>();
 
         return builder;

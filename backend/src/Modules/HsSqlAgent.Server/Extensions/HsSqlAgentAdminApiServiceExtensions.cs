@@ -4,7 +4,9 @@ using Admin.Service.Validators;
 using Auth.Service.Validators;
 using FluentValidation;
 using FluentValidation.AspNetCore;
+using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Middleware;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace HsSqlAgent.Server.Extensions;
 
@@ -16,6 +18,7 @@ public static class HsSqlAgentAdminApiServiceExtensions
         if (!builder.TryRegister("admin-api")) return builder;
 
         var services = builder.Services;
+        services.TryAddScoped<IHsSqlAgentPermissionAuthorizer, MissingHsSqlAgentPermissionAuthorizer>();
         services.AddControllers().AddJsonOptions(json =>
         {
             json.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;

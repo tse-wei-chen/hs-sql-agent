@@ -1,6 +1,8 @@
 using System.Reflection;
+using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Controllers;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Authorization;
@@ -23,5 +25,14 @@ public class AuthorizationMetadataIsolationTests
             .ToArray();
 
         Assert.Empty(bareAuthorization);
+    }
+
+    [Fact]
+    public void PermissionAttributes_AreMvcFilters_NotAspNetNamedPolicyMetadata()
+    {
+        Assert.True(typeof(IFilterFactory).IsAssignableFrom(typeof(HasPermissionAttribute)));
+        Assert.True(typeof(IFilterFactory).IsAssignableFrom(typeof(HasAnyPermissionAttribute)));
+        Assert.False(typeof(IAuthorizeData).IsAssignableFrom(typeof(HasPermissionAttribute)));
+        Assert.False(typeof(IAuthorizeData).IsAssignableFrom(typeof(HasAnyPermissionAttribute)));
     }
 }

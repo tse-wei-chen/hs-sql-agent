@@ -1,12 +1,14 @@
 using Auth.Service.Authorization;
-using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HsSqlAgent.Server.Authorization;
 
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public sealed class HasAnyPermissionAttribute : AuthorizeAttribute
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true, Inherited = true)]
+public sealed class HasAnyPermissionAttribute : Attribute, IFilterFactory, IOrderedFilter
 {
     internal const string Prefix = "__perm_any__";
+    private readonly string[] _permissions;
 
     public HasAnyPermissionAttribute(params string[] permissions)
     {
@@ -16,6 +18,15 @@ public sealed class HasAnyPermissionAttribute : AuthorizeAttribute
         foreach (var permission in permissions)
             PermissionCanonicalPaths.RequirePermissionKey(permission, nameof(permissions));
 
-        Policy = Prefix + string.Join('|', permissions);
+        _permissions = [.. permissions];
     }
+
+    public bool IsReusable => false;
+
+    public int Order => -1000;
+
+    public IFilterMetadata CreateInstance(IServiceProvider serviceProvider)
+        => new HsSqlAgentPermissionAuthorizationFilter(
+            serviceProvider.GetRequiredService<IHsSqlAgentPermissionAuthorizer>(),
+            _permissions);
 }

@@ -19,6 +19,8 @@ public sealed class HsSqlAgentRegistrationBuilder
 
     public HsSqlAgentServiceOptions Options { get; }
 
+    internal bool IsRegistered(string feature) => _registeredFeatures.Contains(feature);
+
     internal bool TryRegister(string feature)
     {
         if (!_registeredFeatures.Add(feature)) return false;
