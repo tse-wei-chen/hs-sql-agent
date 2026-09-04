@@ -1,6 +1,6 @@
 # HsSqlAgent.Server
 
-Embeddable MCP SQL Agent components for ASP.NET Core. New applications should compose the capabilities they need explicitly. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains only as a compatibility path for existing consumers.
+Embeddable MCP SQL Agent components for ASP.NET Core. New applications compose capabilities explicitly; each capability owns only the options it needs. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains as a compatibility path for existing consumers.
 
 ## Install
 
@@ -20,29 +20,36 @@ Canonical permission paths such as `/auth/role` and `/runtime/db-management` are
 
 ## Standalone server
 
-The first-party ToolBox/server uses the same modular registration surface as embedders. A standalone host explicitly selects built-in identity, MCP, administration API, telemetry, controller mapping, UI, and any host-wide exception behavior it wants to own.
+The first-party ToolBox uses the same modular registration surface as package consumers. It explicitly selects runtime, persistence, built-in identity, MCP, administration API, telemetry, controller mapping, UI, and host-wide exception handling.
 
 ```csharp
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
+var hs = builder.Services.AddHsSqlAgentCore();
 
-var hs = builder.Services.AddHsSqlAgentCore(options =>
+hs.AddHsSqlAgentRuntime();
+
+hs.AddHsSqlAgentAdminStore(options =>
 {
-    options.AdminDatabaseProvider = "Sqlite";
-    options.AdminConnectionString = "Data Source=hsagent.db";
-    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!; // at least 32 bytes
-    options.JwtSecretKey = builder.Configuration["JWT_KEY"]!;   // at least 32 bytes
-    options.Mcp.PublicEndpoint = "http://localhost:8080/mcp";
+    options.Provider = "Sqlite";
+    options.ConnectionString = "Data Source=hsagent.db";
 });
 
-hs.AddHsSqlAgentRuntime()
-  .AddHsSqlAgentAdminStore()
-  .AddHsSqlAgentBuiltInAuth()
-  .AddHsSqlAgentMcp()
-  .AddHsSqlAgentAdminApi()
-  .AddHsSqlAgentTelemetry();
+hs.AddHsSqlAgentBuiltInAuth(options =>
+{
+    options.Jwt.SecretKey = builder.Configuration["JWT_KEY"]!; // at least 32 bytes
+});
+
+hs.AddHsSqlAgentMcp(options =>
+{
+    options.PublicEndpoint = "http://localhost:8080/mcp";
+    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!; // at least 32 bytes
+});
+
+hs.AddHsSqlAgentAdminApi();
+hs.AddHsSqlAgentTelemetry();
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
@@ -56,92 +63,112 @@ app.UseHsSqlAgentAdminUi();
 app.Run();
 ```
 
-### Legacy compatibility preset
+Capability defaults preserve the previous aggregate defaults. Omitting a capability does not allocate or validate that capability's options. For example, a host-authorization integration never needs JWT, SMTP, OIDC, or password-reset settings.
 
-Existing applications can continue to use:
+## Existing ASP.NET Core host with its own login and permissions
 
-```csharp
-builder.Services.AddHsSqlAgent(options => { /* ... */ });
-
-var app = builder.Build();
-app.UseExceptionHandler();
-app.UseHsSqlAgent().ServeAdminUi();
-```
-
-The aggregate preset is retained to avoid breaking existing package consumers. It is not the reference composition for new first-party or embedded hosts.
-
-## Existing ASP.NET Core host
-
-Compose only the capabilities that the host needs. Host authentication, authorization, exception handling, telemetry, and controller endpoint mapping stay host-owned.
+A host can omit the HsSqlAgent frontend and built-in identity entirely. The host keeps ownership of authentication, authorization, exception handling, telemetry, and controller endpoint mapping.
 
 ```csharp
 using HsSqlAgent.Server.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Existing application authentication/authorization remains configured by the host.
 builder.Services.AddAuthentication(/* host schemes */);
 builder.Services.AddAuthorization(options =>
 {
-    // Configure the host's SqlAgentAdmin policy here.
+    options.AddPolicy("SqlAgentAdmin", policy =>
+    {
+        // Add the host application's own requirement/handler here.
+        // The handler can inspect HsSqlAgentPermissionResource.Permissions.
+    });
 });
 
-var hs = builder.Services.AddHsSqlAgentCore(options =>
+var hs = builder.Services.AddHsSqlAgentCore();
+
+hs.AddHsSqlAgentRuntime();
+
+hs.AddHsSqlAgentAdminStore(options =>
 {
-    options.AdminDatabaseProvider = "Sqlite";
-    options.AdminConnectionString = "Data Source=hsagent.db";
-    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!;
-    options.Mcp.PublicEndpoint = "https://example.com/mcp";
+    options.Provider = "Postgres";
+    options.ConnectionString = builder.Configuration.GetConnectionString("HsSqlAgent")!;
 });
 
-hs.AddHsSqlAgentRuntime()
-  .AddHsSqlAgentAdminStore()
-  .AddHsSqlAgentHostAuthorization("SqlAgentAdmin")
-  .AddHsSqlAgentAdminApi()
-  .AddHsSqlAgentMcp();
-
-// Optional. Do not add this unless the host wants HsSqlAgent's telemetry exporters.
-// hs.AddHsSqlAgentTelemetry();
+hs.AddHsSqlAgentHostAuthorization("SqlAgentAdmin");
+hs.AddHsSqlAgentAdminApi();
 
 var app = builder.Build();
-
-// The host owns these middleware and MVC routing decisions.
 app.UseAuthentication();
 app.UseAuthorization();
-
-app.UseHsSqlAgentMcp();
 app.UseHsSqlAgentAdminApi();
 app.MapControllers();
-
-// Optional. The packaged SPA currently mounts only at `/`.
-// app.UseHsSqlAgentAdminUi();
-
 app.Run();
 ```
 
-`UseHsSqlAgentAdminApi()` initializes the HsSqlAgent administration pipeline but deliberately does not call `MapControllers()` in modular host mode. ASP.NET Core `MapControllers()` enables attribute-routed controllers for the MVC application as a whole, so the host must own that decision rather than a package implicitly enabling unrelated host controllers.
+In host-authorization mode HsSqlAgent does not publish its built-in `AuthController`, `MemberController`, or `RoleController`, does not install its JWT identity schema, and does not add an `/api`-wide authentication/authorization middleware branch. HsSqlAgent permission checks delegate to the configured host policy and pass canonical permission keys in `HsSqlAgentPermissionResource`.
 
-In host-authorization mode HsSqlAgent does not publish its built-in `AuthController`, `MemberController`, or `RoleController`, does not install its JWT identity schema, and does not add an `/api`-wide authentication/authorization middleware branch. HsSqlAgent permission checks delegate to the configured host policy and pass the requested canonical permission keys as the authorization resource.
+If the same host also wants MCP, add it separately. MCP machine access remains a separate security boundary from human/admin authorization:
+
+```csharp
+hs.AddHsSqlAgentMcp(options =>
+{
+    options.PublicEndpoint = "https://example.com/mcp";
+    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!;
+});
+
+// later
+app.UseHsSqlAgentMcp();
+```
+
+## Capability options
+
+New code configures the capability that owns a setting:
+
+- `HsSqlAgentRuntimeOptions`: bootstrap, operability, cache, rate limiting, security-policy sync, outbound-delivery sync, SQL concurrency, DML approval store.
+- `HsSqlAgentAdminStoreOptions`: administration database provider and connection string.
+- `HsSqlAgentBuiltInAuthOptions`: JWT, password reset/SMTP, enterprise identity/OIDC.
+- `McpOptions`: public MCP endpoint and MCP-key HMAC secret.
+- `TelemetryOptions`: Prometheus and OTLP settings.
+
+Defaults remain the same as the legacy aggregate contract. Examples include SQLite + `Data Source=hsagent.db`, Memory-backed cache/synchronization stores, fail-closed rate/concurrency modes, JWT issuer `HS-Agent`, JWT audience `HS-Agent-Users`, Prometheus on `localhost:9000`, and the existing key prefixes/timeouts.
+
+### Legacy compatibility preset
+
+Existing package consumers can continue to use the aggregate options shape:
+
+```csharp
+builder.Services.AddHsSqlAgent(options =>
+{
+    options.AdminDatabaseProvider = "Sqlite";
+    options.AdminConnectionString = "Data Source=hsagent.db";
+    options.JwtSecretKey = builder.Configuration["JWT_KEY"]!;
+    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!;
+});
+
+var app = builder.Build();
+app.UseExceptionHandler();
+app.UseHsSqlAgent().ServeAdminUi();
+```
+
+`HsSqlAgentServiceOptions` is retained as a compatibility DTO. The compatibility registration translates it into the same capability-specific option objects used by new integrations.
 
 ## Built-in identity as an explicit capability
 
 If an application wants HsSqlAgent's own JWT/member/role model, opt into it explicitly:
 
 ```csharp
-var hs = builder.Services.AddHsSqlAgentCore(options =>
+var hs = builder.Services.AddHsSqlAgentCore();
+hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentAdminStore(options =>
 {
-    options.AdminDatabaseProvider = "Sqlite";
-    options.AdminConnectionString = "Data Source=hsagent.db";
-    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!;
-    options.JwtSecretKey = builder.Configuration["JWT_KEY"]!;
-    options.Mcp.PublicEndpoint = "https://example.com/mcp";
+    options.Provider = "Sqlite";
+    options.ConnectionString = "Data Source=hsagent.db";
 });
-
-hs.AddHsSqlAgentRuntime()
-  .AddHsSqlAgentAdminStore()
-  .AddHsSqlAgentBuiltInAuth()
-  .AddHsSqlAgentAdminApi()
-  .AddHsSqlAgentMcp();
+hs.AddHsSqlAgentBuiltInAuth(options =>
+{
+    options.Jwt.SecretKey = builder.Configuration["JWT_KEY"]!;
+});
+hs.AddHsSqlAgentAdminApi();
 ```
 
 Built-in schemes are namespaced (`HsSqlAgent.Jwt`, `HsSqlAgent.ExternalCookie`, `HsSqlAgent.Oidc`) and do not replace the host application's default authentication schemes or default authorization policy. Built-in identity and host-authorization mode are mutually exclusive.
@@ -170,7 +197,7 @@ The Server package currently brings in `HsSqlAgent.SqlCore`, provider abstractio
 `HsSqlAgent.SqlCore` remains telemetry-provider agnostic and returns deterministic `SqlCompileEvidence` with each translated or rejected compile decision. When `AddHsSqlAgentTelemetry()` is selected, the Server package observes that evidence at the runtime boundary:
 
 - structured `ILogger` events contain verdict, decision boundary/code, source/target provider, capability-matrix version and evidence fingerprint;
-- when `Telemetry.OtlpEndpoint` is configured, those logs and `sql.compile.decision` trace spans are exported through OTLP;
+- when `OtlpEndpoint` is configured, those logs and `sql.compile.decision` trace spans are exported through OTLP;
 - `hsqlagent.sql.compiles` is emitted through the existing OpenTelemetry meter and Prometheus exporter with low-cardinality verdict/boundary/decision/provider labels.
 
 Raw SQL, runtime literal/parameter values, full evidence objects, allowed-table snapshots, evidence fingerprints and trace IDs are not used as Prometheus labels. The database-backed `AuditLog` remains the durable governance/audit store rather than a general compiler telemetry store.
