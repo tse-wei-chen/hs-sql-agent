@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using Auth.Service.Data;
 using Common.Interfaces;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -16,16 +17,36 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
 
     public string? AuthenticationScheme => HsSqlAgentAuthenticationSchemes.Bearer;
 
-    public ValueTask<bool> AuthorizeAsync(
+    public async ValueTask<bool> AuthorizeAsync(
         HttpContext httpContext,
         IReadOnlyCollection<string> permissions,
         CancellationToken cancellationToken = default)
-        => new(AuthorizeCoreAsync(
-            httpContext.User,
+    {
+        var user = httpContext.User;
+
+        // Built-in permissions are bound to HsSqlAgent's own namespaced bearer scheme. Never trust a
+        // host principal merely because it happens to contain similarly named typ/role_id claims.
+        // Direct unit tests can still supply an already-authenticated principal without constructing
+        // an IAuthenticationService; real ASP.NET Core requests always have one after AddAuthentication().
+        if (httpContext.RequestServices?.GetService(typeof(IAuthenticationService)) is IAuthenticationService authenticationService)
+        {
+            var authentication = await authenticationService.AuthenticateAsync(
+                httpContext,
+                HsSqlAgentAuthenticationSchemes.Bearer);
+            if (!authentication.Succeeded || authentication.Principal is null)
+                return false;
+
+            user = authentication.Principal;
+            httpContext.User = user;
+        }
+
+        return await AuthorizeCoreAsync(
+            user,
             httpContext,
             permissions,
             requireAccessTokenType: true,
-            cancellationToken));
+            cancellationToken);
+    }
 
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext ctx,
