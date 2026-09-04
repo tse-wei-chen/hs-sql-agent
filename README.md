@@ -21,7 +21,7 @@ Instead of executing unrestricted LLM-generated SQL, the server parses supported
 - **Enterprise ready** — OIDC SSO, TOTP MFA, audit retention, Prometheus metrics, OTLP, and webhook/SIEM delivery.
 - **Semantic metadata** — Table and column synonyms, relationships, and scoped metric metadata for schema discovery.
 
-SQL support is intentionally bounded: unsupported syntax is rejected instead of silently changing its meaning. See the [MCP Tools Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/MCP-Tools-Reference) for the supported SQL contract.
+SQL support is intentionally bounded: unsupported syntax is rejected instead of silently changing its meaning. See the [SQL Support Reference](https://sql-agent.net/en/docs/sql-compiler/sql-support) for the supported SQL contract.
 
 ## Quick Start
 
@@ -31,13 +31,13 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Open the Admin Panel at <http://localhost:8080>. Configuration options and production deployment guidance are documented in the [Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki).
+Open the Admin Panel at <http://localhost:8080>. See [Configuration](https://sql-agent.net/en/docs/operations/configuration) for runtime settings and [Deployment](https://sql-agent.net/en/docs/operations/deployment) for production guidance.
 
 ## Use with an MCP client
 
 Create an MCP key in the Admin Panel. The key dialog displays the plaintext secret once and generates configuration for Claude Desktop, Cursor, and generic Streamable HTTP clients.
 
-Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`. For client compatibility, onboarding, and DML Elicitation requirements, see [MCP client onboarding](docs/mcp-onboarding.md).
+Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`. For client compatibility, onboarding, and DML Elicitation requirements, see [MCP Client Onboarding](https://sql-agent.net/en/docs/mcp/client-onboarding).
 
 ## NuGet for existing .NET APIs
 
@@ -171,7 +171,7 @@ app.UseHsSqlAgent();
 // app.UseHsSqlAgent().ServeAdminUi();
 ```
 
-For new integrations, prefer the modular API above. See the package-specific [HsSqlAgent.Server README](backend/src/Modules/HsSqlAgent.Server/README.md) and the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for more details.
+For new integrations, prefer the modular API above. See the package-specific [HsSqlAgent.Server README](backend/src/Modules/HsSqlAgent.Server/README.md) and the [ASP.NET Core Integration guide](https://sql-agent.net/en/docs/integration/aspnet-core) for more details.
 
 ### Current HTTP surface contract
 
@@ -191,21 +191,21 @@ Canonical permission paths such as `/auth/role` and `/runtime/db-management` are
 4. Execute queries within configured limits.
 5. For DML, build a read-only impact preview, bind approval to the validated plan and matched row set, require human approval through MCP Elicitation, then revalidate inside the commit transaction before executing the mutation.
 
-Custom SQL tools pass through the same parser, validation, access policy, and execution limits as built-in tools. Lifecycle, parameter, and publishing rules are documented in the [Admin Panel guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel).
+Custom SQL tools pass through the same parser, validation, access policy, and execution limits as built-in tools. Lifecycle, parameter, and publishing rules are documented in [Custom Tools](https://sql-agent.net/en/docs/administration/custom-tools).
 
 ## Documentation
 
 | Topic | Documentation |
 |---|---|
-| Getting started | [Getting Started](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Getting-Started) |
-| Configuration | [Configuration](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Configuration) |
-| Admin Panel | [Admin Panel](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Admin-Panel) |
-| MCP tools and SQL support | [MCP Tools Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/MCP-Tools-Reference) |
-| Security, OIDC, and MFA | [Security Governance](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Security-Governance) |
-| Deployment and observability | [Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Deployment) · [Distributed Deployment](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Distributed-Deployment) |
-| API | [API Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/API-Reference) |
-| Troubleshooting | [Troubleshooting](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Troubleshooting) |
-| Development | [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) |
+| Getting started | [Quick Start](https://sql-agent.net/en/docs/getting-started/quick-start) |
+| Configuration | [Configuration Reference](https://sql-agent.net/en/docs/operations/configuration) |
+| Admin Panel | [Admin Panel Overview](https://sql-agent.net/en/docs/administration/overview) |
+| MCP tools and SQL support | [MCP Tools Reference](https://sql-agent.net/en/docs/mcp/tools-reference) · [SQL Support Reference](https://sql-agent.net/en/docs/sql-compiler/sql-support) |
+| Security, OIDC, and MFA | [Security Overview](https://sql-agent.net/en/docs/security/overview) · [OIDC SSO and TOTP MFA](https://sql-agent.net/en/docs/security/oidc-mfa) |
+| Deployment and observability | [Deployment](https://sql-agent.net/en/docs/operations/deployment) · [Distributed Deployment](https://sql-agent.net/en/docs/operations/distributed-deployment) · [Observability](https://sql-agent.net/en/docs/operations/observability) |
+| API | [Admin HTTP API Reference](https://sql-agent.net/en/docs/reference/api-reference) |
+| Troubleshooting | [Troubleshooting](https://sql-agent.net/en/docs/reference/troubleshooting) |
+| Development | [Architecture and Contribution Flow](https://sql-agent.net/en/docs/development/architecture) |
 
 ## SQL Execution Flow
 
@@ -223,7 +223,7 @@ This is what the human-in-the-loop approval step looks like during `execute_dml_
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Development guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Architecture and Contribution Flow](https://sql-agent.net/en/docs/development/architecture).
 
 ## License
 
