@@ -3,7 +3,6 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Factories;
@@ -12,7 +11,6 @@ namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
 public class DbManagementController(
     IDbManagementService dbManagementService,
     IAuditService auditService) : ControllerBase

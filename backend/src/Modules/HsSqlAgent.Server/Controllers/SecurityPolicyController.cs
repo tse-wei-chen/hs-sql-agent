@@ -3,13 +3,11 @@ using System.Security.Claims;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Authorization;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
-[Authorize]
 [Route("api/runtime/security")]
 public class SecurityPolicyController(
     ISecurityPolicyService securityPolicyService,

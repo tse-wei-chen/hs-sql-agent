@@ -1,12 +1,10 @@
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Authorization;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HsSqlAgent.Server.Controllers;
 
-[Authorize]
 [ApiController]
 [Route("api/[controller]")]
 public class DbSemanticController(IDbSemanticService semanticService) : ControllerBase

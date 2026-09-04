@@ -6,7 +6,6 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using HsSqlAgent.Server.Authorization;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
@@ -14,7 +13,6 @@ using SqlAgent.Service.Interfaces;
 namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
-[Authorize]
 [Route("api/runtime")]
 public class RuntimeAdminController(
     IMcpAccessKeyService keyService,
