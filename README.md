@@ -6,7 +6,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Server) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml)
 
-`hs-sql-agent` connects MCP clients to SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird through an HTTP MCP endpoint and a built-in Admin Panel.
+`hs-sql-agent` connects MCP clients to SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird through an HTTP MCP endpoint. It can run as the complete first-party server with its Admin Panel, or be embedded into an existing ASP.NET Core application as composable capabilities.
 
 ## Why hs-sql-agent?
 
@@ -15,7 +15,9 @@ Instead of executing unrestricted LLM-generated SQL, the server parses supported
 - **Six database providers** — SQLite, PostgreSQL, MySQL, SQL Server, Oracle, and Firebird.
 - **Governed access** — Per-key database binding, table whitelisting, CORS, rate limits, and execution policies.
 - **Safe DML** — Read-only impact preview, one-time approval challenge, commit-time row-set revalidation, and MCP Elicitation for explicit human approval.
-- **Admin Panel** — Manage databases, keys, roles, custom tools, audit records, and runtime policies.
+- **Composable ASP.NET Core package** — Use only runtime, persistence, MCP, Admin API, built-in identity, or telemetry capabilities that your host actually needs.
+- **Host-owned authentication supported** — Existing ASP.NET Core applications can keep their own Cookie/JWT/OIDC login, authorization policy, frontend, exception handling, and telemetry.
+- **Admin Panel** — Manage databases, keys, roles, custom tools, audit records, and runtime policies when the packaged UI and built-in identity are desired.
 - **Enterprise ready** — OIDC SSO, TOTP MFA, audit retention, Prometheus metrics, OTLP, and webhook/SIEM delivery.
 - **Semantic metadata** — Table and column synonyms, relationships, and scoped metric metadata for schema discovery.
 
@@ -39,19 +41,147 @@ Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`.
 
 ## NuGet for existing .NET APIs
 
-Embed the MCP SQL Agent and optional Admin UI in an ASP.NET Core application:
+Install the ASP.NET Core package:
 
 ```bash
 dotnet add package HsSqlAgent.Server
 ```
 
+New integrations start with an optionless core and select only the capabilities they need:
+
 ```csharp
-builder.Services.AddHsSqlAgent(options => { ... });
-app.UseHsSqlAgent();                    // API only
-// app.UseHsSqlAgent().ServeAdminUi();  // API and Admin UI
+using HsSqlAgent.Server.Extensions;
+
+var hs = builder.Services.AddHsSqlAgentCore();
+
+hs.AddHsSqlAgentRuntime();
+
+hs.AddHsSqlAgentAdminStore(options =>
+{
+    options.Provider = "Postgres";
+    options.ConnectionString = builder.Configuration.GetConnectionString("HsSqlAgent")!;
+});
 ```
 
-See the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for configuration and deployment details.
+### Existing application with its own login and permissions
+
+You do **not** need to mount the HsSqlAgent frontend or use the HsSqlAgent member/role/JWT model. Keep the host application's existing authentication and authorization and delegate HsSqlAgent permission checks to one host policy:
+
+```csharp
+builder.Services.AddAuthentication(/* existing host schemes */);
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("SqlAgentAdmin", policy =>
+    {
+        // Add the host application's own requirement/handler.
+        // Handlers may inspect HsSqlAgentPermissionResource.Permissions.
+    });
+});
+
+var hs = builder.Services.AddHsSqlAgentCore();
+
+hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentAdminStore(options =>
+{
+    options.Provider = "Postgres";
+    options.ConnectionString = builder.Configuration.GetConnectionString("HsSqlAgent")!;
+});
+hs.AddHsSqlAgentHostAuthorization("SqlAgentAdmin");
+hs.AddHsSqlAgentAdminApi();
+
+var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseHsSqlAgentAdminApi();
+app.MapControllers();
+app.Run();
+```
+
+In this mode HsSqlAgent does not publish its built-in `AuthController`, `MemberController`, or `RoleController`, does not install its identity schema, and does not require JWT, SMTP, OIDC, MCP, or telemetry configuration unless those capabilities are explicitly selected.
+
+If the same host also wants the MCP endpoint, add it independently:
+
+```csharp
+hs.AddHsSqlAgentMcp(options =>
+{
+    options.PublicEndpoint = "https://example.com/mcp";
+    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!; // at least 32 bytes
+});
+
+// after builder.Build()
+app.UseHsSqlAgentMcp();
+```
+
+MCP access keys are a separate machine-access security boundary from human/admin authorization.
+
+### Standalone / packaged Admin experience
+
+Applications that want the HsSqlAgent JWT/member/role model and Admin API can opt into built-in identity explicitly:
+
+```csharp
+var hs = builder.Services.AddHsSqlAgentCore();
+
+hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentAdminStore(options =>
+{
+    options.Provider = "Sqlite";
+    options.ConnectionString = "Data Source=hsagent.db";
+});
+hs.AddHsSqlAgentBuiltInAuth(options =>
+{
+    options.Jwt.SecretKey = builder.Configuration["JWT_KEY"]!;
+});
+hs.AddHsSqlAgentMcp(options =>
+{
+    options.PublicEndpoint = "http://localhost:8080/mcp";
+    options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!;
+});
+hs.AddHsSqlAgentAdminApi();
+hs.AddHsSqlAgentTelemetry();
+
+var app = builder.Build();
+app.UseHsSqlAgentMcp();
+app.UseHsSqlAgentAdminApi();
+app.MapControllers();
+app.UseHsSqlAgentAdminUi();
+app.Run();
+```
+
+Built-in identity and host-authorization mode are mutually exclusive. HsSqlAgent-owned authentication schemes are namespaced and do not replace the host application's default authentication schemes or default authorization policy.
+
+### Capability-owned configuration
+
+| Capability | Configuration it owns |
+|---|---|
+| `AddHsSqlAgentRuntime()` | Bootstrap, operability, cache, rate limiting, security-policy sync, outbound-delivery sync, SQL concurrency, DML approval store |
+| `AddHsSqlAgentAdminStore()` | Admin database provider and connection string |
+| `AddHsSqlAgentBuiltInAuth()` | JWT, password reset/SMTP, enterprise identity/OIDC |
+| `AddHsSqlAgentHostAuthorization()` | Delegation to an existing ASP.NET Core authorization policy |
+| `AddHsSqlAgentMcp()` | Public MCP endpoint and MCP-key HMAC secret |
+| `AddHsSqlAgentAdminApi()` | HsSqlAgent administration controllers and scoped validation/exception behavior |
+| `AddHsSqlAgentTelemetry()` | Prometheus and OTLP exporters |
+
+Unselected capabilities do not allocate or validate their options. Existing defaults are preserved by the modular API, including SQLite admin storage, Memory-backed runtime stores, fail-closed rate/concurrency modes, JWT issuer/audience defaults, Prometheus defaults, key prefixes, timeouts, and leases.
+
+The legacy aggregate API remains available for existing package consumers:
+
+```csharp
+builder.Services.AddHsSqlAgent(options => { /* existing aggregate configuration */ });
+app.UseHsSqlAgent();
+// app.UseHsSqlAgent().ServeAdminUi();
+```
+
+For new integrations, prefer the modular API above. See the package-specific [HsSqlAgent.Server README](backend/src/Modules/HsSqlAgent.Server/README.md) and the [NuGet Package guide](https://github.com/tse-wei-chen/hs-sql-agent/wiki/NuGet-Package) for more details.
+
+### Current HTTP surface contract
+
+The currently supported public mounts are intentionally fixed:
+
+- MCP: `/mcp`
+- Admin API: `/api`
+- Admin UI: `/`
+
+Canonical permission paths such as `/auth/role` and `/runtime/db-management` are authorization resource identifiers, not HTTP or frontend navigation paths.
 
 ## How SQL execution works
 
@@ -76,7 +206,6 @@ Custom SQL tools pass through the same parser, validation, access policy, and ex
 | API | [API Reference](https://github.com/tse-wei-chen/hs-sql-agent/wiki/API-Reference) |
 | Troubleshooting | [Troubleshooting](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Troubleshooting) |
 | Development | [Development](https://github.com/tse-wei-chen/hs-sql-agent/wiki/Development) |
-
 
 ## SQL Execution Flow
 
