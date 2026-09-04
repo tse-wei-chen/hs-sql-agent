@@ -1,7 +1,8 @@
 namespace HsSqlAgent.Server.Models;
 
 /// <summary>
-/// for AddHsSqlAgent service registration and validation, used in Program.cs
+/// Legacy aggregate options kept for source compatibility with AddHsSqlAgent(...).
+/// New integrations should configure the capability-specific option types instead.
 /// </summary>
 public class HsSqlAgentServiceOptions
 {
@@ -56,9 +57,216 @@ public class HsSqlAgentServiceOptions
     public string CacheKeyPrefix { get; set; } = "hsqlagent:cache:";
 }
 
+public sealed class HsSqlAgentAdminStoreOptions
+{
+    public string Provider { get; set; } = "Sqlite";
+    public string ConnectionString { get; set; } = "Data Source=hsagent.db";
+
+    internal static HsSqlAgentAdminStoreOptions FromLegacy(HsSqlAgentServiceOptions legacy) => new()
+    {
+        Provider = legacy.AdminDatabaseProvider,
+        ConnectionString = legacy.AdminConnectionString
+    };
+}
+
+public sealed class HsSqlAgentRuntimeOptions
+{
+    public BootstrapOptions Bootstrap { get; } = new();
+    public OperabilityOptions Operability { get; } = new();
+    public CacheOptions Cache { get; } = new();
+    public RateLimiterOptions RateLimiter { get; } = new();
+    public SecurityPolicySyncOptions SecurityPolicySync { get; } = new();
+    public OutboundDeliverySyncOptions OutboundDeliverySync { get; } = new();
+    public SqlConcurrencyOptions SqlConcurrency { get; } = new();
+    public DmlApprovalStoreOptions DmlApprovalStore { get; } = new();
+
+    internal static HsSqlAgentRuntimeOptions FromLegacy(HsSqlAgentServiceOptions legacy)
+    {
+        var options = new HsSqlAgentRuntimeOptions();
+        options.Bootstrap.Enabled = legacy.Bootstrap.Enabled;
+        options.Bootstrap.Databases = legacy.Bootstrap.Databases;
+        CopyOperability(legacy.Operability, options.Operability);
+        options.Cache.Provider = legacy.CacheProvider;
+        options.Cache.ConnectionString = legacy.CacheConnectionString;
+        options.Cache.KeyPrefix = legacy.CacheKeyPrefix;
+        options.RateLimiter.PermitLimit = legacy.RateLimitPermitLimit;
+        options.RateLimiter.WindowSeconds = legacy.RateLimitWindowSeconds;
+        options.RateLimiter.Provider = legacy.RateLimiterProvider;
+        options.RateLimiter.ConnectionString = legacy.RateLimiterConnectionString;
+        options.RateLimiter.FailureMode = legacy.RateLimiterFailureMode;
+        options.RateLimiter.KeyPrefix = legacy.RateLimiterKeyPrefix;
+        options.SecurityPolicySync.Provider = legacy.SecurityPolicySyncProvider;
+        options.SecurityPolicySync.ConnectionString = legacy.SecurityPolicySyncConnectionString;
+        options.SecurityPolicySync.KeyPrefix = legacy.SecurityPolicySyncKeyPrefix;
+        options.SecurityPolicySync.RefreshIntervalSeconds = legacy.SecurityPolicySyncRefreshIntervalSeconds;
+        options.OutboundDeliverySync.Provider = legacy.OutboundDeliverySyncProvider;
+        options.OutboundDeliverySync.ConnectionString = legacy.OutboundDeliverySyncConnectionString;
+        options.OutboundDeliverySync.KeyPrefix = legacy.OutboundDeliverySyncKeyPrefix;
+        options.SqlConcurrency.Provider = legacy.SqlConcurrencyProvider;
+        options.SqlConcurrency.ConnectionString = legacy.SqlConcurrencyConnectionString;
+        options.SqlConcurrency.FailureMode = legacy.SqlConcurrencyFailureMode;
+        options.SqlConcurrency.Key = legacy.SqlConcurrencyKey;
+        options.SqlConcurrency.LeaseSeconds = legacy.SqlConcurrencyLeaseSeconds;
+        options.DmlApprovalStore.Provider = legacy.DmlApprovalStoreProvider;
+        options.DmlApprovalStore.ConnectionString = legacy.DmlApprovalStoreConnectionString;
+        options.DmlApprovalStore.KeyPrefix = legacy.DmlApprovalStoreKeyPrefix;
+        return options;
+    }
+
+    private static void CopyOperability(OperabilityOptions source, OperabilityOptions target)
+    {
+        target.HealthProbeEnabled = source.HealthProbeEnabled;
+        target.HealthProbeIntervalSeconds = source.HealthProbeIntervalSeconds;
+        target.HealthProbeTimeoutSeconds = source.HealthProbeTimeoutSeconds;
+        target.HealthProbeMaxConcurrency = source.HealthProbeMaxConcurrency;
+        target.SlowQueryThresholdMs = source.SlowQueryThresholdMs;
+        target.AlertWebhookUrl = source.AlertWebhookUrl;
+        target.AlertWebhookSecret = source.AlertWebhookSecret;
+        target.SiemWebhookUrl = source.SiemWebhookUrl;
+        target.SiemWebhookSecret = source.SiemWebhookSecret;
+        target.DeliveryMaxAttempts = source.DeliveryMaxAttempts;
+        target.DeliveryMaxConcurrency = source.DeliveryMaxConcurrency;
+        target.AuditRetentionDays = source.AuditRetentionDays;
+        target.AuditRetentionMode = source.AuditRetentionMode;
+        target.AuditArchivePath = source.AuditArchivePath;
+        target.AuditFallbackPath = source.AuditFallbackPath;
+        target.AuditRetentionRunHourUtc = source.AuditRetentionRunHourUtc;
+    }
+}
+
+public sealed class HsSqlAgentBuiltInAuthOptions
+{
+    public HsSqlAgentJwtOptions Jwt { get; } = new();
+    public HsSqlAgentPasswordResetOptions PasswordReset { get; } = new();
+    public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
+
+    internal static HsSqlAgentBuiltInAuthOptions FromLegacy(HsSqlAgentServiceOptions legacy)
+    {
+        var options = new HsSqlAgentBuiltInAuthOptions();
+        options.Jwt.SecretKey = legacy.JwtSecretKey;
+        options.Jwt.Issuer = legacy.JwtIssuer;
+        options.Jwt.Audience = legacy.JwtAudience;
+        options.Jwt.AccessTokenExpirationMinutes = legacy.JwtAccessTokenExpirationMinutes;
+        options.Jwt.RefreshTokenExpirationDays = legacy.JwtRefreshTokenExpirationDays;
+        options.Jwt.SignInLockoutThreshold = legacy.SignInLockoutThreshold;
+        options.Jwt.SignInLockoutMinutes = legacy.SignInLockoutMinutes;
+        options.PasswordReset.BaseUrl = legacy.PasswordResetBaseUrl;
+        options.PasswordReset.ExpirationMinutes = legacy.PasswordResetExpirationMinutes;
+        options.PasswordReset.SmtpHost = legacy.SmtpHost;
+        options.PasswordReset.SmtpPort = legacy.SmtpPort;
+        options.PasswordReset.SmtpEnableSsl = legacy.SmtpEnableSsl;
+        options.PasswordReset.SmtpUsername = legacy.SmtpUsername;
+        options.PasswordReset.SmtpPassword = legacy.SmtpPassword;
+        options.PasswordReset.SmtpFrom = legacy.SmtpFrom;
+        CopyEnterpriseIdentity(legacy.EnterpriseIdentity, options.EnterpriseIdentity);
+        return options;
+    }
+
+    private static void CopyEnterpriseIdentity(EnterpriseIdentityOptions source, EnterpriseIdentityOptions target)
+    {
+        target.OidcEnabled = source.OidcEnabled;
+        target.Authority = source.Authority;
+        target.ClientId = source.ClientId;
+        target.ClientSecret = source.ClientSecret;
+        target.RequireHttpsMetadata = source.RequireHttpsMetadata;
+        target.EmailClaim = source.EmailClaim;
+        target.NameClaim = source.NameClaim;
+        target.RoleClaim = source.RoleClaim;
+        target.EmailVerifiedClaim = source.EmailVerifiedClaim;
+        target.RequireVerifiedEmail = source.RequireVerifiedEmail;
+        target.Scopes = [.. source.Scopes];
+        target.RoleMappings = new(source.RoleMappings, StringComparer.OrdinalIgnoreCase);
+        target.DefaultRoleNames = [.. source.DefaultRoleNames];
+        target.AutoProvision = source.AutoProvision;
+        target.FrontendCallbackUrl = source.FrontendCallbackUrl;
+        target.LoginCodeExpirationMinutes = source.LoginCodeExpirationMinutes;
+        target.RequireMfaForRoles = [.. source.RequireMfaForRoles];
+        target.TotpIssuer = source.TotpIssuer;
+        target.DataProtectionKeyPath = source.DataProtectionKeyPath;
+    }
+}
+
+public sealed class HsSqlAgentJwtOptions
+{
+    public string SecretKey { get; set; } = string.Empty;
+    public string Issuer { get; set; } = "HS-Agent";
+    public string Audience { get; set; } = "HS-Agent-Users";
+    public int AccessTokenExpirationMinutes { get; set; } = 1;
+    public int RefreshTokenExpirationDays { get; set; } = 30;
+    public int SignInLockoutThreshold { get; set; } = 5;
+    public int SignInLockoutMinutes { get; set; } = 15;
+}
+
+public sealed class HsSqlAgentPasswordResetOptions
+{
+    public string BaseUrl { get; set; } = "http://localhost:3000/reset-password";
+    public int ExpirationMinutes { get; set; } = 30;
+    public string SmtpHost { get; set; } = string.Empty;
+    public int SmtpPort { get; set; } = 587;
+    public bool SmtpEnableSsl { get; set; } = true;
+    public string SmtpUsername { get; set; } = string.Empty;
+    public string SmtpPassword { get; set; } = string.Empty;
+    public string SmtpFrom { get; set; } = string.Empty;
+}
+
 public class McpOptions
 {
     public string PublicEndpoint { get; set; } = "http://localhost:8080/mcp";
+    public string HmacSecretKey { get; set; } = string.Empty;
+
+    internal static McpOptions FromLegacy(HsSqlAgentServiceOptions legacy) => new()
+    {
+        PublicEndpoint = legacy.Mcp.PublicEndpoint,
+        HmacSecretKey = legacy.HmacSecretKey
+    };
+}
+
+public sealed class CacheOptions
+{
+    public string Provider { get; set; } = "Memory";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = "hsqlagent:cache:";
+}
+
+public sealed class RateLimiterOptions
+{
+    public int PermitLimit { get; set; }
+    public int WindowSeconds { get; set; }
+    public string Provider { get; set; } = "Memory";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string FailureMode { get; set; } = "FailClosed";
+    public string KeyPrefix { get; set; } = "hsqlagent:ratelimit:";
+}
+
+public sealed class SecurityPolicySyncOptions
+{
+    public string Provider { get; set; } = "Memory";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = "hsqlagent:security-policy:";
+    public int RefreshIntervalSeconds { get; set; } = 30;
+}
+
+public sealed class OutboundDeliverySyncOptions
+{
+    public string Provider { get; set; } = "Memory";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = "hsqlagent:outbound-delivery:";
+}
+
+public sealed class SqlConcurrencyOptions
+{
+    public string Provider { get; set; } = "Memory";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string FailureMode { get; set; } = "FailClosed";
+    public string Key { get; set; } = "hsqlagent:sql-concurrency";
+    public int LeaseSeconds { get; set; } = 30;
+}
+
+public sealed class DmlApprovalStoreOptions
+{
+    public string Provider { get; set; } = "Memory";
+    public string ConnectionString { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = "hsqlagent:dml-approval:";
 }
 
 public class BootstrapOptions
@@ -96,6 +304,15 @@ public class TelemetryOptions
     public int PrometheusPort { get; set; } = 9000;
     public string OtlpEndpoint { get; set; } = string.Empty;
     public string ServiceName { get; set; } = "hs-sql-agent";
+
+    internal static TelemetryOptions FromLegacy(HsSqlAgentServiceOptions legacy) => new()
+    {
+        PrometheusEnabled = legacy.Telemetry.PrometheusEnabled,
+        PrometheusHost = legacy.Telemetry.PrometheusHost,
+        PrometheusPort = legacy.Telemetry.PrometheusPort,
+        OtlpEndpoint = legacy.Telemetry.OtlpEndpoint,
+        ServiceName = legacy.Telemetry.ServiceName
+    };
 }
 
 public class OperabilityOptions
@@ -142,7 +359,7 @@ public class EnterpriseIdentityOptions
 }
 
 /// <summary>
-/// for HsSqlAgentBuilder and pipeline configuration, used in UseHsSqlAgent and MapAdminEndpoint
+/// Pipeline configuration retained for fixed public HTTP surfaces and legacy fluent compatibility.
 /// </summary>
 public class HsSqlAgentPipelineOptions
 {
