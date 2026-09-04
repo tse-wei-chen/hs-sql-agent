@@ -33,7 +33,10 @@ public class PermissionAuthorizerAuthenticationTests
         var httpContext = new DefaultHttpContext { RequestServices = provider };
         var handler = new PermissionAuthorizationHandler(Mock.Of<IAuthContext>(), Mock.Of<ICacheService>());
 
-        var authorized = await handler.AuthorizeAsync(httpContext, ["/runtime/db-management.view"]);
+        var authorized = await handler.AuthorizeAsync(
+            httpContext,
+            ["/runtime/db-management.view"],
+            TestContext.Current.CancellationToken);
 
         Assert.False(authorized); // no role_id claim, so permission evaluation still fails closed
         Assert.Same(principal, httpContext.User);
@@ -69,7 +72,10 @@ public class PermissionAuthorizerAuthenticationTests
         };
         var handler = new PermissionAuthorizationHandler(Mock.Of<IAuthContext>(), Mock.Of<ICacheService>());
 
-        var authorized = await handler.AuthorizeAsync(httpContext, ["/runtime/db-management.view"]);
+        var authorized = await handler.AuthorizeAsync(
+            httpContext,
+            ["/runtime/db-management.view"],
+            TestContext.Current.CancellationToken);
 
         Assert.False(authorized);
         Assert.Same(hostPrincipal, httpContext.User);
