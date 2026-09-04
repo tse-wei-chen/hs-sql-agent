@@ -1,4 +1,5 @@
 using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Middleware;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -17,7 +18,7 @@ if (!builder.Environment.IsDevelopment()
         "Mcp:PublicEndpoint is required outside Development so generated client configuration uses the externally reachable MCP URL.");
 }
 
-builder.Services.AddHsSqlAgent(options =>
+var hs = builder.Services.AddHsSqlAgentCore(options =>
 {
     builder.Configuration.GetSection("Mcp").Bind(options.Mcp);
     builder.Configuration.GetSection("Bootstrap").Bind(options.Bootstrap);
@@ -96,6 +97,17 @@ builder.Services.AddHsSqlAgent(options =>
     options.CacheKeyPrefix = builder.Configuration["CacheConfig:KeyPrefix"] ?? "hsqlagent:cache:";
 });
 
+hs.AddHsSqlAgentRuntime()
+  .AddHsSqlAgentAdminStore()
+  .AddHsSqlAgentBuiltInAuth()
+  .AddHsSqlAgentMcp()
+  .AddHsSqlAgentAdminApi()
+  .AddHsSqlAgentTelemetry();
+
+// ToolBox is the first-party standalone host, so host-wide exception handling is explicit here.
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 builder.WebHost.UseUrls(builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:8080");
 
 builder.Logging.AddConsole(consoleLogOptions =>
@@ -106,6 +118,9 @@ builder.Logging.AddConsole(consoleLogOptions =>
 var app = builder.Build();
 
 app.UseExceptionHandler();
-app.UseHsSqlAgent().ServeAdminUi();
+app.UseHsSqlAgentMcp();
+app.UseHsSqlAgentAdminApi();
+app.MapControllers();
+app.UseHsSqlAgentAdminUi();
 
 await app.RunAsync();

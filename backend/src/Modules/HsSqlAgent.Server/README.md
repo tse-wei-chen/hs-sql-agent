@@ -1,6 +1,6 @@
 # HsSqlAgent.Server
 
-Embeddable MCP SQL Agent components for ASP.NET Core. The package can be used as a complete standalone server preset or composed into an existing ASP.NET Core host without replacing that host's authentication, authorization, MVC JSON, exception, or telemetry defaults.
+Embeddable MCP SQL Agent components for ASP.NET Core. New applications should compose the capabilities they need explicitly. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains only as a compatibility path for existing consumers.
 
 ## Install
 
@@ -18,16 +18,17 @@ The current public HTTP contracts are intentionally fixed:
 
 Canonical permission paths such as `/auth/role` and `/runtime/db-management` are authorization resource identifiers, not HTTP mount paths. Changing a page or API URL must not silently change its permission identity.
 
-## Standalone server preset
+## Standalone server
 
-For the packaged toolbox/server experience, use the compatibility preset. It registers runtime services, the administration store, built-in identity, MCP, administration API, and telemetry.
+The first-party ToolBox/server uses the same modular registration surface as embedders. A standalone host explicitly selects built-in identity, MCP, administration API, telemetry, controller mapping, UI, and any host-wide exception behavior it wants to own.
 
 ```csharp
 using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddHsSqlAgent(options =>
+var hs = builder.Services.AddHsSqlAgentCore(options =>
 {
     options.AdminDatabaseProvider = "Sqlite";
     options.AdminConnectionString = "Data Source=hsagent.db";
@@ -36,16 +37,42 @@ builder.Services.AddHsSqlAgent(options =>
     options.Mcp.PublicEndpoint = "http://localhost:8080/mcp";
 });
 
+hs.AddHsSqlAgentRuntime()
+  .AddHsSqlAgentAdminStore()
+  .AddHsSqlAgentBuiltInAuth()
+  .AddHsSqlAgentMcp()
+  .AddHsSqlAgentAdminApi()
+  .AddHsSqlAgentTelemetry();
+
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 var app = builder.Build();
-app.UseHsSqlAgent().ServeAdminUi();
+app.UseExceptionHandler();
+app.UseHsSqlAgentMcp();
+app.UseHsSqlAgentAdminApi();
+app.MapControllers();
+app.UseHsSqlAgentAdminUi();
 app.Run();
 ```
 
-`AddHsSqlAgent()` remains a convenience preset. It is not the primitive integration API for an existing application. The matching `UseHsSqlAgent()` compatibility preset owns controller mapping for the standalone experience.
+### Legacy compatibility preset
+
+Existing applications can continue to use:
+
+```csharp
+builder.Services.AddHsSqlAgent(options => { /* ... */ });
+
+var app = builder.Build();
+app.UseExceptionHandler();
+app.UseHsSqlAgent().ServeAdminUi();
+```
+
+The aggregate preset is retained to avoid breaking existing package consumers. It is not the reference composition for new first-party or embedded hosts.
 
 ## Existing ASP.NET Core host
 
-Compose only the capabilities that the host needs. Host authentication, authorization, and controller endpoint mapping stay host-owned.
+Compose only the capabilities that the host needs. Host authentication, authorization, exception handling, telemetry, and controller endpoint mapping stay host-owned.
 
 ```csharp
 using HsSqlAgent.Server.Extensions;
