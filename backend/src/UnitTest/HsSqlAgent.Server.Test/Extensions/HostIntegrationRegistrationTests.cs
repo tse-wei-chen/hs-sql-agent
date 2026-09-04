@@ -91,6 +91,7 @@ public class HostIntegrationRegistrationTests
     public async Task AddHsSqlAgentHostAuthorization_UsesHostPolicyProviderAndForwardsCanonicalPermissions()
     {
         var services = new ServiceCollection();
+        services.AddLogging();
         services.AddAuthorization();
         services.AddSingleton<IAuthorizationPolicyProvider, HostPolicyProvider>();
         services.AddSingleton<IAuthorizationHandler, CanonicalPermissionHandler>();
