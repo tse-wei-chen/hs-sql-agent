@@ -33,8 +33,8 @@ public class HostMvcIsolationTests
             .OfType<ControllerActionDescriptor>()
             .ToArray();
 
-        var host = Assert.Single(descriptors.Where(descriptor =>
-            descriptor.ControllerTypeInfo.AsType() == typeof(HostIsolationProbeController)));
+        var host = Assert.Single(descriptors, descriptor =>
+            descriptor.ControllerTypeInfo.AsType() == typeof(HostIsolationProbeController));
         Assert.DoesNotContain(host.FilterDescriptors, descriptor => IsHsScopedFilter(descriptor.Filter));
 
         var hs = descriptors.First(descriptor =>
