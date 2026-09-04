@@ -4,6 +4,7 @@ using Auth.Service.Models;
 using Auth.Service.Services;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Background;
+using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -24,9 +25,6 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
         if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
 
-        // Register the host data-protection infrastructure if it is not already present, but never change
-        // the host application's discriminator or persistence settings. A package-specific provider is used
-        // only when HsSqlAgent is explicitly given its own key directory.
         services.AddDataProtection();
         IDataProtectionProvider? isolatedDataProtectionProvider = null;
         if (!string.IsNullOrWhiteSpace(options.EnterpriseIdentity.DataProtectionKeyPath))

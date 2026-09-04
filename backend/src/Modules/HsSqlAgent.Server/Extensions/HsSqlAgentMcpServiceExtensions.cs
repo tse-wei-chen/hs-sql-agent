@@ -4,6 +4,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
+using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.Extensions.AI;
