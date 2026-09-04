@@ -4,6 +4,7 @@ using Auth.Service.Models;
 using Auth.Service.Services;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Background;
+using HsSqlAgent.Server.Filters;
 using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -150,13 +151,14 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
             });
         }
 
-        // MVC authorization middleware still needs the core authorization services, but HsSqlAgent's built-in
-        // identity endpoints no longer depend on named policies or the host IAuthorizationPolicyProvider.
+        // HsSqlAgent authorization filters invoke the namespaced schemes directly. Core authorization
+        // services remain available for host-policy mode, but built-in identity never owns host defaults.
         services.AddAuthorization();
 
         services.RemoveAll<IHsSqlAgentPermissionAuthorizer>();
         services.AddScoped<PermissionAuthorizationHandler>();
         services.AddScoped<IHsSqlAgentPermissionAuthorizer>(sp => sp.GetRequiredService<PermissionAuthorizationHandler>());
+        services.AddScoped<HsSqlAgentBuiltInAuthStateFilter>();
         services.AddHostedService<TokenBlacklistCleanupService>();
 
         return builder;

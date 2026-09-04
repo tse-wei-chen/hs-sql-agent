@@ -89,9 +89,9 @@ public static class HsSqlAgentApplicationExtensions
     }
 
     /// <summary>
-    /// Initializes HsSqlAgent and mounts only the administration API surface when endpoint routing is available.
-    /// Built-in token revocation middleware is installed only when AddHsSqlAgentBuiltInAuth() was selected;
-    /// host authentication can otherwise own authentication.
+    /// Initializes HsSqlAgent and maps the administration controllers when endpoint routing is available.
+    /// HsSqlAgent does not install an /api-wide authentication/authorization middleware branch; built-in
+    /// identity state checks are scoped to HsSqlAgent controllers and host authorization remains host-owned.
     /// </summary>
     public static IApplicationBuilder UseHsSqlAgentAdminApi(this IApplicationBuilder app)
     {
@@ -174,20 +174,6 @@ public static class HsSqlAgentApplicationExtensions
     {
         if (app.Properties.ContainsKey(AdminApiMappedKey)) return app;
 
-        var useBuiltInAuth = app.ApplicationServices
-            .GetServices<HsSqlAgentRegisteredFeature>()
-            .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
-
-        app.UseWhen(
-            context => context.Request.Path.StartsWithSegments(HsSqlAgentHttpPaths.AdminApi),
-            branch =>
-            {
-                branch.UseAuthentication();
-                if (useBuiltInAuth)
-                    branch.UseMiddleware<TokenRevocationMiddleware>();
-                branch.UseAuthorization();
-            });
-
         if (app is IEndpointRouteBuilder endpoints)
         {
             endpoints.MapControllers();
@@ -257,7 +243,6 @@ public static class HsSqlAgentApplicationExtensions
             return;
 
         ThrowIfLegacySqliteUsersWouldBeDiscarded(adminDb);
-
         adminDb.Database.ExecuteSqlRaw("""
             CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
                 "MigrationId" TEXT NOT NULL CONSTRAINT "PK___EFMigrationsHistory" PRIMARY KEY,

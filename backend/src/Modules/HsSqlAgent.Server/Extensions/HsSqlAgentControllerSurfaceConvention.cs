@@ -28,6 +28,14 @@ internal sealed class HsSqlAgentControllerSurfaceConvention(HsSqlAgentRegistrati
                 continue;
             }
 
+            if (registration.IsRegistered("built-in-auth"))
+            {
+                controller.Filters.Add(new ServiceFilterAttribute(typeof(HsSqlAgentBuiltInAuthStateFilter))
+                {
+                    Order = int.MinValue + 100
+                });
+            }
+
             controller.Filters.Add(new ServiceFilterAttribute(typeof(HsSqlAgentValidationFilter)));
             controller.Filters.Add(new ServiceFilterAttribute(typeof(HsSqlAgentExceptionFilter)));
         }

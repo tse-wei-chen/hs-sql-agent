@@ -1,6 +1,8 @@
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Filters;
 using HsSqlAgent.Server.Models;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,6 +47,56 @@ public class ControllerSurfaceRegistrationTests
         Assert.Contains(typeof(RoleController), controllers);
     }
 
+    [Fact]
+    public void BuiltInAuthMode_AttachesIdentityStateGateOnlyToHsSqlAgentControllers()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddControllers().AddApplicationPart(typeof(HostControllerProbe).Assembly);
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentBuiltInAuth()
+            .AddHsSqlAgentAdminApi();
+
+        using var provider = services.BuildServiceProvider();
+        var descriptors = provider.GetRequiredService<IActionDescriptorCollectionProvider>()
+            .ActionDescriptors.Items
+            .OfType<ControllerActionDescriptor>()
+            .ToArray();
+
+        var hs = descriptors.First(descriptor =>
+            descriptor.ControllerTypeInfo.AsType() == typeof(DbManagementController));
+        Assert.Contains(hs.FilterDescriptors, descriptor =>
+            descriptor.Filter is ServiceFilterAttribute filter &&
+            filter.ServiceType == typeof(HsSqlAgentBuiltInAuthStateFilter));
+
+        var host = Assert.Single(descriptors, descriptor =>
+            descriptor.ControllerTypeInfo.AsType() == typeof(HostControllerProbe));
+        Assert.DoesNotContain(host.FilterDescriptors, descriptor =>
+            descriptor.Filter is ServiceFilterAttribute filter &&
+            filter.ServiceType == typeof(HsSqlAgentBuiltInAuthStateFilter));
+    }
+
+    [Fact]
+    public void HostAuthorizationMode_DoesNotAttachBuiltInIdentityStateGate()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentHostAuthorization("Host.SqlAgentAdmin")
+            .AddHsSqlAgentAdminApi();
+
+        using var provider = services.BuildServiceProvider();
+        var descriptors = provider.GetRequiredService<IActionDescriptorCollectionProvider>()
+            .ActionDescriptors.Items
+            .OfType<ControllerActionDescriptor>();
+
+        var hs = descriptors.First(descriptor =>
+            descriptor.ControllerTypeInfo.AsType() == typeof(DbManagementController));
+        Assert.DoesNotContain(hs.FilterDescriptors, descriptor =>
+            descriptor.Filter is ServiceFilterAttribute filter &&
+            filter.ServiceType == typeof(HsSqlAgentBuiltInAuthStateFilter));
+    }
+
     private static Type[] GetHsSqlAgentControllers(IServiceProvider provider)
         => provider.GetRequiredService<IActionDescriptorCollectionProvider>()
             .ActionDescriptors.Items
@@ -60,4 +112,11 @@ public class ControllerSurfaceRegistrationTests
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
     };
+}
+
+[ApiController]
+public sealed class HostControllerProbe : ControllerBase
+{
+    [HttpGet("/api/host-controller-probe")]
+    public IActionResult Get() => Ok();
 }
