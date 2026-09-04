@@ -13,8 +13,13 @@ internal sealed class HsSqlAgentControllerSurfaceConvention(HsSqlAgentRegistrati
 
         for (var index = application.Controllers.Count - 1; index >= 0; index--)
         {
-            if (application.Controllers[index].ControllerType.AsType() == typeof(AuthController))
+            var controllerType = application.Controllers[index].ControllerType.AsType();
+            if (controllerType == typeof(AuthController) ||
+                controllerType == typeof(MemberController) ||
+                controllerType == typeof(RoleController))
+            {
                 application.Controllers.RemoveAt(index);
+            }
         }
     }
 }

@@ -32,6 +32,7 @@ public static class HsSqlAgentApplicationExtensions
 
     /// <summary>
     /// Applies packaged migrations, loads the runtime security policy, and synchronizes configured bootstrap data.
+    /// The built-in identity schema is migrated only when AddHsSqlAgentBuiltInAuth() was selected.
     /// Schema/runtime initialization is idempotent per application pipeline; bootstrap declarations are re-applied on
     /// each explicit initialization so configuration changes retain the existing reconciliation behavior.
     /// </summary>
@@ -41,12 +42,15 @@ public static class HsSqlAgentApplicationExtensions
 
         using (var scope = app.ApplicationServices.CreateScope())
         {
-            var authDb = scope.ServiceProvider.GetRequiredService<Auth.Service.Data.AuthContext>();
+            var useBuiltInAuth = scope.ServiceProvider
+                .GetServices<HsSqlAgentRegisteredFeature>()
+                .Any(x => string.Equals(x.Name, "built-in-auth", StringComparison.Ordinal));
             var adminDb = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
 
             if (firstInitialization)
             {
-                authDb.Database.Migrate();
+                if (useBuiltInAuth)
+                    scope.ServiceProvider.GetRequiredService<Auth.Service.Data.AuthContext>().Database.Migrate();
                 adminDb.Database.Migrate();
 
                 var securityPolicy = adminDb.SecurityPolicySettings

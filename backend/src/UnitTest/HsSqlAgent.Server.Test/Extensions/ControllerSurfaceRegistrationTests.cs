@@ -11,7 +11,7 @@ namespace HsSqlAgent.Server.Test.Extensions;
 public class ControllerSurfaceRegistrationTests
 {
     [Fact]
-    public void HostAuthorizationMode_DoesNotPublishBuiltInAuthController()
+    public void HostAuthorizationMode_DoesNotPublishBuiltInIdentityControllers()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -22,12 +22,14 @@ public class ControllerSurfaceRegistrationTests
         using var provider = services.BuildServiceProvider();
         var controllers = GetHsSqlAgentControllers(provider);
 
-        Assert.Contains(typeof(RoleController), controllers);
+        Assert.Contains(typeof(DbManagementController), controllers);
         Assert.DoesNotContain(typeof(AuthController), controllers);
+        Assert.DoesNotContain(typeof(MemberController), controllers);
+        Assert.DoesNotContain(typeof(RoleController), controllers);
     }
 
     [Fact]
-    public void BuiltInAuthMode_PublishesAuthController_EvenWhenSelectedAfterAdminApi()
+    public void BuiltInAuthMode_PublishesIdentityControllers_EvenWhenSelectedAfterAdminApi()
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -38,8 +40,9 @@ public class ControllerSurfaceRegistrationTests
         using var provider = services.BuildServiceProvider();
         var controllers = GetHsSqlAgentControllers(provider);
 
-        Assert.Contains(typeof(RoleController), controllers);
         Assert.Contains(typeof(AuthController), controllers);
+        Assert.Contains(typeof(MemberController), controllers);
+        Assert.Contains(typeof(RoleController), controllers);
     }
 
     private static Type[] GetHsSqlAgentControllers(IServiceProvider provider)

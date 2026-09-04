@@ -31,6 +31,7 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
         if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
             throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
 
+        services.AddAuthDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
         services.AddDataProtection();
         IDataProtectionProvider? isolatedDataProtectionProvider = null;
         if (!string.IsNullOrWhiteSpace(options.EnterpriseIdentity.DataProtectionKeyPath))
@@ -42,6 +43,8 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
                 dataProtection => dataProtection.SetApplicationName("HsSqlAgent"));
         }
 
+        services.AddScoped<IMemberService, MemberService>();
+        services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IEnterpriseIdentityService, EnterpriseIdentityService>();
         services.AddScoped<IMfaService, MfaService>();

@@ -1,7 +1,5 @@
 using Admin.Service.Interfaces;
 using Admin.Service.Services;
-using Auth.Service.Interfaces;
-using Auth.Service.Services;
 
 namespace HsSqlAgent.Server.Extensions;
 
@@ -22,8 +20,6 @@ public static class HsSqlAgentAdminStoreServiceExtensions
         services.AddAdminDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
-        services.AddScoped<IMemberService, MemberService>();
-        services.AddScoped<IRoleService, RoleService>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IOperabilityService, OperabilityService>();
         services.AddScoped<IAuditRetentionService, AuditRetentionService>();

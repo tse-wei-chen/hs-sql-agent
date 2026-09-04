@@ -1,3 +1,4 @@
+using Auth.Service.Data;
 using Auth.Service.Interfaces;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
@@ -32,35 +33,82 @@ public class ComposableRegistrationTests
     }
 
     [Fact]
+    public void AddHsSqlAgentAdminStore_DoesNotInstallBuiltInIdentityPersistence()
+    {
+        var services = new ServiceCollection();
+
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentAdminStore();
+
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(AuthContext));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthContext));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IMemberService));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IRoleService));
+    }
+
+    [Fact]
     public void AddHsSqlAgentMcp_DoesNotImplicitlyInstallBuiltInUserAuthentication()
     {
         var services = new ServiceCollection();
-        var options = new HsSqlAgentServiceOptions
-        {
-            AdminConnectionString = "Data Source=:memory:",
-            HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
-        };
+        var options = CreateOptions();
 
         services.AddHsSqlAgentCore(options)
             .AddHsSqlAgentMcp();
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(AuthContext));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthContext));
+    }
+
+    [Fact]
+    public void AddHsSqlAgentHostAuthorization_DoesNotInstallBuiltInIdentityPersistence()
+    {
+        var services = new ServiceCollection();
+
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentHostAuthorization("Host.SqlAgentAdmin")
+            .AddHsSqlAgentAdminApi();
+
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(AuthContext));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthContext));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IMemberService));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IRoleService));
+    }
+
+    [Fact]
+    public void AddHsSqlAgentBuiltInAuth_InstallsIdentityPersistence()
+    {
+        var services = new ServiceCollection();
+
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentBuiltInAuth();
+
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(AuthContext));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IAuthContext));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IMemberService));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IRoleService));
     }
 
     [Fact]
     public void AddHsSqlAgent_RemainsTheFullCompatibilityPreset()
     {
         var services = new ServiceCollection();
-        var options = new HsSqlAgentServiceOptions
-        {
-            AdminConnectionString = "Data Source=:memory:",
-            HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
-            JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-        };
+        var options = CreateOptions();
 
         services.AddHsSqlAgent(options);
 
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(AuthContext));
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));
     }
+
+    private static HsSqlAgentServiceOptions CreateOptions() => new()
+    {
+        AdminConnectionString = "Data Source=:memory:",
+        HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
+        JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
+    };
 }
