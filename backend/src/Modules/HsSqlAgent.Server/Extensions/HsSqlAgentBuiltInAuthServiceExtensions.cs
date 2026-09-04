@@ -5,6 +5,7 @@ using Auth.Service.Services;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Filters;
+using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -16,7 +17,9 @@ namespace HsSqlAgent.Server.Extensions;
 
 public static class HsSqlAgentBuiltInAuthServiceExtensions
 {
-    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentBuiltInAuth(this HsSqlAgentRegistrationBuilder builder)
+    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentBuiltInAuth(
+        this HsSqlAgentRegistrationBuilder builder,
+        Action<HsSqlAgentBuiltInAuthOptions>? configure = null)
     {
         if (builder.IsRegistered("host-authorization"))
         {
@@ -25,14 +28,21 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
         }
 
         builder.AddHsSqlAgentAdminStore();
+        builder.ThrowIfAlreadyConfigured("built-in-auth", configure);
+        if (builder.IsRegistered("built-in-auth")) return builder;
+
+        var options = builder.GetOrCreateOptions(() => builder.LegacyOptions is { } legacy
+            ? HsSqlAgentBuiltInAuthOptions.FromLegacy(legacy)
+            : new HsSqlAgentBuiltInAuthOptions());
+        configure?.Invoke(options);
         if (!builder.TryRegister("built-in-auth")) return builder;
 
+        var adminStore = builder.GetRequiredOptions<HsSqlAgentAdminStoreOptions>();
         var services = builder.Services;
-        var options = builder.Options;
-        if (string.IsNullOrWhiteSpace(options.JwtSecretKey) || Encoding.UTF8.GetByteCount(options.JwtSecretKey) < 32)
-            throw new InvalidOperationException("JwtSecretKey must be at least 32 bytes.");
+        if (string.IsNullOrWhiteSpace(options.Jwt.SecretKey) || Encoding.UTF8.GetByteCount(options.Jwt.SecretKey) < 32)
+            throw new InvalidOperationException("BuiltInAuth Jwt SecretKey must be at least 32 bytes.");
 
-        services.AddAuthDatabase(options.AdminDatabaseProvider, options.AdminConnectionString);
+        services.AddAuthDatabase(adminStore.Provider, adminStore.ConnectionString);
         services.AddDataProtection();
         IDataProtectionProvider? isolatedDataProtectionProvider = null;
         if (!string.IsNullOrWhiteSpace(options.EnterpriseIdentity.DataProtectionKeyPath))
@@ -55,24 +65,24 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
 
         services.Configure<JwtSettings>(jwt =>
         {
-            jwt.SecretKey = options.JwtSecretKey;
-            jwt.Issuer = options.JwtIssuer;
-            jwt.Audience = options.JwtAudience;
-            jwt.AccessTokenExpirationMinutes = options.JwtAccessTokenExpirationMinutes;
-            jwt.RefreshTokenExpirationDays = options.JwtRefreshTokenExpirationDays;
-            jwt.SignInLockoutThreshold = options.SignInLockoutThreshold;
-            jwt.SignInLockoutMinutes = options.SignInLockoutMinutes;
+            jwt.SecretKey = options.Jwt.SecretKey;
+            jwt.Issuer = options.Jwt.Issuer;
+            jwt.Audience = options.Jwt.Audience;
+            jwt.AccessTokenExpirationMinutes = options.Jwt.AccessTokenExpirationMinutes;
+            jwt.RefreshTokenExpirationDays = options.Jwt.RefreshTokenExpirationDays;
+            jwt.SignInLockoutThreshold = options.Jwt.SignInLockoutThreshold;
+            jwt.SignInLockoutMinutes = options.Jwt.SignInLockoutMinutes;
         });
         services.Configure<PasswordResetSettings>(reset =>
         {
-            reset.BaseUrl = options.PasswordResetBaseUrl;
-            reset.ExpirationMinutes = options.PasswordResetExpirationMinutes;
-            reset.SmtpHost = options.SmtpHost;
-            reset.SmtpPort = options.SmtpPort;
-            reset.SmtpEnableSsl = options.SmtpEnableSsl;
-            reset.SmtpUsername = options.SmtpUsername;
-            reset.SmtpPassword = options.SmtpPassword;
-            reset.SmtpFrom = options.SmtpFrom;
+            reset.BaseUrl = options.PasswordReset.BaseUrl;
+            reset.ExpirationMinutes = options.PasswordReset.ExpirationMinutes;
+            reset.SmtpHost = options.PasswordReset.SmtpHost;
+            reset.SmtpPort = options.PasswordReset.SmtpPort;
+            reset.SmtpEnableSsl = options.PasswordReset.SmtpEnableSsl;
+            reset.SmtpUsername = options.PasswordReset.SmtpUsername;
+            reset.SmtpPassword = options.PasswordReset.SmtpPassword;
+            reset.SmtpFrom = options.PasswordReset.SmtpFrom;
         });
         services.Configure<EnterpriseIdentitySettings>(identity =>
         {
@@ -97,7 +107,7 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
             identity.TotpIssuer = source.TotpIssuer;
         });
 
-        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.JwtSecretKey));
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(options.Jwt.SecretKey));
         var authentication = services.AddAuthentication()
             .AddJwtBearer(HsSqlAgentAuthenticationSchemes.Bearer, jwt =>
             {
@@ -108,8 +118,8 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
                     ValidateAudience = true,
                     ValidateIssuerSigningKey = true,
                     ValidateLifetime = true,
-                    ValidIssuer = options.JwtIssuer,
-                    ValidAudience = options.JwtAudience,
+                    ValidIssuer = options.Jwt.Issuer,
+                    ValidAudience = options.Jwt.Audience,
                     IssuerSigningKey = signingKey,
                     ClockSkew = TimeSpan.Zero
                 };
@@ -151,8 +161,6 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
             });
         }
 
-        // HsSqlAgent authorization filters invoke the namespaced schemes directly. Core authorization
-        // services remain available for host-policy mode, but built-in identity never owns host defaults.
         services.AddAuthorization();
 
         services.RemoveAll<IHsSqlAgentPermissionAuthorizer>();
