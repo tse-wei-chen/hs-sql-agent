@@ -3,6 +3,8 @@ using Auth.Service.Data;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using Auth.Service.Services;
+using HsSqlAgent.Server.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 
 namespace HsSqlAgent.Server.Middleware;
@@ -17,6 +19,12 @@ public class TokenRevocationMiddleware(RequestDelegate next)
         IAuthContext authContext,
         IAuthRuntimeStateCache? authRuntimeStateCache = null)
     {
+        // Built-in identity never relies on the host application's default authentication scheme.
+        // Authenticate HsSqlAgent's namespaced bearer explicitly before session/revocation checks.
+        var builtInAuthentication = await context.AuthenticateAsync(HsSqlAgentAuthenticationSchemes.Bearer);
+        if (builtInAuthentication.Succeeded && builtInAuthentication.Principal is not null)
+            context.User = builtInAuthentication.Principal;
+
         var jti = context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
 
         if (!string.IsNullOrWhiteSpace(jti) && await revocationService.IsRevokedAsync(jti))

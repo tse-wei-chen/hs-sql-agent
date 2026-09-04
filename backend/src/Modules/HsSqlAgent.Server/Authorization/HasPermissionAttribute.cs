@@ -6,7 +6,7 @@ namespace HsSqlAgent.Server.Authorization;
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
 public class HasPermissionAttribute : AuthorizeAttribute
 {
-    private const string Prefix = "__perm__";
+    internal const string Prefix = "__perm__";
 
     public HasPermissionAttribute(string path, string? action = null)
     {
