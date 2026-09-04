@@ -159,7 +159,7 @@ spec:
       spec:
         id: hs-sql-agent
         source:
-          image: ghcr.io/tse-wei-chen/hs-sql-agent:v2.0.1
+          image: ghcr.io/tse-wei-chen/hs-sql-agent:v2.0.2
         ports:
           - id: web
             port: 8080
