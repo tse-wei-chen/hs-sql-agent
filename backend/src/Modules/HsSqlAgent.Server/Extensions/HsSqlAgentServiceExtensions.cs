@@ -6,8 +6,8 @@ namespace HsSqlAgent.Server.Extensions;
 public static class HsSqlAgentServiceExtensions
 {
     /// <summary>
-    /// Registers the full standalone HsSqlAgent server preset. Existing callers keep the same behavior,
-    /// while embedders can opt into individual capabilities through AddHsSqlAgentCore().
+    /// Registers the legacy full-server preset. New integrations should prefer AddHsSqlAgentCore()
+    /// plus explicit capability registrations.
     /// </summary>
     public static IServiceCollection AddHsSqlAgent(
         this IServiceCollection services,
@@ -20,7 +20,7 @@ public static class HsSqlAgentServiceExtensions
     }
 
     /// <summary>
-    /// Registers the full standalone HsSqlAgent server preset.
+    /// Registers the legacy full-server preset.
     /// </summary>
     public static IServiceCollection AddHsSqlAgent(
         this IServiceCollection services,
@@ -34,8 +34,6 @@ public static class HsSqlAgentServiceExtensions
             .AddHsSqlAgentAdminApi()
             .AddHsSqlAgentTelemetry();
 
-        // The compatibility preset is a complete standalone server and therefore owns its fallback
-        // exception response. Modular registrations deliberately do not install these host-wide services.
         services.AddExceptionHandler<GlobalExceptionHandler>();
         services.AddProblemDetails();
 
@@ -43,8 +41,16 @@ public static class HsSqlAgentServiceExtensions
     }
 
     /// <summary>
-    /// Starts a composable HsSqlAgent registration. Core registration intentionally does not install
-    /// authentication, MVC, MCP, telemetry exporters, background services, or the admin store.
+    /// Starts composable HsSqlAgent registration without allocating unrelated capability options.
+    /// </summary>
+    public static HsSqlAgentRegistrationBuilder AddHsSqlAgentCore(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        return new HsSqlAgentRegistrationBuilder(services);
+    }
+
+    /// <summary>
+    /// Legacy bridge for callers that still configure the aggregate options object.
     /// </summary>
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentCore(
         this IServiceCollection services,
@@ -57,7 +63,7 @@ public static class HsSqlAgentServiceExtensions
     }
 
     /// <summary>
-    /// Starts a composable HsSqlAgent registration using an existing options object.
+    /// Legacy bridge for callers that still provide the aggregate options object.
     /// </summary>
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentCore(
         this IServiceCollection services,
