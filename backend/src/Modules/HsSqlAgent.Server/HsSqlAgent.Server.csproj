@@ -23,7 +23,7 @@
 		<Authors>tse-wei-chen</Authors>
 		<Company>hs-sql-agent</Company>
 		<Description>Embeddable MCP SQL Agent components for ASP.NET Core with composable runtime, MCP, administration, authentication, UI, and telemetry capabilities.</Description>
-		<PackageTags>sql;mcp;ai;database;aspnetcore;hangfire-style</PackageTags>
+		<PackageTags>sql;mcp;ai;database;aspnetcore</PackageTags>
 		<PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
 		<PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
 		<RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
