@@ -1,5 +1,6 @@
 using Auth.Service.Authorization;
 using HsSqlAgent.Server.Authorization;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Authorization;
@@ -34,10 +35,11 @@ public class PermissionCanonicalPathsTests
     }
 
     [Fact]
-    public void HasPermission_AcceptsCanonicalPathAndAction()
+    public void HasPermission_ComposesCanonicalPermissionKeyWithoutNamedPolicyMetadata()
     {
         var attribute = new HasPermissionAttribute(PermissionCanonicalPaths.Roles, "view");
 
-        Assert.Equal("__perm__/auth/role.view", attribute.Policy);
+        Assert.Equal("/auth/role.view", attribute.Permission);
+        Assert.IsAssignableFrom<IFilterFactory>(attribute);
     }
 }
