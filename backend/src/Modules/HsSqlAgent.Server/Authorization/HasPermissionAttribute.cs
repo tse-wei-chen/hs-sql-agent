@@ -1,3 +1,4 @@
+using Auth.Service.Authorization;
 using Microsoft.AspNetCore.Authorization;
 
 namespace HsSqlAgent.Server.Authorization;
@@ -9,6 +10,10 @@ public class HasPermissionAttribute : AuthorizeAttribute
 
     public HasPermissionAttribute(string path, string? action = null)
     {
+        PermissionCanonicalPaths.RequireCanonical(path, nameof(path));
+        if (action is not null)
+            PermissionCanonicalPaths.RequirePermissionKey($"{path}.{action}", nameof(action));
+
         Policy = action is not null
             ? $"{Prefix}{path}.{action}"
             : $"{Prefix}{path}";

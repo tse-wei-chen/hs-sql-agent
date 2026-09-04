@@ -1,0 +1,23 @@
+using HsSqlAgent.Server.Models;
+
+namespace HsSqlAgent.Server.Extensions;
+
+/// <summary>
+/// Composes HsSqlAgent server capabilities without forcing every integration concern onto the host.
+/// </summary>
+public sealed class HsSqlAgentRegistrationBuilder
+{
+    private readonly HashSet<string> _registeredFeatures = new(StringComparer.Ordinal);
+
+    internal HsSqlAgentRegistrationBuilder(IServiceCollection services, HsSqlAgentServiceOptions options)
+    {
+        Services = services;
+        Options = options;
+    }
+
+    public IServiceCollection Services { get; }
+
+    public HsSqlAgentServiceOptions Options { get; }
+
+    internal bool TryRegister(string feature) => _registeredFeatures.Add(feature);
+}
