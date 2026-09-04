@@ -16,7 +16,7 @@ definePageMeta({
       <div class="flex justify-center gap-2 md:justify-start">
         <a href="#" class="flex items-center gap-2 font-medium">
           <div class="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-            <img src="/favicon.ico" alt="hs-sql-agent" class="size-6" />
+            <img src="/favicon.svg" alt="hs-sql-agent" class="size-6" />
           </div>
           hs-sql-agent.
         </a>
