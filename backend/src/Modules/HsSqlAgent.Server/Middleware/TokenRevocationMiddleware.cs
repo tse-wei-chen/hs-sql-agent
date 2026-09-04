@@ -20,10 +20,16 @@ public class TokenRevocationMiddleware(RequestDelegate next)
         IAuthRuntimeStateCache? authRuntimeStateCache = null)
     {
         // Built-in identity never relies on the host application's default authentication scheme.
-        // Authenticate HsSqlAgent's namespaced bearer explicitly before session/revocation checks.
-        var builtInAuthentication = await context.AuthenticateAsync(HsSqlAgentAuthenticationSchemes.Bearer);
-        if (builtInAuthentication.Succeeded && builtInAuthentication.Principal is not null)
-            context.User = builtInAuthentication.Principal;
+        // Real ASP.NET Core requests have IAuthenticationService in RequestServices; direct middleware
+        // unit tests may supply an already-authenticated principal without constructing a service provider.
+        if (context.RequestServices?.GetService(typeof(IAuthenticationService)) is IAuthenticationService authenticationService)
+        {
+            var builtInAuthentication = await authenticationService.AuthenticateAsync(
+                context,
+                HsSqlAgentAuthenticationSchemes.Bearer);
+            if (builtInAuthentication.Succeeded && builtInAuthentication.Principal is not null)
+                context.User = builtInAuthentication.Principal;
+        }
 
         var jti = context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
 
