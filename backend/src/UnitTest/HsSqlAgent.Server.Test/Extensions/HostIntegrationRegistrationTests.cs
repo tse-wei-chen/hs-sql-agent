@@ -71,7 +71,7 @@ public class HostIntegrationRegistrationTests
     }
 
     [Fact]
-    public void AddHsSqlAgentBuiltInAuth_UsesPermissionAuthorizerInsteadOfStaticPermissionPolicies()
+    public void AddHsSqlAgentBuiltInAuth_UsesFiltersInsteadOfStaticAuthorizationPolicies()
     {
         var services = new ServiceCollection();
         services.AddHsSqlAgentCore(CreateOptions())
@@ -79,7 +79,10 @@ public class HostIntegrationRegistrationTests
 
         using var provider = services.BuildServiceProvider();
         var authorization = provider.GetRequiredService<IOptions<AuthorizationOptions>>().Value;
-        Assert.NotNull(authorization.GetPolicy(HsSqlAgentAuthorizationPolicies.Access));
+        Assert.Null(authorization.GetPolicy(HsSqlAgentAuthorizationPolicies.Access));
+        Assert.Null(authorization.GetPolicy(HsSqlAgentAuthorizationPolicies.RefreshToken));
+        Assert.Null(authorization.GetPolicy(HsSqlAgentAuthorizationPolicies.MfaChallenge));
+        Assert.Null(authorization.GetPolicy(HsSqlAgentAuthorizationPolicies.ExternalLogin));
         Assert.Null(authorization.GetPolicy("__perm__/auth/role.view"));
 
         using var scope = provider.CreateScope();
@@ -118,7 +121,7 @@ public class HostIntegrationRegistrationTests
         var authorized = await authorizer.AuthorizeAsync(
             httpContext,
             ["/runtime/db-management.view"],
-            CancellationToken.None);
+            TestContext.Current.CancellationToken);
 
         Assert.True(authorized);
     }
