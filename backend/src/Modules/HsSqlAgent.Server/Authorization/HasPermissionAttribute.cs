@@ -1,16 +1,29 @@
-using Microsoft.AspNetCore.Authorization;
+using Auth.Service.Authorization;
+using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace HsSqlAgent.Server.Authorization;
 
-[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
-public class HasPermissionAttribute : AuthorizeAttribute
+[AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, AllowMultiple = true, Inherited = true)]
+public class HasPermissionAttribute : Attribute, IFilterFactory, IOrderedFilter
 {
-    private const string Prefix = "__perm__";
-
     public HasPermissionAttribute(string path, string? action = null)
     {
-        Policy = action is not null
-            ? $"{Prefix}{path}.{action}"
-            : $"{Prefix}{path}";
+        PermissionCanonicalPaths.RequireCanonical(path, nameof(path));
+        if (action is not null)
+            PermissionCanonicalPaths.RequirePermissionKey($"{path}.{action}", nameof(action));
+
+        Permission = action is not null ? $"{path}.{action}" : path;
     }
+
+    public string Permission { get; }
+
+    public bool IsReusable => false;
+
+    public int Order => -1000;
+
+    public IFilterMetadata CreateInstance(IServiceProvider serviceProvider)
+        => new HsSqlAgentPermissionAuthorizationFilter(
+            serviceProvider.GetRequiredService<IHsSqlAgentPermissionAuthorizer>(),
+            [Permission]);
 }

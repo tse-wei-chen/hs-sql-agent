@@ -3,6 +3,8 @@ using Auth.Service.Data;
 using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using Auth.Service.Services;
+using HsSqlAgent.Server.Authorization;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 
 namespace HsSqlAgent.Server.Middleware;
@@ -17,6 +19,18 @@ public class TokenRevocationMiddleware(RequestDelegate next)
         IAuthContext authContext,
         IAuthRuntimeStateCache? authRuntimeStateCache = null)
     {
+        // Built-in identity never relies on the host application's default authentication scheme.
+        // Real ASP.NET Core requests have IAuthenticationService in RequestServices; direct middleware
+        // unit tests may supply an already-authenticated principal without constructing a service provider.
+        if (context.RequestServices?.GetService(typeof(IAuthenticationService)) is IAuthenticationService authenticationService)
+        {
+            var builtInAuthentication = await authenticationService.AuthenticateAsync(
+                context,
+                HsSqlAgentAuthenticationSchemes.Bearer);
+            if (builtInAuthentication.Succeeded && builtInAuthentication.Principal is not null)
+                context.User = builtInAuthentication.Principal;
+        }
+
         var jti = context.User.FindFirst(JwtRegisteredClaimNames.Jti)?.Value;
 
         if (!string.IsNullOrWhiteSpace(jti) && await revocationService.IsRevokedAsync(jti))

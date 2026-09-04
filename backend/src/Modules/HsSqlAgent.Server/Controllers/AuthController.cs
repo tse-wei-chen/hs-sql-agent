@@ -5,6 +5,7 @@ using Auth.Service.Interfaces;
 using Auth.Service.Models;
 using Auth.Service.Services;
 using HsSqlAgent.Server.Attributes;
+using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Mvc;
@@ -48,7 +49,7 @@ public class AuthController(
         {
             logger.LogWarning(ex, "Sign-in failed for user");
             await auditService.WriteLogAsync("admin.signin", request.Email, "failed", "Invalid credentials");
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden);
         }
         catch (ArgumentException ex)
         {
@@ -122,6 +123,7 @@ public class AuthController(
         }
     }
 
+    [AccessAuthorize]
     [HttpPost("sign-out")]
     public async Task<IActionResult> SignOutAsync([FromBody] SignOutRequest? request)
     {
@@ -166,6 +168,7 @@ public class AuthController(
         return Ok();
     }
 
+    [AccessAuthorize]
     [HttpGet("sessions")]
     public async Task<IActionResult> GetSessionsAsync(CancellationToken cancellationToken)
     {
@@ -173,6 +176,7 @@ public class AuthController(
         return Ok(await authService.GetSessionsAsync(memberId, sessionId, cancellationToken));
     }
 
+    [AccessAuthorize]
     [HttpDelete("sessions/{sessionId:guid}")]
     public async Task<IActionResult> RevokeSessionAsync(Guid sessionId, CancellationToken cancellationToken)
     {
@@ -189,6 +193,7 @@ public class AuthController(
         }
     }
 
+    [AccessAuthorize]
     [HttpDelete("sessions")]
     public async Task<IActionResult> RevokeOtherSessionsAsync(CancellationToken cancellationToken)
     {
@@ -218,10 +223,10 @@ public class AuthController(
         return Challenge(new AuthenticationProperties
         {
             RedirectUri = Url.Action(nameof(OidcCallbackAsync))
-        }, "oidc");
+        }, HsSqlAgentAuthenticationSchemes.Oidc);
     }
 
-    [Authorize(Policy = "ExternalLoginPolicy")]
+    [ExternalLoginAuthorize]
     [HttpGet("oidc/callback")]
     public async Task<IActionResult> OidcCallbackAsync(CancellationToken cancellationToken)
     {
@@ -238,7 +243,7 @@ public class AuthController(
             .Select(x => x.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var code = await enterpriseIdentityService.CreateExternalLoginCodeAsync(
             "oidc", subject, email, name, externalRoles, cancellationToken);
-        await HttpContext.SignOutAsync("ExternalCookie");
+        await HttpContext.SignOutAsync(HsSqlAgentAuthenticationSchemes.ExternalCookie);
         var separator = settings.FrontendCallbackUrl.Contains('?') ? '&' : '?';
         return Redirect($"{settings.FrontendCallbackUrl}{separator}code={Uri.EscapeDataString(code)}");
     }
@@ -264,6 +269,7 @@ public class AuthController(
         }
     }
 
+    [AccessAuthorize]
     [HttpGet("mfa/status")]
     public async Task<IActionResult> GetMfaStatusAsync(CancellationToken cancellationToken)
     {
@@ -271,6 +277,7 @@ public class AuthController(
         return Ok(await mfaService.GetStatusAsync(memberId, cancellationToken));
     }
 
+    [AccessAuthorize]
     [HttpPost("mfa/setup")]
     public async Task<IActionResult> BeginMfaSetupAsync(CancellationToken cancellationToken)
     {
@@ -279,6 +286,7 @@ public class AuthController(
         catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
     }
 
+    [AccessAuthorize]
     [HttpPost("mfa/confirm")]
     public async Task<IActionResult> ConfirmMfaSetupAsync(MfaCodeRequest request, CancellationToken cancellationToken)
     {
@@ -292,6 +300,7 @@ public class AuthController(
         catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
 
+    [AccessAuthorize]
     [HttpPost("mfa/disable")]
     public async Task<IActionResult> DisableMfaAsync(MfaCodeRequest request, CancellationToken cancellationToken)
     {
@@ -305,7 +314,7 @@ public class AuthController(
         catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
 
-    [Authorize(Policy = "MfaChallengePolicy")]
+    [MfaChallengeAuthorize]
     [HttpPost("mfa/verify")]
     public async Task<IActionResult> VerifyMfaChallengeAsync(MfaCodeRequest request, CancellationToken cancellationToken)
     {
@@ -361,6 +370,7 @@ public class AuthController(
         }
     }
 
+    [AccessAuthorize]
     [HttpGet("account")]
     public async Task<IActionResult> GetAccountAsync(CancellationToken cancellationToken)
     {
@@ -368,6 +378,7 @@ public class AuthController(
         return Ok(await memberService.GetAccountAsync(memberId, cancellationToken));
     }
 
+    [AccessAuthorize]
     [HttpPut("account")]
     public async Task<IActionResult> UpdateAccountAsync(UpdateAccountRequest request, CancellationToken cancellationToken)
     {
@@ -384,6 +395,7 @@ public class AuthController(
         }
     }
 
+    [AccessAuthorize]
     [HttpPut("account/password")]
     public async Task<IActionResult> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken cancellationToken)
     {

@@ -1,5 +1,8 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using Auth.Service.Data;
 using Common.Interfaces;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
@@ -7,19 +10,76 @@ using Microsoft.EntityFrameworkCore;
 namespace HsSqlAgent.Server.Authorization;
 
 public class PermissionAuthorizationHandler(IAuthContext context, ICacheService cache)
-    : AuthorizationHandler<PermissionRequirement>
+    : AuthorizationHandler<PermissionRequirement>, IHsSqlAgentPermissionAuthorizer
 {
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
     private static readonly object RequestSnapshotKey = new();
+
+    public string? AuthenticationScheme => HsSqlAgentAuthenticationSchemes.Bearer;
+
+    public async ValueTask<bool> AuthorizeAsync(
+        HttpContext httpContext,
+        IReadOnlyCollection<string> permissions,
+        CancellationToken cancellationToken = default)
+    {
+        var user = httpContext.User;
+
+        // Built-in permissions are bound to HsSqlAgent's own namespaced bearer scheme. Never trust a
+        // host principal merely because it happens to contain similarly named typ/role_id claims.
+        // Direct unit tests can still supply an already-authenticated principal without constructing
+        // an IAuthenticationService; real ASP.NET Core requests always have one after AddAuthentication().
+        if (httpContext.RequestServices?.GetService(typeof(IAuthenticationService)) is IAuthenticationService authenticationService)
+        {
+            var authentication = await authenticationService.AuthenticateAsync(
+                httpContext,
+                HsSqlAgentAuthenticationSchemes.Bearer);
+            if (!authentication.Succeeded || authentication.Principal is null)
+                return false;
+
+            user = authentication.Principal;
+            httpContext.User = user;
+        }
+
+        return await AuthorizeCoreAsync(
+            user,
+            httpContext,
+            permissions,
+            requireAccessTokenType: true,
+            cancellationToken);
+    }
 
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext ctx,
         PermissionRequirement req)
     {
-        if (ctx.User.Identity?.IsAuthenticated != true)
-            return;
+        var httpContext = ctx.Resource as HttpContext;
+        var cancellationToken = httpContext?.RequestAborted ?? CancellationToken.None;
+        if (await AuthorizeCoreAsync(
+                ctx.User,
+                httpContext,
+                req.Permissions,
+                requireAccessTokenType: false,
+                cancellationToken))
+        {
+            ctx.Succeed(req);
+        }
+    }
 
-        var roleIds = ctx.User.FindAll("role_id")
+    private async Task<bool> AuthorizeCoreAsync(
+        ClaimsPrincipal user,
+        HttpContext? httpContext,
+        IReadOnlyCollection<string> requestedPermissions,
+        bool requireAccessTokenType,
+        CancellationToken cancellationToken)
+    {
+        if (user.Identity?.IsAuthenticated != true)
+            return false;
+
+        if (requireAccessTokenType &&
+            !string.Equals(user.FindFirst(JwtRegisteredClaimNames.Typ)?.Value, "access", StringComparison.Ordinal))
+            return false;
+
+        var roleIds = user.FindAll("role_id")
             .Select(c => int.TryParse(c.Value, out var id) ? id : (int?)null)
             .Where(id => id.HasValue)
             .Select(id => id!.Value)
@@ -28,17 +88,14 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
             .ToList();
 
         if (roleIds.Count == 0)
-            return;
+            return false;
 
-        var memberId = ctx.User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
-        var securityVersion = ctx.User.FindFirst(Auth.Service.Services.AuthService.SecurityVersionClaim)?.Value;
+        var memberId = user.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
+        var securityVersion = user.FindFirst(Auth.Service.Services.AuthService.SecurityVersionClaim)?.Value;
         if (string.IsNullOrWhiteSpace(memberId) || string.IsNullOrWhiteSpace(securityVersion))
-            return;
+            return false;
 
         var cacheKey = $"perm:user:{memberId}:v{securityVersion}:roles:{string.Join("|", roleIds)}";
-        var httpContext = ctx.Resource as HttpContext;
-        var cancellationToken = httpContext?.RequestAborted ?? CancellationToken.None;
-
         HashSet<string> permissions;
         if (httpContext is not null &&
             TryGetRequestSnapshot(httpContext, cacheKey, out var requestPermissions))
@@ -52,8 +109,7 @@ public class PermissionAuthorizationHandler(IAuthContext context, ICacheService 
                 GetRequestSnapshot(httpContext)[cacheKey] = permissions;
         }
 
-        if (req.Permissions.Any(permissions.Contains))
-            ctx.Succeed(req);
+        return requestedPermissions.Any(permissions.Contains);
     }
 
     private async Task<HashSet<string>> LoadPermissionsAsync(

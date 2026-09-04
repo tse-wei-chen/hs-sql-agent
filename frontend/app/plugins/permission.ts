@@ -1,15 +1,6 @@
-interface ActionGrant {
-  actionId: number
-  code: string
-  name: string
-}
-
-interface PermissionGrant {
-  permissionId: number
-  name: string
-  path: string
-  actions: ActionGrant[]
-}
+import { watch } from "vue"
+import { authSessionRevision } from "@/lib/auth-session"
+import { canAccess, type PermissionGrant } from "@/lib/permissions"
 
 function getPermissions(): PermissionGrant[] {
   try {
@@ -20,27 +11,6 @@ function getPermissions(): PermissionGrant[] {
   }
 }
 
-function hasPermission(path: string, action: string): boolean {
-  return getPermissions().some(p => p.path === path && p.actions.some(a => a.code === action))
-}
-
-function resolveAction(value: string, currentPath: string) {
-  return value.startsWith("/") ? value : `${currentPath}.${value}`
-}
-
-function checkValue(value: string | string[], currentPath: string): boolean {
-  if (typeof value === "string") {
-    const resolved = resolveAction(value, currentPath)
-    const dot = resolved.lastIndexOf(".")
-    if (dot === -1) return false
-    return hasPermission(resolved.slice(0, dot), resolved.slice(dot + 1))
-  }
-  if (Array.isArray(value)) {
-    return value.some((v) => checkValue(v, currentPath))
-  }
-  return false
-}
-
 export default defineNuxtPlugin((nuxtApp) => {
   const route = useRoute()
   const directiveWatchers = new WeakMap<HTMLElement, () => void>()
@@ -49,7 +19,14 @@ export default defineNuxtPlugin((nuxtApp) => {
     // Establish a reactive dependency so computed callers of $can update after
     // token refresh, sign-in, or sign-out changes the stored permission grants.
     void authSessionRevision.value
-    return checkValue(value, route.path)
+
+    // Relative action names are resolved against the page's declared canonical permission,
+    // never against its navigational URL. A route can therefore move without changing its
+    // authorization identity.
+    const pagePermission = typeof route.meta.permission === "string"
+      ? route.meta.permission
+      : undefined
+    return canAccess(getPermissions(), value, pagePermission)
   }
 
   nuxtApp.vueApp.directive("permission", {
@@ -75,5 +52,3 @@ export default defineNuxtPlugin((nuxtApp) => {
     },
   }
 })
-import { watch } from "vue"
-import { authSessionRevision } from "@/lib/auth-session"

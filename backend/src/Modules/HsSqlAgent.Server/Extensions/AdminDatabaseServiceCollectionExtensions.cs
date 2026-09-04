@@ -13,19 +13,29 @@ internal static class AdminDatabaseServiceCollectionExtensions
         string provider,
         string connectionString)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
-            throw new InvalidOperationException("Admin database connection string is required.");
-
-        if (!IsSqlite(provider) && !IsPostgres(provider))
-            ThrowUnsupportedProvider(provider);
-
+        Validate(provider, connectionString);
         services.AddDbContext<AdminContext>(db => ConfigureAdminContext(db, provider, connectionString));
         services.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
+        return services;
+    }
 
+    public static IServiceCollection AddAuthDatabase(
+        this IServiceCollection services,
+        string provider,
+        string connectionString)
+    {
+        Validate(provider, connectionString);
         services.AddDbContext<AuthContext>(db => ConfigureAuthContext(db, provider, connectionString));
         services.AddScoped<IAuthContext>(sp => sp.GetRequiredService<AuthContext>());
-
         return services;
+    }
+
+    private static void Validate(string provider, string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            throw new InvalidOperationException("Admin database connection string is required.");
+        if (!IsSqlite(provider) && !IsPostgres(provider))
+            ThrowUnsupportedProvider(provider);
     }
 
     private static void ConfigureAdminContext(
@@ -36,9 +46,7 @@ internal static class AdminDatabaseServiceCollectionExtensions
         if (IsSqlite(provider))
         {
             options.UseSqlite(connectionString, sqlite =>
-            {
-                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName);
-            });
+                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName));
             return;
         }
 
@@ -63,9 +71,7 @@ internal static class AdminDatabaseServiceCollectionExtensions
         if (IsSqlite(provider))
         {
             options.UseSqlite(connectionString, sqlite =>
-            {
-                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName);
-            });
+                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName));
             return;
         }
 

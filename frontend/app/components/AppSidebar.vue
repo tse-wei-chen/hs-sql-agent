@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Command } from "@lucide/vue";
 import NavUser from "@/components/NavUser.vue";
+import { Permissions } from "@/lib/permissions";
 import {
   Sidebar,
   SidebarContent,
@@ -21,7 +22,7 @@ const navMain = computed(() =>
   data.value.navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => $can(`${item.url}.view`)),
+      items: group.items.filter((item) => $can(item.permission)),
     }))
     .filter((group) => group.items.length > 0),
 );
@@ -50,21 +51,21 @@ const data = ref({
       title: "Runtime Management",
       url: "#",
       items: [
-        { title: "Overview", url: "/home" },
-        { title: "MCP Keys", url: "/runtime/mcp-keys" },
-        { title: "Custom Tools", url: "/runtime/custom-tools" },
-        { title: "DB Management", url: "/runtime/db-management" },
-        { title: "Audit", url: "/runtime/audit" },
-        { title: "Security", url: "/runtime/security" },
-        { title: "Operability", url: "/runtime/operability" },
+        { title: "Overview", url: "/home", permission: Permissions.Home.View },
+        { title: "MCP Keys", url: "/runtime/mcp-keys", permission: Permissions.Runtime.McpKeys.View },
+        { title: "Custom Tools", url: "/runtime/custom-tools", permission: Permissions.Runtime.CustomTools.View },
+        { title: "DB Management", url: "/runtime/db-management", permission: Permissions.Runtime.DbManagement.View },
+        { title: "Audit", url: "/runtime/audit", permission: Permissions.Runtime.Audit.View },
+        { title: "Security", url: "/runtime/security", permission: Permissions.Runtime.Security.View },
+        { title: "Operability", url: "/runtime/operability", permission: Permissions.Runtime.Operability.View },
       ],
     },
     {
       title: "Auth Management",
       url: "#",
       items: [
-        { title: "Role Management", url: "/auth/role", isActive: true },
-        { title: "User Management", url: "/auth/user", isActive: true },
+        { title: "Role Management", url: "/auth/role", permission: Permissions.Auth.Role.View, isActive: true },
+        { title: "User Management", url: "/auth/user", permission: Permissions.Auth.User.View, isActive: true },
       ],
     },
   ],

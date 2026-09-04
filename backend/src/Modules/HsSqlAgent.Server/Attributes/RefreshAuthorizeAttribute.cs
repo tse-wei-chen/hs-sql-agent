@@ -1,11 +1,6 @@
-using Microsoft.AspNetCore.Authorization;
+using HsSqlAgent.Server.Authorization;
 
 namespace HsSqlAgent.Server.Attributes;
 
-public sealed class RefreshAuthorizeAttribute : AuthorizeAttribute
-{
-    public RefreshAuthorizeAttribute()
-    {
-        Policy = "RefreshTokenPolicy";
-    }
-}
+public sealed class RefreshAuthorizeAttribute()
+    : HsSqlAgentAuthenticationAttribute(HsSqlAgentAuthenticationSchemes.Bearer, "refresh");

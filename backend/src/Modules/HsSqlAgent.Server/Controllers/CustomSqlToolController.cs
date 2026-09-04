@@ -10,7 +10,6 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -20,7 +19,6 @@ namespace HsSqlAgent.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
 public class CustomSqlToolController(
     ICustomSqlToolService toolService,
     IAuditService auditService,
