@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
@@ -7,7 +7,6 @@
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<!-- Prometheus HttpListener is intentionally prerelease; keep this package-scoped exception only. -->
 		<NoWarn>$(NoWarn);CS1591;NU5104</NoWarn>
-		<OutputType>Library</OutputType>
 		<IsPackable>true</IsPackable>
 	</PropertyGroup>
 
@@ -23,7 +22,7 @@
 		<PackageId>HsSqlAgent.Server</PackageId>
 		<Authors>tse-wei-chen</Authors>
 		<Company>hs-sql-agent</Company>
-		<Description>Embeddable MCP SQL Agent server for ASP.NET Core. Add HsSqlAgent to any existing ASP.NET Core app with AddHsSqlAgent() / UseHsSqlAgent().</Description>
+		<Description>Embeddable MCP SQL Agent components for ASP.NET Core with composable runtime, MCP, administration, authentication, UI, and telemetry capabilities.</Description>
 		<PackageTags>sql;mcp;ai;database;aspnetcore;hangfire-style</PackageTags>
 		<PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
 		<PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
@@ -33,6 +32,10 @@
 		<IncludeSymbols>true</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
@@ -68,7 +71,7 @@
 		<ProjectReference Include="..\Auth.Service\Auth.Service.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.PostgresMigrations\HsSqlAgent.PostgresMigrations.csproj" PrivateAssets="All" />
 		<ProjectReference Include="..\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" PrivateAssets="All" />
-<ProjectReference Include="..\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.fsproj" />
+		<ProjectReference Include="..\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.fsproj" />
 		<ProjectReference Include="..\HsSqlAgent.Provider.Abstractions\HsSqlAgent.Provider.Abstractions.csproj" />
 		<ProjectReference Include="..\HsSqlAgent.Provider.PostgreSql\HsSqlAgent.Provider.PostgreSql.csproj" />
 		<ProjectReference Include="..\HsSqlAgent.Provider.MySql\HsSqlAgent.Provider.MySql.csproj" />
