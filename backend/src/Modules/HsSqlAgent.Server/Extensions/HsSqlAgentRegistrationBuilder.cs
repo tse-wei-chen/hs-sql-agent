@@ -19,5 +19,12 @@ public sealed class HsSqlAgentRegistrationBuilder
 
     public HsSqlAgentServiceOptions Options { get; }
 
-    internal bool TryRegister(string feature) => _registeredFeatures.Add(feature);
+    internal bool TryRegister(string feature)
+    {
+        if (!_registeredFeatures.Add(feature)) return false;
+        Services.AddSingleton(new HsSqlAgentRegisteredFeature(feature));
+        return true;
+    }
 }
+
+internal sealed record HsSqlAgentRegisteredFeature(string Name);
