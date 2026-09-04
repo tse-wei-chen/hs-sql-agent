@@ -1,4 +1,6 @@
-using FluentValidation;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Admin.Service.Models;
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Filters;
@@ -8,6 +10,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Extensions;
@@ -54,6 +57,34 @@ public class HostMvcIsolationTests
         Assert.DoesNotContain(services, descriptor =>
             descriptor.ServiceType == typeof(IExceptionHandler) &&
             descriptor.ImplementationType?.Namespace == "HsSqlAgent.Server.Middleware");
+    }
+
+    [Fact]
+    public void AddHsSqlAgentAdminApi_PreservesHostJsonOptions()
+    {
+        var services = new ServiceCollection();
+        services.AddControllers().AddJsonOptions(json =>
+        {
+            json.JsonSerializerOptions.PropertyNamingPolicy = null;
+            json.JsonSerializerOptions.DictionaryKeyPolicy = null;
+            json.JsonSerializerOptions.PropertyNameCaseInsensitive = false;
+        });
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentAdminApi();
+
+        using var provider = services.BuildServiceProvider();
+        var json = provider.GetRequiredService<IOptions<JsonOptions>>().Value.JsonSerializerOptions;
+
+        Assert.Null(json.PropertyNamingPolicy);
+        Assert.Null(json.DictionaryKeyPolicy);
+        Assert.False(json.PropertyNameCaseInsensitive);
+        Assert.DoesNotContain(json.Converters, converter => converter is JsonStringEnumConverter);
+    }
+
+    [Fact]
+    public void McpRateLimitMode_PreservesStringWireContractWithoutGlobalJsonConverter()
+    {
+        Assert.Equal("\"Custom\"", JsonSerializer.Serialize(McpKeyRateLimitMode.Custom));
     }
 
     private static bool IsHsScopedFilter(object filter)

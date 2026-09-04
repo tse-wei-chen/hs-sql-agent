@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using Admin.Service.Validators;
 using Auth.Service.Validators;
 using FluentValidation;
@@ -23,14 +21,7 @@ public static class HsSqlAgentAdminApiServiceExtensions
         services.AddScoped<HsSqlAgentValidationFilter>();
         services.AddScoped<HsSqlAgentExceptionFilter>();
         services.AddControllers()
-            .AddApplicationPart(typeof(RoleController).Assembly)
-            .AddJsonOptions(json =>
-            {
-                json.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-                json.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
-                json.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-                json.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-            });
+            .AddApplicationPart(typeof(RoleController).Assembly);
         services.Configure<MvcOptions>(mvc =>
             mvc.Conventions.Add(new HsSqlAgentControllerSurfaceConvention(builder)));
         services.AddValidatorsFromAssemblyContaining<IssueMcpAccessKeyRequestValidator>();
