@@ -37,7 +37,7 @@ public static class HsSqlAgentMcpServiceExtensions
             throw new InvalidOperationException("Mcp HmacSecretKey must be at least 32 bytes.");
         if (!Uri.TryCreate(options.PublicEndpoint, UriKind.Absolute, out var mcpPublicEndpoint)
             || mcpPublicEndpoint.Scheme is not ("http" or "https"))
-            throw new InvalidOperationException("Mcp PublicEndpoint must be an absolute HTTP or HTTPS URL.");
+            throw new InvalidOperationException("Mcp:PublicEndpoint must be an absolute HTTP or HTTPS URL.");
 
         services.Configure<McpKeySettings>(mcp => mcp.HmacSecretKey = options.HmacSecretKey);
         services.Configure<McpOptions>(mcp =>
