@@ -5,7 +5,9 @@ using Auth.Service.Validators;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using HsSqlAgent.Server.Authorization;
+using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Middleware;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace HsSqlAgent.Server.Extensions;
@@ -19,13 +21,17 @@ public static class HsSqlAgentAdminApiServiceExtensions
 
         var services = builder.Services;
         services.TryAddScoped<IHsSqlAgentPermissionAuthorizer, MissingHsSqlAgentPermissionAuthorizer>();
-        services.AddControllers().AddJsonOptions(json =>
-        {
-            json.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-            json.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
-            json.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
-            json.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
-        });
+        services.AddControllers()
+            .AddApplicationPart(typeof(RoleController).Assembly)
+            .AddJsonOptions(json =>
+            {
+                json.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+                json.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.CamelCase;
+                json.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+                json.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+            });
+        services.Configure<MvcOptions>(mvc =>
+            mvc.Conventions.Add(new HsSqlAgentControllerSurfaceConvention(builder)));
         services.AddFluentValidationAutoValidation();
         services.AddValidatorsFromAssemblyContaining<IssueMcpAccessKeyRequestValidator>();
         services.AddValidatorsFromAssemblyContaining<SignInRequestValidator>();
