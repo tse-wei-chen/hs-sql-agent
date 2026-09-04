@@ -150,30 +150,9 @@ public static class HsSqlAgentBuiltInAuthServiceExtensions
             });
         }
 
-        services.AddAuthorizationBuilder()
-            .AddPolicy(HsSqlAgentAuthorizationPolicies.Access, policy =>
-            {
-                policy.AddAuthenticationSchemes(HsSqlAgentAuthenticationSchemes.Bearer);
-                policy.RequireAuthenticatedUser();
-                policy.RequireClaim("typ", "access");
-            })
-            .AddPolicy(HsSqlAgentAuthorizationPolicies.RefreshToken, policy =>
-            {
-                policy.AddAuthenticationSchemes(HsSqlAgentAuthenticationSchemes.Bearer);
-                policy.RequireAuthenticatedUser();
-                policy.RequireClaim("typ", "refresh");
-            })
-            .AddPolicy(HsSqlAgentAuthorizationPolicies.MfaChallenge, policy =>
-            {
-                policy.AddAuthenticationSchemes(HsSqlAgentAuthenticationSchemes.Bearer);
-                policy.RequireAuthenticatedUser();
-                policy.RequireClaim("typ", "mfa");
-            })
-            .AddPolicy(HsSqlAgentAuthorizationPolicies.ExternalLogin, policy =>
-            {
-                policy.AddAuthenticationSchemes(HsSqlAgentAuthenticationSchemes.ExternalCookie);
-                policy.RequireAuthenticatedUser();
-            });
+        // MVC authorization middleware still needs the core authorization services, but HsSqlAgent's built-in
+        // identity endpoints no longer depend on named policies or the host IAuthorizationPolicyProvider.
+        services.AddAuthorization();
 
         services.RemoveAll<IHsSqlAgentPermissionAuthorizer>();
         services.AddScoped<PermissionAuthorizationHandler>();

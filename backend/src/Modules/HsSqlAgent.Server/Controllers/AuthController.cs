@@ -123,7 +123,7 @@ public class AuthController(
         }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpPost("sign-out")]
     public async Task<IActionResult> SignOutAsync([FromBody] SignOutRequest? request)
     {
@@ -168,7 +168,7 @@ public class AuthController(
         return Ok();
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpGet("sessions")]
     public async Task<IActionResult> GetSessionsAsync(CancellationToken cancellationToken)
     {
@@ -176,7 +176,7 @@ public class AuthController(
         return Ok(await authService.GetSessionsAsync(memberId, sessionId, cancellationToken));
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpDelete("sessions/{sessionId:guid}")]
     public async Task<IActionResult> RevokeSessionAsync(Guid sessionId, CancellationToken cancellationToken)
     {
@@ -193,7 +193,7 @@ public class AuthController(
         }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpDelete("sessions")]
     public async Task<IActionResult> RevokeOtherSessionsAsync(CancellationToken cancellationToken)
     {
@@ -226,7 +226,7 @@ public class AuthController(
         }, HsSqlAgentAuthenticationSchemes.Oidc);
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.ExternalLogin)]
+    [ExternalLoginAuthorize]
     [HttpGet("oidc/callback")]
     public async Task<IActionResult> OidcCallbackAsync(CancellationToken cancellationToken)
     {
@@ -269,7 +269,7 @@ public class AuthController(
         }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpGet("mfa/status")]
     public async Task<IActionResult> GetMfaStatusAsync(CancellationToken cancellationToken)
     {
@@ -277,7 +277,7 @@ public class AuthController(
         return Ok(await mfaService.GetStatusAsync(memberId, cancellationToken));
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpPost("mfa/setup")]
     public async Task<IActionResult> BeginMfaSetupAsync(CancellationToken cancellationToken)
     {
@@ -286,7 +286,7 @@ public class AuthController(
         catch (InvalidOperationException ex) { return BadRequest(ex.Message); }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpPost("mfa/confirm")]
     public async Task<IActionResult> ConfirmMfaSetupAsync(MfaCodeRequest request, CancellationToken cancellationToken)
     {
@@ -300,7 +300,7 @@ public class AuthController(
         catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpPost("mfa/disable")]
     public async Task<IActionResult> DisableMfaAsync(MfaCodeRequest request, CancellationToken cancellationToken)
     {
@@ -314,7 +314,7 @@ public class AuthController(
         catch (ArgumentException ex) { return BadRequest(ex.Message); }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.MfaChallenge)]
+    [MfaChallengeAuthorize]
     [HttpPost("mfa/verify")]
     public async Task<IActionResult> VerifyMfaChallengeAsync(MfaCodeRequest request, CancellationToken cancellationToken)
     {
@@ -370,7 +370,7 @@ public class AuthController(
         }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpGet("account")]
     public async Task<IActionResult> GetAccountAsync(CancellationToken cancellationToken)
     {
@@ -378,7 +378,7 @@ public class AuthController(
         return Ok(await memberService.GetAccountAsync(memberId, cancellationToken));
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpPut("account")]
     public async Task<IActionResult> UpdateAccountAsync(UpdateAccountRequest request, CancellationToken cancellationToken)
     {
@@ -395,7 +395,7 @@ public class AuthController(
         }
     }
 
-    [Authorize(Policy = HsSqlAgentAuthorizationPolicies.Access)]
+    [AccessAuthorize]
     [HttpPut("account/password")]
     public async Task<IActionResult> ChangePasswordAsync(ChangePasswordRequest request, CancellationToken cancellationToken)
     {

@@ -1,4 +1,5 @@
 using System.Reflection;
+using HsSqlAgent.Server.Attributes;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Controllers;
 using Microsoft.AspNetCore.Authorization;
@@ -28,11 +29,43 @@ public class AuthorizationMetadataIsolationTests
     }
 
     [Fact]
+    public void AuthController_DoesNotUseAspNetAuthorizeMetadata()
+    {
+        var authorizeMetadata = typeof(AuthController)
+            .GetCustomAttributes<AuthorizeAttribute>(inherit: false)
+            .Cast<object>()
+            .Concat(typeof(AuthController)
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly)
+                .SelectMany(method => method.GetCustomAttributes<AuthorizeAttribute>(inherit: false)))
+            .ToArray();
+
+        Assert.Empty(authorizeMetadata);
+    }
+
+    [Fact]
     public void PermissionAttributes_AreMvcFilters_NotAspNetNamedPolicyMetadata()
     {
         Assert.True(typeof(IFilterFactory).IsAssignableFrom(typeof(HasPermissionAttribute)));
         Assert.True(typeof(IFilterFactory).IsAssignableFrom(typeof(HasAnyPermissionAttribute)));
         Assert.False(typeof(IAuthorizeData).IsAssignableFrom(typeof(HasPermissionAttribute)));
         Assert.False(typeof(IAuthorizeData).IsAssignableFrom(typeof(HasAnyPermissionAttribute)));
+    }
+
+    [Fact]
+    public void BuiltInAuthenticationAttributes_AreMvcFilters_NotAspNetAuthorizeMetadata()
+    {
+        Type[] attributeTypes =
+        [
+            typeof(AccessAuthorizeAttribute),
+            typeof(RefreshAuthorizeAttribute),
+            typeof(MfaChallengeAuthorizeAttribute),
+            typeof(ExternalLoginAuthorizeAttribute)
+        ];
+
+        Assert.All(attributeTypes, attributeType =>
+        {
+            Assert.True(typeof(IAsyncAuthorizationFilter).IsAssignableFrom(attributeType));
+            Assert.False(typeof(IAuthorizeData).IsAssignableFrom(attributeType));
+        });
     }
 }
