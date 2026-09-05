@@ -4,7 +4,7 @@
 
 <img width="1000" height="500" alt="coverImage" src="https://github.com/user-attachments/assets/e317cee2-7bf3-4b11-94b9-4fdeedb29689" />
 
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Server) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Hosting) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml)
 
 `hs-sql-agent` sits between AI-generated SQL and your databases. It accepts raw SQL through MCP, parses it into a structured compiler model, validates source and target capabilities, applies access and execution policy, and only then renders SQL for the target provider.
 
@@ -15,9 +15,9 @@ It supports **PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird** and 
 - **Fail-closed SQL compiler** — Unsupported or unproven syntax is rejected instead of being silently rewritten with different semantics.
 - **Closed F# compiler core** — SQL enters a closed discriminated-union AST and advances through unforgeable `parsed → bound → canonical → validated → executable` compiler stages.
 - **Six database providers** — PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird with provider-aware validation and lowering.
-- **Safe DML** — Read-only impact preview, one-time approval challenge, commit-time row-set revalidation, and MCP Elicitation for explicit human approval.
+- **Safe DML** — Read-only impact preview, one-time approval challenge, commit-time row-set revalidation, and explicit human approval through MCP Elicitation or an approval provider.
 - **Governed access** — Per-key database binding, table whitelisting, rate limits, execution limits, roles, policies, and audit records.
-- **Flexible hosting** — Run the packaged server and Admin UI, or embed only the capabilities an existing ASP.NET Core host needs.
+- **Flexible hosting** — Run the packaged server and Admin UI, use the standard ASP.NET Core host, or compose advanced integrations from modular capabilities.
 - **Production observability** — Prometheus metrics, OpenTelemetry/OTLP, audit retention, and webhook/SIEM delivery.
 
 SQL support is intentionally bounded by proven semantics. See the [SQL Support Reference](https://sql-agent.net/en/docs/sql-compiler/sql-support) for the current contract.
@@ -44,22 +44,27 @@ The plaintext secret is shown only once. See [MCP Client Onboarding](https://sql
 
 ## Use from .NET
 
-The repository publishes two .NET entry points:
-
-| Package | Use it when |
-|---|---|
-| [`HsSqlAgent.Server`](https://www.nuget.org/packages/HsSqlAgent.Server) | You want to embed the MCP SQL Agent, runtime, Admin API/UI, identity, authorization integration, or telemetry into ASP.NET Core. |
-| `HsSqlAgent.SqlCore` | You want only the provider-driver-free SQL parser, validation, normalization, capability proof, and compiler pipeline. |
-
-Install the server package for an existing ASP.NET Core application:
+For the same batteries-included composition as the official Docker host, install `HsSqlAgent.Hosting`:
 
 ```bash
-dotnet add package HsSqlAgent.Server
+dotnet add package HsSqlAgent.Hosting
 ```
 
-New integrations start from `AddHsSqlAgentCore()` and opt into only the capabilities the host needs. Existing applications can keep their own authentication, authorization, frontend, exception handling, and telemetry.
+```csharp
+using HsSqlAgent.Hosting;
 
-The complete registration examples, capability ownership rules, host-auth integration, HTTP surface contract, defaults, and compatibility API live in the [ASP.NET Core Integration Guide](https://sql-agent.net/en/docs/integration/aspnet-core) and the [package README](backend/src/Modules/HsSqlAgent.Server/README.md).
+var builder = WebApplication.CreateBuilder(args);
+builder.AddHsSqlAgentStandardHost();
+
+var app = builder.Build();
+app.UseHsSqlAgentStandardHost();
+
+await app.RunAsync();
+```
+
+Use `HsSqlAgent.Server` directly only when you need custom authentication, middleware ordering, approval providers, UI, or capability composition.
+
+See the [ASP.NET Core Integration Guide](https://sql-agent.net/en/docs/integration/aspnet-core) and the [`HsSqlAgent.Hosting` package README](backend/src/Modules/HsSqlAgent.Hosting/README.md) for the full integration contract.
 
 ## How SQL execution works
 
