@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
+using HsSqlAgent.Approvals;
 
 namespace HsSqlAgent.Approvals.Webhook;
 
