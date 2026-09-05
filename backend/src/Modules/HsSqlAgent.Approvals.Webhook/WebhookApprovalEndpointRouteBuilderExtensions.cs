@@ -19,7 +19,7 @@ public static class WebhookApprovalEndpointRouteBuilderExtensions
         return endpoints.MapPost(pattern, HandleCallbackAsync);
     }
 
-    private static async Task<IResult> HandleCallbackAsync(
+    internal static async Task<IResult> HandleCallbackAsync(
         HttpRequest request,
         IDmlApprovalCompletionSink completionSink,
         IOptions<WebhookApprovalOptions> optionsAccessor,
