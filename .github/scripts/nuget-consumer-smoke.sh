@@ -3,6 +3,14 @@ set -euo pipefail
 
 package_source="$(cd "$1" && pwd)"
 
+# Keep the first-party standalone/Docker composition on the same CI path as the public packages.
+# This catches ToolBox references/configuration that Server-only tests cannot see.
+dotnet build backend/src/ToolBox/ToolBox.csproj --configuration Release
+
+grep -Fq \
+  'COPY backend/src/Modules/HsSqlAgent.Approvals.Webhook/HsSqlAgent.Approvals.Webhook.csproj ./backend/src/Modules/HsSqlAgent.Approvals.Webhook/' \
+  Dockerfile
+
 # Server depends on the transport-neutral approval contracts. Pack that dependency into the same
 # local source even when a calling workflow still has an older inline public-package list.
 if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Approvals.Abstractions.*.nupkg' ! -name '*.symbols.nupkg' -print -quit | grep -q .; then
