@@ -1,14 +1,46 @@
 # HsSqlAgent.Approvals.Webhook
 
-Official generic webhook adapter for HsSqlAgent DML approvals. It sends the transport-neutral approval evidence to an external HTTP workflow and receives a signed asynchronous completion callback. HsSqlAgent still owns SQL validation, approval evidence binding, commit-time revalidation, and atomic execution.
+Official generic webhook adapter for HsSqlAgent DML approvals. It sends transport-neutral approval evidence to an external HTTP workflow and receives a signed asynchronous completion callback. HsSqlAgent still owns SQL validation, approval evidence binding, commit-time revalidation, and atomic execution.
 
-## How to use it
+## Choose a consumption path
 
-There are two supported consumption paths.
+HsSqlAgent has one standard first-party composition and one modular composition path.
 
-### Standalone Docker image
+### Standard host / official Docker
 
-The first-party `ToolBox` host already composes this adapter into the official Docker image. No extra NuGet installation or custom image is required. MCP Elicitation remains the default; opt into Webhook with environment variables:
+Use `HsSqlAgent.Hosting` when a .NET application should behave like the official Docker image:
+
+```bash
+dotnet add package HsSqlAgent.Hosting
+```
+
+```csharp
+using HsSqlAgent.Hosting;
+
+var builder = WebApplication.CreateBuilder(args);
+builder.AddHsSqlAgentStandardHost();
+
+var app = builder.Build();
+app.UseHsSqlAgentStandardHost();
+await app.RunAsync();
+```
+
+The official `ToolBox` / Docker image uses that same Hosting composition. Both select DML approval through the same ASP.NET Core configuration contract. MCP Elicitation is the default; enable Webhook with:
+
+```json
+{
+  "DmlApproval": {
+    "Provider": "Webhook",
+    "Webhook": {
+      "Endpoint": "https://approval.example.com/hssqlagent/requests",
+      "CallbackUrl": "https://sql-agent.example.com/api/hs-sql-agent/approvals/webhook",
+      "SigningSecret": "replace-with-a-unique-secret-at-least-32-bytes"
+    }
+  }
+}
+```
+
+For Docker Compose, the repository maps the ergonomic `.env` variables below onto those same configuration keys:
 
 ```env
 DML_APPROVAL_PROVIDER=Webhook
@@ -17,11 +49,16 @@ DML_APPROVAL_WEBHOOK_CALLBACK_URL=https://sql-agent.example.com/api/hs-sql-agent
 DML_APPROVAL_WEBHOOK_SIGNING_SECRET=replace-with-a-unique-secret-at-least-32-bytes
 ```
 
-The standard `docker-compose.yml` and distributed compose map these variables to the standalone host configuration. Set `DML_APPROVAL_PROVIDER=McpElicitation` or omit it to keep the built-in MCP approval flow.
+Set the provider to `McpElicitation` or omit it to keep the built-in MCP approval flow.
 
-### Embedded ASP.NET Core / `HsSqlAgent.Server` NuGet
+### Modular `HsSqlAgent.Server` host
 
-Applications embedding `HsSqlAgent.Server` add the independent `HsSqlAgent.Approvals.Webhook` package alongside Server. No Server fork or source modification is required; the application remains the composition root:
+Use this package directly alongside `HsSqlAgent.Server` only when the application intentionally owns its HsSqlAgent composition (for example, existing authentication, custom middleware ordering, or a custom approval provider):
+
+```bash
+dotnet add package HsSqlAgent.Server
+dotnet add package HsSqlAgent.Approvals.Webhook
+```
 
 ```csharp
 using HsSqlAgent.Approvals.Webhook;
@@ -37,11 +74,13 @@ builder.Services.AddHsSqlAgentWebhookApproval(options =>
     options.SigningSecret = builder.Configuration["HsSqlAgent:WebhookApproval:SigningSecret"]!;
 });
 
-// Register the remaining HsSqlAgent capabilities as usual.
+// Register the remaining HsSqlAgent capabilities required by this host.
 
 var app = builder.Build();
 app.MapHsSqlAgentWebhookApprovalCallback();
 ```
+
+In the modular path the registration call itself selects the provider; `DmlApproval:Provider` is a standard-Hosting selector and is not required.
 
 `Endpoint` is the external workflow receiver. `CallbackUrl` is included in every approval request so the external workflow knows where to return an `Approved` or `Rejected` decision. HTTPS is required by default. Set `RequireHttps = false` only for controlled local development.
 
