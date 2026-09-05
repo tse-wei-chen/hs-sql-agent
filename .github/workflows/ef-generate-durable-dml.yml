@@ -1,0 +1,65 @@
+name: Generate Durable DML EF Migration
+
+on:
+  push:
+    branches:
+      - feat/durable-dml-approval-lifecycle
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/durable-dml-approval-lifecycle
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install dotnet-ef
+        run: dotnet tool install --global dotnet-ef --version 10.0.9
+
+      - name: Generate SQLite Admin migration
+        run: >-
+          dotnet ef migrations add AddDurableDmlApprovals
+          --project backend/src/Modules/HsSqlAgent.SqliteMigrations/HsSqlAgent.SqliteMigrations.csproj
+          --startup-project backend/src/Modules/HsSqlAgent.SqliteMigrations/HsSqlAgent.SqliteMigrations.csproj
+          --context AdminContext
+          --output-dir Admin
+
+      - name: Generate PostgreSQL Admin migration
+        run: >-
+          dotnet ef migrations add AddDurableDmlApprovalsPostgres
+          --project backend/src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj
+          --startup-project backend/src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj
+          --context AdminContext
+          --output-dir Admin
+
+      - name: Verify EF model is fully migrated
+        run: |
+          dotnet ef migrations has-pending-model-changes \
+            --project backend/src/Modules/HsSqlAgent.SqliteMigrations/HsSqlAgent.SqliteMigrations.csproj \
+            --startup-project backend/src/Modules/HsSqlAgent.SqliteMigrations/HsSqlAgent.SqliteMigrations.csproj \
+            --context AdminContext
+          dotnet ef migrations has-pending-model-changes \
+            --project backend/src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj \
+            --startup-project backend/src/Modules/HsSqlAgent.PostgresMigrations/HsSqlAgent.PostgresMigrations.csproj \
+            --context AdminContext
+
+      - name: Commit EF-generated migration artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/ef-generate-durable-dml.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/src/Modules/HsSqlAgent.SqliteMigrations/Admin \
+                  backend/src/Modules/HsSqlAgent.PostgresMigrations/Admin
+          git commit -m "chore: generate durable DML EF migrations"
+          git push origin HEAD:feat/durable-dml-approval-lifecycle
