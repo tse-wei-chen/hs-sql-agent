@@ -96,7 +96,6 @@ public static class HsSqlAgentMcpServiceExtensions
                     foreach (var customTool in customTools)
                     {
                         if (allowedNames != null && !allowedNames.Contains(customTool.Name)) continue;
-
                         var properties = new Dictionary<string, object>();
                         if (!string.IsNullOrWhiteSpace(customTool.ParametersJson))
                         {
@@ -148,7 +147,8 @@ public static class HsSqlAgentMcpServiceExtensions
                                     sp.GetRequiredService<ISqlExecutionConcurrencyLimiter>(),
                                     sp.GetRequiredService<ITypedQueryRuntime>(),
                                     sp.GetRequiredService<TypedDmlRuntime>(),
-                                    sp.GetService<IDmlApprovalProvider>());
+                                    sp.GetService<IDmlApprovalProvider>(),
+                                    sp.GetService<IDmlApprovalCompletionSink>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
                                 return await proxy.Execute(json, server, ct);
                             });
@@ -171,12 +171,10 @@ public static class HsSqlAgentMcpServiceExtensions
         var toolType = typeof(T);
         var methods = toolType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(method => method.GetCustomAttributes(typeof(McpServerToolAttribute), false).Length != 0);
-
         var serializerOptions = new JsonSerializerOptions(McpJsonUtilities.DefaultOptions)
         {
             AllowOutOfOrderMetadataProperties = true
         };
-
         foreach (var method in methods)
         {
             var tool = McpServerTool.Create(method, request => request.Services!.GetRequiredService<T>(), new McpServerToolCreateOptions
@@ -185,7 +183,6 @@ public static class HsSqlAgentMcpServiceExtensions
             });
             tools.Add(tool);
         }
-
         return [.. tools];
     }
 }

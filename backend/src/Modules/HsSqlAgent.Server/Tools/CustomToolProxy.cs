@@ -25,7 +25,8 @@ public class CustomToolProxy(
     ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
     ITypedQueryRuntime? typedQueryRuntime = null,
     TypedDmlRuntime? typedDmlRuntime = null,
-    IDmlApprovalProvider? dmlApprovalProvider = null)
+    IDmlApprovalProvider? dmlApprovalProvider = null,
+    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null)
 {
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
@@ -38,6 +39,7 @@ public class CustomToolProxy(
     private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
     private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
     private readonly IDmlApprovalProvider? _dmlApprovalProvider = dmlApprovalProvider;
+    private readonly IDmlApprovalCompletionSink? _dmlApprovalCompletionSink = dmlApprovalCompletionSink;
 
     public async Task<string> Execute(
         JsonElement arguments,
@@ -126,7 +128,6 @@ public class CustomToolProxy(
             if (isQuery)
             {
                 auditQueryDialect = dbType;
-
                 await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
                 {
                     if (lease is null)
@@ -137,13 +138,8 @@ public class CustomToolProxy(
                     if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                     {
                         var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
-                            provider,
-                            sqlConfig.ConnectionString,
-                            renderedSql,
-                            dbType,
-                            securityPolicy,
-                            allowedTables,
-                            cancellationToken);
+                            provider, sqlConfig.ConnectionString, renderedSql, dbType,
+                            securityPolicy, allowedTables, cancellationToken);
                         auditQueryFacts = compiledExecution.Facts;
                         execution = compiledExecution.Execution;
                     }
@@ -151,13 +147,8 @@ public class CustomToolProxy(
                     {
                         auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
                         execution = await _typedQueryRuntime.ExecuteAsync(
-                            provider,
-                            sqlConfig.ConnectionString,
-                            renderedSql,
-                            dbType,
-                            securityPolicy,
-                            allowedTables,
-                            cancellationToken);
+                            provider, sqlConfig.ConnectionString, renderedSql, dbType,
+                            securityPolicy, allowedTables, cancellationToken);
                     }
                     queryReturnedRows = execution.RowCount;
                     result = JsonSerializer.Serialize(execution.Rows);
@@ -165,6 +156,8 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
+                var accessKeyId = ResolveAccessKeyId()
+                                  ?? throw new UnauthorizedAccessException("DML approval requires a stable MCP access-key identity.");
                 var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
                     provider,
                     sqlConfig.ConnectionString,
@@ -182,7 +175,8 @@ public class CustomToolProxy(
                     _typedDmlRuntime,
                     _securityPolicyRuntimeState,
                     _sqlConcurrencyLimiter,
-                    ResolveTableWhitelist);
+                    ResolveTableWhitelist,
+                    _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle);
                 var dmlExecution = await flow.ExecuteAsync(
                     provider,
                     sqlConfig.ConnectionString,
@@ -190,16 +184,27 @@ public class CustomToolProxy(
                     approvalContext,
                     approvalProvider,
                     $"Custom tool `{_name}`",
-                    cancellationToken);
+                    cancellationToken,
+                    new DmlApprovalResumeContext(
+                        renderedSql,
+                        _name,
+                        accessKeyId,
+                        dbManagementId.Value,
+                        dbType,
+                        tool.Id,
+                        tool.PublishedRevisionId));
                 result = dmlExecution.Result;
                 approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
                 dmlAffectedRows = dmlExecution.AffectedRows;
 
                 if (!dmlExecution.Committed)
                 {
-                    var auditResult = result.Contains("cancelled", StringComparison.OrdinalIgnoreCase)
-                        ? "cancelled"
-                        : "failed";
+                    var (auditResult, approvalStatus) = dmlExecution.ApprovalDecision switch
+                    {
+                        DmlApprovalDecision.Pending => ("pending", "pending"),
+                        DmlApprovalDecision.Rejected => ("cancelled", "declined"),
+                        _ => ("failed", "not-completed")
+                    };
                     await _auditService.WriteEventAsync(
                         $"mcp.{_name}.executed",
                         _name,
@@ -210,7 +215,7 @@ public class CustomToolProxy(
                             Operation = DmlOperationName(parsedDml),
                             DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                             AffectedRows = dmlAffectedRows,
-                            ApprovalStatus = auditResult == "cancelled" ? "declined" : "not-completed",
+                            ApprovalStatus = approvalStatus,
                             Definition = DescribeDml(parsedDml)
                         },
                         result,
@@ -238,7 +243,7 @@ public class CustomToolProxy(
                         : stopwatch.ElapsedMilliseconds,
                     ReturnedRows = isQuery ? queryReturnedRows : null,
                     AffectedRows = isDml ? dmlAffectedRows : null,
-                    ApprovalStatus = isDml ? "interactive-accepted" : null,
+                    ApprovalStatus = isDml ? "approved" : null,
                     Definition = isQuery && auditQueryFacts != null
                         ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
                         : auditDml == null ? null : DescribeDml(auditDml)
@@ -283,10 +288,7 @@ public class CustomToolProxy(
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
         Math.Max(0, stopwatch.ElapsedMilliseconds - approvalWaitDurationMs);
 
-    private static string DescribeQuery(
-        string sql,
-        SqlAgentToolType sourceDialect,
-        QueryFacts facts) =>
+    private static string DescribeQuery(string sql, SqlAgentToolType sourceDialect, QueryFacts facts) =>
         JsonSerializer.Serialize(new
         {
             SourceDialect = sourceDialect.ToString(),
@@ -312,11 +314,8 @@ public class CustomToolProxy(
                 var fields = statement.Statement switch
                 {
                     UpdateStatement updateStatement => updateStatement.Assignments
-                        .Select(assignment => IdentifierText(assignment.Column))
-                        .ToArray(),
-                    InsertStatement insertStatement => insertStatement.Columns
-                        .Select(IdentifierText)
-                        .ToArray(),
+                        .Select(assignment => IdentifierText(assignment.Column)).ToArray(),
+                    InsertStatement insertStatement => insertStatement.Columns.Select(IdentifierText).ToArray(),
                     _ => []
                 };
                 var hasWhere = statement.Statement switch
@@ -367,9 +366,14 @@ public class CustomToolProxy(
     {
         var context = _httpContextAccessor.HttpContext;
         return context?.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var value) == true
-               && value is int id
-            ? id
-            : null;
+               && value is int id ? id : null;
+    }
+
+    private int? ResolveAccessKeyId()
+    {
+        var context = _httpContextAccessor.HttpContext;
+        return context?.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var value) == true
+               && value is int id ? id : null;
     }
 
     private HashSet<string>? ResolveTableWhitelist()
@@ -378,11 +382,9 @@ public class CustomToolProxy(
             ?? throw new UnauthorizedAccessException("MCP table authorization context is missing.");
         if (!context.Items.TryGetValue(McpContextItemKeys.TableWhitelist, out var whitelistValue))
             throw new UnauthorizedAccessException("MCP table authorization context is missing.");
-
         var tableWhitelist = whitelistValue?.ToString();
         if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
-        return tableWhitelist
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        return tableWhitelist.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
@@ -392,13 +394,10 @@ public class CustomToolProxy(
             ?? throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
         if (!context.Items.TryGetValue(McpContextItemKeys.AllowedTools, out var allowedToolsValue))
             throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
-
         var allowedTools = allowedToolsValue?.ToString();
         if (string.IsNullOrWhiteSpace(allowedTools)) return;
-        var allowed = allowedTools
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase));
-        if (!allowed)
+        if (!allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase)))
             throw new UnauthorizedAccessException($"API key does not have permission to use tool: {_name}");
     }
 }
@@ -406,18 +405,12 @@ public class CustomToolProxy(
 internal interface IDmlApprovalClient
 {
     bool SupportsElicitation { get; }
-
-    ValueTask<ElicitResult> ElicitAsync(
-        ElicitRequestParams request,
-        CancellationToken cancellationToken);
+    ValueTask<ElicitResult> ElicitAsync(ElicitRequestParams request, CancellationToken cancellationToken);
 }
 
 internal sealed class McpDmlApprovalClient(McpServer server) : IDmlApprovalClient
 {
     public bool SupportsElicitation => server.ClientCapabilities?.Elicitation != null;
-
-    public ValueTask<ElicitResult> ElicitAsync(
-        ElicitRequestParams request,
-        CancellationToken cancellationToken) =>
+    public ValueTask<ElicitResult> ElicitAsync(ElicitRequestParams request, CancellationToken cancellationToken) =>
         server.ElicitAsync(request, cancellationToken);
 }
