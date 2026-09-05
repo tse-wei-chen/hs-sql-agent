@@ -12,6 +12,8 @@
     <DebugType>portable</DebugType>
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <!-- Hosting intentionally carries the same prerelease Prometheus exporter dependency as Server. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
     <PackageId>HsSqlAgent.Hosting</PackageId>
     <Authors>tse-wei-chen</Authors>
     <Company>hs-sql-agent</Company>
