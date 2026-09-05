@@ -3,11 +3,18 @@ set -euo pipefail
 
 package_source="$(cd "$1" && pwd)"
 
-# Server now has a package dependency on the transport-neutral approval contracts. Pack that
-# dependency into the same local source even when a calling workflow still has an older inline
-# public-package list, so this smoke test exercises the real NuGet dependency boundary.
+# Server depends on the transport-neutral approval contracts. Pack that dependency into the same
+# local source even when a calling workflow still has an older inline public-package list.
 if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Approvals.Abstractions.*.nupkg' ! -name '*.symbols.nupkg' -print -quit | grep -q .; then
   dotnet pack backend/src/Modules/HsSqlAgent.Approvals.Abstractions/HsSqlAgent.Approvals.Abstractions.csproj \
+    --configuration Release \
+    --output "$package_source"
+fi
+
+# The webhook adapter is an independent official package rather than a Server dependency. Pack it
+# here so PR package smoke exercises the real NuGet boundary even before older workflow lists catch up.
+if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Approvals.Webhook.*.nupkg' ! -name '*.symbols.nupkg' -print -quit | grep -q .; then
+  dotnet pack backend/src/Modules/HsSqlAgent.Approvals.Webhook/HsSqlAgent.Approvals.Webhook.csproj \
     --configuration Release \
     --output "$package_source"
 fi
@@ -44,12 +51,15 @@ cat > "$consumer_dir/NuGet.Config" <<EOF
 EOF
 
 dotnet add "$consumer_dir" package HsSqlAgent.Server --version "$version" --source "$package_source" --no-restore
+dotnet add "$consumer_dir" package HsSqlAgent.Approvals.Webhook --version "$version" --source "$package_source" --no-restore
 cat > "$consumer_dir/Program.cs" <<'EOF'
 using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Linq;
+using System.Text;
 using HsSqlAgent.Approvals;
+using HsSqlAgent.Approvals.Webhook;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
@@ -60,6 +70,7 @@ string[] expectedAssemblies =
 [
     "HsSqlAgent.Server",
     "HsSqlAgent.Approvals.Abstractions",
+    "HsSqlAgent.Approvals.Webhook",
     "HsSqlAgent.SqlCore",
     "FSharp.Core",
     "HsSqlAgent.Provider.Abstractions",
@@ -90,6 +101,30 @@ var durableCompletion = DmlApprovalCompletion.Approve(
     "EXT-SMOKE");
 if (durableCompletion.Decision != DmlApprovalDecision.Approved)
     throw new InvalidOperationException("Packed approval contracts did not preserve the completion decision.");
+
+// Keep the independent webhook protocol on the packed consumer surface without requiring Server internals.
+var webhookBody = Encoding.UTF8.GetBytes("{\"requestId\":\"dml_smoke\"}");
+var webhookSignature = WebhookApprovalSignature.Compute(
+    "smoke-webhook-secret-that-is-at-least-32-bytes",
+    1234567890,
+    webhookBody);
+if (!WebhookApprovalSignature.Verify(
+        "smoke-webhook-secret-that-is-at-least-32-bytes",
+        1234567890,
+        webhookBody,
+        webhookSignature))
+    throw new InvalidOperationException("Packed webhook adapter signature contract failed.");
+
+var webhookServices = new ServiceCollection();
+webhookServices.AddHsSqlAgentWebhookApproval(options =>
+{
+    options.Endpoint = new Uri("https://approval.example.test/requests");
+    options.CallbackUrl = new Uri("https://sql-agent.example.test/api/hs-sql-agent/approvals/webhook");
+    options.SigningSecret = "smoke-webhook-secret-that-is-at-least-32-bytes";
+});
+using var webhookProvider = webhookServices.BuildServiceProvider();
+if (webhookProvider.GetService<IDmlApprovalProvider>() is not WebhookDmlApprovalProvider)
+    throw new InvalidOperationException("Packed webhook adapter DI registration failed.");
 
 var validation = new SqlPlanValidationContext(
     "nuget-consumer-smoke-v2",
