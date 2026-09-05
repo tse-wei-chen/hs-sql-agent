@@ -20,6 +20,18 @@ public sealed class DmlApprovalProviderRegistrationTests
     }
 
     [Fact]
+    public void AddHsSqlAgentRuntime_RegistersCompletionSinkWithoutImplicitAdminStore()
+    {
+        var services = new ServiceCollection();
+        var hs = services.AddHsSqlAgentCore();
+
+        hs.AddHsSqlAgentRuntime();
+
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IDmlApprovalCompletionSink));
+        Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));
+    }
+
+    [Fact]
     public void AddHsSqlAgentDmlApproval_RejectsAmbiguousSecondProvider()
     {
         var services = new ServiceCollection();
