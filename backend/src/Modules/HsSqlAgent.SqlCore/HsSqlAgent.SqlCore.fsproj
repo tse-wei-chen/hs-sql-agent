@@ -63,6 +63,7 @@
     <Compile Include="RewriteFacadeAdapter.fs" />
     <Compile Include="InspectionFacade.fs" />
     <Compile Include="CompatibilityParserFacade.fs" />
+    <Compile Include="CompatibilityDmlBatchParser.fs" />
     <Compile Include="Facade.fs" />
     <Compile Include="LegacyCompilerFacade.fs" />
   </ItemGroup>
