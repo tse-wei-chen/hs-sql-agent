@@ -30,6 +30,7 @@
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="SqlAgent.Test" />
+		<InternalsVisibleTo Include="HsSqlAgent.Server" />
 	</ItemGroup>
 
 	<ItemGroup>

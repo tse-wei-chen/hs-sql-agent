@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -80,6 +80,10 @@ const { meta, values, setValues, setFieldValue, resetForm: resetVeeForm, handleS
     dbManagementId: null,
   },
 })
+
+const sqlTemplatePlaceholder = computed(() => values.type === "DML"
+  ? "DELETE FROM order_details WHERE order_id = {{ orderId }};\n\nDELETE FROM orders WHERE id = {{ orderId }};"
+  : "SELECT name FROM customers WHERE status = {{ status }}")
 
 const tools = ref<CustomSqlTool[]>([]);
 const loading = ref(false);
@@ -247,7 +251,7 @@ const publish = async (tool: CustomSqlTool) => {
       ? `\nBreaking changes:\n- ${impact.breakingChanges.join("\n- ")}`
       : "\nNo parameter, name, type, or database breaking changes detected.";
     const elicitation = tool.type === "DML"
-      ? "\n\nDML requirement: every production call requires a client with MCP form Elicitation. Clients without it cannot commit."
+      ? "\n\nDML requirement: every production call requires MCP form Elicitation. Multiple statements are approved once and commit as one atomic transaction; any failure rolls back all statements."
       : "";
     if (!confirm(
       `Publish ${tool.name} to ${impact.draftDatabaseName || "the bound database"}?\n` +
@@ -331,7 +335,7 @@ onMounted(async () => {
                 v-if="values.type === 'DML'"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
               >
-                Published DML requires MCP form Elicitation for every commit. Clients without an Elicitation approval UI can still use Query tools, but DML execution will be refused.
+                Published DML requires MCP form Elicitation for every commit. Separate multiple DML statements with semicolons; they are approved once and execute as one atomic transaction. Any revalidation or execution failure rolls back the entire transaction.
               </div>
             </Field>
 
@@ -379,12 +383,15 @@ onMounted(async () => {
                         minHeight: '150px',
                         maxHeight: '400px',
                         overflowY: 'auto',
-                      }" placeholder="SELECT name FROM customers WHERE status = {{ status }}" />
+                      }" :placeholder="sqlTemplatePlaceholder" />
                   </div>
                   <div class="flex justify-between items-start">
                     <div class="space-y-1 text-[0.7rem] text-muted-foreground">
                       <p>
                         SQL is parsed into the same AST as the built-in SQL tools at publish and execution time.
+                      </p>
+                      <p v-if="values.type === 'DML'">
+                        Multiple statements are previewed together. Production execution uses one approval and one database transaction, so all statements commit or all statements roll back.
                       </p>
                       <p v-pre>
                         Use unquoted {{ parameterName }} placeholders for values. Identifiers and SQL fragments cannot be parameters.
@@ -558,7 +565,7 @@ onMounted(async () => {
         <DialogHeader>
           <DialogTitle>Test Execute Tool</DialogTitle>
           <DialogDescription>
-            Run against the bound database. DML tests always roll back and never commit. Production DML additionally requires a client that supports MCP form Elicitation.
+            Run against the bound database. DML tests are preview-only and never commit; multi-statement DML is previewed as one atomic transaction. Production DML additionally requires a client that supports MCP form Elicitation.
           </DialogDescription>
         </DialogHeader>
 
