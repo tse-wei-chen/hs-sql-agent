@@ -29,14 +29,15 @@ public sealed class DurableDmlApprovalLifecycleTests
     private const string RequiredTool = "execute_dml_sql";
 
     [Fact]
-    public async Task PendingApproval_NewScopeAndRuntime_ExecutesExactlyOnce()
+    public async Task PendingApproval_NewServiceProviderAndRuntime_ExecutesExactlyOnce()
     {
         await using var fixture = await Fixture.CreateAsync();
         var request = await PersistPendingInsertAsync(fixture);
 
         Assert.Equal(0L, await fixture.CountTargetRowsAsync());
 
-        await using (var scope = fixture.Services.CreateAsyncScope())
+        await using (var restartedServices = fixture.CreateRestartedServices())
+        await using (var scope = restartedServices.CreateAsyncScope())
         {
             var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
             var completion = await lifecycle.CompleteAsync(
@@ -53,7 +54,8 @@ public sealed class DurableDmlApprovalLifecycleTests
 
         Assert.Equal(1L, await fixture.CountTargetRowsAsync());
 
-        await using (var scope = fixture.Services.CreateAsyncScope())
+        await using (var restartedServices = fixture.CreateRestartedServices())
+        await using (var scope = restartedServices.CreateAsyncScope())
         {
             var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
             var duplicate = await lifecycle.CompleteAsync(
@@ -87,7 +89,8 @@ public sealed class DurableDmlApprovalLifecycleTests
             await context.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
 
-        await using (var scope = fixture.Services.CreateAsyncScope())
+        await using (var restartedServices = fixture.CreateRestartedServices())
+        await using (var scope = restartedServices.CreateAsyncScope())
         {
             var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
             var completion = await lifecycle.CompleteAsync(
@@ -110,7 +113,8 @@ public sealed class DurableDmlApprovalLifecycleTests
         await using var fixture = await Fixture.CreateAsync();
         var request = await PersistPendingInsertAsync(fixture);
 
-        await using (var scope = fixture.Services.CreateAsyncScope())
+        await using (var restartedServices = fixture.CreateRestartedServices())
+        await using (var scope = restartedServices.CreateAsyncScope())
         {
             var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
             var completion = await lifecycle.CompleteAsync(
@@ -222,7 +226,6 @@ public sealed class DurableDmlApprovalLifecycleTests
         {
             var adminPath = Path.Combine(Path.GetTempPath(), $"hsqlagent-durable-admin-{Guid.NewGuid():N}.db");
             var targetPath = Path.Combine(Path.GetTempPath(), $"hsqlagent-durable-target-{Guid.NewGuid():N}.db");
-            var adminConnectionString = new SqliteConnectionStringBuilder { DataSource = adminPath }.ToString();
             var sqlProvider = new SqliteProvider();
             var targetConnectionString = sqlProvider.BuildConnectionString(new BuildDbConnectionModelBase
             {
@@ -239,12 +242,7 @@ public sealed class DurableDmlApprovalLifecycleTests
                     It.IsAny<BuildDbConnectionModelBase>()))
                 .Returns(targetConnectionString);
 
-            var serviceCollection = new ServiceCollection();
-            serviceCollection.AddDbContext<AdminContext>(options => options.UseSqlite(adminConnectionString));
-            serviceCollection.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
-            serviceCollection.AddSingleton<ICryptoService, CryptoService>();
-            serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
-            var services = serviceCollection.BuildServiceProvider();
+            var services = BuildServices(adminPath);
 
             await using (var scope = services.CreateAsyncScope())
             {
@@ -288,6 +286,22 @@ public sealed class DurableDmlApprovalLifecycleTests
                 sqlProvider,
                 providerFactory,
                 connectionStringFactory);
+        }
+
+        public ServiceProvider CreateRestartedServices() => BuildServices(AdminDatabasePath);
+
+        private static ServiceProvider BuildServices(string adminDatabasePath)
+        {
+            var adminConnectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = adminDatabasePath
+            }.ToString();
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddDbContext<AdminContext>(options => options.UseSqlite(adminConnectionString));
+            serviceCollection.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
+            serviceCollection.AddSingleton<ICryptoService, CryptoService>();
+            serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
+            return serviceCollection.BuildServiceProvider();
         }
 
         public DurableDmlApprovalLifecycle CreateLifecycle(
