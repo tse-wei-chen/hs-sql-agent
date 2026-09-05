@@ -41,6 +41,10 @@ services:
       - CacheConfig__KeyPrefix=${CACHE_KEY_PREFIX:-hsqlagent:cache:}
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
       - Mcp__PublicEndpoint=${MCP_PUBLIC_ENDPOINT:-http://localhost:8080/mcp}
+      - DmlApproval__Provider=${DML_APPROVAL_PROVIDER:-McpElicitation}
+      - DmlApproval__Webhook__Endpoint=${DML_APPROVAL_WEBHOOK_ENDPOINT:-}
+      - DmlApproval__Webhook__CallbackUrl=${DML_APPROVAL_WEBHOOK_CALLBACK_URL:-}
+      - DmlApproval__Webhook__SigningSecret=${DML_APPROVAL_WEBHOOK_SIGNING_SECRET:-}
       - Bootstrap__Enabled=${BOOTSTRAP_ENABLED:-false}
       - Bootstrap__Databases__0__BootstrapId=${BOOTSTRAP_DB_ID:-default-db}
       - Bootstrap__Databases__0__Name=${BOOTSTRAP_DB_NAME:-Default DB}

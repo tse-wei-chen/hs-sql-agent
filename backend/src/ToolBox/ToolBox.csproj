@@ -15,6 +15,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Modules\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
+    <ProjectReference Include="..\Modules\HsSqlAgent.Hosting\HsSqlAgent.Hosting.csproj" />
   </ItemGroup>
 </Project>

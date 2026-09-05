@@ -147,11 +147,11 @@ module internal CompileEvidenceBuilder =
 
         [
             match conflictTargetAssurance with
-            | null -> ()
-            | value -> yield conflictAssuranceEvidence value
+            | Null -> ()
+            | NonNull value -> yield conflictAssuranceEvidence value
             match resultRowAssurance with
-            | null -> ()
-            | value -> yield resultRowAssuranceEvidence value
+            | Null -> ()
+            | NonNull value -> yield resultRowAssuranceEvidence value
         ]
         |> Seq.sortBy (fun evidence -> evidence.Kind)
         |> ImmutableArray.CreateRange

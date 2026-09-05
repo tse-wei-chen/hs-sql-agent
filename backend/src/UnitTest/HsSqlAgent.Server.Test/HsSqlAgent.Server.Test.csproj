@@ -34,7 +34,9 @@
     <ProjectReference Include="..\..\Modules\Admin.Service\Admin.Service.csproj" />
     <ProjectReference Include="..\..\Modules\Auth.Service\Auth.Service.csproj" />
     <ProjectReference Include="..\..\Modules\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
-<ProjectReference Include="..\..\Modules\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.fsproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.Approvals.Webhook\HsSqlAgent.Approvals.Webhook.csproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.Hosting\HsSqlAgent.Hosting.csproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.fsproj" />
     <ProjectReference Include="..\..\Modules\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" />
   </ItemGroup>
 
