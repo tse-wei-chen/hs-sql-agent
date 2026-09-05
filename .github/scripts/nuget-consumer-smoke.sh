@@ -2,6 +2,16 @@
 set -euo pipefail
 
 package_source="$(cd "$1" && pwd)"
+
+# Server now has a package dependency on the transport-neutral approval contracts. Pack that
+# dependency into the same local source even when a calling workflow still has an older inline
+# public-package list, so this smoke test exercises the real NuGet dependency boundary.
+if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Approvals.Abstractions.*.nupkg' ! -name '*.symbols.nupkg' -print -quit | grep -q .; then
+  dotnet pack backend/src/Modules/HsSqlAgent.Approvals.Abstractions/HsSqlAgent.Approvals.Abstractions.csproj \
+    --configuration Release \
+    --output "$package_source"
+fi
+
 server_package="$(find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Server.*.nupkg' ! -name '*.symbols.nupkg' -print -quit)"
 if [[ -z "$server_package" ]]; then
   echo "HsSqlAgent.Server package was not found in $package_source" >&2
@@ -40,9 +50,11 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Linq;
 using HsSqlAgent.Approvals;
+using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using Microsoft.Extensions.DependencyInjection;
 
 string[] expectedAssemblies =
 [
@@ -66,7 +78,8 @@ foreach (string assemblyName in expectedAssemblies)
     Console.WriteLine($"Loaded {assembly.GetName().Name} {assembly.GetName().Version}");
 }
 
-_ = typeof(IDmlApprovalProvider);
+var services = new ServiceCollection();
+services.AddHsSqlAgentCore().AddHsSqlAgentDmlApproval<SmokeApprovalProvider>();
 
 var validation = new SqlPlanValidationContext(
     "nuget-consumer-smoke-v2",
