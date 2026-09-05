@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.SqlCore.SqlParsing;
@@ -115,6 +116,7 @@ public sealed class TypedDmlTransactionRuntimeTests
         private string _connectionString = connectionString;
         private ConnectionState _state = ConnectionState.Closed;
 
+        [AllowNull]
         public override string ConnectionString
         {
             get => _connectionString;
