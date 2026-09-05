@@ -35,9 +35,11 @@ Open the Admin Panel at <http://localhost:8080>. See [Configuration](https://sql
 
 ## Use with an MCP client
 
-Create an MCP key in the Admin Panel. The key dialog displays the plaintext secret once and generates configuration for Claude Desktop, Cursor, and generic Streamable HTTP clients.
+Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`, before issuing production keys.
 
-Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`. For client compatibility, onboarding, and DML Elicitation requirements, see [MCP Client Onboarding](https://sql-agent.net/en/docs/mcp/client-onboarding).
+Then open **Runtime → MCP Keys** in the Admin Panel and issue a key. The one-time **Save and connect** dialog displays the plaintext secret and generates ready-to-paste configuration for **Claude Desktop, Cursor, Visual Studio Code, and generic Streamable HTTP clients**. Choose the client tab, click its **Copy ... config** button, and paste the copied JSON into that MCP client.
+
+The plaintext secret is not stored and cannot be shown again after the dialog closes. Rotate or duplicate the key to obtain a new secret and generated configuration. For client compatibility, onboarding, and DML Elicitation requirements, see [MCP Client Onboarding](https://sql-agent.net/en/docs/mcp/client-onboarding).
 
 ## NuGet for existing .NET APIs
 
