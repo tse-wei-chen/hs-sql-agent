@@ -29,6 +29,12 @@ internal static class DmlApprovalRequestFactory
             session.Statements.Select((statement, index) => ToStatement(statement, index + 1)).ToArray(),
             session.Challenge);
 
+    internal static string ComputeEvidenceFingerprint(TypedDmlApprovalSession session) =>
+        ComputeEvidenceFingerprint(session.Preview.Challenge);
+
+    internal static string ComputeEvidenceFingerprint(TypedDmlTransactionApprovalSession session) =>
+        ComputeEvidenceFingerprint(session.Challenge);
+
     internal static void EnsureBoundResult(
         DmlApprovalRequest request,
         DmlApprovalResult result)
@@ -76,16 +82,25 @@ internal static class DmlApprovalRequestFactory
     {
         var material =
             "v1|" +
-            Component(challenge.PlanFingerprint) + "|" +
-            Component(challenge.RowSetFingerprint ?? string.Empty) + "|" +
-            challenge.AffectedRows + "|" +
-            Component(challenge.PolicyVersion) + "|" +
-            Component(challenge.ApprovalContextFingerprint) + "|" +
+            StableEvidenceMaterial(challenge) + "|" +
             challenge.IssuedAt.ToUnixTimeMilliseconds() + "|" +
             challenge.ExpiresAt.ToUnixTimeMilliseconds() + "|" +
             Component(challenge.Nonce);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+        return Hash(material);
     }
+
+    private static string ComputeEvidenceFingerprint(DmlApprovalChallenge challenge) =>
+        Hash("durable-v1|" + StableEvidenceMaterial(challenge));
+
+    private static string StableEvidenceMaterial(DmlApprovalChallenge challenge) =>
+        Component(challenge.PlanFingerprint) + "|" +
+        Component(challenge.RowSetFingerprint ?? string.Empty) + "|" +
+        challenge.AffectedRows + "|" +
+        Component(challenge.PolicyVersion) + "|" +
+        Component(challenge.ApprovalContextFingerprint);
+
+    private static string Hash(string material) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
 
     private static string Component(string value) =>
         Encoding.UTF8.GetByteCount(value) + ":" + value;

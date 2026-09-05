@@ -17,6 +17,7 @@ public class AdminContext(DbContextOptions<AdminContext> options) : DbContext(op
     public DbSet<DbHealthState> DbHealthStates { get; set; } = null!;
     public DbSet<RateLimitMetric> RateLimitMetrics { get; set; } = null!;
     public DbSet<OutboundDelivery> OutboundDeliveries { get; set; } = null!;
+    public DbSet<DmlApprovalRequestState> DmlApprovalRequests { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

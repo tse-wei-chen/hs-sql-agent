@@ -17,5 +17,6 @@ public interface IAdminContext
     DbSet<DbHealthState> DbHealthStates { get; }
     DbSet<RateLimitMetric> RateLimitMetrics { get; }
     DbSet<OutboundDelivery> OutboundDeliveries { get; }
+    DbSet<DmlApprovalRequestState> DmlApprovalRequests { get; }
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
