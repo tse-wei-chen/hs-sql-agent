@@ -60,6 +60,7 @@ public static class WebhookApprovalEndpointRouteBuilderExtensions
 
         if (!WebhookApprovalSignature.Verify(
                 options.SigningSecret,
+                WebhookApprovalEvents.ApprovalCompleted,
                 unixTimestamp,
                 body,
                 signatureHeader.ToString()))
