@@ -1,3 +1,4 @@
+using HsSqlAgent.Approvals;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace HsSqlAgent.Approvals.Webhook;
