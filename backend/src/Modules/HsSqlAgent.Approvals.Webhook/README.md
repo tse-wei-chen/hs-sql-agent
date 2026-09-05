@@ -60,10 +60,10 @@ Callback headers use the same timestamp/signature format and must set:
 The signature is HMAC-SHA256 over the exact bytes:
 
 ```text
-UTF8("<unix-seconds>.") || raw-http-body
+UTF8("<unix-seconds>.<event-name>.") || raw-http-body
 ```
 
-using `SigningSecret`, encoded as `v1=<base64 digest>`. `WebhookApprovalSignature` is public so .NET integrations can generate or verify the protocol without copying cryptographic code.
+using `SigningSecret`, encoded as `v1=<base64 digest>`. The event name is cryptographically bound so a valid `dml.approval.requested` message cannot be replayed as `dml.approval.completed`. `WebhookApprovalSignature` is public so .NET integrations can generate or verify the protocol without copying cryptographic code.
 
 Callbacks outside the configured timestamp tolerance are rejected. Duplicate valid callbacks are safe: the durable approval lifecycle claims the request once and returns `AlreadyCompleted` or `AlreadyProcessing` instead of executing DML twice.
 
