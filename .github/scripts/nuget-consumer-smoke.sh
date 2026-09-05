@@ -92,7 +92,6 @@ foreach (string assemblyName in expectedAssemblies)
 var services = new ServiceCollection();
 services.AddHsSqlAgentCore().AddHsSqlAgentDmlApproval<SmokeApprovalProvider>();
 
-// Keep the asynchronous approval completion API on the public NuGet consumer surface.
 _ = typeof(IDmlApprovalCompletionSink);
 var durableCompletion = DmlApprovalCompletion.Approve(
     "dml_smoke",
@@ -102,14 +101,15 @@ var durableCompletion = DmlApprovalCompletion.Approve(
 if (durableCompletion.Decision != DmlApprovalDecision.Approved)
     throw new InvalidOperationException("Packed approval contracts did not preserve the completion decision.");
 
-// Keep the independent webhook protocol on the packed consumer surface without requiring Server internals.
 var webhookBody = Encoding.UTF8.GetBytes("{\"requestId\":\"dml_smoke\"}");
 var webhookSignature = WebhookApprovalSignature.Compute(
     "smoke-webhook-secret-that-is-at-least-32-bytes",
+    WebhookApprovalEvents.ApprovalCompleted,
     1234567890,
     webhookBody);
 if (!WebhookApprovalSignature.Verify(
         "smoke-webhook-secret-that-is-at-least-32-bytes",
+        WebhookApprovalEvents.ApprovalCompleted,
         1234567890,
         webhookBody,
         webhookSignature))
