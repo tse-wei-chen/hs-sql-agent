@@ -15,7 +15,8 @@ public partial class SqlAgentTool(
     ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
     ITypedQueryRuntime? typedQueryRuntime = null,
     TypedDmlRuntime? typedDmlRuntime = null,
-    IDmlApprovalProvider? dmlApprovalProvider = null)
+    IDmlApprovalProvider? dmlApprovalProvider = null,
+    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
@@ -26,4 +27,5 @@ public partial class SqlAgentTool(
     private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
     private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
     private readonly IDmlApprovalProvider? _dmlApprovalProvider = dmlApprovalProvider;
+    private readonly IDmlApprovalCompletionSink? _dmlApprovalCompletionSink = dmlApprovalCompletionSink;
 }

@@ -9,15 +9,13 @@ namespace HsSqlAgent.Server.Tools;
 
 internal static class DmlApprovalRequestFactory
 {
+    private static readonly TimeSpan DurableApprovalLifetime = TimeSpan.FromHours(1);
+
     internal static DmlApprovalRequest Create(
         string title,
         DmlApprovalExecutionContext approvalContext,
         TypedDmlApprovalSession session) =>
-        CreateCore(
-            title,
-            approvalContext,
-            [ToStatement(session, 1)],
-            session.Preview.Challenge);
+        CreateCore(title, approvalContext, [ToStatement(session, 1)], session.Preview.Challenge);
 
     internal static DmlApprovalRequest Create(
         string title,
@@ -29,19 +27,18 @@ internal static class DmlApprovalRequestFactory
             session.Statements.Select((statement, index) => ToStatement(statement, index + 1)).ToArray(),
             session.Challenge);
 
-    internal static void EnsureBoundResult(
-        DmlApprovalRequest request,
-        DmlApprovalResult result)
+    internal static string ComputeEvidenceFingerprint(TypedDmlApprovalSession session) =>
+        ComputeEvidenceFingerprint(session.Preview.Challenge);
+
+    internal static string ComputeEvidenceFingerprint(TypedDmlTransactionApprovalSession session) =>
+        ComputeEvidenceFingerprint(session.Challenge);
+
+    internal static void EnsureBoundResult(DmlApprovalRequest request, DmlApprovalResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (!string.Equals(
-                request.ApprovalFingerprint,
-                result.ApprovalFingerprint,
-                StringComparison.Ordinal))
-        {
+        if (!string.Equals(request.ApprovalFingerprint, result.ApprovalFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "DML approval provider returned a decision for different approval evidence.");
-        }
     }
 
     private static DmlApprovalRequest CreateCore(
@@ -60,11 +57,10 @@ internal static class DmlApprovalRequestFactory
             TotalAffectedRows: challenge.AffectedRows,
             ApprovalFingerprint: ComputeApprovalFingerprint(challenge),
             IssuedAt: challenge.IssuedAt,
-            ExpiresAt: challenge.ExpiresAt);
+            ExpiresAt: challenge.ExpiresAt,
+            DurableUntil: challenge.IssuedAt.Add(DurableApprovalLifetime));
 
-    private static DmlApprovalStatement ToStatement(
-        TypedDmlApprovalSession statement,
-        int index) =>
+    private static DmlApprovalStatement ToStatement(TypedDmlApprovalSession statement, int index) =>
         new(
             Index: index,
             Operation: statement.Plan.Operation.ToString().ToUpperInvariant(),
@@ -75,18 +71,25 @@ internal static class DmlApprovalRequestFactory
     private static string ComputeApprovalFingerprint(DmlApprovalChallenge challenge)
     {
         var material =
-            "v1|" +
-            Component(challenge.PlanFingerprint) + "|" +
-            Component(challenge.RowSetFingerprint ?? string.Empty) + "|" +
-            challenge.AffectedRows + "|" +
-            Component(challenge.PolicyVersion) + "|" +
-            Component(challenge.ApprovalContextFingerprint) + "|" +
+            "v1|" + StableEvidenceMaterial(challenge) + "|" +
             challenge.IssuedAt.ToUnixTimeMilliseconds() + "|" +
             challenge.ExpiresAt.ToUnixTimeMilliseconds() + "|" +
             Component(challenge.Nonce);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+        return Hash(material);
     }
 
-    private static string Component(string value) =>
-        Encoding.UTF8.GetByteCount(value) + ":" + value;
+    private static string ComputeEvidenceFingerprint(DmlApprovalChallenge challenge) =>
+        Hash("durable-v1|" + StableEvidenceMaterial(challenge));
+
+    private static string StableEvidenceMaterial(DmlApprovalChallenge challenge) =>
+        Component(challenge.PlanFingerprint) + "|" +
+        Component(challenge.RowSetFingerprint ?? string.Empty) + "|" +
+        challenge.AffectedRows + "|" +
+        Component(challenge.PolicyVersion) + "|" +
+        Component(challenge.ApprovalContextFingerprint);
+
+    private static string Hash(string material) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+
+    private static string Component(string value) => Encoding.UTF8.GetByteCount(value) + ":" + value;
 }

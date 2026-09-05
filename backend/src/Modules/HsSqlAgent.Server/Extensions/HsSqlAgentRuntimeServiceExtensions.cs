@@ -4,6 +4,7 @@ using Admin.Service.Models;
 using Admin.Service.Services;
 using Common.Interfaces;
 using Common.Services;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
 using Infrastructure.Caching;
@@ -85,6 +86,9 @@ public static class HsSqlAgentRuntimeServiceExtensions
         services.AddSingleton(provider => new TypedDmlRuntime(
             challengeStore: provider.GetRequiredService<IDmlApprovalChallengeStore>(),
             compileEvidenceObserver: provider.GetRequiredService<ISqlCompileEvidenceObserver>()));
+        services.AddScoped<DurableDmlApprovalLifecycle>();
+        services.AddScoped<IDmlApprovalCompletionSink>(provider =>
+            provider.GetRequiredService<DurableDmlApprovalLifecycle>());
 
         services.Configure<BootstrapOptions>(bootstrap =>
         {
