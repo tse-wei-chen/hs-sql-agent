@@ -42,16 +42,21 @@ public enum WebhookApprovalDecision
 
 /// <summary>
 /// Shared v1 HMAC-SHA256 signature helper for request and callback bodies.
-/// The signed bytes are UTF-8("{unixTimestamp}.") followed by the exact HTTP body bytes.
+/// The signed bytes are UTF-8("{unixTimestamp}.{eventName}.") followed by the exact HTTP body bytes.
 /// </summary>
 public static class WebhookApprovalSignature
 {
     public const string VersionPrefix = "v1=";
 
-    public static string Compute(string secret, long unixTimestamp, ReadOnlySpan<byte> body)
+    public static string Compute(
+        string secret,
+        string eventName,
+        long unixTimestamp,
+        ReadOnlySpan<byte> body)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(secret);
-        var prefix = Encoding.UTF8.GetBytes($"{unixTimestamp}.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(eventName);
+        var prefix = Encoding.UTF8.GetBytes($"{unixTimestamp}.{eventName}.");
         var payload = new byte[prefix.Length + body.Length];
         prefix.CopyTo(payload, 0);
         body.CopyTo(payload.AsSpan(prefix.Length));
@@ -59,9 +64,15 @@ public static class WebhookApprovalSignature
         return VersionPrefix + Convert.ToBase64String(digest);
     }
 
-    public static bool Verify(string secret, long unixTimestamp, ReadOnlySpan<byte> body, string provided)
+    public static bool Verify(
+        string secret,
+        string eventName,
+        long unixTimestamp,
+        ReadOnlySpan<byte> body,
+        string provided)
     {
         if (string.IsNullOrWhiteSpace(secret)
+            || string.IsNullOrWhiteSpace(eventName)
             || string.IsNullOrWhiteSpace(provided)
             || !provided.StartsWith(VersionPrefix, StringComparison.Ordinal))
             return false;
@@ -76,7 +87,8 @@ public static class WebhookApprovalSignature
             return false;
         }
 
-        var expected = Convert.FromBase64String(Compute(secret, unixTimestamp, body)[VersionPrefix.Length..]);
+        var expected = Convert.FromBase64String(
+            Compute(secret, eventName, unixTimestamp, body)[VersionPrefix.Length..]);
         return supplied.Length == expected.Length && CryptographicOperations.FixedTimeEquals(supplied, expected);
     }
 }
