@@ -26,7 +26,8 @@ public interface IDmlApprovalCompletionSink
 
 /// <summary>
 /// Transport-neutral, execution-primitive-free description of the exact DML evidence being
-/// presented for approval.
+/// presented for approval. ExpiresAt is the short-lived synchronous execution challenge deadline;
+/// DurableUntil is the latest time a Pending request may be completed asynchronously.
 /// </summary>
 public sealed record DmlApprovalRequest(
     string RequestId,
@@ -39,7 +40,8 @@ public sealed record DmlApprovalRequest(
     int TotalAffectedRows,
     string ApprovalFingerprint,
     DateTimeOffset IssuedAt,
-    DateTimeOffset ExpiresAt)
+    DateTimeOffset ExpiresAt,
+    DateTimeOffset? DurableUntil = null)
 {
     public bool IsTransaction => Statements.Count > 1;
 }
@@ -74,23 +76,14 @@ public sealed record DmlApprovalResult(
         DmlApprovalRequest request,
         string? approverIdentity = null,
         string? externalReference = null) =>
-        new(
-            DmlApprovalDecision.Approved,
-            request.ApprovalFingerprint,
-            approverIdentity,
-            externalReference);
+        new(DmlApprovalDecision.Approved, request.ApprovalFingerprint, approverIdentity, externalReference);
 
     public static DmlApprovalResult Reject(
         DmlApprovalRequest request,
         string? reason = null,
         string? approverIdentity = null,
         string? externalReference = null) =>
-        new(
-            DmlApprovalDecision.Rejected,
-            request.ApprovalFingerprint,
-            approverIdentity,
-            externalReference,
-            reason);
+        new(DmlApprovalDecision.Rejected, request.ApprovalFingerprint, approverIdentity, externalReference, reason);
 
     public static DmlApprovalResult Pending(
         DmlApprovalRequest request,
@@ -120,12 +113,7 @@ public sealed record DmlApprovalCompletion(
         string approvalFingerprint,
         string? approverIdentity = null,
         string? externalReference = null) =>
-        new(
-            requestId,
-            DmlApprovalDecision.Approved,
-            approvalFingerprint,
-            approverIdentity,
-            externalReference);
+        new(requestId, DmlApprovalDecision.Approved, approvalFingerprint, approverIdentity, externalReference);
 
     public static DmlApprovalCompletion Reject(
         string requestId,

@@ -9,15 +9,13 @@ namespace HsSqlAgent.Server.Tools;
 
 internal static class DmlApprovalRequestFactory
 {
+    private static readonly TimeSpan DurableApprovalLifetime = TimeSpan.FromHours(1);
+
     internal static DmlApprovalRequest Create(
         string title,
         DmlApprovalExecutionContext approvalContext,
         TypedDmlApprovalSession session) =>
-        CreateCore(
-            title,
-            approvalContext,
-            [ToStatement(session, 1)],
-            session.Preview.Challenge);
+        CreateCore(title, approvalContext, [ToStatement(session, 1)], session.Preview.Challenge);
 
     internal static DmlApprovalRequest Create(
         string title,
@@ -35,19 +33,12 @@ internal static class DmlApprovalRequestFactory
     internal static string ComputeEvidenceFingerprint(TypedDmlTransactionApprovalSession session) =>
         ComputeEvidenceFingerprint(session.Challenge);
 
-    internal static void EnsureBoundResult(
-        DmlApprovalRequest request,
-        DmlApprovalResult result)
+    internal static void EnsureBoundResult(DmlApprovalRequest request, DmlApprovalResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
-        if (!string.Equals(
-                request.ApprovalFingerprint,
-                result.ApprovalFingerprint,
-                StringComparison.Ordinal))
-        {
+        if (!string.Equals(request.ApprovalFingerprint, result.ApprovalFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "DML approval provider returned a decision for different approval evidence.");
-        }
     }
 
     private static DmlApprovalRequest CreateCore(
@@ -66,11 +57,10 @@ internal static class DmlApprovalRequestFactory
             TotalAffectedRows: challenge.AffectedRows,
             ApprovalFingerprint: ComputeApprovalFingerprint(challenge),
             IssuedAt: challenge.IssuedAt,
-            ExpiresAt: challenge.ExpiresAt);
+            ExpiresAt: challenge.ExpiresAt,
+            DurableUntil: challenge.IssuedAt.Add(DurableApprovalLifetime));
 
-    private static DmlApprovalStatement ToStatement(
-        TypedDmlApprovalSession statement,
-        int index) =>
+    private static DmlApprovalStatement ToStatement(TypedDmlApprovalSession statement, int index) =>
         new(
             Index: index,
             Operation: statement.Plan.Operation.ToString().ToUpperInvariant(),
@@ -81,8 +71,7 @@ internal static class DmlApprovalRequestFactory
     private static string ComputeApprovalFingerprint(DmlApprovalChallenge challenge)
     {
         var material =
-            "v1|" +
-            StableEvidenceMaterial(challenge) + "|" +
+            "v1|" + StableEvidenceMaterial(challenge) + "|" +
             challenge.IssuedAt.ToUnixTimeMilliseconds() + "|" +
             challenge.ExpiresAt.ToUnixTimeMilliseconds() + "|" +
             Component(challenge.Nonce);
@@ -102,6 +91,5 @@ internal static class DmlApprovalRequestFactory
     private static string Hash(string material) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
 
-    private static string Component(string value) =>
-        Encoding.UTF8.GetByteCount(value) + ":" + value;
+    private static string Component(string value) => Encoding.UTF8.GetByteCount(value) + ":" + value;
 }

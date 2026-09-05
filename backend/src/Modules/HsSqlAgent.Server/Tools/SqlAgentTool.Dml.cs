@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Models;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.SqlCore.SqlParsing;
 using ModelContextProtocol.Server;
@@ -33,31 +34,28 @@ public partial class SqlAgentTool
         try
         {
             ValidateToolAccess("execute_dml_sql");
-            if (string.IsNullOrWhiteSpace(sql))
-                return "Error: SQL is missing.";
+            if (string.IsNullOrWhiteSpace(sql)) return "Error: SQL is missing.";
 
             var sqlConfig = await ResolveSqlConfigAsync();
-            if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return InvalidSqlConfigurationMessage;
+            if (!CheckProviderAndConnectionString(sqlConfig, out var dbType)) return InvalidSqlConfigurationMessage;
+            var accessKeyId = ResolveAccessKeyId()
+                              ?? throw new UnauthorizedAccessException("DML approval requires a stable MCP access-key identity.");
+            var dbManagementId = ResolveDbManagementId()
+                                 ?? throw new UnauthorizedAccessException("DML approval requires a stable target database identity.");
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             parsedBatch = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
-                provider,
-                sqlConfig.ConnectionString,
-                sql,
-                dbType,
-                cancellationToken);
+                provider, sqlConfig.ConnectionString, sql, dbType, cancellationToken);
             foreach (var statement in parsedBatch.Statements)
                 TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
 
-            var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(
-                _httpContextAccessor.HttpContext,
-                dbType);
+            var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(_httpContextAccessor.HttpContext, dbType);
             var flow = new TypedDmlTransactionApprovalFlow(
                 _typedDmlRuntime,
                 _securityPolicyRuntimeState,
                 _sqlConcurrencyLimiter,
-                ResolveTableWhitelist);
+                ResolveTableWhitelist,
+                _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle);
             var descriptor = DescribeBatch(parsedBatch);
             var approvalTitle = parsedBatch.Count == 1
                 ? $"{descriptor.Operation} on `{descriptor.Resource}`"
@@ -72,17 +70,28 @@ public partial class SqlAgentTool
                 approvalContext,
                 approvalProvider,
                 approvalTitle,
-                cancellationToken);
+                cancellationToken,
+                new DmlApprovalResumeContext(
+                    sql,
+                    "execute_dml_sql",
+                    accessKeyId,
+                    dbManagementId,
+                    dbType));
 
             approvalWaitDurationMs = execution.ApprovalWaitDurationMs;
             affectedRowCount = execution.AffectedRows;
             if (!execution.Committed)
             {
-                var cancelled = execution.Result.Contains("cancelled", StringComparison.OrdinalIgnoreCase);
+                var (auditResult, approvalStatus) = execution.ApprovalDecision switch
+                {
+                    DmlApprovalDecision.Pending => ("pending", "pending"),
+                    DmlApprovalDecision.Rejected => ("cancelled", "declined"),
+                    _ => ("failed", "not-completed")
+                };
                 await WriteDmlAuditAsync(
                     parsedBatch,
-                    cancelled ? "cancelled" : "failed",
-                    cancelled ? "declined" : "not-completed",
+                    auditResult,
+                    approvalStatus,
                     stopwatch,
                     approvalWaitDurationMs,
                     affectedRowCount,
@@ -94,7 +103,7 @@ public partial class SqlAgentTool
             await WriteDmlAuditAsync(
                 parsedBatch,
                 "success",
-                "interactive-accepted",
+                "approved",
                 stopwatch,
                 approvalWaitDurationMs,
                 affectedRowCount,
@@ -104,10 +113,7 @@ public partial class SqlAgentTool
                 cancellationToken);
             return execution.Result;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             var descriptor = parsedBatch is null ? null : DescribeBatch(parsedBatch);
@@ -160,18 +166,13 @@ public partial class SqlAgentTool
             cancellationToken);
     }
 
-    // Keep the original single-statement audit contract for compatibility and focused inspection tests.
     private static string DescribeDml(ParsedStatement parsedMutation)
     {
         var descriptor = DescribeMutation(parsedMutation);
         var valueFields = parsedMutation.Statement switch
         {
-            UpdateStatement updateStatement => updateStatement.Assignments
-                .Select(assignment => IdentifierText(assignment.Column))
-                .ToArray(),
-            InsertStatement insertStatement => insertStatement.Columns
-                .Select(IdentifierText)
-                .ToArray(),
+            UpdateStatement updateStatement => updateStatement.Assignments.Select(assignment => IdentifierText(assignment.Column)).ToArray(),
+            InsertStatement insertStatement => insertStatement.Columns.Select(IdentifierText).ToArray(),
             _ => []
         };
         var hasWhere = parsedMutation.Statement switch
@@ -200,16 +201,11 @@ public partial class SqlAgentTool
                 Index = index + 1,
                 Operation = root.GetProperty("Operation").GetString(),
                 TableName = root.GetProperty("TableName").GetString(),
-                ValueFields = root.GetProperty("ValueFields").EnumerateArray()
-                    .Select(value => value.GetString()).ToArray(),
+                ValueFields = root.GetProperty("ValueFields").EnumerateArray().Select(value => value.GetString()).ToArray(),
                 HasWhere = root.GetProperty("HasWhere").GetBoolean()
             };
         }).ToArray();
-        return JsonSerializer.Serialize(new
-        {
-            StatementCount = parsedBatch.Count,
-            Statements = statements
-        });
+        return JsonSerializer.Serialize(new { StatementCount = parsedBatch.Count, Statements = statements });
     }
 
     private static DmlBatchDescriptor DescribeBatch(ParsedDmlBatch parsedBatch)
@@ -222,14 +218,13 @@ public partial class SqlAgentTool
         return new DmlBatchDescriptor("TRANSACTION", "multiple");
     }
 
-    private static DmlDescriptor DescribeMutation(ParsedStatement parsedMutation) =>
-        parsedMutation.Statement switch
-        {
-            UpdateStatement updateTarget => new DmlDescriptor("UPDATE", IdentifierText(updateTarget.Target.Name)),
-            DeleteStatement deleteTarget => new DmlDescriptor("DELETE", IdentifierText(deleteTarget.Target.Name)),
-            InsertStatement insertTarget => new DmlDescriptor("INSERT", IdentifierText(insertTarget.Target.Name)),
-            _ => new DmlDescriptor(parsedMutation.Statement.GetType().Name, "unknown")
-        };
+    private static DmlDescriptor DescribeMutation(ParsedStatement parsedMutation) => parsedMutation.Statement switch
+    {
+        UpdateStatement updateTarget => new DmlDescriptor("UPDATE", IdentifierText(updateTarget.Target.Name)),
+        DeleteStatement deleteTarget => new DmlDescriptor("DELETE", IdentifierText(deleteTarget.Target.Name)),
+        InsertStatement insertTarget => new DmlDescriptor("INSERT", IdentifierText(insertTarget.Target.Name)),
+        _ => new DmlDescriptor(parsedMutation.Statement.GetType().Name, "unknown")
+    };
 
     private static string IdentifierText(SqlIdentifier identifier) =>
         string.Join('.', identifier.Parts.Select(part => part.Value));
