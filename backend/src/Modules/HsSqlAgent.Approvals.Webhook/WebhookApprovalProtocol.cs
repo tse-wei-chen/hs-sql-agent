@@ -39,12 +39,17 @@ public enum WebhookApprovalDecision
     Rejected
 }
 
-internal static class WebhookApprovalSignature
+/// <summary>
+/// Shared v1 HMAC-SHA256 signature helper for request and callback bodies.
+/// The signed bytes are UTF-8("{unixTimestamp}.") followed by the exact HTTP body bytes.
+/// </summary>
+public static class WebhookApprovalSignature
 {
-    internal const string VersionPrefix = "v1=";
+    public const string VersionPrefix = "v1=";
 
     public static string Compute(string secret, long unixTimestamp, ReadOnlySpan<byte> body)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(secret);
         var prefix = Encoding.UTF8.GetBytes($"{unixTimestamp}.");
         var payload = new byte[prefix.Length + body.Length];
         prefix.CopyTo(payload, 0);
@@ -55,7 +60,11 @@ internal static class WebhookApprovalSignature
 
     public static bool Verify(string secret, long unixTimestamp, ReadOnlySpan<byte> body, string provided)
     {
-        if (!provided.StartsWith(VersionPrefix, StringComparison.Ordinal)) return false;
+        if (string.IsNullOrWhiteSpace(secret)
+            || string.IsNullOrWhiteSpace(provided)
+            || !provided.StartsWith(VersionPrefix, StringComparison.Ordinal))
+            return false;
+
         byte[] supplied;
         try
         {
