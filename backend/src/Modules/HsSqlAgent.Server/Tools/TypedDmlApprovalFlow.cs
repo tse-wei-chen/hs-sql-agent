@@ -1,17 +1,14 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Interfaces;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Services;
-using ModelContextProtocol.Protocol;
-using static ModelContextProtocol.Protocol.ElicitRequestParams;
 
 namespace HsSqlAgent.Server.Tools;
 
 /// <summary>
-/// Shared interactive approval orchestration for server DML entry points. The flow never accepts
-/// or produces a legacy confirmation token; the only commit credential is the typed one-time
-/// challenge embedded in the preview session. Provider identity and the parser-native mutation are
-/// explicit and strategy-free.
+/// Shared approval orchestration for server DML entry points. Approval transport is supplied by
+/// IDmlApprovalProvider; commit authority stays inside the typed runtime.
 /// </summary>
 internal sealed class TypedDmlApprovalFlow(
     TypedDmlRuntime runtime,
@@ -24,17 +21,17 @@ internal sealed class TypedDmlApprovalFlow(
         string connectionString,
         ParsedStatement parsedMutation,
         DmlApprovalExecutionContext approvalContext,
-        IDmlApprovalClient? approvalClient,
+        IDmlApprovalProvider? approvalProvider,
         string approvalTitle,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(parsedMutation);
 
-        if (approvalClient?.SupportsElicitation != true)
+        if (approvalProvider is null)
         {
             return new TypedDmlExecutionTiming(
-                "Error: This MCP client does not support the interactive confirmation required for DML execution.",
+                "Error: This MCP client does not support the interactive confirmation required for DML execution. Configure IDmlApprovalProvider to use another approval system.",
                 0,
                 null,
                 false);
@@ -64,32 +61,17 @@ internal sealed class TypedDmlApprovalFlow(
                 cancellationToken);
         }
 
-        var affectedRows = session.Preview.AffectedRows;
-        var previewJson = JsonSerializer.Serialize(session.Preview.Rows);
-        var operation = session.Plan.Operation.ToString().ToUpperInvariant();
+        var approvalRequest = DmlApprovalRequestFactory.Create(
+            approvalTitle,
+            approvalContext,
+            session);
         var approvalStopwatch = Stopwatch.StartNew();
-        ElicitResult elicitResult;
+        DmlApprovalResult approvalResult;
         try
         {
-            elicitResult = await approvalClient.ElicitAsync(new ElicitRequestParams
-            {
-                Message =
-                    $"## {approvalTitle}\n\n" +
-                    $"**{operation} on `{session.Plan.TableName}` — {affectedRows} row(s) affected**\n\n" +
-                    $"### Impact preview\n\n{previewJson}",
-                RequestedSchema = new RequestSchema
-                {
-                    Properties =
-                    {
-                        ["approve"] = new BooleanSchema
-                        {
-                            Title = "Approve execution",
-                            Description =
-                                $"This will **{operation} {affectedRows} row(s)** in `{session.Plan.TableName}`."
-                        }
-                    }
-                }
-            }, cancellationToken);
+            approvalResult = await approvalProvider.RequestApprovalAsync(
+                approvalRequest,
+                cancellationToken);
         }
         finally
         {
@@ -97,14 +79,25 @@ internal sealed class TypedDmlApprovalFlow(
         }
 
         var approvalWaitDurationMs = approvalStopwatch.ElapsedMilliseconds;
-        if (elicitResult.Action != "accept"
-            || elicitResult.Content?.TryGetValue("approve", out var approveElement) != true
-            || approveElement.ValueKind != JsonValueKind.True)
+        DmlApprovalRequestFactory.EnsureBoundResult(approvalRequest, approvalResult);
+        if (approvalResult.Decision == DmlApprovalDecision.Pending)
+        {
+            var reference = string.IsNullOrWhiteSpace(approvalResult.ExternalReference)
+                ? string.Empty
+                : $" externalReference={approvalResult.ExternalReference}";
+            return new TypedDmlExecutionTiming(
+                $"DML approval is pending external review. No database changes were committed.{reference}",
+                approvalWaitDurationMs,
+                session.Preview.AffectedRows,
+                false);
+        }
+
+        if (approvalResult.Decision != DmlApprovalDecision.Approved)
         {
             return new TypedDmlExecutionTiming(
-                "DML execution cancelled by user.",
+                approvalResult.Reason ?? "DML execution cancelled by approval provider.",
                 approvalWaitDurationMs,
-                affectedRows,
+                session.Preview.AffectedRows,
                 false);
         }
 
@@ -117,7 +110,7 @@ internal sealed class TypedDmlApprovalFlow(
                 return new TypedDmlExecutionTiming(
                     "Server busy: maximum concurrent SQL operations reached.",
                     approvalWaitDurationMs,
-                    affectedRows,
+                    session.Preview.AffectedRows,
                     false);
             }
 

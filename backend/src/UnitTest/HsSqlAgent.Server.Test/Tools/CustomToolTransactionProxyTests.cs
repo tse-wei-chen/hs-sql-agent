@@ -3,10 +3,10 @@ using System.Text.Json;
 using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
-using ModelContextProtocol.Protocol;
 using Moq;
 using SqlAgent.Service.Interfaces;
 using Xunit;
@@ -16,7 +16,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 public sealed class CustomToolTransactionProxyTests
 {
     [Fact]
-    public async Task Execute_MultiStatementDml_UsesOneAtomicApproval()
+    public async Task Execute_MultiStatementDml_UsesOnePluggableApprovalProviderWithoutMcpElicitation()
     {
         var toolService = new Mock<ICustomSqlToolService>();
         toolService.Setup(x => x.GetPublishedToolByNameAsync(
@@ -69,7 +69,7 @@ public sealed class CustomToolTransactionProxyTests
         limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
 
-        var approval = new CapturingDecliningApprovalClient();
+        var approval = new CapturingDecliningApprovalProvider();
         var proxy = new CustomToolProxy(
             "archive_order",
             toolService.Object,
@@ -78,37 +78,43 @@ public sealed class CustomToolTransactionProxyTests
             Mock.Of<IAuditService>(),
             Mock.Of<IQueryValueParserService>(),
             policyState.Object,
-            limiter.Object);
+            limiter.Object,
+            dmlApprovalProvider: approval);
 
         var result = await proxy.Execute(
             JsonSerializer.SerializeToElement(new { }),
-            approval,
-            TestContext.Current.CancellationToken);
+            server: null,
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Contains("cancelled by user", result, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, approval.ElicitCount);
+        Assert.Equal(1, approval.RequestCount);
         Assert.NotNull(approval.LastRequest);
-        Assert.Contains("2 statement(s)", approval.LastRequest!.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Atomic transaction", approval.LastRequest.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(approval.LastRequest!.IsTransaction);
+        Assert.Equal(2, approval.LastRequest.Statements.Count);
+        Assert.Equal(2, approval.LastRequest.TotalAffectedRows);
+        Assert.Equal("mcp-key:7", approval.LastRequest.RequesterIdentity);
+        Assert.Equal("testdb", approval.LastRequest.DatabaseIdentity);
+        Assert.All(approval.LastRequest.Statements, statement => Assert.Equal("INSERT", statement.Operation));
         connections.Verify(
             x => x.Create("Host=localhost;Database=testdb"),
             Times.Exactly(3));
         metadata.VerifyNoOtherCalls();
     }
 
-    private sealed class CapturingDecliningApprovalClient : IDmlApprovalClient
+    private sealed class CapturingDecliningApprovalProvider : IDmlApprovalProvider
     {
-        public bool SupportsElicitation => true;
-        public int ElicitCount { get; private set; }
-        public ElicitRequestParams? LastRequest { get; private set; }
+        public int RequestCount { get; private set; }
+        public DmlApprovalRequest? LastRequest { get; private set; }
 
-        public ValueTask<ElicitResult> ElicitAsync(
-            ElicitRequestParams request,
-            CancellationToken cancellationToken)
+        public ValueTask<DmlApprovalResult> RequestApprovalAsync(
+            DmlApprovalRequest request,
+            CancellationToken cancellationToken = default)
         {
-            ElicitCount++;
+            RequestCount++;
             LastRequest = request;
-            return ValueTask.FromResult(new ElicitResult { Action = "decline" });
+            return ValueTask.FromResult(DmlApprovalResult.Reject(
+                request,
+                "DML transaction execution cancelled by user."));
         }
     }
 }

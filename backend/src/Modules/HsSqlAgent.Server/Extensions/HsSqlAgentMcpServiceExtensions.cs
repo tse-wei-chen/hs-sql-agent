@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
@@ -146,7 +147,8 @@ public static class HsSqlAgentMcpServiceExtensions
                                     sp.GetRequiredService<ISecurityPolicyRuntimeState>(),
                                     sp.GetRequiredService<ISqlExecutionConcurrencyLimiter>(),
                                     sp.GetRequiredService<ITypedQueryRuntime>(),
-                                    sp.GetRequiredService<TypedDmlRuntime>());
+                                    sp.GetRequiredService<TypedDmlRuntime>(),
+                                    sp.GetService<IDmlApprovalProvider>());
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
                                 return await proxy.Execute(json, server, ct);
                             });

@@ -62,12 +62,15 @@ public partial class SqlAgentTool
             var approvalTitle = parsedBatch.Count == 1
                 ? $"{descriptor.Operation} on `{descriptor.Resource}`"
                 : $"Atomic DML transaction ({parsedBatch.Count} statements)";
+            var approvalProvider = DmlApprovalProviderResolver.Resolve(
+                _dmlApprovalProvider,
+                new McpDmlApprovalClient(server));
             var execution = await flow.ExecuteAsync(
                 provider,
                 sqlConfig.ConnectionString,
                 parsedBatch,
                 approvalContext,
-                new McpDmlApprovalClient(server),
+                approvalProvider,
                 approvalTitle,
                 cancellationToken);
 

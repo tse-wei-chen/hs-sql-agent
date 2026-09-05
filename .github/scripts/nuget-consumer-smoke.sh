@@ -39,6 +39,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Linq;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
@@ -46,6 +47,7 @@ using HsSqlAgent.SqlCore.Enums;
 string[] expectedAssemblies =
 [
     "HsSqlAgent.Server",
+    "HsSqlAgent.Approvals.Abstractions",
     "HsSqlAgent.SqlCore",
     "FSharp.Core",
     "HsSqlAgent.Provider.Abstractions",
@@ -63,6 +65,8 @@ foreach (string assemblyName in expectedAssemblies)
     _ = assembly.GetExportedTypes();
     Console.WriteLine($"Loaded {assembly.GetName().Name} {assembly.GetName().Version}");
 }
+
+_ = typeof(IDmlApprovalProvider);
 
 var validation = new SqlPlanValidationContext(
     "nuget-consumer-smoke-v2",
@@ -87,6 +91,14 @@ if (command.Sql.Contains("= 1", StringComparison.Ordinal))
     throw new InvalidOperationException("Packed SqlCore facade inlined a predicate literal that must remain parameterized.");
 
 Console.WriteLine($"Compiled public SqlCore query via packed Server dependency: {command.Sql}");
+
+sealed class SmokeApprovalProvider : IDmlApprovalProvider
+{
+    public ValueTask<DmlApprovalResult> RequestApprovalAsync(
+        DmlApprovalRequest request,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(DmlApprovalResult.Reject(request));
+}
 EOF
 
 dotnet restore "$consumer_dir" --configfile "$consumer_dir/NuGet.Config" --no-cache
