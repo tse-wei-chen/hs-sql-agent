@@ -558,6 +558,105 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                     b.ToTable("DbSemanticRelationships");
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.DmlApprovalRequestState", b =>
+                {
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("AccessKeyId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ApprovalFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ApproverIdentity")
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("CustomToolId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("CustomToolRevisionId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DatabaseIdentity")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("DatabaseProvider")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<int>("DbManagementId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EvidenceFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExternalReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ProtectedExecutionPayload")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<string>("RequesterIdentity")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("RequiredToolName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("StatementCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Status")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(24)
+                        .HasColumnType("character varying(24)");
+
+                    b.Property<string>("TargetIdentity")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("TotalAffectedRows")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("RequestId");
+
+                    b.HasIndex("ExternalReference");
+
+                    b.HasIndex("Status", "ExpiresAt");
+
+                    b.ToTable("DmlApprovalRequests", (string)null);
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.McpAccessKey", b =>
                 {
                     b.Property<int>("Id")
