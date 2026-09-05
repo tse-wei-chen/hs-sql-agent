@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore.Core.Ast;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;

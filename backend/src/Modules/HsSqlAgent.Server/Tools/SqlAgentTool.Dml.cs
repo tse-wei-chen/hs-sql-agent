@@ -120,7 +120,7 @@ public partial class SqlAgentTool
                     AffectedRows = affectedRowCount,
                     ApprovalStatus = "not-completed",
                     ErrorCategory = ex.GetType().Name,
-                    Definition = parsedBatch is null ? null : DescribeDml(parsedBatch)
+                    Definition = parsedBatch is null ? null : DescribeDmlBatch(parsedBatch)
                 },
                 ex.Message,
                 cancellationToken);
@@ -151,40 +151,55 @@ public partial class SqlAgentTool
                 AffectedRows = affectedRows,
                 ApprovalStatus = approvalStatus,
                 ErrorCategory = result == "failed" ? "PolicyOrExecutionDenied" : null,
-                Definition = DescribeDml(parsedBatch)
+                Definition = DescribeDmlBatch(parsedBatch)
             },
             detail,
             cancellationToken);
     }
 
-    private static string DescribeDml(ParsedDmlBatch parsedBatch)
+    // Keep the original single-statement audit contract for compatibility and focused inspection tests.
+    private static string DescribeDml(ParsedStatement parsedMutation)
+    {
+        var descriptor = DescribeMutation(parsedMutation);
+        var valueFields = parsedMutation.Statement switch
+        {
+            UpdateStatement updateStatement => updateStatement.Assignments
+                .Select(assignment => IdentifierText(assignment.Column))
+                .ToArray(),
+            InsertStatement insertStatement => insertStatement.Columns
+                .Select(IdentifierText)
+                .ToArray(),
+            _ => []
+        };
+        var hasWhere = parsedMutation.Statement switch
+        {
+            UpdateStatement updateWithPredicate => updateWithPredicate.Predicate is not null,
+            DeleteStatement deleteWithPredicate => deleteWithPredicate.Predicate is not null,
+            _ => false
+        };
+        return JsonSerializer.Serialize(new
+        {
+            descriptor.Operation,
+            TableName = descriptor.Table,
+            ValueFields = valueFields,
+            HasWhere = hasWhere
+        });
+    }
+
+    private static string DescribeDmlBatch(ParsedDmlBatch parsedBatch)
     {
         var statements = parsedBatch.Statements.Select((parsedMutation, index) =>
         {
-            var descriptor = DescribeMutation(parsedMutation);
-            var valueFields = parsedMutation.Statement switch
-            {
-                UpdateStatement updateStatement => updateStatement.Assignments
-                    .Select(assignment => IdentifierText(assignment.Column))
-                    .ToArray(),
-                InsertStatement insertStatement => insertStatement.Columns
-                    .Select(IdentifierText)
-                    .ToArray(),
-                _ => []
-            };
-            var hasWhere = parsedMutation.Statement switch
-            {
-                UpdateStatement updateWithPredicate => updateWithPredicate.Predicate is not null,
-                DeleteStatement deleteWithPredicate => deleteWithPredicate.Predicate is not null,
-                _ => false
-            };
+            using var document = JsonDocument.Parse(DescribeDml(parsedMutation));
+            var root = document.RootElement;
             return new
             {
                 Index = index + 1,
-                descriptor.Operation,
-                TableName = descriptor.Table,
-                ValueFields = valueFields,
-                HasWhere = hasWhere
+                Operation = root.GetProperty("Operation").GetString(),
+                TableName = root.GetProperty("TableName").GetString(),
+                ValueFields = root.GetProperty("ValueFields").EnumerateArray()
+                    .Select(value => value.GetString()).ToArray(),
+                HasWhere = root.GetProperty("HasWhere").GetBoolean()
             };
         }).ToArray();
         return JsonSerializer.Serialize(new
