@@ -81,6 +81,16 @@ foreach (string assemblyName in expectedAssemblies)
 var services = new ServiceCollection();
 services.AddHsSqlAgentCore().AddHsSqlAgentDmlApproval<SmokeApprovalProvider>();
 
+// Keep the asynchronous approval completion API on the public NuGet consumer surface.
+_ = typeof(IDmlApprovalCompletionSink);
+var durableCompletion = DmlApprovalCompletion.Approve(
+    "dml_smoke",
+    new string('A', 64),
+    "smoke-reviewer",
+    "EXT-SMOKE");
+if (durableCompletion.Decision != DmlApprovalDecision.Approved)
+    throw new InvalidOperationException("Packed approval contracts did not preserve the completion decision.");
+
 var validation = new SqlPlanValidationContext(
     "nuget-consumer-smoke-v2",
     new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" });
