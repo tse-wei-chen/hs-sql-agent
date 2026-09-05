@@ -1,4 +1,3 @@
-using System.Net.Http.Json;
 using System.Text.Json;
 using HsSqlAgent.Approvals;
 using Microsoft.Extensions.Options;
@@ -9,6 +8,7 @@ public sealed class WebhookDmlApprovalProvider(
     HttpClient httpClient,
     IOptions<WebhookApprovalOptions> options) : IDmlApprovalProvider
 {
+    private const int MaxAcceptedResponseBytes = 16 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly WebhookApprovalOptions _options = options.Value;
 
@@ -33,26 +33,55 @@ public sealed class WebhookDmlApprovalProvider(
             Content = new ByteArrayContent(body)
         };
         message.Content.Headers.ContentType = new("application/json");
+        message.Headers.TryAddWithoutValidation(WebhookApprovalHeaders.Event, WebhookApprovalEvents.ApprovalRequested);
         message.Headers.TryAddWithoutValidation(WebhookApprovalHeaders.Timestamp, timestamp.ToString());
         message.Headers.TryAddWithoutValidation(
             WebhookApprovalHeaders.Signature,
-            WebhookApprovalSignature.Compute(_options.SigningSecret, timestamp, body));
-        message.Headers.TryAddWithoutValidation(WebhookApprovalHeaders.Event, WebhookApprovalEvents.ApprovalRequested);
+            WebhookApprovalSignature.Compute(
+                _options.SigningSecret,
+                WebhookApprovalEvents.ApprovalRequested,
+                timestamp,
+                body));
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_options.RequestTimeout);
         using var response = await httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         response.EnsureSuccessStatusCode();
 
-        string? externalReference = null;
-        if (response.Content.Headers.ContentLength is not 0)
-        {
-            var accepted = await response.Content.ReadFromJsonAsync<WebhookApprovalAccepted>(JsonOptions, timeout.Token);
-            externalReference = accepted?.ExternalReference;
-        }
-
+        var accepted = await ReadAcceptedResponseAsync(response.Content, timeout.Token);
         return DmlApprovalResult.Pending(
             request,
-            string.IsNullOrWhiteSpace(externalReference) ? request.RequestId : externalReference);
+            string.IsNullOrWhiteSpace(accepted?.ExternalReference)
+                ? request.RequestId
+                : accepted.ExternalReference);
+    }
+
+    private static async Task<WebhookApprovalAccepted?> ReadAcceptedResponseAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is > MaxAcceptedResponseBytes)
+            throw new InvalidOperationException("Webhook approval response exceeded the 16 KiB limit.");
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        int read;
+        while ((read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken)) > 0)
+        {
+            if (buffer.Length + read > MaxAcceptedResponseBytes)
+                throw new InvalidOperationException("Webhook approval response exceeded the 16 KiB limit.");
+            await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken);
+        }
+
+        if (buffer.Length == 0) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<WebhookApprovalAccepted>(buffer.ToArray(), JsonOptions);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidOperationException("Webhook approval response contained invalid JSON.", exception);
+        }
     }
 }
