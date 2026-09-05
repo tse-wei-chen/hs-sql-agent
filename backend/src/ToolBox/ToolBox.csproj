@@ -15,7 +15,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Modules\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
-    <ProjectReference Include="..\Modules\HsSqlAgent.Approvals.Webhook\HsSqlAgent.Approvals.Webhook.csproj" />
+    <ProjectReference Include="..\Modules\HsSqlAgent.Hosting\HsSqlAgent.Hosting.csproj" />
   </ItemGroup>
 </Project>

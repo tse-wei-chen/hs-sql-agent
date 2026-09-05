@@ -51,6 +51,7 @@ jobs:
             backend/src/Modules/HsSqlAgent.Provider.Oracle/HsSqlAgent.Provider.Oracle.csproj
             backend/src/Modules/HsSqlAgent.Provider.Firebird/HsSqlAgent.Provider.Firebird.csproj
             backend/src/Modules/HsSqlAgent.Server/HsSqlAgent.Server.csproj
+            backend/src/Modules/HsSqlAgent.Hosting/HsSqlAgent.Hosting.csproj
           )
           if [ -n "${{ github.event.inputs.version_suffix }}" ]; then
             pack_args=(--version-suffix "${{ github.event.inputs.version_suffix }}")
@@ -61,7 +62,7 @@ jobs:
             dotnet pack "$project" -c Release "${pack_args[@]}" -o "${{ github.workspace }}/nupkg"
           done
 
-      - name: Smoke test packed Server package
+      - name: Smoke test packed Hosting package
         shell: bash
         run: bash .github/scripts/nuget-consumer-smoke.sh "${{ github.workspace }}/nupkg"
 

@@ -8,7 +8,7 @@ package_source="$(cd "$1" && pwd)"
 dotnet build backend/src/ToolBox/ToolBox.csproj --configuration Release
 
 grep -Fq \
-  'COPY backend/src/Modules/HsSqlAgent.Approvals.Webhook/HsSqlAgent.Approvals.Webhook.csproj ./backend/src/Modules/HsSqlAgent.Approvals.Webhook/' \
+  'COPY backend/src/Modules/HsSqlAgent.Hosting/HsSqlAgent.Hosting.csproj ./backend/src/Modules/HsSqlAgent.Hosting/' \
   Dockerfile
 
 # Server depends on the transport-neutral approval contracts. Pack that dependency into the same
@@ -19,10 +19,16 @@ if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Approvals.Abstractions
     --output "$package_source"
 fi
 
-# The webhook adapter is an independent official package rather than a Server dependency. Pack it
-# here so PR package smoke exercises the real NuGet boundary even before older workflow lists catch up.
+# The webhook adapter stays an independent package so modular Server consumers can opt into it.
 if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Approvals.Webhook.*.nupkg' ! -name '*.symbols.nupkg' -print -quit | grep -q .; then
   dotnet pack backend/src/Modules/HsSqlAgent.Approvals.Webhook/HsSqlAgent.Approvals.Webhook.csproj \
+    --configuration Release \
+    --output "$package_source"
+fi
+
+# Standard hosting is the batteries-included NuGet composition used by ToolBox/Docker.
+if ! find "$package_source" -maxdepth 1 -name 'HsSqlAgent.Hosting.*.nupkg' ! -name '*.symbols.nupkg' -print -quit | grep -q .; then
+  dotnet pack backend/src/Modules/HsSqlAgent.Hosting/HsSqlAgent.Hosting.csproj \
     --configuration Release \
     --output "$package_source"
 fi
@@ -46,7 +52,7 @@ fi
 consumer_dir="$(mktemp -d)"
 trap 'rm -rf "$consumer_dir"' EXIT
 
-dotnet new console --framework net10.0 --no-restore --output "$consumer_dir"
+dotnet new web --framework net10.0 --no-restore --output "$consumer_dir"
 cat > "$consumer_dir/NuGet.Config" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <configuration>
@@ -58,8 +64,9 @@ cat > "$consumer_dir/NuGet.Config" <<EOF
 </configuration>
 EOF
 
-dotnet add "$consumer_dir" package HsSqlAgent.Server --version "$version" --source "$package_source" --no-restore
-dotnet add "$consumer_dir" package HsSqlAgent.Approvals.Webhook --version "$version" --source "$package_source" --no-restore
+# A batteries-included consumer installs only Hosting. Server and the official Webhook adapter
+# must arrive transitively from the packed package graph.
+dotnet add "$consumer_dir" package HsSqlAgent.Hosting --version "$version" --source "$package_source" --no-restore
 cat > "$consumer_dir/Program.cs" <<'EOF'
 using System;
 using System.Collections.Generic;
@@ -68,14 +75,18 @@ using System.Linq;
 using System.Text;
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Approvals.Webhook;
+using HsSqlAgent.Hosting;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 string[] expectedAssemblies =
 [
+    "HsSqlAgent.Hosting",
     "HsSqlAgent.Server",
     "HsSqlAgent.Approvals.Abstractions",
     "HsSqlAgent.Approvals.Webhook",
@@ -123,16 +134,28 @@ if (!WebhookApprovalSignature.Verify(
         webhookSignature))
     throw new InvalidOperationException("Packed webhook adapter signature contract failed.");
 
-var webhookServices = new ServiceCollection();
-webhookServices.AddHsSqlAgentWebhookApproval(options =>
+var standardBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
-    options.Endpoint = new Uri("https://approval.example.test/requests");
-    options.CallbackUrl = new Uri("https://sql-agent.example.test/api/hs-sql-agent/approvals/webhook");
-    options.SigningSecret = "smoke-webhook-secret-that-is-at-least-32-bytes";
+    EnvironmentName = Environments.Development
 });
-using var webhookProvider = webhookServices.BuildServiceProvider();
-if (webhookProvider.GetService<IDmlApprovalProvider>() is not WebhookDmlApprovalProvider)
-    throw new InvalidOperationException("Packed webhook adapter DI registration failed.");
+standardBuilder.Configuration["AdminDatabase:Provider"] = "Sqlite";
+standardBuilder.Configuration["AdminDatabase:ConnectionString"] = "Data Source=hosting-smoke.db";
+standardBuilder.Configuration["JwtSettings:SecretKey"] = new string('J', 64);
+standardBuilder.Configuration["McpKeySettings:HmacSecretKey"] = new string('H', 64);
+standardBuilder.Configuration["Mcp:PublicEndpoint"] = "http://localhost:8080/mcp";
+standardBuilder.Configuration["DmlApproval:Provider"] = "Webhook";
+standardBuilder.Configuration["DmlApproval:Webhook:Endpoint"] = "https://approval.example.test/requests";
+standardBuilder.Configuration["DmlApproval:Webhook:CallbackUrl"] =
+    "https://sql-agent.example.test/api/hs-sql-agent/approvals/webhook";
+standardBuilder.Configuration["DmlApproval:Webhook:SigningSecret"] =
+    "smoke-webhook-secret-that-is-at-least-32-bytes";
+
+standardBuilder.AddHsSqlAgentStandardHost();
+await using var standardApp = standardBuilder.Build();
+standardApp.UseHsSqlAgentStandardHost();
+
+if (standardApp.Services.GetService<IDmlApprovalProvider>() is not WebhookDmlApprovalProvider)
+    throw new InvalidOperationException("Packed Hosting package did not select the Webhook approval provider.");
 
 var validation = new SqlPlanValidationContext(
     "nuget-consumer-smoke-v2",
@@ -156,7 +179,7 @@ if (!command.Parameters.Any(parameter =>
 if (command.Sql.Contains("= 1", StringComparison.Ordinal))
     throw new InvalidOperationException("Packed SqlCore facade inlined a predicate literal that must remain parameterized.");
 
-Console.WriteLine($"Compiled public SqlCore query via packed Server dependency: {command.Sql}");
+Console.WriteLine($"Compiled public SqlCore query via packed Hosting dependency: {command.Sql}");
 
 sealed class SmokeApprovalProvider : IDmlApprovalProvider
 {

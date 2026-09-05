@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HsSqlAgent.Hosting</AssemblyName>
+    <RootNamespace>HsSqlAgent.Hosting</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true' Or '$(TF_BUILD)' == 'true'">true</ContinuousIntegrationBuild>
+    <PackageId>HsSqlAgent.Hosting</PackageId>
+    <Authors>tse-wei-chen</Authors>
+    <Company>hs-sql-agent</Company>
+    <Description>Official batteries-included ASP.NET Core composition for HsSqlAgent, matching the standalone Docker host.</Description>
+    <PackageTags>sql;mcp;database;aspnetcore;hosting;webhook</PackageTags>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/tse-wei-chen/hs-sql-agent</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HsSqlAgent.Server\HsSqlAgent.Server.csproj" />
+    <ProjectReference Include="..\HsSqlAgent.Approvals.Webhook\HsSqlAgent.Approvals.Webhook.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
