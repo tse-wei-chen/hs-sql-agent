@@ -15,16 +15,36 @@ public sealed class WebhookApprovalAdapterTests
     private const string Secret = "webhook-test-secret-that-is-at-least-32-bytes";
 
     [Fact]
-    public void Signature_RoundTripsAndRejectsTamperedBody()
+    public void Signature_BindsEventAndBody()
     {
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var body = Encoding.UTF8.GetBytes("{\"requestId\":\"req-1\"}");
-        var signature = WebhookApprovalSignature.Compute(Secret, timestamp, body);
+        var signature = WebhookApprovalSignature.Compute(
+            Secret,
+            WebhookApprovalEvents.ApprovalCompleted,
+            timestamp,
+            body);
 
-        Assert.True(WebhookApprovalSignature.Verify(Secret, timestamp, body, signature));
+        Assert.True(WebhookApprovalSignature.Verify(
+            Secret,
+            WebhookApprovalEvents.ApprovalCompleted,
+            timestamp,
+            body,
+            signature));
+        Assert.False(WebhookApprovalSignature.Verify(
+            Secret,
+            WebhookApprovalEvents.ApprovalRequested,
+            timestamp,
+            body,
+            signature));
 
         body[body.Length - 2] ^= 1;
-        Assert.False(WebhookApprovalSignature.Verify(Secret, timestamp, body, signature));
+        Assert.False(WebhookApprovalSignature.Verify(
+            Secret,
+            WebhookApprovalEvents.ApprovalCompleted,
+            timestamp,
+            body,
+            signature));
     }
 
     [Fact]
@@ -46,6 +66,7 @@ public sealed class WebhookApprovalAdapterTests
         Assert.NotNull(handler.Signature);
         Assert.True(WebhookApprovalSignature.Verify(
             Secret,
+            handler.Event!,
             long.Parse(handler.Timestamp!),
             handler.Body!,
             handler.Signature!));
@@ -158,8 +179,11 @@ public sealed class WebhookApprovalAdapterTests
         context.Request.ContentType = "application/json";
         context.Request.Headers[WebhookApprovalHeaders.Event] = WebhookApprovalEvents.ApprovalCompleted;
         context.Request.Headers[WebhookApprovalHeaders.Timestamp] = timestamp.ToString();
-        context.Request.Headers[WebhookApprovalHeaders.Signature] =
-            WebhookApprovalSignature.Compute(options.SigningSecret, timestamp, body);
+        context.Request.Headers[WebhookApprovalHeaders.Signature] = WebhookApprovalSignature.Compute(
+            options.SigningSecret,
+            WebhookApprovalEvents.ApprovalCompleted,
+            timestamp,
+            body);
         return context;
     }
 
