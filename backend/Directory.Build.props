@@ -2,7 +2,7 @@
   <PropertyGroup>
     <!-- One release version for every first-party NuGet package. Override with
          -p:VersionPrefix=... when preparing a release. -->
-    <VersionPrefix Condition="'$(VersionPrefix)' == ''">2.0.2</VersionPrefix>
+    <VersionPrefix Condition="'$(VersionPrefix)' == ''">2.0.3</VersionPrefix>
     <Exclude>[*]*.Models.*</Exclude>
     <!-- Keep warning hygiene consistent across every backend C#/F# project. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
