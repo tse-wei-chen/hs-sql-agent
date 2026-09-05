@@ -79,6 +79,11 @@ describe("MCP key issuance helpers", () => {
       url: "https://sql.example.com/mcp",
       headers: { "X-MCP-Server-Key": "secret-key" },
     });
+    expect(JSON.parse(snippets.vscode).servers["hs-sql-agent"]).toEqual({
+      type: "http",
+      url: "https://sql.example.com/mcp",
+      headers: { "X-MCP-Server-Key": "secret-key" },
+    });
     expect(JSON.parse(snippets.genericHttp)).toEqual({
       type: "streamable-http",
       url: "https://sql.example.com/mcp",
