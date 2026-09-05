@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
+using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Services;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -23,7 +24,8 @@ public class CustomToolProxy(
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
     ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
     ITypedQueryRuntime? typedQueryRuntime = null,
-    TypedDmlRuntime? typedDmlRuntime = null)
+    TypedDmlRuntime? typedDmlRuntime = null,
+    IDmlApprovalProvider? dmlApprovalProvider = null)
 {
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
@@ -35,6 +37,7 @@ public class CustomToolProxy(
     private readonly ISqlExecutionConcurrencyLimiter _sqlConcurrencyLimiter = sqlConcurrencyLimiter;
     private readonly ITypedQueryRuntime _typedQueryRuntime = typedQueryRuntime ?? new TypedQueryRuntime();
     private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
+    private readonly IDmlApprovalProvider? _dmlApprovalProvider = dmlApprovalProvider;
 
     public async Task<string> Execute(
         JsonElement arguments,
@@ -42,18 +45,23 @@ public class CustomToolProxy(
         CancellationToken cancellationToken = default)
         => await ExecuteCore(
             arguments,
-            server is null ? null : new McpDmlApprovalClient(server),
+            DmlApprovalProviderResolver.Resolve(
+                _dmlApprovalProvider,
+                server is null ? null : new McpDmlApprovalClient(server)),
             cancellationToken);
 
     internal async Task<string> Execute(
         JsonElement arguments,
         IDmlApprovalClient? approvalClient,
         CancellationToken cancellationToken = default)
-        => await ExecuteCore(arguments, approvalClient, cancellationToken);
+        => await ExecuteCore(
+            arguments,
+            DmlApprovalProviderResolver.Resolve(_dmlApprovalProvider, approvalClient),
+            cancellationToken);
 
     private async Task<string> ExecuteCore(
         JsonElement arguments,
-        IDmlApprovalClient? approvalClient,
+        IDmlApprovalProvider? approvalProvider,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -180,7 +188,7 @@ public class CustomToolProxy(
                     sqlConfig.ConnectionString,
                     parsedDml,
                     approvalContext,
-                    approvalClient,
+                    approvalProvider,
                     $"Custom tool `{_name}`",
                     cancellationToken);
                 result = dmlExecution.Result;

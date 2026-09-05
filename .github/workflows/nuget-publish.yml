@@ -41,6 +41,7 @@ jobs:
           set -euo pipefail
           projects=(
             backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj
+            backend/src/Modules/HsSqlAgent.Approvals.Abstractions/HsSqlAgent.Approvals.Abstractions.csproj
             backend/src/Modules/HsSqlAgent.Provider.Abstractions/HsSqlAgent.Provider.Abstractions.csproj
             backend/src/Modules/HsSqlAgent.Provider.PostgreSql/HsSqlAgent.Provider.PostgreSql.csproj
             backend/src/Modules/HsSqlAgent.Provider.MySql/HsSqlAgent.Provider.MySql.csproj
