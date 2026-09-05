@@ -366,20 +366,36 @@ public class CustomSqlToolController(
                     allowedTables: null,
                     approvalContext,
                     cancellationToken);
-                result = JsonSerializer.Serialize(new
+
+                if (session.Statements.Length == 1)
                 {
-                    statementCount = session.Statements.Length,
-                    totalAffectedRows = session.Challenge.AffectedRows,
-                    statements = session.Statements.Select((statement, index) => new
+                    var statement = session.Statements[0];
+                    result = JsonSerializer.Serialize(new
                     {
-                        index = index + 1,
                         operation = statement.Plan.Operation.ToString(),
                         table = statement.Plan.TableName,
                         affectedRows = statement.Preview.AffectedRows,
-                        preview = statement.Preview.Rows
-                    }).ToArray(),
-                    committed = false
-                });
+                        preview = statement.Preview.Rows,
+                        committed = false
+                    });
+                }
+                else
+                {
+                    result = JsonSerializer.Serialize(new
+                    {
+                        statementCount = session.Statements.Length,
+                        totalAffectedRows = session.Challenge.AffectedRows,
+                        statements = session.Statements.Select((statement, index) => new
+                        {
+                            index = index + 1,
+                            operation = statement.Plan.Operation.ToString(),
+                            table = statement.Plan.TableName,
+                            affectedRows = statement.Preview.AffectedRows,
+                            preview = statement.Preview.Rows
+                        }).ToArray(),
+                        committed = false
+                    });
+                }
             }
 
             await auditService.WriteLogAsync(
