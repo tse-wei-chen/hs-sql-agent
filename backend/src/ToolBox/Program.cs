@@ -1,3 +1,4 @@
+using HsSqlAgent.Approvals.Webhook;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Middleware;
 
@@ -114,6 +115,25 @@ hs.AddHsSqlAgentMcp(options =>
     options.HmacSecretKey = builder.Configuration["McpKeySettings:HmacSecretKey"] ?? string.Empty;
 });
 
+var dmlApprovalProvider = builder.Configuration["DmlApproval:Provider"]?.Trim();
+var useWebhookApproval = false;
+if (string.IsNullOrEmpty(dmlApprovalProvider)
+    || string.Equals(dmlApprovalProvider, "McpElicitation", StringComparison.OrdinalIgnoreCase))
+{
+    // No explicit provider registration: the Server keeps its existing MCP Elicitation fallback.
+}
+else if (string.Equals(dmlApprovalProvider, "Webhook", StringComparison.OrdinalIgnoreCase))
+{
+    useWebhookApproval = true;
+    builder.Services.AddHsSqlAgentWebhookApproval(options =>
+        builder.Configuration.GetSection("DmlApproval:Webhook").Bind(options));
+}
+else
+{
+    throw new InvalidOperationException(
+        $"Unsupported DmlApproval:Provider '{dmlApprovalProvider}'. Supported values are McpElicitation and Webhook.");
+}
+
 hs.AddHsSqlAgentAdminApi();
 
 hs.AddHsSqlAgentTelemetry(options =>
@@ -138,6 +158,8 @@ app.UseExceptionHandler();
 app.UseHsSqlAgentMcp();
 app.UseHsSqlAgentAdminApi();
 app.MapControllers();
+if (useWebhookApproval)
+    app.MapHsSqlAgentWebhookApprovalCallback();
 app.UseHsSqlAgentAdminUi();
 
 await app.RunAsync();
