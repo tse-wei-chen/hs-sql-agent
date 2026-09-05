@@ -37,6 +37,7 @@
 
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
+    <InternalsVisibleTo Include="HsSqlAgent.Server.Test" />
   </ItemGroup>
 
 </Project>
