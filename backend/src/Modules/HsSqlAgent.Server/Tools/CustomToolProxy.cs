@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
 using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Data.Entites;
@@ -69,7 +70,7 @@ public class CustomToolProxy(
         CustomSqlTool? tool = null;
         QueryFacts? auditQueryFacts = null;
         SqlAgentToolType? auditQueryDialect = null;
-        ParsedStatement? auditDml = null;
+        ParsedDmlBatch? auditDml = null;
         string renderedSql = string.Empty;
         try
         {
@@ -156,20 +157,20 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var parsedDml =
-                    await _typedDmlRuntime.ParseDmlWithVerifiedRuntimeProfileAsync(
-                        provider,
-                        sqlConfig.ConnectionString,
-                        renderedSql,
-                        dbType,
-                        cancellationToken);
+                var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+                    provider,
+                    sqlConfig.ConnectionString,
+                    renderedSql,
+                    dbType,
+                    cancellationToken);
                 auditDml = parsedDml;
-                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
+                foreach (var statement in parsedDml.Statements)
+                    TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
 
                 var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(
                     _httpContextAccessor.HttpContext,
                     dbType);
-                var flow = new TypedDmlApprovalFlow(
+                var flow = new TypedDmlTransactionApprovalFlow(
                     _typedDmlRuntime,
                     _securityPolicyRuntimeState,
                     _sqlConcurrencyLimiter,
@@ -287,39 +288,48 @@ public class CustomToolProxy(
             facts.ContainsSubquery
         });
 
-    private static string DescribeDml(ParsedStatement parsedDml)
-    {
-        var table = parsedDml.Statement switch
+    private static string DescribeDml(ParsedDmlBatch parsedDml) =>
+        JsonSerializer.Serialize(new
         {
-            UpdateStatement update => IdentifierText(update.Target.Name),
-            DeleteStatement delete => IdentifierText(delete.Target.Name),
-            InsertStatement insert => IdentifierText(insert.Target.Name),
-            _ => "unknown"
-        };
-        var fields = parsedDml.Statement switch
-        {
-            UpdateStatement updateStatement => updateStatement.Assignments
-                .Select(assignment => IdentifierText(assignment.Column))
-                .ToArray(),
-            InsertStatement insertStatement => insertStatement.Columns
-                .Select(IdentifierText)
-                .ToArray(),
-            _ => []
-        };
-        var hasWhere = parsedDml.Statement switch
-        {
-            UpdateStatement update => update.Predicate is not null,
-            DeleteStatement delete => delete.Predicate is not null,
-            _ => false
-        };
-        return JsonSerializer.Serialize(new
-        {
-            Operation = DmlOperationName(parsedDml),
-            TableName = table,
-            ValueFields = fields,
-            HasWhere = hasWhere
+            StatementCount = parsedDml.Count,
+            Statements = parsedDml.Statements.Select((statement, index) =>
+            {
+                var table = statement.Statement switch
+                {
+                    UpdateStatement update => IdentifierText(update.Target.Name),
+                    DeleteStatement delete => IdentifierText(delete.Target.Name),
+                    InsertStatement insert => IdentifierText(insert.Target.Name),
+                    _ => "unknown"
+                };
+                var fields = statement.Statement switch
+                {
+                    UpdateStatement updateStatement => updateStatement.Assignments
+                        .Select(assignment => IdentifierText(assignment.Column))
+                        .ToArray(),
+                    InsertStatement insertStatement => insertStatement.Columns
+                        .Select(IdentifierText)
+                        .ToArray(),
+                    _ => []
+                };
+                var hasWhere = statement.Statement switch
+                {
+                    UpdateStatement update => update.Predicate is not null,
+                    DeleteStatement delete => delete.Predicate is not null,
+                    _ => false
+                };
+                return new
+                {
+                    Index = index + 1,
+                    Operation = DmlOperationName(statement),
+                    TableName = table,
+                    ValueFields = fields,
+                    HasWhere = hasWhere
+                };
+            }).ToArray()
         });
-    }
+
+    private static string DmlOperationName(ParsedDmlBatch parsedDml) =>
+        parsedDml.Count == 1 ? DmlOperationName(parsedDml.Statements[0]) : "transaction";
 
     private static string DmlOperationName(ParsedStatement parsedDml) => parsedDml.Statement switch
     {
@@ -359,9 +369,7 @@ public class CustomToolProxy(
         var context = _httpContextAccessor.HttpContext
             ?? throw new UnauthorizedAccessException("MCP table authorization context is missing.");
         if (!context.Items.TryGetValue(McpContextItemKeys.TableWhitelist, out var whitelistValue))
-        {
             throw new UnauthorizedAccessException("MCP table authorization context is missing.");
-        }
 
         var tableWhitelist = whitelistValue?.ToString();
         if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
@@ -375,9 +383,7 @@ public class CustomToolProxy(
         var context = _httpContextAccessor.HttpContext
             ?? throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
         if (!context.Items.TryGetValue(McpContextItemKeys.AllowedTools, out var allowedToolsValue))
-        {
             throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
-        }
 
         var allowedTools = allowedToolsValue?.ToString();
         if (string.IsNullOrWhiteSpace(allowedTools)) return;

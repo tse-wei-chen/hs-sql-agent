@@ -7,6 +7,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
@@ -206,21 +207,26 @@ public class CustomSqlToolController(
             var sql = CustomToolSqlTemplate.RenderForValidation(tool.SqlTemplate, tool.ParametersJson);
             if (IsDml(tool))
             {
-                var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
-                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
+                var parsedBatch = CoreDmlBatchTextParser.ParseDmlBatch(sql, dbType);
+                var validationContext = new SqlPlanValidationContext("custom-tool-definition-validation");
+                var dmlPolicy = new DmlCompilationPolicy(
+                    policy?.RequireWhereForUpdate ?? true,
+                    policy?.RequireWhereForDelete ?? true,
+                    policy?.AllowFullTableUpdate ?? false,
+                    policy?.AllowFullTableDelete ?? false);
 
-                var command = SqlCoreFacade.CompileDml(
-                    parsedDml,
-                    dbType,
-                    new SqlPlanValidationContext("custom-tool-definition-validation"),
-                    new DmlCompilationPolicy(
-                        policy?.RequireWhereForUpdate ?? true,
-                        policy?.RequireWhereForDelete ?? true,
-                        policy?.AllowFullTableUpdate ?? false,
-                        policy?.AllowFullTableDelete ?? false),
-                    targetProfile: null,
-                    conflictTargetAssurance: null);
-                compileEvidenceObserver?.Observe(command.CompileEvidence);
+                foreach (var parsedDml in parsedBatch.Statements)
+                {
+                    TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
+                    var command = SqlCoreFacade.CompileDml(
+                        parsedDml,
+                        dbType,
+                        validationContext,
+                        dmlPolicy,
+                        targetProfile: null,
+                        conflictTargetAssurance: null);
+                    compileEvidenceObserver?.Observe(command.CompileEvidence);
+                }
                 return null;
             }
 
@@ -324,11 +330,9 @@ public class CustomSqlToolController(
                 request.Parameters ?? new Dictionary<string, object?>());
             await using var lease = await sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken);
             if (lease is null)
-            {
                 return StatusCode(
                     StatusCodes.Status429TooManyRequests,
                     new { success = false, error = "Maximum concurrent SQL operations reached." });
-            }
 
             string result;
             if (isQuery)
@@ -345,28 +349,35 @@ public class CustomSqlToolController(
             }
             else
             {
-                var parsedDml = CoreSqlTextParser.ParseDml(sql, dbType);
-                TypedDmlRuntime.EnsureSupportedStatement(parsedDml.Statement);
+                var parsedBatch = CoreDmlBatchTextParser.ParseDmlBatch(sql, dbType);
+                foreach (var statement in parsedBatch.Statements)
+                    TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
 
                 var approvalContext = DmlApprovalExecutionContextResolver.FromAdmin(
                     User,
                     tool.DbManagementId.Value,
                     dbType,
                     dbPwd.Database);
-                var session = await new TypedDmlRuntime().PreviewAsync(
+                var session = await new TypedDmlRuntime().PreviewTransactionAsync(
                     provider,
                     connectionString,
-                    parsedDml,
+                    parsedBatch,
                     runtimePolicy,
                     allowedTables: null,
                     approvalContext,
                     cancellationToken);
                 result = JsonSerializer.Serialize(new
                 {
-                    operation = session.Plan.Operation.ToString(),
-                    table = session.Plan.TableName,
-                    affectedRows = session.Preview.AffectedRows,
-                    preview = session.Preview.Rows,
+                    statementCount = session.Statements.Length,
+                    totalAffectedRows = session.Challenge.AffectedRows,
+                    statements = session.Statements.Select((statement, index) => new
+                    {
+                        index = index + 1,
+                        operation = statement.Plan.Operation.ToString(),
+                        table = statement.Plan.TableName,
+                        affectedRows = statement.Preview.AffectedRows,
+                        preview = statement.Preview.Rows
+                    }).ToArray(),
                     committed = false
                 });
             }
