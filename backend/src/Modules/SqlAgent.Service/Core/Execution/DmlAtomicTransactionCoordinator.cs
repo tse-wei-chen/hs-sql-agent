@@ -5,12 +5,13 @@ using Dapper;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// Commits an already-approved ordered DML plan set in one database transaction. UPDATE/DELETE row
-/// identities are re-queried immediately before each mutation, after earlier mutations in the same
-/// transaction. If an earlier mutation changes a later approved row set, the whole transaction is
-/// rolled back rather than silently widening or changing the approved impact.
+/// Internal commit primitive for an already-approved ordered DML plan set. The public/server-facing
+/// approval boundary is TypedDmlRuntime; this coordinator must not become a public challenge bypass.
+/// UPDATE/DELETE row identities are re-queried immediately before each mutation, after earlier
+/// mutations in the same transaction. If an earlier mutation changes a later approved row set, the
+/// whole transaction is rolled back rather than silently widening or changing the approved impact.
 /// </summary>
-public sealed class DmlAtomicTransactionCoordinator(
+internal sealed class DmlAtomicTransactionCoordinator(
     IDbConnectionFactory connectionFactory,
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null)
 {
