@@ -2,10 +2,33 @@
 
 Official generic webhook adapter for HsSqlAgent DML approvals. It sends the transport-neutral approval evidence to an external HTTP workflow and receives a signed asynchronous completion callback. HsSqlAgent still owns SQL validation, approval evidence binding, commit-time revalidation, and atomic execution.
 
-## Registration
+## How to use it
+
+There are two supported consumption paths.
+
+### Standalone Docker image
+
+The first-party `ToolBox` host already composes this adapter into the official Docker image. No extra NuGet installation or custom image is required. MCP Elicitation remains the default; opt into Webhook with environment variables:
+
+```env
+DML_APPROVAL_PROVIDER=Webhook
+DML_APPROVAL_WEBHOOK_ENDPOINT=https://approval.example.com/hssqlagent/requests
+DML_APPROVAL_WEBHOOK_CALLBACK_URL=https://sql-agent.example.com/api/hs-sql-agent/approvals/webhook
+DML_APPROVAL_WEBHOOK_SIGNING_SECRET=replace-with-a-unique-secret-at-least-32-bytes
+```
+
+The standard `docker-compose.yml` and distributed compose map these variables to the standalone host configuration. Set `DML_APPROVAL_PROVIDER=McpElicitation` or omit it to keep the built-in MCP approval flow.
+
+### Embedded ASP.NET Core / `HsSqlAgent.Server` NuGet
+
+Applications embedding `HsSqlAgent.Server` add the independent `HsSqlAgent.Approvals.Webhook` package alongside Server. No Server fork or source modification is required; the application remains the composition root:
 
 ```csharp
 using HsSqlAgent.Approvals.Webhook;
+using HsSqlAgent.Server.Extensions;
+
+var hs = builder.Services.AddHsSqlAgentCore();
+hs.AddHsSqlAgentRuntime();
 
 builder.Services.AddHsSqlAgentWebhookApproval(options =>
 {
@@ -14,6 +37,9 @@ builder.Services.AddHsSqlAgentWebhookApproval(options =>
     options.SigningSecret = builder.Configuration["HsSqlAgent:WebhookApproval:SigningSecret"]!;
 });
 
+// Register the remaining HsSqlAgent capabilities as usual.
+
+var app = builder.Build();
 app.MapHsSqlAgentWebhookApprovalCallback();
 ```
 
