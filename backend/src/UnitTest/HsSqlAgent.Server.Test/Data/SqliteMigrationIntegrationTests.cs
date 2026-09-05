@@ -58,7 +58,11 @@ public sealed class SqliteMigrationIntegrationTests
             await using var command = connection.CreateCommand();
             command.CommandText =
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '__EFMigrationsHistory';";
+            Assert.Equal(1L, (long)(await command.ExecuteScalarAsync(
+                TestContext.Current.CancellationToken))!);
 
+            command.CommandText =
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'DmlApprovalRequests';";
             Assert.Equal(1L, (long)(await command.ExecuteScalarAsync(
                 TestContext.Current.CancellationToken))!);
         }
