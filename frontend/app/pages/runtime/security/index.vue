@@ -43,12 +43,15 @@ const defaults: SecurityPolicy = {
 
 const policy = reactive<SecurityPolicy>({ ...defaults });
 const loading = ref(false);
+const loaded = ref(false);
+const loadError = ref("");
 const saving = ref(false);
 const savedFingerprint = ref("");
 
 const posture = computed(() => buildSecurityPolicyPosture(policy));
 const hasUnsavedChanges = computed(
   () =>
+    loaded.value &&
     savedFingerprint.value !== "" &&
     savedFingerprint.value !== securityPolicyFingerprint(policy),
 );
@@ -61,10 +64,17 @@ const formatTime = (value?: string | null) => {
 
 const load = async () => {
   loading.value = true;
+  loaded.value = false;
+  loadError.value = "";
+  savedFingerprint.value = "";
+
   try {
     Object.assign(policy, await getSecurityPolicy());
     savedFingerprint.value = securityPolicyFingerprint(policy);
+    loaded.value = true;
   } catch (error: any) {
+    loadError.value =
+      "The effective server policy could not be loaded. Fallback values are not shown or editable.";
     toast.error(error?.response?.data?.error || "Failed to load security policy.");
   } finally {
     loading.value = false;
@@ -72,7 +82,7 @@ const load = async () => {
 };
 
 const save = async () => {
-  if (!hasUnsavedChanges.value) return;
+  if (!loaded.value || !hasUnsavedChanges.value) return;
 
   saving.value = true;
   try {
@@ -103,6 +113,15 @@ onMounted(load);
     </div>
 
     <div v-if="loading" class="text-sm text-muted-foreground">Loading policy...</div>
+
+    <div
+      v-else-if="!loaded"
+      class="rounded-lg border border-destructive/40 bg-destructive/5 p-4"
+    >
+      <div class="font-medium text-destructive">Unable to load effective policy</div>
+      <p class="mt-1 text-sm text-muted-foreground">{{ loadError }}</p>
+      <Button class="mt-3" variant="outline" @click="load">Retry</Button>
+    </div>
 
     <template v-else>
       <Card>
