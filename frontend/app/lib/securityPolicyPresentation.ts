@@ -24,44 +24,47 @@ const policySnapshot = (policy: SecurityPolicy) => ({
 export const securityPolicyFingerprint = (policy: SecurityPolicy) =>
   JSON.stringify(policySnapshot(policy));
 
+const fullTableAllowed = (requireWhere: boolean, allowFullTable: boolean) =>
+  !requireWhere && allowFullTable;
+
 export const buildSecurityPolicyPosture = (
   policy: SecurityPolicy,
 ): SecurityPolicyPosture => {
+  const updateAllowsAllRows = fullTableAllowed(
+    policy.requireWhereForUpdate,
+    policy.allowFullTableUpdate,
+  );
+  const deleteAllowsAllRows = fullTableAllowed(
+    policy.requireWhereForDelete,
+    policy.allowFullTableDelete,
+  );
   const warnings: string[] = [];
 
-  if (!policy.requireWhereForUpdate) {
-    warnings.push("UPDATE can run without a WHERE clause.");
+  if (updateAllowsAllRows) {
+    warnings.push("Full-table UPDATE is allowed by the effective compiler policy.");
   }
-  if (!policy.requireWhereForDelete) {
-    warnings.push("DELETE can run without a WHERE clause.");
-  }
-  if (policy.allowFullTableUpdate) {
-    warnings.push("Full-table UPDATE is allowed by the current policy.");
-  }
-  if (policy.allowFullTableDelete) {
-    warnings.push("Full-table DELETE is allowed by the current policy.");
+  if (deleteAllowsAllRows) {
+    warnings.push("Full-table DELETE is allowed by the effective compiler policy.");
   }
 
   const requiresReview = warnings.length > 0;
-  const whereSummary = [
-    policy.requireWhereForUpdate ? "UPDATE required" : "UPDATE optional",
-    policy.requireWhereForDelete ? "DELETE required" : "DELETE optional",
-  ].join(" · ");
-  const fullTableSummary = [
-    policy.allowFullTableUpdate ? "UPDATE allowed" : "UPDATE blocked",
-    policy.allowFullTableDelete ? "DELETE allowed" : "DELETE blocked",
-  ].join(" · ");
 
   return {
     label: requiresReview ? "Review mutation policy" : "Guarded mutation policy",
     requiresReview,
     summary: requiresReview
-      ? "One or more mutation guardrails are relaxed. Review the effective policy before enabling DML for agents."
-      : "WHERE is required for UPDATE/DELETE and full-table mutation is blocked.",
+      ? "The effective compiler policy allows at least one full-table mutation path. Review the guardrails before enabling DML for agents."
+      : "The effective compiler policy requires a predicate for UPDATE and DELETE.",
     warnings,
     facts: [
-      { label: "WHERE policy", value: whereSummary },
-      { label: "Full-table mutation", value: fullTableSummary },
+      {
+        label: "Effective UPDATE",
+        value: updateAllowsAllRows ? "Full-table allowed" : "Predicate required",
+      },
+      {
+        label: "Effective DELETE",
+        value: deleteAllowsAllRows ? "Full-table allowed" : "Predicate required",
+      },
       { label: "DML row cap", value: `${policy.dmlMaxAffectedRows} rows` },
       {
         label: "Query limit",
