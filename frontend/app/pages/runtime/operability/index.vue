@@ -22,6 +22,10 @@ import {
   buildKeyFilterOptions,
   resolveOperabilityFilterId,
 } from "@/lib/operabilityFilters";
+import {
+  buildAuditDrillDownQuery,
+  type AuditDrillDownFilters,
+} from "@/lib/auditNavigation";
 
 definePageMeta({
   layout: "default",
@@ -52,6 +56,14 @@ const keyFilterLabels = computed(() =>
   keyFilterOptions.value.map((option) => option.label),
 );
 
+const selectedDatabaseId = () =>
+  resolveOperabilityFilterId(
+    selectedDatabase.value,
+    databaseFilterOptions.value,
+  );
+const selectedAccessKeyId = () =>
+  resolveOperabilityFilterId(selectedKey.value, keyFilterOptions.value);
+
 const filters = () => ({
   from: from.value
     ? new Date(`${from.value}T00:00:00`).toISOString()
@@ -59,16 +71,28 @@ const filters = () => ({
   to: to.value
     ? new Date(`${to.value}T23:59:59.999`).toISOString()
     : undefined,
-  dbManagementId: resolveOperabilityFilterId(
-    selectedDatabase.value,
-    databaseFilterOptions.value,
-  ),
-  accessKeyId: resolveOperabilityFilterId(
-    selectedKey.value,
-    keyFilterOptions.value,
-  ),
+  dbManagementId: selectedDatabaseId(),
+  accessKeyId: selectedAccessKeyId(),
   toolName: toolName.value || undefined,
 });
+
+const auditFilters = (
+  overrides: Partial<AuditDrillDownFilters> = {},
+): AuditDrillDownFilters => ({
+  from: from.value || undefined,
+  to: to.value || undefined,
+  dbManagementId: selectedDatabaseId(),
+  accessKeyId: selectedAccessKeyId(),
+  toolName: toolName.value || undefined,
+  ...overrides,
+});
+
+const openAudit = async (overrides: Partial<AuditDrillDownFilters> = {}) => {
+  await navigateTo({
+    path: "/runtime/audit",
+    query: buildAuditDrillDownQuery(auditFilters(overrides)),
+  });
+};
 
 const load = async () => {
   loading.value = true;
@@ -166,6 +190,13 @@ onMounted(load);
           <Button :disabled="loading" @click="load">
             {{ loading ? "Loading..." : "Refresh" }}
           </Button>
+          <Button
+            v-if="$can('/runtime/audit.view')"
+            variant="outline"
+            @click="openAudit()"
+          >
+            View matching audit
+          </Button>
         </div>
         <p class="mt-2 text-xs text-muted-foreground">
           Database and key selectors use Operability data only; no additional management permission is required.
@@ -220,21 +251,31 @@ onMounted(load);
         <div
           v-for="item in health"
           :key="item.dbManagementId"
-          class="rounded border p-3 text-sm"
+          class="flex flex-col gap-3 rounded border p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
         >
-          <div class="font-medium">
-            {{ item.name }} ({{ item.provider }}) — {{ item.status }}
+          <div>
+            <div class="font-medium">
+              {{ item.name }} ({{ item.provider }}) — {{ item.status }}
+            </div>
+            <div class="text-muted-foreground">
+              latency {{ item.latencyMs ?? "—" }} ms · failures
+              {{ item.consecutiveFailures }} · last success
+              {{ item.lastSuccessAt || "never" }}<template v-if="item.outageStartedAt">
+                · outage since {{ item.outageStartedAt }}</template
+              >
+            </div>
+            <div v-if="item.lastError" class="text-destructive">
+              {{ item.lastError }}
+            </div>
           </div>
-          <div class="text-muted-foreground">
-            latency {{ item.latencyMs ?? "—" }} ms · failures
-            {{ item.consecutiveFailures }} · last success
-            {{ item.lastSuccessAt || "never" }}<template v-if="item.outageStartedAt">
-              · outage since {{ item.outageStartedAt }}</template
-            >
-          </div>
-          <div v-if="item.lastError" class="text-destructive">
-            {{ item.lastError }}
-          </div>
+          <Button
+            v-if="$can('/runtime/audit.view')"
+            size="sm"
+            variant="outline"
+            @click="openAudit({ dbManagementId: item.dbManagementId, accessKeyId: undefined })"
+          >
+            Audit
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -248,15 +289,25 @@ onMounted(load);
         <div
           v-for="item in keyUsage"
           :key="item.accessKeyId"
-          class="rounded border p-3 text-sm"
+          class="flex flex-col gap-3 rounded border p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
         >
-          <div class="font-medium">{{ item.name }} (#{{ item.accessKeyId }})</div>
-          <div class="text-muted-foreground">
-            audited tool operations {{ item.requestCount }} · success {{ item.successCount }} ·
-            failed {{ item.failureCount }} · HTTP rate-limit 429 {{ item.rateLimitCount }}
-            ({{ percent(item.rateLimitRejectionRate) }}) · last activity
-            {{ item.lastUsedAt || "never" }}
+          <div>
+            <div class="font-medium">{{ item.name }} (#{{ item.accessKeyId }})</div>
+            <div class="text-muted-foreground">
+              audited tool operations {{ item.requestCount }} · success {{ item.successCount }} ·
+              failed {{ item.failureCount }} · HTTP rate-limit 429 {{ item.rateLimitCount }}
+              ({{ percent(item.rateLimitRejectionRate) }}) · last activity
+              {{ item.lastUsedAt || "never" }}
+            </div>
           </div>
+          <Button
+            v-if="$can('/runtime/audit.view')"
+            size="sm"
+            variant="outline"
+            @click="openAudit({ accessKeyId: item.accessKeyId })"
+          >
+            Audit
+          </Button>
         </div>
       </CardContent>
     </Card>
