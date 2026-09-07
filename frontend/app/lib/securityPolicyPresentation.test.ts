@@ -20,23 +20,51 @@ const policy = (overrides: Partial<SecurityPolicy> = {}): SecurityPolicy => ({
 });
 
 describe("buildSecurityPolicyPosture", () => {
-  it("reports a guarded mutation policy when WHERE is required and full-table mutation is blocked", () => {
+  it("reports a guarded mutation policy when both mutations require predicates", () => {
     const result = buildSecurityPolicyPosture(policy());
 
     expect(result.label).toBe("Guarded mutation policy");
     expect(result.requiresReview).toBe(false);
     expect(result.warnings).toEqual([]);
     expect(result.facts).toContainEqual({
-      label: "Full-table mutation",
-      value: "UPDATE blocked · DELETE blocked",
+      label: "Effective UPDATE",
+      value: "Predicate required",
+    });
+    expect(result.facts).toContainEqual({
+      label: "Effective DELETE",
+      value: "Predicate required",
     });
   });
 
-  it("surfaces every relaxed mutation guardrail without inventing a security score", () => {
+  it("keeps a predicate requirement when only one raw flag is relaxed", () => {
+    const result = buildSecurityPolicyPosture(
+      policy({
+        requireWhereForUpdate: false,
+        allowFullTableUpdate: false,
+        requireWhereForDelete: true,
+        allowFullTableDelete: true,
+      }),
+    );
+
+    expect(result.label).toBe("Guarded mutation policy");
+    expect(result.requiresReview).toBe(false);
+    expect(result.warnings).toEqual([]);
+    expect(result.facts).toContainEqual({
+      label: "Effective UPDATE",
+      value: "Predicate required",
+    });
+    expect(result.facts).toContainEqual({
+      label: "Effective DELETE",
+      value: "Predicate required",
+    });
+  });
+
+  it("flags only mutation paths whose two policy flags jointly allow all rows", () => {
     const result = buildSecurityPolicyPosture(
       policy({
         requireWhereForUpdate: false,
         allowFullTableUpdate: true,
+        requireWhereForDelete: false,
         allowFullTableDelete: true,
       }),
     );
@@ -44,10 +72,17 @@ describe("buildSecurityPolicyPosture", () => {
     expect(result.label).toBe("Review mutation policy");
     expect(result.requiresReview).toBe(true);
     expect(result.warnings).toEqual([
-      "UPDATE can run without a WHERE clause.",
-      "Full-table UPDATE is allowed by the current policy.",
-      "Full-table DELETE is allowed by the current policy.",
+      "Full-table UPDATE is allowed by the effective compiler policy.",
+      "Full-table DELETE is allowed by the effective compiler policy.",
     ]);
+    expect(result.facts).toContainEqual({
+      label: "Effective UPDATE",
+      value: "Full-table allowed",
+    });
+    expect(result.facts).toContainEqual({
+      label: "Effective DELETE",
+      value: "Full-table allowed",
+    });
   });
 });
 
