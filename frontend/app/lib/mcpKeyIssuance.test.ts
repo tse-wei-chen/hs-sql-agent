@@ -130,6 +130,21 @@ describe("MCP key issuance helpers", () => {
     expect(posture.dataScope).toBe("1 table");
   });
 
+  it("flags saved tools that are no longer classifiable by the published catalog", () => {
+    const posture = resolveMcpAccessPosture(
+      ["execute_query_sql", "retired_custom_tool"],
+      ["execute_dml_sql"],
+      false,
+      0,
+      1,
+    );
+
+    expect(posture.level).toBe("review");
+    expect(posture.title).toBe("Review tool scope");
+    expect(posture.description).toContain("not in the current published catalog");
+    expect(posture.dataScope).toBe("All tables");
+  });
+
   it("builds direct Streamable HTTP snippets with the MCP server key header", () => {
     const snippets = createMcpOnboardingSnippets("https://sql.example.com/mcp", "secret-key");
     expect(JSON.parse(snippets.cursor).mcpServers["hs-sql-agent"]).toEqual({
