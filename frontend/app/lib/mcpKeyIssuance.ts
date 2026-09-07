@@ -81,8 +81,12 @@ export function resolveMcpAccessPosture(
     };
   }
 
-  const dmlTools = new Set(dmlToolNames);
-  const dmlEnabled = allowedTools.some((name) => dmlTools.has(name));
+  const dmlTools = new Set(
+    Array.from(dmlToolNames, (name) => name.toLocaleLowerCase()),
+  );
+  const dmlEnabled = allowedTools.some((name) =>
+    dmlTools.has(name.toLocaleLowerCase()),
+  );
 
   if (dmlEnabled) {
     return {
@@ -154,8 +158,12 @@ export function allowedToolsRequireElicitation(
   dmlToolNames: Iterable<string> = [],
 ): boolean {
   if (allowedTools.length === 0) return true;
-  const dmlTools = new Set(dmlToolNames);
-  return allowedTools.some((name) => dmlTools.has(name));
+  const dmlTools = new Set(
+    Array.from(dmlToolNames, (name) => name.toLocaleLowerCase()),
+  );
+  return allowedTools.some((name) =>
+    dmlTools.has(name.toLocaleLowerCase()),
+  );
 }
 
 export interface McpOnboardingSnippets {
