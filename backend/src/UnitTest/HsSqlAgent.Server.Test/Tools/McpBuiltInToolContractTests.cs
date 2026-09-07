@@ -65,4 +65,55 @@ public class McpBuiltInToolContractTests
         Assert.True(attribute.ReadOnly);
         Assert.Equal(typeof(Task<>).MakeGenericType(resultType), method.ReturnType);
     }
+
+    [Fact]
+    public void ExecuteDmlSql_AdvertisesStructuredMutatingOutput()
+    {
+        var method = typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.ExecuteDmlSql));
+        Assert.NotNull(method);
+
+        var attribute = Assert.Single(method.GetCustomAttributes<McpServerToolAttribute>());
+        Assert.True(attribute.UseStructuredContent);
+        Assert.False(attribute.ReadOnly);
+        Assert.Equal(typeof(Task<McpDmlToolResult>), method.ReturnType);
+    }
+
+    [Fact]
+    public void DmlStructuredResult_SeparatesApprovalStateFromErrors()
+    {
+        var pending = McpDmlToolResult.Pending(
+            "Postgres",
+            2,
+            4,
+            15,
+            "request-1",
+            "ticket-7",
+            "Pending review.");
+        var rejected = McpDmlToolResult.Rejected(
+            "Postgres",
+            1,
+            3,
+            9,
+            "request-2",
+            "Rejected.");
+        var failed = McpDmlToolResult.Failed(
+            "Postgres",
+            1,
+            "Server busy.",
+            new McpToolError("server.busy", "Server busy.", "Execution", true));
+
+        Assert.Equal("pending", pending.Status);
+        Assert.Equal("pending", pending.ApprovalDecision);
+        Assert.Equal("ticket-7", pending.ApprovalExternalReference);
+        Assert.Null(pending.Error);
+
+        Assert.Equal("rejected", rejected.Status);
+        Assert.Equal("rejected", rejected.ApprovalDecision);
+        Assert.Null(rejected.Error);
+
+        Assert.Equal("failed", failed.Status);
+        Assert.Null(failed.ApprovalDecision);
+        Assert.NotNull(failed.Error);
+        Assert.True(failed.Error.Retryable);
+    }
 }
