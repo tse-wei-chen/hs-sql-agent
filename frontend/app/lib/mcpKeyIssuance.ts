@@ -20,7 +20,8 @@ export interface McpToolSelectionDescriptor {
 export type McpAccessPostureLevel =
   | "read-query"
   | "dml-enabled"
-  | "unrestricted";
+  | "unrestricted"
+  | "review";
 
 export interface McpAccessPosture {
   level: McpAccessPostureLevel;
@@ -55,6 +56,7 @@ export function resolveMcpAccessPosture(
   dmlToolNames: Iterable<string> = [],
   restrictTables = false,
   selectedTableCount = 0,
+  unclassifiedToolCount = 0,
 ): McpAccessPosture {
   const dataScope = restrictTables
     ? `${selectedTableCount} table${selectedTableCount === 1 ? "" : "s"}`
@@ -66,6 +68,15 @@ export function resolveMcpAccessPosture(
       title: "Unrestricted tool access",
       description:
         "All built-in and published tools for this database are allowed, including DML.",
+      dataScope,
+    };
+  }
+
+  if (unclassifiedToolCount > 0) {
+    return {
+      level: "review",
+      title: "Review tool scope",
+      description: `${allowedTools.length} tools are saved, but ${unclassifiedToolCount} ${unclassifiedToolCount === 1 ? "tool is" : "tools are"} not in the current published catalog.`,
       dataScope,
     };
   }
