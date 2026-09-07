@@ -109,7 +109,7 @@ describe("MCP key issuance helpers", () => {
 
   it("surfaces explicit DML and table-restricted posture", () => {
     const posture = resolveMcpAccessPosture(
-      ["execute_query_sql", "execute_dml_sql"],
+      ["execute_query_sql", "EXECUTE_DML_SQL"],
       ["execute_dml_sql"],
       true,
       2,
@@ -172,6 +172,7 @@ describe("MCP key issuance helpers", () => {
     const dmlTools = ["execute_dml_sql", "archive_customer"];
     expect(allowedToolsRequireElicitation([], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["execute_dml_sql"], dmlTools)).toBe(true);
+    expect(allowedToolsRequireElicitation(["EXECUTE_DML_SQL"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["archive_customer"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["execute_query_sql"], dmlTools)).toBe(false);
   });
