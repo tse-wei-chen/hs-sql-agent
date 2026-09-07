@@ -2,7 +2,6 @@ using HsSqlAgent.SqlCore;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json;
-using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Xunit;
@@ -18,38 +17,6 @@ public class SqlAgentToolTests
         Assert.Null(typeof(SqlAgentTool).GetMethod("GetSemanticModel"));
         Assert.NotNull(typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.GetTables)));
         Assert.NotNull(typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.GetColumns)));
-    }
-
-    [Fact]
-    public void SemanticDescriptions_ShouldPreserveRelationshipAndMetricContext()
-    {
-        var relationshipMethod = typeof(SqlAgentTool).GetMethod(
-            "DescribeRelationship", BindingFlags.Static | BindingFlags.NonPublic);
-        var metricMethod = typeof(SqlAgentTool).GetMethod(
-            "DescribeMetric", BindingFlags.Static | BindingFlags.NonPublic);
-
-        var relationship = (string)relationshipMethod!.Invoke(null,
-        [
-            new DbSemanticRelationshipModel
-            {
-                Name = "orders_customer", SourceSchema = "main", SourceTable = "orders",
-                SourceColumn = "customer_id", TargetSchema = "main", TargetTable = "customers",
-                TargetColumn = "id", Cardinality = "many-to-one", Direction = "source-to-target"
-            }
-        ])!;
-        var metric = (string)metricMethod!.Invoke(null,
-        [
-            new DbSemanticMetricModel
-            {
-                Name = "revenue", TableName = "orders", Formula = "orders.amount",
-                Aggregation = "sum", Synonyms = ["sales"]
-            }
-        ])!;
-
-        Assert.Contains("main.orders.customer_id -> main.customers.id", relationship);
-        Assert.Contains("many-to-one", relationship);
-        Assert.Contains("formula=orders.amount", metric);
-        Assert.Contains("synonyms=sales", metric);
     }
 
     [Fact]

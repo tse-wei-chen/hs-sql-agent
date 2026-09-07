@@ -16,7 +16,7 @@ public class SqlAgentToolMetadataTests
     [Fact]
     public async Task GetSchemas_ReturnsStructuredProviderAndSchemaList()
     {
-        var (tool, metadata, _) = CreateTool(tableWhitelist: string.Empty);
+        var (tool, metadata, _, _) = CreateTool(tableWhitelist: string.Empty);
         metadata
             .Setup(x => x.GetSchemasAsync("Host=localhost;Database=testdb", It.IsAny<CancellationToken>()))
             .ReturnsAsync(["public", "sales"]);
@@ -25,14 +25,14 @@ public class SqlAgentToolMetadataTests
 
         Assert.True(result.Success);
         Assert.Equal("Postgres", result.Provider);
-        Assert.Equal(["public", "sales"], result.Schemas);
+        Assert.Equal(new[] { "public", "sales" }, result.Schemas);
         Assert.Null(result.Error);
     }
 
     [Fact]
     public async Task GetTables_AppliesKeyWhitelistBeforeReturningStructuredItems()
     {
-        var (tool, metadata, _) = CreateTool(tableWhitelist: "public.users");
+        var (tool, metadata, _, _) = CreateTool(tableWhitelist: "public.users");
         metadata
             .Setup(x => x.GetTablesAsync(
                 "Host=localhost;Database=testdb",
@@ -52,7 +52,7 @@ public class SqlAgentToolMetadataTests
     [Fact]
     public async Task GetColumns_ReturnsPrimaryKeyMetadataAsStructuredFields()
     {
-        var (tool, metadata, _) = CreateTool(tableWhitelist: "public.users");
+        var (tool, metadata, _, _) = CreateTool(tableWhitelist: "public.users");
         metadata
             .Setup(x => x.GetColumnsAsync(
                 "Host=localhost;Database=testdb",
@@ -76,8 +76,108 @@ public class SqlAgentToolMetadataTests
         Assert.Null(result.Error);
     }
 
-    private static (SqlAgentTool Tool, Mock<IProviderMetadataReader> Metadata, Mock<IAuditService> Audit) CreateTool(
-        string tableWhitelist)
+    [Fact]
+    public async Task StructuredMetadata_PreservesMetricAndRelationshipContext()
+    {
+        var (tool, metadata, semanticService, context) = CreateTool(
+            tableWhitelist: "main.orders,main.customers");
+        context.Items[McpContextItemKeys.DbManagementId] = 42;
+        metadata
+            .Setup(x => x.GetTablesAsync(
+                "Host=localhost;Database=testdb",
+                "main",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["orders", "customers"]);
+        metadata
+            .Setup(x => x.GetColumnsAsync(
+                "Host=localhost;Database=testdb",
+                "main",
+                "orders",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new DatabaseColumnMetadata("main", "orders", "customer_id", "integer", false)
+            ]);
+        semanticService
+            .Setup(x => x.GetSemanticModelAsync(42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DbSemanticModel(
+                42,
+                [
+                    new DbSemanticVM
+                    {
+                        DbManagementId = 42,
+                        SchemaName = "main",
+                        TableName = "orders",
+                        Description = "Customer orders",
+                        DisplayName = "Orders",
+                        Synonyms = ["purchases"]
+                    },
+                    new DbSemanticVM
+                    {
+                        DbManagementId = 42,
+                        SchemaName = "main",
+                        TableName = "orders",
+                        ColumnName = "customer_id",
+                        Description = "Owning customer",
+                        DisplayName = "Customer",
+                        Synonyms = ["buyer"]
+                    }
+                ],
+                [
+                    new DbSemanticRelationshipModel
+                    {
+                        DbManagementId = 42,
+                        Name = "orders_customer",
+                        SourceSchema = "main",
+                        SourceTable = "orders",
+                        SourceColumn = "customer_id",
+                        TargetSchema = "main",
+                        TargetTable = "customers",
+                        TargetColumn = "id",
+                        Cardinality = "many-to-one",
+                        Direction = "source-to-target"
+                    }
+                ],
+                [
+                    new DbSemanticMetricModel
+                    {
+                        DbManagementId = 42,
+                        SchemaName = "main",
+                        TableName = "orders",
+                        Name = "revenue",
+                        DisplayName = "Revenue",
+                        Formula = "orders.amount",
+                        Aggregation = "sum",
+                        Synonyms = ["sales"]
+                    }
+                ]));
+
+        var tables = await tool.GetTables("main", TestContext.Current.CancellationToken);
+        var columns = await tool.GetColumns("main", "orders", TestContext.Current.CancellationToken);
+
+        var orders = Assert.Single(tables.Tables, table => table.Name == "orders");
+        Assert.Equal("Orders", orders.DisplayName);
+        Assert.Contains("purchases", orders.Synonyms);
+        var metric = Assert.Single(orders.Metrics);
+        Assert.Equal("revenue", metric.Name);
+        Assert.Equal("orders.amount", metric.Formula);
+        Assert.Equal("sum", metric.Aggregation);
+        Assert.Contains("sales", metric.Synonyms);
+
+        var customerId = Assert.Single(columns.Columns);
+        Assert.Equal("Customer", customerId.DisplayName);
+        Assert.Contains("buyer", customerId.Synonyms);
+        var relationship = Assert.Single(customerId.Relationships);
+        Assert.Equal("orders_customer", relationship.Name);
+        Assert.Equal("main.orders.customer_id", relationship.Source);
+        Assert.Equal("main.customers.id", relationship.Target);
+        Assert.Equal("many-to-one", relationship.Cardinality);
+    }
+
+    private static (
+        SqlAgentTool Tool,
+        Mock<IProviderMetadataReader> Metadata,
+        Mock<IDbSemanticService> SemanticService,
+        DefaultHttpContext Context) CreateTool(string tableWhitelist)
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         var providerFactory = new Mock<ISqlProviderFactory>();
@@ -113,6 +213,7 @@ public class SqlAgentToolMetadataTests
                 concurrencyLimiter.Object,
                 typedQueryRuntime.Object),
             metadata,
-            auditService);
+            semanticService,
+            context);
     }
 }
