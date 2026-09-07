@@ -17,37 +17,40 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 
-const props = defineProps<{
-  modelValue: string;
-  options: string[];
-  placeholder?: string;
-  class?: any;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: string;
+    options: string[];
+    placeholder?: string;
+    searchPlaceholder?: string;
+    emptyText?: string;
+    allowCustom?: boolean;
+    disabled?: boolean;
+    class?: any;
+  }>(),
+  {
+    placeholder: "Select...",
+    searchPlaceholder: "Search or type custom value...",
+    emptyText: "No results found.",
+    allowCustom: true,
+    disabled: false,
+  },
+);
 
 const emit = defineEmits<{
   "update:modelValue": [value: string];
 }>();
 
 const open = ref(false);
+const searchVal = ref("");
 
-const onSelect = (val: string) => {
-  emit("update:modelValue", val);
+const onSelect = (value: string) => {
+  emit("update:modelValue", value);
   open.value = false;
 };
 
-// We need a wrapper component or just access to filterState if we were inside Command.
-// Since Command is down in the template, we can't easily use `useCommand()` here in script setup.
-// Wait! `Command` provides the context. We can't access it here.
-// Let's rely on `@input` event on CommandInput or just trust that v-model works on ListboxFilter.
-// Actually, `ListboxFilter` is a normal input, so `@input="(e) => searchVal = e.target.value"` will work perfectly!
-
-const searchVal = ref("");
-
-// Watch for changes in the popover state to reset search
 watch(open, (isOpen) => {
-  if (isOpen) {
-    searchVal.value = "";
-  }
+  if (isOpen) searchVal.value = "";
 });
 </script>
 
@@ -58,50 +61,48 @@ watch(open, (isOpen) => {
         variant="outline"
         role="combobox"
         :aria-expanded="open"
-        :class="cn('justify-between font-normal px-3', props.class)"
+        :disabled="disabled"
+        :class="cn('justify-between px-3 font-normal', props.class)"
       >
-        <span class="truncate">{{
-          modelValue || placeholder || "Select..."
-        }}</span>
+        <span class="truncate">{{ modelValue || placeholder }}</span>
         <ChevronsUpDown class="ml-2 h-4 w-4 shrink-0 opacity-50" />
       </Button>
     </PopoverTrigger>
-    <!-- We use SameWidth as trigger for PopoverContent if possible, but w-[200px] or dynamic -->
-    <PopoverContent class="p-0 min-w-50" align="start">
+    <PopoverContent class="min-w-50 p-0" align="start">
       <Command>
         <CommandInput
-          placeholder="Search or type custom value..."
-          @input="(e: any) => (searchVal = e.target.value)"
+          :placeholder="searchPlaceholder"
+          @input="(event: any) => (searchVal = event.target.value)"
         />
         <CommandList>
-          <!-- Show the typed custom value as an option if it's not empty and not perfectly matching an existing option -->
-          <CommandGroup v-if="searchVal && !options.includes(searchVal)">
+          <CommandGroup
+            v-if="allowCustom && searchVal && !options.includes(searchVal)"
+          >
             <CommandItem :value="searchVal" @select="onSelect(searchVal)">
-              <span class="text-primary font-medium"
-                >Use custom: "{{ searchVal }}"</span
-              >
+              <span class="font-medium text-primary">
+                Use custom: "{{ searchVal }}"
+              </span>
             </CommandItem>
           </CommandGroup>
 
-          <CommandEmpty v-if="!searchVal"> No results found. </CommandEmpty>
+          <CommandEmpty>{{ emptyText }}</CommandEmpty>
 
           <CommandGroup>
-            <!-- Standard Options -->
             <CommandItem
-              v-for="opt in options"
-              :key="opt"
-              :value="opt"
-              @select="onSelect(opt)"
+              v-for="option in options"
+              :key="option"
+              :value="option"
+              @select="onSelect(option)"
             >
               <Check
                 :class="
                   cn(
                     'mr-2 h-4 w-4',
-                    modelValue === opt ? 'opacity-100' : 'opacity-0',
+                    modelValue === option ? 'opacity-100' : 'opacity-0',
                   )
                 "
               />
-              {{ opt }}
+              {{ option }}
             </CommandItem>
           </CommandGroup>
         </CommandList>
