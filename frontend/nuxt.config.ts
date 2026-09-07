@@ -59,7 +59,8 @@ export default defineNuxtConfig({
         "@codemirror/theme-one-dark",
         "codemirror",
         "@lucide/vue",
-        "vue-sonner"
+        "vue-sonner",
+        "qrcode"
       ],
     },
   },
