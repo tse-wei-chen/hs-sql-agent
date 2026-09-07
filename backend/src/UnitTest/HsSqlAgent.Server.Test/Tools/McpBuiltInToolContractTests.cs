@@ -29,6 +29,6 @@ public class McpBuiltInToolContractTests
             annotatedMethods);
 
         Assert.Equal(5, McpBuiltInTools.Names.Count);
-        Assert.DoesNotContain("update_semantic_layer", McpBuiltInTools.Names);
+        Assert.False(McpBuiltInTools.Names.Contains("update_semantic_layer"));
     }
 }
