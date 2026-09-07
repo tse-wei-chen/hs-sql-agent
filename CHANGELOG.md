@@ -9,8 +9,8 @@ All notable changes to this project will be documented in this file.
 - Added one canonical server-side catalog for the five documented built-in MCP tools: `get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`, and `execute_dml_sql`.
 - MCP startup now fails closed when reflected built-in tools do not exactly match the canonical catalog, preventing accidental tool-surface expansion.
 - Removed the undocumented `update_semantic_layer` method from MCP discovery. The CLR method remains for compatibility, while Semantic Layer writes continue through the permission-protected Admin UI/API.
-- The Admin tool-catalog endpoint now returns built-in/custom classification, Query/DML type, display name, and risk metadata for MCP-key experiences.
-- Added a regression test that locks the public built-in MCP method surface to the five-tool contract.
+- The Admin tool-catalog endpoint now returns built-in/custom classification, Query/DML type, display name, risk metadata, and safe default-selection metadata for MCP-key experiences.
+- Added regression tests that lock the public built-in MCP method surface and the four-tool read/query default with DML opt-in.
 
 ### Developer experience
 
@@ -21,6 +21,11 @@ All notable changes to this project will be documented in this file.
 
 - Removed the inert `Search the docs...` sidebar control.
 - Replaced template-like sidebar branding with `hs-sql-agent` / `Admin Console`.
+- Made MCP Key issue/edit tool selection fully server-driven instead of maintaining a second built-in tool list in the frontend.
+- New MCP keys default to the four read/query tools (`get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`); `execute_dml_sql` and Custom DML tools remain explicit opt-in.
+- MCP Key issuance fails closed when the canonical tool catalog cannot be loaded instead of allowing an empty selection state to become unrestricted access.
+- Added an Access Posture summary to MCP Key issue/edit flows that distinguishes `Read/query only`, `DML enabled`, and `Unrestricted tool access` while also showing all-table vs table-restricted scope.
+- Added a permission-aware System Readiness flow on the Admin home page for database setup, active-key issuance, and first observed MCP client use.
 
 ### Compatibility note
 
@@ -107,6 +112,11 @@ app.UseHsSqlAgent();
   - Type definitions fully aligned with new backend schema.
   - `"in"` type removed from `WhereItem` union; IN conditions mapped to `type: "basic"` + `operator: "IN"`.
   - UI: IN is no longer a separate dropdown option — shown automatically when operator is `IN`/`NOT IN`.
+
+### Tests
+
+- **+506 lines** of new strategy tests covering Orders table JOINs, WHERE, HAVING, ORDER BY, GROUP BY, window functions, CASE WHEN, arithmetic expressions, CTEs, and UNION.
+- All strategy test files (SQLite, Postgres, MySql, SqlServer, Oracle, Firebird) updated to pass the extended test matrix.
 
 ## [1.6.0-alpha] - 2026-05-24
 
@@ -197,138 +207,14 @@ app.UseHsSqlAgent();
 ### Changed
 
 - **Feature**:
-  - Add support for SQL function expressions
-  - Enhance arithmetic conditions
-
-## [1.4.0-alpha] - 2026-05-14
-
-### Breaking Change
-
-- **Remove "Configure Manually" mode**: MCP API keys now require association with a Database Management entry (`DbManagementId`). Legacy manual connection string input has been removed from both the API and UI.
-- Old MCP keys will no longer be able to connect to the database. Please regenerate new MCP keys.
-
-### Feature
-
-- **Table Whitelist**: Administrators can now restrict each MCP API key to specific database tables. When a whitelist is configured, `get_tables` results are filtered, and `get_columns` / `execute_query_safe` / `execute_dml_safe` will reject access to non-whitelisted tables.
-- **Semantic Layer**: Added a semantic metadata layer for databases, allowing administrators to define display names and descriptions for tables and columns. Semantic data is automatically merged into `get_tables` and `get_columns` MCP tool responses.
-- **Dynamic Breadcrumb**: The layout breadcrumb now dynamically reflects the current route path with proper labels and navigation links.
-
-## [1.3.17-alpha] - 2026-05-13
-
-### Feature
-
-- UI improve for sql multi select and display.
-
-## [1.3.16-alpha] - 2026-05-11
-
-### Feature
-
-- **SQL Server**: Add support `TrustedServerCertificate` and `Encrypt` options in the connection string when testing or using the database connection.
-
-## [1.3.15-alpha] - 2026-05-02
-
-### Changed
-
-- **CustomToolProxy Enhancement**:
-  - Integrated audit logging capabilities to monitor tool execution.
-  - Improved query value parsing for more robust handling of dynamic inputs.
-- **SQL Builder Refinement**:
-  - Added support for **Table Aliases**, enabling more complex and readable JOIN queries.
-  - Refactored **Column Options** to provide a more flexible and scalable configuration structure.
-
-### Fixed
-
-- **Sql Definition Json Builder**: Resolved an issue where the JSON builder incorrectly mapped schema definitions.
-- **Custom Tool Param Issue**: Fixed a bug where custom tool parameters failed to pass through the proxy, ensuring correct argument delivery to underlying services.
-
-## [1.3.14-alpha] - 2026-04-30
-
-### Features
-
-- **Testing Infrastructure**: Added comprehensive unit and integration test suites for all database strategies (**PostgreSQL**, **MySQL**, **SQLite**, **SQL Server**, **Oracle**) using **Testcontainers**, ensuring reliability across different database engines.
-- **Database Management**: Introduced `DbManagementService` and corresponding API controllers to manage database connections and metadata more efficiently.
-- **Validation Layers**: Integrated **FluentValidation** on the backend and **VeeValidate** on the frontend to provide robust data validation and improved user feedback.
-- **Frontend Enhancements**: Initialized **Vitest** for frontend unit testing and added **MCP configuration** logic to support dynamic tool discovery.
-- **Oracle & SQL Server Support**: Fully implemented and validated strategies for Oracle and SQL Server, including container-based integration tests.
-
-### Fix
-
-- **SqlKata Query Builder**: Fixed regressions in the SQL compiler related to subquery alias generation and side effects in column alias handling.
-- **Error Mapping**: Improved database error code handling in `BaseStrategy` to provide more accurate troubleshooting hints (e.g., column/table not found).
-- **MySQL Compatibility**: Fixed a bug where certain MySQL truncation errors (e.g., Error 1292) were not being correctly intercepted.
-
-### Refactor
-
-- **Code Cleanup**: Streamlined `using` directives and improved general code readability and maintainability across the backend modules.
-- **Contribution Guidelines**: Updated `CONTRIBUTING.md` and added issue templates to improve the development workflow.
-
-## [1.3.13-alpha] - 2026-04-24
-
-### Features
-
-- **Visual SQL Builder**: Introduced a comprehensive GUI for building SQL Query JSON definitions, allowing users to visually construct complex tools
-
-### Refactor
-
-- **SQL Builder Simplification**: Removed mandatory table alias (`mainAlias`) logic from the SQL builder to simplify the user interface and generated JSON structure.
-
-## [1.3.12-alpha] - 2026-04-22
-
-### Features
-
-- Added **Database Management** page.
-- Enabled direct association with existing databases when issuing **MCP API Keys**.
-
-## [1.3.11-alpha] - 2026-04-21
-
-### Breaking Change
-
-- replace AES encryption with AesGcm for improved security and performance in connection string encryption and decryption : this is a breaking change that requires existing encrypted connection strings in the database to be re-encrypted using the new AesGcm-based CryptoService implementation, as the encryption format and key management are updated for enhanced security.
-
-## [1.3.10-alpha] - 2026-04-20
-
-### Feature
-
-- **Custom SQL Tools (Low-Code Tool Plugin System)**: Administrators can now define domain-specific SQL operations (Query or DML) directly from the Admin Panel, exposing them as new MCP tools to the AI agent.
-- **Dynamic Parameter Injection**: Introduced `{{parameterName}}` syntax for custom tools, allowing the AI to pass context-aware arguments into pre-defined SQL statements.
-- **Admin UI Enhancements**: Added a dedicated management interface for creating, testing, and managing Custom SQL Tools.
-- **Documentation Refactoring**: Major overhaul of `README.md` with a high-speed aesthetic, improed information architecture, and integrated Admin Panel snapshots.
-
-## [1.3.9-alpha] - 2026-04-19
-
-### Security Issue Fix
-
-- Resource injection For ConnectString
-- Clear text storage of sensitive information
-- Exposure of private information
-- Log entries created from user input
-
-### Breaking Change
-
-- UI Change: Manual entry of ADO.NET connection strings is disabled in the UI.
-
-## [1.3.8-alpha] - 2026-04-18
-
-### Improvement
-
-- Remove unnecessary middleware to reduce performance consumption
-
-### Fix
-
-- Fix the issue where the dashboard is not displaying
-
-## [1.3.7-alpha] - 2026-04-16
-
-### Feature
-
-- `allowed Tools` For Dynamic Tool List
-- implement database connection testing feature 、 global provider support
+  - Add support `allowed Tools` For Dynamic Tool List
+  - implement database connection testing feature 、 global provider support
 
 ## [1.3.6-alpha] - 2026-04-16
 
 ### Feature
 
-- `allowed Tools` Manage tool access for the API key : This feature allows administrators to specify which tools or API endpoints an issued API key has access to. By managing tool access at the API key level, you can enforce fine-grained permissions and restrict certain keys to only use specific functionalities of the MCP API, enhancing security and control over how the API is used.
+- `allowed Tools` Manage tool access for the API key : this feature allows administrators to specify which tools or API endpoints an issued API key has access to. By managing tool access at the API key level, you can enforce fine-grained permissions and restrict certain keys to only use specific functionalities of the MCP API, enhancing security and control over how the API is used.
 
 ## [1.3.5-alpha] - 2026-04-16
 
