@@ -12,17 +12,23 @@ export interface McpKeyDetail {
   windowSecondsOverride: number;
 }
 
-const DEFAULT_ALLOWED_TOOLS = [
-  "get_columns",
-  "get_schemas",
-  "get_tables",
-  "execute_query_sql",
-];
+export interface McpToolSelectionDescriptor {
+  name: string;
+  defaultSelected: boolean;
+}
 
-export function createInitialMcpKeyDetail(): McpKeyDetail {
+export function resolveDefaultAllowedTools(
+  tools: readonly McpToolSelectionDescriptor[],
+): string[] {
+  return tools.filter((tool) => tool.defaultSelected).map((tool) => tool.name);
+}
+
+export function createInitialMcpKeyDetail(
+  defaultAllowedTools: Iterable<string> = [],
+): McpKeyDetail {
   return {
     expiresAt: null,
-    allowedTools: [...DEFAULT_ALLOWED_TOOLS],
+    allowedTools: [...defaultAllowedTools],
     corsAllowedOrigins: "",
     dbManagementId: null,
     tableWhitelist: [],
@@ -82,12 +88,11 @@ export function formatAllowedToolsLabel(selectedTools: string[]): string {
 
 export function allowedToolsRequireElicitation(
   allowedTools: string[],
-  customDmlToolNames: Iterable<string> = [],
+  dmlToolNames: Iterable<string> = [],
 ): boolean {
-  const customDml = new Set(customDmlToolNames);
-  return allowedTools.length === 0 ||
-    allowedTools.includes("execute_dml_sql") ||
-    allowedTools.some((name) => customDml.has(name));
+  if (allowedTools.length === 0) return true;
+  const dmlTools = new Set(dmlToolNames);
+  return allowedTools.some((name) => dmlTools.has(name));
 }
 
 export interface McpOnboardingSnippets {
