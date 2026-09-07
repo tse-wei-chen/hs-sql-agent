@@ -29,6 +29,7 @@
 		<RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageReleaseNotes>2.0.5 adds structured MCP results for the built-in query, metadata, and DML tools.</PackageReleaseNotes>
 		<IncludeSymbols>true</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 	</PropertyGroup>
