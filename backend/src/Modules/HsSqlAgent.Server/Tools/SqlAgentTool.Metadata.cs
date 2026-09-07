@@ -1,6 +1,6 @@
 using System.ComponentModel;
-using System.Text.Json;
 using Admin.Service.Models;
+using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Server.Models;
 using ModelContextProtocol.Server;
 
@@ -8,87 +8,100 @@ namespace HsSqlAgent.Server.Tools;
 
 public partial class SqlAgentTool
 {
-    [McpServerTool, Description("Get column names and types of a table.")]
-    public async Task<string> GetColumns(
+    [McpServerTool(UseStructuredContent = true, ReadOnly = true), Description("Get column names and types of a table.")]
+    public async Task<McpColumnsToolResult> GetColumns(
         [Description("The schema name")] string schemaName,
         [Description("The table name")] string tableName,
         CancellationToken cancellationToken = default)
     {
+        string? providerName = null;
         try
         {
             ValidateToolAccess("get_columns");
             EnsureTableAllowed(QualifiedTable(schemaName, tableName));
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return InvalidSqlConfigurationMessage;
+            {
+                return new McpColumnsToolResult(
+                    false,
+                    null,
+                    schemaName,
+                    tableName,
+                    [],
+                    InvalidConfigurationError());
+            }
+            providerName = dbType.ToString();
             if (string.IsNullOrEmpty(tableName))
-                return "Table name cannot be empty.";
+            {
+                return new McpColumnsToolResult(
+                    false,
+                    providerName,
+                    schemaName,
+                    tableName,
+                    [],
+                    new McpToolError("validation.table_missing", "Table name cannot be empty.", "Input"));
+            }
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
-            List<ColumnInfo> columns;
+            IReadOnlyList<DatabaseColumnMetadata> metadata;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                var metadata = await provider.Metadata.GetColumnsAsync(
+                metadata = await provider.Metadata.GetColumnsAsync(
                     sqlConfig.ConnectionString,
                     schemaName,
                     tableName,
                     cancellationToken);
-                columns = metadata
-                    .Select(column => new ColumnInfo(
-                        column.Name,
-                        column.Type,
-                        column.IsPrimaryKey,
-                        column.PrimaryKeyOrdinal))
-                    .ToList();
             }
 
+            var whitelist = ResolveTableWhitelist();
             var dbId = ResolveDbManagementId();
+            DbSemanticModel? semanticModel = null;
             if (dbId.HasValue)
+                semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value, cancellationToken);
+
+            var columns = metadata.Select(column =>
             {
-                var whitelist = ResolveTableWhitelist();
-                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value, cancellationToken);
-                var tableSemantics = semanticModel.Entities.Where(s =>
+                var semantic = semanticModel?.Entities.FirstOrDefault(s =>
                     string.Equals(s.SchemaName, schemaName, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(s.TableName, tableName, StringComparison.OrdinalIgnoreCase)).ToList();
+                    && string.Equals(s.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(s.ColumnName, column.Name, StringComparison.OrdinalIgnoreCase));
 
-                foreach (var col in columns)
-                {
-                    var semantic = tableSemantics.FirstOrDefault(s =>
-                        string.Equals(s.ColumnName, col.Name, StringComparison.OrdinalIgnoreCase));
-                    var parts = new List<string>();
-                    if (semantic != null)
-                    {
-                        if (!string.IsNullOrWhiteSpace(semantic.DisplayName))
-                            parts.Add($"Display Name: {semantic.DisplayName}");
-                        if (!string.IsNullOrWhiteSpace(semantic.Description))
-                            parts.Add(semantic.Description);
-                        if (semantic.Synonyms.Count > 0)
-                            parts.Add($"Synonyms: {string.Join(", ", semantic.Synonyms)}");
-                    }
+                var relationships = semanticModel?.Relationships.Where(r =>
+                    IsSemanticTableAllowed(whitelist, r.SourceSchema, r.SourceTable)
+                    && IsSemanticTableAllowed(whitelist, r.TargetSchema, r.TargetTable)
+                    && ((SameIdentifier(r.SourceSchema, schemaName)
+                         && SameIdentifier(r.SourceTable, tableName)
+                         && SameIdentifier(r.SourceColumn, column.Name))
+                        || (SameIdentifier(r.TargetSchema, schemaName)
+                            && SameIdentifier(r.TargetTable, tableName)
+                            && SameIdentifier(r.TargetColumn, column.Name))))
+                    .Select(r => new McpRelationshipToolItem(
+                        r.Name,
+                        QualifiedColumn(r.SourceSchema, r.SourceTable, r.SourceColumn),
+                        QualifiedColumn(r.TargetSchema, r.TargetTable, r.TargetColumn),
+                        r.Cardinality.ToString(),
+                        r.Direction.ToString()))
+                    .ToArray() ?? [];
 
-                    var relationships = semanticModel.Relationships.Where(r =>
-                        IsSemanticTableAllowed(whitelist, r.SourceSchema, r.SourceTable)
-                        && IsSemanticTableAllowed(whitelist, r.TargetSchema, r.TargetTable)
-                        && ((SameIdentifier(r.SourceSchema, schemaName)
-                             && SameIdentifier(r.SourceTable, tableName)
-                             && SameIdentifier(r.SourceColumn, col.Name))
-                            || (SameIdentifier(r.TargetSchema, schemaName)
-                                && SameIdentifier(r.TargetTable, tableName)
-                                && SameIdentifier(r.TargetColumn, col.Name))));
-                    parts.AddRange(relationships.Select(DescribeRelationship));
-                    if (parts.Count > 0)
-                        col.Description = string.Join(". ", parts);
-                }
-            }
+                return new McpColumnToolItem(
+                    column.Name,
+                    column.Type,
+                    column.IsPrimaryKey,
+                    column.PrimaryKeyOrdinal,
+                    semantic?.DisplayName,
+                    semantic?.Description,
+                    semantic?.Synonyms?.ToArray() ?? [],
+                    relationships);
+            }).ToArray();
 
             await _auditService.WriteLogAsync(
                 "mcp.get_columns",
                 $"{schemaName}.{tableName}",
                 "success",
                 cancellationToken: cancellationToken);
-            return JsonSerializer.Serialize(columns);
+            return new McpColumnsToolResult(true, providerName, schemaName, tableName, columns, null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -102,22 +115,30 @@ public partial class SqlAgentTool
                 "failed",
                 ex.Message,
                 cancellationToken);
-            return $"Error getting columns: {ex.Message}";
+            return new McpColumnsToolResult(
+                false,
+                providerName,
+                schemaName,
+                tableName,
+                [],
+                DescribeMetadataError(ex));
         }
     }
 
-    [McpServerTool, Description("Get list of schemas in the database.")]
-    public async Task<string> GetSchemas(CancellationToken cancellationToken = default)
+    [McpServerTool(UseStructuredContent = true, ReadOnly = true), Description("Get list of schemas in the database.")]
+    public async Task<McpSchemasToolResult> GetSchemas(CancellationToken cancellationToken = default)
     {
+        string? providerName = null;
         try
         {
             ValidateToolAccess("get_schemas");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return InvalidSqlConfigurationMessage;
+                return new McpSchemasToolResult(false, null, [], InvalidConfigurationError());
+            providerName = dbType.ToString();
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
-            IEnumerable<string> schemas;
+            IReadOnlyList<string> schemas;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
@@ -130,7 +151,7 @@ public partial class SqlAgentTool
                 "database",
                 "success",
                 cancellationToken: cancellationToken);
-            return string.Join(", ", schemas);
+            return new McpSchemasToolResult(true, providerName, schemas.ToArray(), null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -144,72 +165,76 @@ public partial class SqlAgentTool
                 "failed",
                 ex.Message,
                 cancellationToken);
-            return $"Error getting schemas: {ex.Message}";
+            return new McpSchemasToolResult(false, providerName, [], DescribeMetadataError(ex));
         }
     }
 
-    [McpServerTool, Description("Get list of tables in a schema.")]
-    public async Task<string> GetTables(
+    [McpServerTool(UseStructuredContent = true, ReadOnly = true), Description("Get list of tables in a schema.")]
+    public async Task<McpTablesToolResult> GetTables(
         [Description("The schema name")] string schemaName,
         CancellationToken cancellationToken = default)
     {
+        string? providerName = null;
         try
         {
             ValidateToolAccess("get_tables");
             var sqlConfig = await ResolveSqlConfigAsync();
             if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-                return InvalidSqlConfigurationMessage;
+                return new McpTablesToolResult(false, null, schemaName, [], InvalidConfigurationError());
+            providerName = dbType.ToString();
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
-            IEnumerable<string> tables;
+            IReadOnlyList<string> providerTables;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-                tables = await provider.Metadata.GetTablesAsync(sqlConfig.ConnectionString, schemaName, cancellationToken);
+                providerTables = await provider.Metadata.GetTablesAsync(sqlConfig.ConnectionString, schemaName, cancellationToken);
             }
 
+            IEnumerable<string> tables = providerTables;
             var whitelist = ResolveTableWhitelist();
             if (whitelist is { Count: > 0 })
-                tables = tables.Where(t => whitelist.Contains(QualifiedTable(schemaName, t))).ToArray();
+                tables = tables.Where(t => whitelist.Contains(QualifiedTable(schemaName, t)));
+            var visibleTables = tables.ToArray();
 
+            DbSemanticModel? semanticModel = null;
             var dbId = ResolveDbManagementId();
             if (dbId.HasValue)
-            {
-                var semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value, cancellationToken);
-                var tablesWithDesc = tables.Select(t =>
-                {
-                    var semantic = semanticModel.Entities.FirstOrDefault(item =>
-                        SameIdentifier(item.SchemaName, schemaName)
-                        && SameIdentifier(item.TableName, t)
-                        && string.IsNullOrEmpty(item.ColumnName));
-                    var parts = new List<string>();
-                    if (!string.IsNullOrWhiteSpace(semantic?.DisplayName))
-                        parts.Add($"Display Name: {semantic.DisplayName}");
-                    if (!string.IsNullOrWhiteSpace(semantic?.Description))
-                        parts.Add(semantic.Description);
-                    if (semantic?.Synonyms.Count > 0)
-                        parts.Add($"Synonyms: {string.Join(", ", semantic.Synonyms)}");
-                    var metrics = semanticModel.Metrics.Where(metric =>
-                        SameIdentifier(metric.SchemaName, schemaName) && SameIdentifier(metric.TableName, t));
-                    parts.AddRange(metrics.Select(DescribeMetric));
-                    return parts.Count > 0 ? $"{t} ({string.Join(". ", parts)})" : t;
-                });
+                semanticModel = await _semanticService.GetSemanticModelAsync(dbId.Value, cancellationToken);
 
-                await _auditService.WriteLogAsync(
-                    "mcp.get_tables",
-                    schemaName,
-                    "success",
-                    cancellationToken: cancellationToken);
-                return string.Join(", ", tablesWithDesc);
-            }
+            var tableItems = visibleTables.Select(tableName =>
+            {
+                var semantic = semanticModel?.Entities.FirstOrDefault(item =>
+                    SameIdentifier(item.SchemaName, schemaName)
+                    && SameIdentifier(item.TableName, tableName)
+                    && string.IsNullOrEmpty(item.ColumnName));
+                var metrics = semanticModel?.Metrics
+                    .Where(metric => SameIdentifier(metric.SchemaName, schemaName) && SameIdentifier(metric.TableName, tableName))
+                    .Select(metric => new McpMetricToolItem(
+                        metric.Name,
+                        metric.DisplayName,
+                        metric.Aggregation.ToString(),
+                        metric.Formula,
+                        metric.Grain,
+                        metric.Filter,
+                        metric.Synonyms?.ToArray() ?? []))
+                    .ToArray() ?? [];
+
+                return new McpTableToolItem(
+                    tableName,
+                    semantic?.DisplayName,
+                    semantic?.Description,
+                    semantic?.Synonyms?.ToArray() ?? [],
+                    metrics);
+            }).ToArray();
 
             await _auditService.WriteLogAsync(
                 "mcp.get_tables",
                 schemaName,
                 "success",
                 cancellationToken: cancellationToken);
-            return string.Join(", ", tables);
+            return new McpTablesToolResult(true, providerName, schemaName, tableItems, null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -223,7 +248,7 @@ public partial class SqlAgentTool
                 "failed",
                 ex.Message,
                 cancellationToken);
-            return $"Error getting tables: {ex.Message}";
+            return new McpTablesToolResult(false, providerName, schemaName, [], DescribeMetadataError(ex));
         }
     }
 
@@ -281,6 +306,32 @@ public partial class SqlAgentTool
         }
     }
 
+    private static McpToolError InvalidConfigurationError() =>
+        new("configuration.invalid", InvalidSqlConfigurationMessage, "Configuration");
+
+    private static McpToolError DescribeMetadataError(Exception error) => error switch
+    {
+        UnauthorizedAccessException => new McpToolError(
+            "authorization.denied",
+            error.Message,
+            "Authorization"),
+        TimeoutException => new McpToolError(
+            "metadata.timeout",
+            error.Message,
+            "Metadata",
+            true),
+        InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
+            new McpToolError(
+                "server.busy",
+                error.Message,
+                "Metadata",
+                true),
+        _ => new McpToolError(
+            "metadata.failed",
+            error.Message,
+            "Metadata")
+    };
+
     private static bool SameIdentifier(string? left, string? right) =>
         string.Equals(left ?? string.Empty, right ?? string.Empty, StringComparison.OrdinalIgnoreCase);
 
@@ -289,25 +340,6 @@ public partial class SqlAgentTool
         string? schema,
         string table) =>
         whitelist is null or { Count: 0 } || whitelist.Contains(QualifiedTable(schema, table));
-
-    private static string DescribeRelationship(DbSemanticRelationshipModel relationship) =>
-        $"Relationship {relationship.Name}: "
-        + $"{QualifiedColumn(relationship.SourceSchema, relationship.SourceTable, relationship.SourceColumn)} "
-        + $"-> {QualifiedColumn(relationship.TargetSchema, relationship.TargetTable, relationship.TargetColumn)} "
-        + $"[{relationship.Cardinality}, {relationship.Direction}]";
-
-    private static string DescribeMetric(DbSemanticMetricModel metric)
-    {
-        var details = new List<string>
-        {
-            $"aggregation={metric.Aggregation}",
-            $"formula={metric.Formula}"
-        };
-        if (!string.IsNullOrWhiteSpace(metric.Grain)) details.Add($"grain={metric.Grain}");
-        if (!string.IsNullOrWhiteSpace(metric.Filter)) details.Add($"filter={metric.Filter}");
-        if (metric.Synonyms is { Count: > 0 }) details.Add($"synonyms={string.Join("/", metric.Synonyms)}");
-        return $"Metric {metric.DisplayName ?? metric.Name} [{string.Join("; ", details)}]";
-    }
 
     private static string QualifiedColumn(string? schema, string table, string column) =>
         string.IsNullOrWhiteSpace(schema) ? $"{table}.{column}" : $"{schema}.{table}.{column}";

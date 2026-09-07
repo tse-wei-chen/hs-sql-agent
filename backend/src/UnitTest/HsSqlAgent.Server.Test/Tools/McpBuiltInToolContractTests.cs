@@ -50,15 +50,19 @@ public class McpBuiltInToolContractTests
         Assert.Equal("high", dml.Risk);
     }
 
-    [Fact]
-    public void ExecuteQuerySql_AdvertisesStructuredReadOnlyOutput()
+    [Theory]
+    [InlineData(nameof(SqlAgentTool.ExecuteQuerySql), typeof(McpQueryToolResult))]
+    [InlineData(nameof(SqlAgentTool.GetSchemas), typeof(McpSchemasToolResult))]
+    [InlineData(nameof(SqlAgentTool.GetTables), typeof(McpTablesToolResult))]
+    [InlineData(nameof(SqlAgentTool.GetColumns), typeof(McpColumnsToolResult))]
+    public void ReadTools_AdvertiseStructuredReadOnlyOutputs(string methodName, Type resultType)
     {
-        var method = typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.ExecuteQuerySql));
+        var method = typeof(SqlAgentTool).GetMethod(methodName);
         Assert.NotNull(method);
 
         var attribute = Assert.Single(method.GetCustomAttributes<McpServerToolAttribute>());
         Assert.True(attribute.UseStructuredContent);
         Assert.True(attribute.ReadOnly);
-        Assert.Equal(typeof(Task<McpQueryToolResult>), method.ReturnType);
+        Assert.Equal(typeof(Task<>).MakeGenericType(resultType), method.ReturnType);
     }
 }

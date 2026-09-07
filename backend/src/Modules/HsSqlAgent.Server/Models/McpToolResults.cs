@@ -51,3 +51,65 @@ public sealed record McpQueryToolResult(
         long durationMs = 0) =>
         new(false, provider, 0, Math.Max(0, durationMs), [], error);
 }
+
+public sealed record McpSchemasToolResult(
+    [property: Description("Whether schema discovery completed successfully.")]
+    bool Success,
+    [property: Description("Resolved target database provider, or null when configuration could not be resolved.")]
+    string? Provider,
+    [property: Description("Schema names visible to the current MCP key.")]
+    IReadOnlyList<string> Schemas,
+    [property: Description("Machine-readable error details when Success is false; otherwise null.")]
+    McpToolError? Error);
+
+public sealed record McpMetricToolItem(
+    string Name,
+    string? DisplayName,
+    string Aggregation,
+    string Formula,
+    string? Grain,
+    string? Filter,
+    IReadOnlyList<string> Synonyms);
+
+public sealed record McpTableToolItem(
+    string Name,
+    string? DisplayName,
+    string? Description,
+    IReadOnlyList<string> Synonyms,
+    IReadOnlyList<McpMetricToolItem> Metrics);
+
+public sealed record McpTablesToolResult(
+    [property: Description("Whether table discovery completed successfully.")]
+    bool Success,
+    string? Provider,
+    string Schema,
+    [property: Description("Tables visible to the current MCP key, including structured semantic metadata when available.")]
+    IReadOnlyList<McpTableToolItem> Tables,
+    McpToolError? Error);
+
+public sealed record McpRelationshipToolItem(
+    string Name,
+    string Source,
+    string Target,
+    string Cardinality,
+    string Direction);
+
+public sealed record McpColumnToolItem(
+    string Name,
+    string Type,
+    bool IsPrimaryKey,
+    int? PrimaryKeyOrdinal,
+    string? DisplayName,
+    string? Description,
+    IReadOnlyList<string> Synonyms,
+    IReadOnlyList<McpRelationshipToolItem> Relationships);
+
+public sealed record McpColumnsToolResult(
+    [property: Description("Whether column discovery completed successfully.")]
+    bool Success,
+    string? Provider,
+    string Schema,
+    string Table,
+    [property: Description("Columns visible to the current MCP key, including structured semantic metadata and relationships when available.")]
+    IReadOnlyList<McpColumnToolItem> Columns,
+    McpToolError? Error);
