@@ -108,6 +108,7 @@ const keys = ref<McpKeyItem[]>([]);
 const builtInTools = ref<AvailableMcpTool[]>([]);
 const availableTools = ref<AvailableMcpTool[]>([]);
 const lifecycleTools = ref<AvailableMcpTool[]>([]);
+const keyToolCatalogs = ref<Record<number, AvailableMcpTool[]>>({});
 const dbManagements = ref<DbManagement[]>([]);
 const loading = ref(false);
 const toolCatalogReady = ref(false);
@@ -224,6 +225,9 @@ const accessPostureClass = (level: McpAccessPostureLevel) => {
   }
   if (level === "dml-enabled") {
     return "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200";
+  }
+  if (level === "review") {
+    return "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200";
   }
   return "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200";
 };
@@ -363,6 +367,30 @@ const load = async () => {
     lifecycleTools.value = canonicalBuiltIns;
     detail.value.allowedTools = resolveDefaultAllowedTools(canonicalBuiltIns);
     toolCatalogReady.value = true;
+
+    const keyDbIds = [
+      ...new Set(
+        (keysResult as McpKeyItem[])
+          .map((key) => key.dbManagementId)
+          .filter(
+            (dbManagementId): dbManagementId is number =>
+              typeof dbManagementId === "number" && dbManagementId > 0,
+          ),
+      ),
+    ];
+    const catalogResults = await Promise.allSettled(
+      keyDbIds.map(async (dbManagementId) => ({
+        dbManagementId,
+        tools: await listAvailableMcpTools(dbManagementId),
+      })),
+    );
+    const catalogs: Record<number, AvailableMcpTool[]> = {};
+    for (const result of catalogResults) {
+      if (result.status === "fulfilled") {
+        catalogs[result.value.dbManagementId] = result.value.tools;
+      }
+    }
+    keyToolCatalogs.value = catalogs;
   } catch (error: any) {
     toolCatalogReady.value = false;
     toolCatalogError.value =
@@ -486,13 +514,47 @@ const lifecycleExpiry = () =>
     ? new Date(lifecycleExpiresAt.value).toISOString()
     : null;
 
-const parseAllowedTools = (value?: string | null) =>
+const parseCsvValues = (value?: string | null) =>
   value
     ? value
         .split(",")
-        .map((name) => name.trim())
+        .map((item) => item.trim())
         .filter(Boolean)
     : [];
+
+const parseAllowedTools = (value?: string | null) => parseCsvValues(value);
+
+const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
+  const allowedTools = parseAllowedTools(key.allowedTools);
+  const tableWhitelist = parseCsvValues(key.tableWhitelist);
+  const catalog =
+    (key.dbManagementId ? keyToolCatalogs.value[key.dbManagementId] : undefined) ??
+    builtInTools.value;
+  const publishedNames = new Set(
+    catalog.map((tool) => tool.name.toLocaleLowerCase()),
+  );
+  const unclassifiedToolCount = allowedTools.filter(
+    (name) => !publishedNames.has(name.toLocaleLowerCase()),
+  ).length;
+  const catalogDmlTools = catalog
+    .filter((tool) => tool.type === "DML")
+    .map((tool) => tool.name);
+
+  return resolveMcpAccessPosture(
+    allowedTools,
+    catalogDmlTools,
+    tableWhitelist.length > 0,
+    tableWhitelist.length,
+    unclassifiedToolCount,
+  );
+};
+
+const issuedKeyRows = computed(() =>
+  keys.value.map((key) => ({
+    key,
+    posture: resolveStoredKeyAccessPosture(key),
+  })),
+);
 
 const openLifecycle = (
   mode: "edit" | "rotate" | "clone",
@@ -895,45 +957,91 @@ onMounted(load);
     </Card>
 
     <Card>
-      <CardHeader class="border-b"><CardTitle>Issued Keys</CardTitle></CardHeader>
+      <CardHeader class="border-b">
+        <CardTitle>Issued Keys</CardTitle>
+        <CardDescription>
+          Review effective access posture before rotating, duplicating, or broadening a key.
+        </CardDescription>
+      </CardHeader>
       <CardContent>
         <div v-if="loading" class="py-8 text-sm text-muted-foreground">Loading keys...</div>
         <div v-else-if="keys.length === 0" class="py-8 text-sm text-muted-foreground">No issued keys yet.</div>
-        <div v-else class="space-y-2 pt-4">
+        <div v-else class="space-y-3 pt-4">
           <div
-            v-for="key in keys"
+            v-for="{ key, posture } in issuedKeyRows"
             :key="key.id"
-            class="flex flex-col gap-3 rounded-lg border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between"
+            class="rounded-lg border bg-card p-4 shadow-sm"
           >
-            <div class="text-sm">
-              <div class="font-medium">{{ key.name }}</div>
-              <div class="text-muted-foreground">
-                Prefix: {{ key.keyPrefix }} | Status: {{ key.isExpired ? "expired" : key.isActive ? "active" : "revoked" }}
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div class="min-w-0 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-medium">{{ key.name }}</span>
+                  <Badge variant="outline">
+                    {{ key.isExpired ? "Expired" : key.isActive ? "Active" : "Revoked" }}
+                  </Badge>
+                  <Badge variant="outline" :class="accessPostureClass(posture.level)">
+                    {{ posture.title }}
+                  </Badge>
+                  <Badge v-if="key.isExpiringSoon" variant="outline" class="border-amber-300 text-amber-700">
+                    Expires within 7 days
+                  </Badge>
+                </div>
+                <div class="text-xs text-muted-foreground">
+                  Prefix <span class="font-mono">{{ key.keyPrefix }}</span>
+                  <template v-if="key.dbManagementName || key.dbManagementId">
+                    · {{ key.dbManagementName || `Missing connection #${key.dbManagementId}` }}
+                  </template>
+                  <template v-if="key.sqlProvider"> · {{ key.sqlProvider }}</template>
+                </div>
               </div>
-              <div class="text-muted-foreground">Expires: {{ key.expiresAt || "never" }}</div>
-              <div class="text-muted-foreground">Last used: {{ key.lastUsedAt || "never" }}</div>
-              <div class="text-muted-foreground">CORS: {{ key.corsAllowedOrigins || "none" }}</div>
-              <div class="text-muted-foreground">
-                Database: {{ key.dbManagementName || (key.dbManagementId ? `Missing connection #${key.dbManagementId}` : "none") }}
-                <template v-if="key.sqlProvider"> ({{ key.sqlProvider }})</template>
+              <div class="flex flex-wrap gap-2">
+                <Button v-if="!key.isBootstrapManaged" variant="outline" @click="openLifecycle('edit', key)" v-permission="'edit'">Edit</Button>
+                <Button variant="outline" @click="openLifecycle('clone', key)" v-permission="'create'">Duplicate</Button>
+                <Button v-if="!key.isBootstrapManaged" variant="outline" :disabled="!key.isActive" @click="openLifecycle('rotate', key)" v-permission="'edit'">Rotate</Button>
+                <Button v-if="!key.isBootstrapManaged" variant="destructive" :disabled="!key.isActive" @click="revoke(key.id)" v-permission="'revoke'">Revoke</Button>
               </div>
-              <div class="text-muted-foreground">Table Whitelist: {{ key.tableWhitelist || "All" }}</div>
-              <div class="text-muted-foreground">Allowed Tools: {{ key.allowedTools || "All" }}</div>
-              <div class="text-muted-foreground">
-                Rate Limit:
-                <template v-if="key.rateLimitMode === 'Unlimited'">Unlimited (per-key limit disabled)</template>
-                <template v-else>
-                  {{ key.effectivePermitLimit }} requests / {{ key.effectiveWindowSeconds }}s
-                  ({{ key.rateLimitMode === "Custom" ? "key override" : "Security default" }})
-                </template>
-              </div>
-              <div v-if="key.isExpiringSoon" class="mt-1 font-medium text-amber-600">Expires within 7 days</div>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <Button v-if="!key.isBootstrapManaged" variant="outline" @click="openLifecycle('edit', key)" v-permission="'edit'">Edit</Button>
-              <Button variant="outline" @click="openLifecycle('clone', key)" v-permission="'create'">Duplicate</Button>
-              <Button v-if="!key.isBootstrapManaged" variant="outline" :disabled="!key.isActive" @click="openLifecycle('rotate', key)" v-permission="'edit'">Rotate</Button>
-              <Button v-if="!key.isBootstrapManaged" variant="destructive" :disabled="!key.isActive" @click="revoke(key.id)" v-permission="'revoke'">Revoke</Button>
+
+            <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Access</div>
+                <div class="mt-1 text-sm font-medium">{{ posture.title }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">{{ posture.description }}</div>
+              </div>
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Data scope</div>
+                <div class="mt-1 text-sm font-medium">{{ posture.dataScope }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">
+                  {{ key.tableWhitelist || "No table allowlist" }}
+                </div>
+              </div>
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Usage</div>
+                <div class="mt-1 text-sm font-medium">{{ key.lastUsedAt ? "Used" : "Never used" }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">Last used: {{ key.lastUsedAt || "never" }}</div>
+              </div>
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Rate limit</div>
+                <div class="mt-1 text-sm font-medium">
+                  <template v-if="key.rateLimitMode === 'Unlimited'">Unlimited</template>
+                  <template v-else>{{ key.effectivePermitLimit }} / {{ key.effectiveWindowSeconds }}s</template>
+                </div>
+                <div class="mt-1 text-xs text-muted-foreground">
+                  {{ key.rateLimitMode === "Custom" ? "Key override" : key.rateLimitMode === "Unlimited" ? "Per-key quota disabled" : "Security default" }}
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+              <span>Tools: {{ key.allowedTools || "All current tools" }}</span>
+              <span>Expires: {{ key.expiresAt || "never" }}</span>
+              <span>CORS: {{ key.corsAllowedOrigins || "none" }}</span>
+            </div>
+            <div
+              v-if="posture.level === 'review'"
+              class="mt-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200"
+            >
+              This key references a tool that is not in the database's current published catalog. Review the key before changing its access scope.
             </div>
           </div>
         </div>
