@@ -4,6 +4,7 @@ using FluentValidation;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Filters;
+using HsSqlAgent.Server.Formatting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -23,7 +24,11 @@ public static class HsSqlAgentAdminApiServiceExtensions
         services.AddControllers()
             .AddApplicationPart(typeof(RoleController).Assembly);
         services.Configure<MvcOptions>(mvc =>
-            mvc.Conventions.Add(new HsSqlAgentControllerSurfaceConvention(builder)));
+        {
+            mvc.InputFormatters.Insert(0, new HsSqlAgentJsonInputFormatter());
+            mvc.OutputFormatters.Insert(0, new HsSqlAgentJsonOutputFormatter());
+            mvc.Conventions.Add(new HsSqlAgentControllerSurfaceConvention(builder));
+        });
         services.AddValidatorsFromAssemblyContaining<IssueMcpAccessKeyRequestValidator>();
         services.AddValidatorsFromAssemblyContaining<SignInRequestValidator>();
 
