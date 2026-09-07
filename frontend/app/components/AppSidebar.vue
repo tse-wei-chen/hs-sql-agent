@@ -85,13 +85,12 @@ const data = ref({
                 <Command class="size-4" />
               </div>
               <div class="grid flex-1 text-left text-sm leading-tight">
-                <span class="truncate font-medium">HS Admin Panel</span>
-                <span class="truncate text-xs">Dashboard</span>
+                <span class="truncate font-medium">hs-sql-agent</span>
+                <span class="truncate text-xs">Admin Console</span>
               </div>
             </NuxtLink>
           </SidebarMenuButton>
         </SidebarMenuItem>
-        <SearchForm />
       </SidebarMenu>
     </SidebarHeader>
     <SidebarContent>
