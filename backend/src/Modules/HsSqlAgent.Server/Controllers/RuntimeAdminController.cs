@@ -5,6 +5,7 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Models;
 using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -43,8 +44,25 @@ public class RuntimeAdminController(
         if (dbManagementId <= 0)
             return BadRequest("A valid DbManagementId is required.");
 
-        var tools = await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId, cancellationToken);
-        return Ok(tools.Select(x => new { x.Name, x.Type }));
+        var builtInTools = new[]
+        {
+            new { Name = McpBuiltInTools.GetSchemas, Type = "Query", DisplayName = "Get schemas", Risk = "low", IsBuiltIn = true },
+            new { Name = McpBuiltInTools.GetTables, Type = "Query", DisplayName = "Get tables", Risk = "low", IsBuiltIn = true },
+            new { Name = McpBuiltInTools.GetColumns, Type = "Query", DisplayName = "Get columns", Risk = "low", IsBuiltIn = true },
+            new { Name = McpBuiltInTools.ExecuteQuerySql, Type = "Query", DisplayName = "Execute query", Risk = "medium", IsBuiltIn = true },
+            new { Name = McpBuiltInTools.ExecuteDmlSql, Type = "DML", DisplayName = "Execute DML", Risk = "high", IsBuiltIn = true }
+        };
+        var customTools = (await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId, cancellationToken))
+            .Select(tool => new
+            {
+                tool.Name,
+                tool.Type,
+                DisplayName = $"Custom: {tool.Name}",
+                Risk = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase) ? "high" : "medium",
+                IsBuiltIn = false
+            });
+
+        return Ok(builtInTools.Concat(customTools));
     }
 
     [HttpPost("mcp-keys")]
