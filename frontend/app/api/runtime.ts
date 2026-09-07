@@ -45,6 +45,9 @@ export interface McpClientConfig {
 export interface AvailableMcpTool {
   name: string;
   type: "Query" | "DML";
+  displayName: string;
+  risk: "low" | "medium" | "high";
+  isBuiltIn: boolean;
 }
 
 export const getMcpClientConfig = async (): Promise<McpClientConfig> => {
