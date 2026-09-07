@@ -27,7 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { CircleAlert, CircleCheck, KeyRound , CircleQuestionMark  } from "@lucide/vue";
+import { CircleAlert, CircleCheck, KeyRound, CircleQuestionMark } from "@lucide/vue";
 import {
   issueMcpKey,
   cloneMcpKey,
@@ -47,13 +47,10 @@ import {
   getTables,
   type DbManagement,
 } from "~/api/db-management";
-
 import MultiSelect from "~/components/MultiSelect.vue";
 import Transfer from "~/components/Transfer.vue";
-
-
 import FormField from "@/components/FormField.vue";
-import { toast } from "vue-sonner"
+import { toast } from "vue-sonner";
 import { useForm } from "vee-validate";
 import {
   createInitialMcpKeyDetail,
@@ -62,6 +59,9 @@ import {
   serializeTableWhitelist,
   createMcpOnboardingSnippets,
   allowedToolsRequireElicitation,
+  resolveDefaultAllowedTools,
+  resolveMcpAccessPosture,
+  type McpAccessPostureLevel,
   type McpKeyDetail,
   type McpKeyRateLimitMode,
 } from "@/lib/mcpKeyIssuance";
@@ -94,15 +94,25 @@ interface McpKeyItem {
   isBootstrapManaged: boolean;
 }
 
-const { meta, values, setFieldValue, resetForm: resetVeeForm, handleSubmit } = useForm<{ name: string; dbManagementId: number | null }>({
+const {
+  meta,
+  values,
+  setFieldValue,
+  resetForm: resetVeeForm,
+  handleSubmit,
+} = useForm<{ name: string; dbManagementId: number | null }>({
   initialValues: { name: "", dbManagementId: null },
-})
+});
 
 const keys = ref<McpKeyItem[]>([]);
-const customTools = ref<AvailableMcpTool[]>([]);
-const lifecycleCustomTools = ref<AvailableMcpTool[]>([]);
+const builtInTools = ref<AvailableMcpTool[]>([]);
+const availableTools = ref<AvailableMcpTool[]>([]);
+const lifecycleTools = ref<AvailableMcpTool[]>([]);
+const keyToolCatalogs = ref<Record<number, AvailableMcpTool[]>>({});
 const dbManagements = ref<DbManagement[]>([]);
 const loading = ref(false);
+const toolCatalogReady = ref(false);
+const toolCatalogError = ref("");
 const issuing = ref(false);
 const testing = ref(false);
 const customExpiresAt = ref("");
@@ -125,7 +135,7 @@ const lifecycleKey = ref<McpKeyItem | null>(null);
 const lifecycleSaving = ref(false);
 const lifecycleName = ref("");
 const lifecycleExpiresAt = ref("");
-const lifecycleAllowedTools = ref("");
+const lifecycleAllowedTools = ref<string[]>([]);
 const lifecycleCors = ref("");
 const lifecycleDbManagementId = ref<number | null>(null);
 const lifecycleTableWhitelist = ref("");
@@ -138,16 +148,101 @@ const expiringSoonKeys = computed(() =>
   keys.value.filter((key) => key.isExpiringSoon),
 );
 
+const builtInToolNames = computed(
+  () => new Set(builtInTools.value.map((tool) => tool.name)),
+);
+
+const toToolOptions = (tools: AvailableMcpTool[]) =>
+  tools.map((tool) => ({
+    label: tool.displayName,
+    value: tool.name,
+    risk: tool.risk,
+  }));
+
+const toolOptions = computed(() => toToolOptions(availableTools.value));
+const lifecycleToolOptions = computed(() => toToolOptions(lifecycleTools.value));
+
+const selectedToolLabel = computed(() =>
+  formatAllowedToolsLabel(detail.value.allowedTools),
+);
+const lifecycleSelectedToolLabel = computed(() =>
+  formatAllowedToolsLabel(lifecycleAllowedTools.value),
+);
+
+const dmlToolNames = computed(
+  () => new Set(
+    availableTools.value
+      .filter((tool) => tool.type === "DML")
+      .map((tool) => tool.name),
+  ),
+);
+const lifecycleDmlToolNames = computed(
+  () => new Set(
+    lifecycleTools.value
+      .filter((tool) => tool.type === "DML")
+      .map((tool) => tool.name),
+  ),
+);
+
+const issueRequiresElicitation = computed(() =>
+  allowedToolsRequireElicitation(detail.value.allowedTools, dmlToolNames.value),
+);
+const lifecycleRequiresElicitation = computed(() =>
+  allowedToolsRequireElicitation(
+    lifecycleAllowedTools.value,
+    lifecycleDmlToolNames.value,
+  ),
+);
+
+const issueAccessPosture = computed(() =>
+  resolveMcpAccessPosture(
+    detail.value.allowedTools,
+    dmlToolNames.value,
+    isWhitelistEnabled.value,
+    detail.value.tableWhitelist.length,
+  ),
+);
+
+const lifecycleTableCount = computed(() =>
+  lifecycleTableWhitelist.value
+    .split(",")
+    .map((table) => table.trim())
+    .filter(Boolean).length,
+);
+
+const lifecycleAccessPosture = computed(() =>
+  resolveMcpAccessPosture(
+    lifecycleAllowedTools.value,
+    lifecycleDmlToolNames.value,
+    lifecycleTableCount.value > 0,
+    lifecycleTableCount.value,
+  ),
+);
+
+const accessPostureClass = (level: McpAccessPostureLevel) => {
+  if (level === "unrestricted") {
+    return "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200";
+  }
+  if (level === "dml-enabled") {
+    return "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200";
+  }
+  if (level === "review") {
+    return "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200";
+  }
+  return "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200";
+};
+
 watch(
   () => detail.value.dbManagementId,
   async (newVal) => {
-    customTools.value = [];
     detail.value.allowedTools = detail.value.allowedTools.filter((name) =>
-      baseToolOptions.some((tool) => tool.value === name),
+      builtInToolNames.value.has(name),
     );
+    availableTools.value = builtInTools.value;
     selectedSchema.value = undefined;
     availableTables.value = [];
     detail.value.tableWhitelist = [];
+
     if (newVal) {
       const requestedDbId = newVal;
       fetchingSchemas.value = true;
@@ -161,11 +256,19 @@ watch(
       } finally {
         fetchingSchemas.value = false;
       }
+
       try {
         const tools = await listAvailableMcpTools(requestedDbId);
-        if (detail.value.dbManagementId === requestedDbId) customTools.value = tools;
+        if (detail.value.dbManagementId === requestedDbId) {
+          availableTools.value = tools;
+        }
       } catch {
-        if (detail.value.dbManagementId === requestedDbId) customTools.value = [];
+        if (detail.value.dbManagementId === requestedDbId) {
+          availableTools.value = builtInTools.value;
+          toast.error(
+            "Custom tool catalog could not be loaded. Built-in tools remain available.",
+          );
+        }
       }
     } else {
       availableSchemas.value = [];
@@ -194,57 +297,46 @@ watch(
   },
 );
 
-const tableOptions = computed(() => {
-  return availableTables.value.map((t) => ({
-    label: t,
-    value: `${selectedSchema.value}.${t}`,
-  }));
-});
-
-const baseToolOptions = [
-  { label: "Execute Query", value: "execute_query_sql", risk: "medium" },
-  { label: "Get Columns", value: "get_columns", risk: "low" },
-  { label: "Get Schemas", value: "get_schemas", risk: "low" },
-  { label: "Get Tables", value: "get_tables", risk: "low" },
-  { label: "Execute DML", value: "execute_dml_sql", risk: "high" },
-];
-
-const toolOptions = computed(() => {
-  const customOptions = customTools.value.map((t) => ({
-    label: `Custom: ${t.name}`,
-    value: t.name,
-    risk: t.type === "DML" ? "high" : "medium",
-  }));
-  return [...baseToolOptions, ...customOptions];
-});
-
-const selectedToolLabel = computed(() => {
-  return formatAllowedToolsLabel(detail.value.allowedTools);
-});
-
-const dmlToolNames = computed(() => new Set(
-  customTools.value.filter((tool) => tool.type === "DML").map((tool) => tool.name),
-));
-
-const issueRequiresElicitation = computed(() =>
-  allowedToolsRequireElicitation(detail.value.allowedTools, dmlToolNames.value),
-);
-const lifecycleRequiresElicitation = computed(() => allowedToolsRequireElicitation(
-  lifecycleAllowedTools.value.split(",").map((name) => name.trim()).filter(Boolean),
-  new Set(lifecycleCustomTools.value.filter((tool) => tool.type === "DML").map((tool) => tool.name)),
-));
-
 watch(lifecycleDbManagementId, async (dbManagementId) => {
-  lifecycleCustomTools.value = [];
-  if (!dbManagementId) return;
+  const requestedSelection = [...lifecycleAllowedTools.value];
+  lifecycleTools.value = builtInTools.value;
+
+  if (!dbManagementId) {
+    lifecycleAllowedTools.value = requestedSelection.filter((name) =>
+      builtInToolNames.value.has(name),
+    );
+    return;
+  }
+
   const requestedDbId = dbManagementId;
   try {
     const tools = await listAvailableMcpTools(requestedDbId);
-    if (lifecycleDbManagementId.value === requestedDbId) lifecycleCustomTools.value = tools;
+    if (lifecycleDbManagementId.value !== requestedDbId) return;
+
+    lifecycleTools.value = tools;
+    const availableNames = new Set(tools.map((tool) => tool.name));
+    lifecycleAllowedTools.value = requestedSelection.filter((name) =>
+      availableNames.has(name),
+    );
   } catch {
-    if (lifecycleDbManagementId.value === requestedDbId) lifecycleCustomTools.value = [];
+    if (lifecycleDbManagementId.value === requestedDbId) {
+      lifecycleTools.value = builtInTools.value;
+      lifecycleAllowedTools.value = requestedSelection.filter((name) =>
+        builtInToolNames.value.has(name),
+      );
+      toast.error(
+        "Tool catalog could not be loaded for this database. Only built-in tools are shown.",
+      );
+    }
   }
 });
+
+const tableOptions = computed(() =>
+  availableTables.value.map((table) => ({
+    label: table,
+    value: `${selectedSchema.value}.${table}`,
+  })),
+);
 
 const onboardingSnippets = computed(() =>
   createMcpOnboardingSnippets(mcpEndpoint.value, issuedPlaintextKey.value),
@@ -252,33 +344,85 @@ const onboardingSnippets = computed(() =>
 
 const load = async () => {
   loading.value = true;
+  toolCatalogError.value = "";
   try {
-    const [keysResult, dbManagementsResult, clientConfig] =
+    const [keysResult, dbManagementsResult, clientConfig, catalog] =
       await Promise.all([
         listMcpKeys(),
         listDbManagements(),
         getMcpClientConfig(),
+        listAvailableMcpTools(),
       ]);
+
+    const canonicalBuiltIns = catalog.filter((tool) => tool.isBuiltIn);
+    if (canonicalBuiltIns.length === 0) {
+      throw new Error("The server returned an empty built-in MCP tool catalog.");
+    }
+
     keys.value = keysResult;
     dbManagements.value = dbManagementsResult;
     mcpEndpoint.value = clientConfig.mcpEndpoint;
+    builtInTools.value = canonicalBuiltIns;
+    availableTools.value = canonicalBuiltIns;
+    lifecycleTools.value = canonicalBuiltIns;
+    detail.value.allowedTools = resolveDefaultAllowedTools(canonicalBuiltIns);
+    toolCatalogReady.value = true;
+
+    const keyDbIds = [
+      ...new Set(
+        (keysResult as McpKeyItem[])
+          .map((key) => key.dbManagementId)
+          .filter(
+            (dbManagementId): dbManagementId is number =>
+              typeof dbManagementId === "number" && dbManagementId > 0,
+          ),
+      ),
+    ];
+    const catalogResults = await Promise.allSettled(
+      keyDbIds.map(async (dbManagementId) => ({
+        dbManagementId,
+        tools: await listAvailableMcpTools(dbManagementId),
+      })),
+    );
+    const catalogs: Record<number, AvailableMcpTool[]> = {};
+    for (const result of catalogResults) {
+      if (result.status === "fulfilled") {
+        catalogs[result.value.dbManagementId] = result.value.tools;
+      }
+    }
+    keyToolCatalogs.value = catalogs;
+  } catch (error: any) {
+    toolCatalogReady.value = false;
+    toolCatalogError.value =
+      error?.response?.data?.error ||
+      error?.response?.data ||
+      error?.message ||
+      "Unable to load the MCP tool catalog.";
+    toast.error(toolCatalogError.value);
   } finally {
     loading.value = false;
   }
 };
 
 const resetForm = () => {
-  resetVeeForm()
-  detail.value = createInitialMcpKeyDetail()
-  customExpiresAt.value = ""
-  isWhitelistEnabled.value = false
-  selectedSchema.value = undefined
-  issuedPlaintextKey.value = ""
-  issuedKeyName.value = ""
+  resetVeeForm();
+  detail.value = createInitialMcpKeyDetail(
+    resolveDefaultAllowedTools(builtInTools.value),
+  );
+  availableTools.value = builtInTools.value;
+  customExpiresAt.value = "";
+  isWhitelistEnabled.value = false;
+  selectedSchema.value = undefined;
+  issuedPlaintextKey.value = "";
+  issuedKeyName.value = "";
 };
 
 const issue = async () => {
   try {
+    if (!toolCatalogReady.value) {
+      throw new Error("The MCP tool catalog must load before a key can be issued.");
+    }
+
     const expiresAt = resolveMcpKeyExpiry(
       detail.value.expiresAt,
       customExpiresAt.value,
@@ -292,7 +436,7 @@ const issue = async () => {
       name: values.name.trim(),
       expiresAt,
       allowedTools:
-        detail.value.allowedTools?.length > 0
+        detail.value.allowedTools.length > 0
           ? detail.value.allowedTools.join(",")
           : null,
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
@@ -309,10 +453,11 @@ const issue = async () => {
           : null,
     });
 
-    resetForm()
+    const issuedName = result.name || values.name;
+    resetForm();
     await load();
     issuedPlaintextKey.value = result.plaintextKey || "";
-    issuedKeyName.value = result.name || values.name;
+    issuedKeyName.value = issuedName;
   } catch (error: any) {
     toast.error(
       error?.response?.data?.error ||
@@ -324,7 +469,7 @@ const issue = async () => {
     issuing.value = false;
   }
 };
-const onIssue = handleSubmit(issue)
+const onIssue = handleSubmit(issue);
 
 const test = async () => {
   try {
@@ -369,6 +514,48 @@ const lifecycleExpiry = () =>
     ? new Date(lifecycleExpiresAt.value).toISOString()
     : null;
 
+const parseCsvValues = (value?: string | null) =>
+  value
+    ? value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
+
+const parseAllowedTools = (value?: string | null) => parseCsvValues(value);
+
+const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
+  const allowedTools = parseAllowedTools(key.allowedTools);
+  const tableWhitelist = parseCsvValues(key.tableWhitelist);
+  const catalog =
+    (key.dbManagementId ? keyToolCatalogs.value[key.dbManagementId] : undefined) ??
+    builtInTools.value;
+  const publishedNames = new Set(
+    catalog.map((tool) => tool.name.toLocaleLowerCase()),
+  );
+  const unclassifiedToolCount = allowedTools.filter(
+    (name) => !publishedNames.has(name.toLocaleLowerCase()),
+  ).length;
+  const catalogDmlTools = catalog
+    .filter((tool) => tool.type === "DML")
+    .map((tool) => tool.name);
+
+  return resolveMcpAccessPosture(
+    allowedTools,
+    catalogDmlTools,
+    tableWhitelist.length > 0,
+    tableWhitelist.length,
+    unclassifiedToolCount,
+  );
+};
+
+const issuedKeyRows = computed(() =>
+  keys.value.map((key) => ({
+    key,
+    posture: resolveStoredKeyAccessPosture(key),
+  })),
+);
+
 const openLifecycle = (
   mode: "edit" | "rotate" | "clone",
   key: McpKeyItem,
@@ -383,13 +570,15 @@ const openLifecycle = (
   lifecycleExpiresAt.value = toLocalDateTime(
     mode === "edit" ? key.expiresAt : reusableExpiry,
   );
-  lifecycleAllowedTools.value = key.allowedTools || "";
+  lifecycleAllowedTools.value = parseAllowedTools(key.allowedTools);
   lifecycleCors.value = key.corsAllowedOrigins || "";
   lifecycleDbManagementId.value = key.dbManagementId ?? null;
   lifecycleTableWhitelist.value = key.tableWhitelist || "";
   lifecycleRateLimitMode.value = key.rateLimitMode || "Inherit";
-  lifecyclePermitLimit.value = key.permitLimitOverride || key.effectivePermitLimit || 120;
-  lifecycleWindowSeconds.value = key.windowSecondsOverride || key.effectiveWindowSeconds || 60;
+  lifecyclePermitLimit.value =
+    key.permitLimitOverride || key.effectivePermitLimit || 120;
+  lifecycleWindowSeconds.value =
+    key.windowSecondsOverride || key.effectiveWindowSeconds || 60;
   gracePeriodMinutes.value = 0;
 };
 
@@ -402,7 +591,10 @@ const saveLifecycle = async () => {
       result = await updateMcpKey(lifecycleKey.value.id, {
         name: lifecycleName.value.trim(),
         expiresAt: lifecycleExpiry(),
-        allowedTools: lifecycleAllowedTools.value.trim() || null,
+        allowedTools:
+          lifecycleAllowedTools.value.length > 0
+            ? lifecycleAllowedTools.value.join(",")
+            : null,
         corsAllowedOrigins: lifecycleCors.value.trim() || null,
         dbManagementId: lifecycleDbManagementId.value,
         tableWhitelist: lifecycleTableWhitelist.value.trim() || null,
@@ -463,9 +655,7 @@ const closeOnboarding = () => {
   issuedKeyName.value = "";
 };
 
-onMounted(async () => {
-  await load();
-});
+onMounted(load);
 </script>
 
 <template>
@@ -511,23 +701,15 @@ onMounted(async () => {
                 </SelectContent>
               </Select>
             </Field>
-            <span class="md:col-span-2">
-              <hr />
-            </span>
+            <span class="md:col-span-2"><hr /></span>
             <Field v-if="detail.expiresAt === 'custom'" class="md:col-span-2">
               <FieldLabel for="customExpiresAt">Custom Expires At</FieldLabel>
-              <Input
-                id="customExpiresAt"
-                v-model="customExpiresAt"
-                type="datetime-local"
-              />
+              <Input id="customExpiresAt" v-model="customExpiresAt" type="datetime-local" />
             </Field>
             <Field>
               <FieldLabel for="rateLimitMode">Per-key rate limit</FieldLabel>
               <Select v-model="detail.rateLimitMode">
-                <SelectTrigger id="rateLimitMode" class="w-full">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger id="rateLimitMode" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="Inherit">Use Security default</SelectItem>
                   <SelectItem value="Custom">Custom quota</SelectItem>
@@ -557,15 +739,9 @@ onMounted(async () => {
                 <FieldLabel>Database<RequiredStar /></FieldLabel>
                 <div class="relative">
                   <Select :modelValue="detail.dbManagementId" @update:modelValue="(v: unknown) => { detail.dbManagementId = v as number | null; setFieldValue('dbManagementId', v as number | null) }">
-                    <SelectTrigger class="w-full">
-                      <SelectValue placeholder="Select database connection" />
-                    </SelectTrigger>
+                    <SelectTrigger class="w-full"><SelectValue placeholder="Select database connection" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem
-                        v-for="db in dbManagements"
-                        :key="db.id"
-                        :value="db.id"
-                      >
+                      <SelectItem v-for="db in dbManagements" :key="db.id" :value="db.id">
                         {{ db.name }} ({{ db.sqlProvider }})
                       </SelectItem>
                     </SelectContent>
@@ -577,88 +753,57 @@ onMounted(async () => {
                           <CircleAlert class="size-4 text-destructive" />
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent side="top" align="end">
-                        {{ errorMessage }}
-                      </TooltipContent>
+                      <TooltipContent side="top" align="end">{{ errorMessage }}</TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
-                  <div
-                    v-else-if="fieldMeta.touched && fieldMeta.valid"
-                    class="absolute right-0 top-1/2 -translate-y-1/2 pr-3"
-                  >
+                  <div v-else-if="fieldMeta.touched && fieldMeta.valid" class="absolute right-0 top-1/2 -translate-y-1/2 pr-3">
                     <CircleCheck class="size-4 text-green-500" />
                   </div>
                 </div>
               </Field>
             </VeeField>
-            <span class="md:col-span-2">
-              <hr />
-            </span>
+            <span class="md:col-span-2"><hr /></span>
             <Field class="md:col-span-2">
               <div class="flex items-center justify-start gap-2">
-                <FieldLabel>Restrict Data Access (Advanced) </FieldLabel>
+                <FieldLabel>Restrict Data Access (Advanced)</FieldLabel>
                 <TooltipProvider>
                   <Tooltip>
-                    <TooltipTrigger as-child>
-                      <CircleQuestionMark
-                        class="h-5 w-5 text-muted-foreground"
-                      />
-                    </TooltipTrigger>
+                    <TooltipTrigger as-child><CircleQuestionMark class="h-5 w-5 text-muted-foreground" /></TooltipTrigger>
                     <TooltipContent>
                       <p class="mt-1 text-xs text-background">
-                        If enabled, you can restrict the tables that the AI can
-                        access.
+                        If enabled, you can restrict the tables that the AI can access.
                       </p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
                 <Switch id="enable-whitelist" v-model="isWhitelistEnabled" />
               </div>
-              <div
-                v-if="!detail.dbManagementId && isWhitelistEnabled"
-                class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground"
-              >
+              <div v-if="!detail.dbManagementId && isWhitelistEnabled" class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground">
                 Please select a database connection first.
               </div>
-              <div
-                v-else-if="fetchingSchemas && isWhitelistEnabled"
-                class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground"
-              >
+              <div v-else-if="fetchingSchemas && isWhitelistEnabled" class="py-12 border-2 border-dashed rounded-lg text-center text-muted-foreground">
                 Fetching schemas...
               </div>
-              <Tabs
-                v-else-if="isWhitelistEnabled"
-                v-model="selectedSchema"
-                class="w-full"
-              >
+              <Tabs v-else-if="isWhitelistEnabled" v-model="selectedSchema" class="w-full">
                 <div class="flex items-center gap-4 mb-4">
                   <div class="flex-1 overflow-x-auto pb-2">
-                    <TabsList
-                      class="inline-flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-auto min-w-full"
-                    >
+                    <TabsList class="inline-flex h-9 items-center justify-start rounded-lg bg-muted p-1 text-muted-foreground w-auto min-w-full">
                       <TabsTrigger
-                        v-for="s in availableSchemas"
-                        :key="s"
-                        :value="s"
+                        v-for="schema in availableSchemas"
+                        :key="schema"
+                        :value="schema"
                         class="inline-flex items-center justify-center whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow"
                       >
-                        {{ s }}
+                        {{ schema }}
                       </TabsTrigger>
                     </TabsList>
                   </div>
                 </div>
-
-                <div
-                  v-if="!selectedSchema"
-                  class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground"
-                >
+                <div v-if="!selectedSchema" class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground">
                   Select a schema above to manage table whitelist.
                 </div>
                 <div v-else class="space-y-4">
-                  <div
-                    v-if="fetchingTables"
-                    class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground"
-                  >
+                  <div v-if="fetchingTables" class="py-20 border rounded-lg bg-muted/20 text-center text-muted-foreground">
                     Fetching tables for {{ selectedSchema }}...
                   </div>
                   <Transfer
@@ -670,21 +815,27 @@ onMounted(async () => {
                     right-title="Whitelist"
                   />
                   <p class="text-xs text-muted-foreground">
-                    Selected tables:
-                    {{
-                      detail.tableWhitelist.length ||
-                      "None — select at least one table"
-                    }}
+                    Selected tables: {{ detail.tableWhitelist.length || "None — select at least one table" }}
                   </p>
                 </div>
               </Tabs>
             </Field>
-            <span class="md:col-span-2">
-              <hr />
-            </span>
+            <span class="md:col-span-2"><hr /></span>
             <Field class="md:col-span-2">
-              <FieldLabel>Allowed Tools (multi-select)</FieldLabel>
+              <div class="flex items-center justify-between gap-3">
+                <FieldLabel>Allowed Tools (multi-select)</FieldLabel>
+                <span v-if="toolCatalogReady" class="text-xs text-muted-foreground">
+                  Server-managed catalog
+                </span>
+              </div>
+              <div
+                v-if="!toolCatalogReady"
+                class="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
+              >
+                {{ toolCatalogError || "Loading MCP tool catalog..." }}
+              </div>
               <MultiSelect
+                v-else
                 v-model="detail.allowedTools"
                 :options="toolOptions"
                 :placeholder="selectedToolLabel"
@@ -705,8 +856,23 @@ onMounted(async () => {
                   </div>
                 </template>
               </MultiSelect>
+              <p v-if="toolCatalogReady" class="mt-2 text-xs text-muted-foreground">
+                New keys start with the four safe read/query tools selected. DML is opt-in.
+              </p>
               <div
-                v-if="issueRequiresElicitation"
+                v-if="toolCatalogReady"
+                class="mt-2 rounded-md border p-3 text-sm"
+                :class="accessPostureClass(issueAccessPosture.level)"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-xs font-semibold uppercase tracking-wide">Access posture</span>
+                  <span class="font-medium">{{ issueAccessPosture.title }}</span>
+                </div>
+                <p class="mt-1 text-xs">{{ issueAccessPosture.description }}</p>
+                <p class="mt-1 text-xs font-medium">Data scope: {{ issueAccessPosture.dataScope }}</p>
+              </div>
+              <div
+                v-if="toolCatalogReady && issueRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
               >
                 This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused. An unrestricted tool list also includes DML.
@@ -714,20 +880,13 @@ onMounted(async () => {
             </Field>
             <Field class="md:col-span-2">
               <div class="flex items-center justify-start gap-2">
-                <FieldLabel for="corsAllowedOrigins"
-                  >CORS Allowed Origins</FieldLabel
-                >
+                <FieldLabel for="corsAllowedOrigins">CORS Allowed Origins</FieldLabel>
                 <TooltipProvider>
                   <Tooltip>
-                    <TooltipTrigger as-child>
-                      <CircleQuestionMark
-                        class="h-5 w-5 text-muted-foreground"
-                      />
-                    </TooltipTrigger>
+                    <TooltipTrigger as-child><CircleQuestionMark class="h-5 w-5 text-muted-foreground" /></TooltipTrigger>
                     <TooltipContent>
                       <p class="mt-1 text-xs text-background">
-                        Comma-separated origins. Leave empty to block browser
-                        cross-origin requests for this key.
+                        Comma-separated origins. Leave empty to block browser cross-origin requests for this key.
                       </p>
                     </TooltipContent>
                   </Tooltip>
@@ -742,11 +901,7 @@ onMounted(async () => {
           </FieldGroup>
           <span class="item-center flex justify-end gap-2">
             <TooltipProvider>
-              <Tooltip
-                :disabled="
-                  !connectionTestResult || connectionTestResult.success === true
-                "
-              >
+              <Tooltip :disabled="!connectionTestResult || connectionTestResult.success === true">
                 <TooltipTrigger as-child>
                   <Button
                     type="button"
@@ -767,35 +922,15 @@ onMounted(async () => {
                               : 'bg-slate-100 text-slate-500',
                       ]"
                     >
-                      <template
-                        v-if="
-                          connectionTestResult &&
-                          connectionTestResult.success === true
-                        "
-                      >
-                        ✓
-                      </template>
-                      <template
-                        v-else-if="
-                          connectionTestResult &&
-                          connectionTestResult.success === false
-                        "
-                      >
-                        ✗
-                      </template>
+                      <template v-if="connectionTestResult && connectionTestResult.success === true">✓</template>
+                      <template v-else-if="connectionTestResult && connectionTestResult.success === false">✗</template>
                       <template v-else>?</template>
                     </Badge>
-                    <span>{{
-                      testing ? "Connecting..." : "Test DB Connection"
-                    }}</span>
+                    <span>{{ testing ? "Connecting..." : "Test DB Connection" }}</span>
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent
-                  class="max-w-[300px] bg-red-950 text-white border-none"
-                >
-                  <p class="font-mono text-xs">
-                    {{ connectionTestResult?.errorMessage }}
-                  </p>
+                <TooltipContent class="max-w-[300px] bg-red-950 text-white border-none">
+                  <p class="font-mono text-xs">{{ connectionTestResult?.errorMessage }}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -803,6 +938,7 @@ onMounted(async () => {
               type="submit"
               :disabled="
                 !meta.valid ||
+                !toolCatalogReady ||
                 issuing ||
                 (detail.expiresAt === 'custom' && !customExpiresAt) ||
                 (isWhitelistEnabled && detail.tableWhitelist.length === 0) ||
@@ -817,100 +953,95 @@ onMounted(async () => {
             </Button>
           </span>
         </form>
-
       </CardContent>
     </Card>
 
     <Card>
       <CardHeader class="border-b">
         <CardTitle>Issued Keys</CardTitle>
+        <CardDescription>
+          Review effective access posture before rotating, duplicating, or broadening a key.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <div v-if="loading" class="py-8 text-sm text-muted-foreground">
-          Loading keys...
-        </div>
-        <div
-          v-else-if="keys.length === 0"
-          class="py-8 text-sm text-muted-foreground"
-        >
-          No issued keys yet.
-        </div>
-        <div v-else class="space-y-2 pt-4">
+        <div v-if="loading" class="py-8 text-sm text-muted-foreground">Loading keys...</div>
+        <div v-else-if="keys.length === 0" class="py-8 text-sm text-muted-foreground">No issued keys yet.</div>
+        <div v-else class="space-y-3 pt-4">
           <div
-            v-for="key in keys"
+            v-for="{ key, posture } in issuedKeyRows"
             :key="key.id"
-            class="flex flex-col gap-3 rounded-lg border bg-card p-4 shadow-sm md:flex-row md:items-center md:justify-between"
+            class="rounded-lg border bg-card p-4 shadow-sm"
           >
-            <div class="text-sm">
-              <div class="font-medium">{{ key.name }}</div>
-              <div class="text-muted-foreground">
-                Prefix: {{ key.keyPrefix }} | Status:
-                {{ key.isExpired ? "expired" : key.isActive ? "active" : "revoked" }}
+            <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div class="min-w-0 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="font-medium">{{ key.name }}</span>
+                  <Badge variant="outline">
+                    {{ key.isExpired ? "Expired" : key.isActive ? "Active" : "Revoked" }}
+                  </Badge>
+                  <Badge variant="outline" :class="accessPostureClass(posture.level)">
+                    {{ posture.title }}
+                  </Badge>
+                  <Badge v-if="key.isExpiringSoon" variant="outline" class="border-amber-300 text-amber-700">
+                    Expires within 7 days
+                  </Badge>
+                </div>
+                <div class="text-xs text-muted-foreground">
+                  Prefix <span class="font-mono">{{ key.keyPrefix }}</span>
+                  <template v-if="key.dbManagementName || key.dbManagementId">
+                    · {{ key.dbManagementName || `Missing connection #${key.dbManagementId}` }}
+                  </template>
+                  <template v-if="key.sqlProvider"> · {{ key.sqlProvider }}</template>
+                </div>
               </div>
-              <div class="text-muted-foreground">
-                Expires: {{ key.expiresAt || "never" }}
-              </div>
-              <div class="text-muted-foreground">
-                Last used: {{ key.lastUsedAt || "never" }}
-              </div>
-              <div class="text-muted-foreground">
-                CORS: {{ key.corsAllowedOrigins || "none" }}
-              </div>
-              <div class="text-muted-foreground">
-                Database:
-                {{ key.dbManagementName || (key.dbManagementId ? `Missing connection #${key.dbManagementId}` : "none") }}
-                <template v-if="key.sqlProvider"> ({{ key.sqlProvider }})</template>
-              </div>
-              <div class="text-muted-foreground">
-                Table Whitelist: {{ key.tableWhitelist || "All" }}
-              </div>
-              <div class="text-muted-foreground">
-                Allowed Tools: {{ key.allowedTools || "All" }}
-              </div>
-              <div class="text-muted-foreground">
-                Rate Limit:
-                <template v-if="key.rateLimitMode === 'Unlimited'">
-                  Unlimited (per-key limit disabled)
-                </template>
-                <template v-else>
-                  {{ key.effectivePermitLimit }} requests / {{ key.effectiveWindowSeconds }}s
-                  ({{ key.rateLimitMode === "Custom" ? "key override" : "Security default" }})
-                </template>
-              </div>
-              <div
-                v-if="key.isExpiringSoon"
-                class="mt-1 font-medium text-amber-600"
-              >
-                Expires within 7 days
+              <div class="flex flex-wrap gap-2">
+                <Button v-if="!key.isBootstrapManaged" variant="outline" @click="openLifecycle('edit', key)" v-permission="'edit'">Edit</Button>
+                <Button variant="outline" @click="openLifecycle('clone', key)" v-permission="'create'">Duplicate</Button>
+                <Button v-if="!key.isBootstrapManaged" variant="outline" :disabled="!key.isActive" @click="openLifecycle('rotate', key)" v-permission="'edit'">Rotate</Button>
+                <Button v-if="!key.isBootstrapManaged" variant="destructive" :disabled="!key.isActive" @click="revoke(key.id)" v-permission="'revoke'">Revoke</Button>
               </div>
             </div>
-            <div class="flex flex-wrap gap-2">
-              <Button
-                v-if="!key.isBootstrapManaged"
-                variant="outline"
-                @click="openLifecycle('edit', key)"
-                v-permission="'edit'"
-              >Edit</Button>
-              <Button
-                variant="outline"
-                @click="openLifecycle('clone', key)"
-                v-permission="'create'"
-              >Duplicate</Button>
-              <Button
-                v-if="!key.isBootstrapManaged"
-                variant="outline"
-                :disabled="!key.isActive"
-                @click="openLifecycle('rotate', key)"
-                v-permission="'edit'"
-              >Rotate</Button>
-              <Button
-                v-if="!key.isBootstrapManaged"
-                variant="destructive"
-                :disabled="!key.isActive"
-                @click="revoke(key.id)"
-                v-permission="'revoke'"
-                >Revoke</Button
-              >
+
+            <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Access</div>
+                <div class="mt-1 text-sm font-medium">{{ posture.title }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">{{ posture.description }}</div>
+              </div>
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Data scope</div>
+                <div class="mt-1 text-sm font-medium">{{ posture.dataScope }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">
+                  {{ key.tableWhitelist || "No table allowlist" }}
+                </div>
+              </div>
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Usage</div>
+                <div class="mt-1 text-sm font-medium">{{ key.lastUsedAt ? "Used" : "Never used" }}</div>
+                <div class="mt-1 text-xs text-muted-foreground">Last used: {{ key.lastUsedAt || "never" }}</div>
+              </div>
+              <div class="rounded-md border bg-muted/20 p-3">
+                <div class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Rate limit</div>
+                <div class="mt-1 text-sm font-medium">
+                  <template v-if="key.rateLimitMode === 'Unlimited'">Unlimited</template>
+                  <template v-else>{{ key.effectivePermitLimit }} / {{ key.effectiveWindowSeconds }}s</template>
+                </div>
+                <div class="mt-1 text-xs text-muted-foreground">
+                  {{ key.rateLimitMode === "Custom" ? "Key override" : key.rateLimitMode === "Unlimited" ? "Per-key quota disabled" : "Security default" }}
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
+              <span>Tools: {{ key.allowedTools || "All current tools" }}</span>
+              <span>Expires: {{ key.expiresAt || "never" }}</span>
+              <span>CORS: {{ key.corsAllowedOrigins || "none" }}</span>
+            </div>
+            <div
+              v-if="posture.level === 'review'"
+              class="mt-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200"
+            >
+              This key references a tool that is not in the database's current published catalog. Review the key before changing its access scope.
             </div>
           </div>
         </div>
@@ -951,9 +1082,7 @@ onMounted(async () => {
             <Field>
               <FieldLabel>Database</FieldLabel>
               <Select v-model="lifecycleDbManagementId">
-                <SelectTrigger class="w-full">
-                  <SelectValue placeholder="Select database connection" />
-                </SelectTrigger>
+                <SelectTrigger class="w-full"><SelectValue placeholder="Select database connection" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="db in dbManagements" :key="db.id" :value="db.id">
                     {{ db.name }} ({{ db.sqlProvider }})
@@ -963,7 +1092,38 @@ onMounted(async () => {
             </Field>
             <Field>
               <FieldLabel>Allowed tools</FieldLabel>
-              <Input v-model="lifecycleAllowedTools" placeholder="Comma-separated tool names" />
+              <MultiSelect
+                v-model="lifecycleAllowedTools"
+                :options="lifecycleToolOptions"
+                :placeholder="lifecycleSelectedToolLabel"
+              >
+                <template #option="{ option }">
+                  <div class="flex items-center justify-between w-full">
+                    <span class="truncate pr-2">{{ option.label }}</span>
+                    <span
+                      class="text-xs font-mono shrink-0"
+                      :class="{
+                        'text-red-500': option.risk === 'high',
+                        'text-yellow-500': option.risk === 'medium',
+                        'text-emerald-500': option.risk === 'low',
+                      }"
+                    >
+                      {{ option.value }}
+                    </span>
+                  </div>
+                </template>
+              </MultiSelect>
+              <div
+                class="mt-2 rounded-md border p-3 text-xs"
+                :class="accessPostureClass(lifecycleAccessPosture.level)"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-semibold uppercase tracking-wide">Access posture</span>
+                  <span class="font-medium">{{ lifecycleAccessPosture.title }}</span>
+                </div>
+                <p class="mt-1">{{ lifecycleAccessPosture.description }}</p>
+                <p class="mt-1 font-medium">Data scope: {{ lifecycleAccessPosture.dataScope }}</p>
+              </div>
               <div
                 v-if="lifecycleRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
@@ -1081,7 +1241,6 @@ onMounted(async () => {
               <Button size="sm" variant="outline" @click="copySnippet(onboardingSnippets.genericHttp)">Copy HTTP config</Button>
             </TabsContent>
           </Tabs>
-
         </div>
 
         <DialogFooter>

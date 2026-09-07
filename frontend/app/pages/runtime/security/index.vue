@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { toast } from "vue-sonner";
 import {
   getSecurityPolicy,
   updateSecurityPolicy,
   type SecurityPolicy,
 } from "@/api/security";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -17,6 +18,10 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import {
+  buildSecurityPolicyPosture,
+  securityPolicyFingerprint,
+} from "@/lib/securityPolicyPresentation";
 
 definePageMeta({
   layout: "default",
@@ -38,13 +43,38 @@ const defaults: SecurityPolicy = {
 
 const policy = reactive<SecurityPolicy>({ ...defaults });
 const loading = ref(false);
+const loaded = ref(false);
+const loadError = ref("");
 const saving = ref(false);
+const savedFingerprint = ref("");
+
+const posture = computed(() => buildSecurityPolicyPosture(policy));
+const hasUnsavedChanges = computed(
+  () =>
+    loaded.value &&
+    savedFingerprint.value !== "" &&
+    savedFingerprint.value !== securityPolicyFingerprint(policy),
+);
+
+const formatTime = (value?: string | null) => {
+  if (!value) return "";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+};
 
 const load = async () => {
   loading.value = true;
+  loaded.value = false;
+  loadError.value = "";
+  savedFingerprint.value = "";
+
   try {
     Object.assign(policy, await getSecurityPolicy());
+    savedFingerprint.value = securityPolicyFingerprint(policy);
+    loaded.value = true;
   } catch (error: any) {
+    loadError.value =
+      "The effective server policy could not be loaded. Fallback values are not shown or editable.";
     toast.error(error?.response?.data?.error || "Failed to load security policy.");
   } finally {
     loading.value = false;
@@ -52,9 +82,12 @@ const load = async () => {
 };
 
 const save = async () => {
+  if (!loaded.value || !hasUnsavedChanges.value) return;
+
   saving.value = true;
   try {
     Object.assign(policy, await updateSecurityPolicy({ ...policy }));
+    savedFingerprint.value = securityPolicyFingerprint(policy);
     toast.success("Security policy updated.");
   } catch (error: any) {
     toast.error(
@@ -81,7 +114,85 @@ onMounted(load);
 
     <div v-if="loading" class="text-sm text-muted-foreground">Loading policy...</div>
 
+    <div
+      v-else-if="!loaded"
+      class="rounded-lg border border-destructive/40 bg-destructive/5 p-4"
+    >
+      <div class="font-medium text-destructive">Unable to load effective policy</div>
+      <p class="mt-1 text-sm text-muted-foreground">{{ loadError }}</p>
+      <Button class="mt-3" variant="outline" @click="load">Retry</Button>
+    </div>
+
     <template v-else>
+      <Card>
+        <CardHeader class="border-b">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Effective policy posture</CardTitle>
+              <CardDescription>
+                Read the mutation guardrails and runtime limits before changing individual values.
+              </CardDescription>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="outline"
+                :class="
+                  posture.requiresReview
+                    ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200'
+                    : 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200'
+                "
+              >
+                {{ posture.label }}
+              </Badge>
+              <Badge
+                variant="outline"
+                :class="
+                  hasUnsavedChanges
+                    ? 'border-amber-300 text-amber-800 dark:border-amber-900 dark:text-amber-200'
+                    : ''
+                "
+              >
+                {{ hasUnsavedChanges ? "Unsaved changes" : "Saved" }}
+              </Badge>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent class="space-y-4 pt-4">
+          <p class="text-sm text-muted-foreground">{{ posture.summary }}</p>
+
+          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div
+              v-for="fact in posture.facts"
+              :key="fact.label"
+              class="rounded-lg border p-3"
+            >
+              <div class="text-xs text-muted-foreground">{{ fact.label }}</div>
+              <div class="mt-1 text-sm font-medium">{{ fact.value }}</div>
+            </div>
+          </div>
+
+          <div
+            v-if="posture.warnings.length"
+            class="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100"
+          >
+            <div class="font-medium">Mutation guardrails to review</div>
+            <ul class="mt-2 list-disc space-y-1 pl-5">
+              <li v-for="warning in posture.warnings" :key="warning">
+                {{ warning }}
+              </li>
+            </ul>
+          </div>
+
+          <p
+            v-if="policy.updatedAt || policy.updatedBy"
+            class="text-xs text-muted-foreground"
+          >
+            Last saved<template v-if="policy.updatedAt"> {{ formatTime(policy.updatedAt) }}</template
+            ><template v-if="policy.updatedBy"> by {{ policy.updatedBy }}</template>.
+          </p>
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Query limits</CardTitle>
@@ -90,12 +201,24 @@ onMounted(load);
         <CardContent class="grid gap-4 md:grid-cols-2">
           <Field>
             <FieldLabel for="queryMaxRows">Maximum returned rows</FieldLabel>
-            <Input id="queryMaxRows" v-model.number="policy.queryMaxRows" type="number" min="1" max="100000" />
+            <Input
+              id="queryMaxRows"
+              v-model.number="policy.queryMaxRows"
+              type="number"
+              min="1"
+              max="100000"
+            />
             <FieldDescription>The server clamps larger or missing LIMIT values.</FieldDescription>
           </Field>
           <Field>
             <FieldLabel for="queryTimeoutSeconds">SQL timeout (seconds)</FieldLabel>
-            <Input id="queryTimeoutSeconds" v-model.number="policy.queryTimeoutSeconds" type="number" min="1" max="600" />
+            <Input
+              id="queryTimeoutSeconds"
+              v-model.number="policy.queryTimeoutSeconds"
+              type="number"
+              min="1"
+              max="600"
+            />
           </Field>
         </CardContent>
       </Card>
@@ -110,7 +233,13 @@ onMounted(load);
         <CardContent class="grid gap-5 md:grid-cols-2">
           <Field>
             <FieldLabel for="dmlMaxAffectedRows">Maximum affected rows</FieldLabel>
-            <Input id="dmlMaxAffectedRows" v-model.number="policy.dmlMaxAffectedRows" type="number" min="1" max="1000000" />
+            <Input
+              id="dmlMaxAffectedRows"
+              v-model.number="policy.dmlMaxAffectedRows"
+              type="number"
+              min="1"
+              max="1000000"
+            />
           </Field>
           <div />
           <Field orientation="horizontal">
@@ -169,8 +298,12 @@ onMounted(load);
       </Card>
 
       <div class="flex justify-end">
-        <Button v-permission="'edit'" :disabled="saving" @click="save">
-          {{ saving ? "Saving..." : "Save policy" }}
+        <Button
+          v-permission="'edit'"
+          :disabled="saving || !hasUnsavedChanges"
+          @click="save"
+        >
+          {{ saving ? "Saving..." : hasUnsavedChanges ? "Save policy" : "Saved" }}
         </Button>
       </div>
     </template>

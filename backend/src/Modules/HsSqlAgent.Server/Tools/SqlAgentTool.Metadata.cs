@@ -227,10 +227,9 @@ public partial class SqlAgentTool
         }
     }
 
-    [McpServerTool, Description(@"
-        Update the semantic layer metadata for tables and columns.
-        Enriches schema discovery with human-readable names and descriptions.
-    ")]
+    // Semantic metadata is an administrative control-plane write. Keep this CLR method for
+    // source/binary compatibility, but do not expose it as an MCP tool. Administrators edit
+    // semantic metadata through the Admin API/UI where canonical permissions are enforced.
     public async Task<string> UpdateSemanticLayer(
         [Description("List of semantic entries to upsert.")]
         List<SemanticLayerEntry> entries)

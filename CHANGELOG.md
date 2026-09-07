@@ -1,6 +1,31 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+
+## [2.0.4] - Unreleased
+
+### MCP contract and security
+
+- Added one canonical server-side catalog for the five documented built-in MCP tools: `get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`, and `execute_dml_sql`.
+- MCP startup now fails closed when reflected built-in tools do not exactly match the canonical catalog, preventing accidental tool-surface expansion.
+- Removed the undocumented `update_semantic_layer` method from MCP discovery. The CLR method remains for compatibility, while Semantic Layer writes continue through the permission-protected Admin UI/API.
+- The Admin tool-catalog endpoint now returns built-in/custom classification, Query/DML type, display name, and risk metadata for MCP-key experiences.
+- Added a regression test that locks the public built-in MCP method surface to the five-tool contract.
+
+### Developer experience
+
+- Set the next first-party package version to `2.0.4`.
+- Aligned the frontend Docker build with CI/package-manager pins: Node.js 22, pnpm 10.22.0, and `pnpm install --frozen-lockfile`.
+
+### Admin UI
+
+- Removed the inert `Search the docs...` sidebar control.
+- Replaced template-like sidebar branding with `hs-sql-agent` / `Admin Console`.
+
+### Compatibility note
+
+`update_semantic_layer` was not part of the documented 2.0.x five-tool MCP contract. Deployments that called it through MCP should move semantic metadata writes to **Runtime → DB Management → Semantic Layer** or the Admin API before upgrading. Existing MCP keys, SQL compiler behavior, DML approval semantics, and Admin Store schema do not require migration for these changes.
+
 ## [1.8.3] - 2026-06-26
 ## What's Changed
 * Remove outdated documentation files: Architecture, Configuration, Dep… by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/59
@@ -136,7 +161,6 @@ app.UseHsSqlAgent();
 - `HavingOpToSql` → `GetOperatorString` for clarity.
 - `CollectFrom*` methods extracted for reuse across proxy validation and execution.
 - `CollectFromQueryDefinition` now also collects HAVING, ORDER BY, GROUP BY references.
-- `useSqlBuilder.ts` code readability & formatting improvements.
 
 ### Tests
 
@@ -259,7 +283,7 @@ app.UseHsSqlAgent();
 
 ### Breaking Change
 
-- replace AES encryption with AesGcm for improved security and performance in connection string encryption. This change requires existing encrypted connection strings to be re-encrypted using the new AesGcm-based CryptoService implementation, as the encryption format and key management have been updated for enhanced security.
+- replace AES encryption with AesGcm for improved security and performance in connection string encryption and decryption : this is a breaking change that requires existing encrypted connection strings in the database to be re-encrypted using the new AesGcm-based CryptoService implementation, as the encryption format and key management are updated for enhanced security.
 
 ## [1.3.10-alpha] - 2026-04-20
 
@@ -317,9 +341,6 @@ app.UseHsSqlAgent();
 ### Breaking Change
 
 - remove `get_table_reference` tool from MCP API: this tool was rarely used and added complexity to the codebase, and its functionality can be achieved through a combination of `get_tables` and `get_columns` calls. Removing it simplifies the API and reduces maintenance overhead without significantly impacting usability.
-
-### Feature
-
 - Added support some new database providers: `SqlServer`, `Oracle`, and `FireBird`. The MCP API can now handle connections to these additional database types, expanding the range of supported databases for SQL query execution and metadata retrieval.
 - Added `execute_dml_safe` tool to MCP API: this new tool allows clients to execute DML statements (INSERT, UPDATE, DELETE) safely through the MCP API, with the same security guards and validation mechanisms as `execute_query_safe`. This expands the capabilities of the MCP API to support data modification operations in addition to query execution.
 

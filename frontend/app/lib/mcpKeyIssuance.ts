@@ -12,23 +12,96 @@ export interface McpKeyDetail {
   windowSecondsOverride: number;
 }
 
-const DEFAULT_ALLOWED_TOOLS = [
-  "get_columns",
-  "get_schemas",
-  "get_tables",
-  "execute_query_sql",
-];
+export interface McpToolSelectionDescriptor {
+  name: string;
+  defaultSelected: boolean;
+}
 
-export function createInitialMcpKeyDetail(): McpKeyDetail {
+export type McpAccessPostureLevel =
+  | "read-query"
+  | "dml-enabled"
+  | "unrestricted"
+  | "review";
+
+export interface McpAccessPosture {
+  level: McpAccessPostureLevel;
+  title: string;
+  description: string;
+  dataScope: string;
+}
+
+export function resolveDefaultAllowedTools(
+  tools: readonly McpToolSelectionDescriptor[],
+): string[] {
+  return tools.filter((tool) => tool.defaultSelected).map((tool) => tool.name);
+}
+
+export function createInitialMcpKeyDetail(
+  defaultAllowedTools: Iterable<string> = [],
+): McpKeyDetail {
   return {
     expiresAt: null,
-    allowedTools: [...DEFAULT_ALLOWED_TOOLS],
+    allowedTools: [...defaultAllowedTools],
     corsAllowedOrigins: "",
     dbManagementId: null,
     tableWhitelist: [],
     rateLimitMode: "Inherit",
     permitLimitOverride: 120,
     windowSecondsOverride: 60,
+  };
+}
+
+export function resolveMcpAccessPosture(
+  allowedTools: readonly string[],
+  dmlToolNames: Iterable<string> = [],
+  restrictTables = false,
+  selectedTableCount = 0,
+  unclassifiedToolCount = 0,
+): McpAccessPosture {
+  const dataScope = restrictTables
+    ? `${selectedTableCount} table${selectedTableCount === 1 ? "" : "s"}`
+    : "All tables";
+
+  if (allowedTools.length === 0) {
+    return {
+      level: "unrestricted",
+      title: "Unrestricted tool access",
+      description:
+        "All built-in and published tools for this database are allowed, including DML.",
+      dataScope,
+    };
+  }
+
+  if (unclassifiedToolCount > 0) {
+    return {
+      level: "review",
+      title: "Review tool scope",
+      description: `${allowedTools.length} tools are saved, but ${unclassifiedToolCount} ${unclassifiedToolCount === 1 ? "tool is" : "tools are"} not in the current published catalog.`,
+      dataScope,
+    };
+  }
+
+  const dmlTools = new Set(
+    Array.from(dmlToolNames, (name) => name.toLocaleLowerCase()),
+  );
+  const dmlEnabled = allowedTools.some((name) =>
+    dmlTools.has(name.toLocaleLowerCase()),
+  );
+
+  if (dmlEnabled) {
+    return {
+      level: "dml-enabled",
+      title: "DML enabled",
+      description: `${allowedTools.length} tools selected. DML still requires the configured human approval flow.`,
+      dataScope,
+    };
+  }
+
+  return {
+    level: "read-query",
+    title: "Read/query only",
+    description: `${allowedTools.length} non-DML tools selected.`,
+    dataScope,
   };
 }
 
@@ -82,12 +155,15 @@ export function formatAllowedToolsLabel(selectedTools: string[]): string {
 
 export function allowedToolsRequireElicitation(
   allowedTools: string[],
-  customDmlToolNames: Iterable<string> = [],
+  dmlToolNames: Iterable<string> = [],
 ): boolean {
-  const customDml = new Set(customDmlToolNames);
-  return allowedTools.length === 0 ||
-    allowedTools.includes("execute_dml_sql") ||
-    allowedTools.some((name) => customDml.has(name));
+  if (allowedTools.length === 0) return true;
+  const dmlTools = new Set(
+    Array.from(dmlToolNames, (name) => name.toLocaleLowerCase()),
+  );
+  return allowedTools.some((name) =>
+    dmlTools.has(name.toLocaleLowerCase()),
+  );
 }
 
 export interface McpOnboardingSnippets {
