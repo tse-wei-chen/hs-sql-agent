@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
+using Common.Models;
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Background;
 using HsSqlAgent.Server.Middleware;
@@ -63,6 +64,7 @@ public static class HsSqlAgentMcpServiceExtensions
         services.TryAddSingleton<IHttpContextAccessor, HttpContextAccessor>();
 
         var tools = GetToolsForType<SqlAgentTool>();
+        EnsureCanonicalBuiltInToolSurface(tools);
         services.AddSingleton(tools);
 
         services.AddMcpServer()
@@ -163,6 +165,27 @@ public static class HsSqlAgentMcpServiceExtensions
             });
 
         return builder;
+    }
+
+    private static void EnsureCanonicalBuiltInToolSurface(IEnumerable<McpServerTool> tools)
+    {
+        var actual = tools
+            .Select(tool => tool.ProtocolTool.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unexpected = actual
+            .Except(McpBuiltInTools.Names, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var missing = McpBuiltInTools.Names
+            .Except(actual, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (unexpected.Length == 0 && missing.Length == 0) return;
+
+        throw new InvalidOperationException(
+            "Built-in MCP tool discovery does not match the canonical public catalog. " +
+            $"Unexpected: [{string.Join(", ", unexpected)}]; missing: [{string.Join(", ", missing)}].");
     }
 
     private static McpServerTool[] GetToolsForType<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods)] T>() where T : class

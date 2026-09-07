@@ -5,6 +5,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -18,10 +19,6 @@ public class McpAccessKeyService(
     ISecurityPolicyRuntimeState securityPolicyRuntimeState) : IMcpAccessKeyService
 {
     private const int KeyPrefixLength = 8;
-    private static readonly HashSet<string> BuiltInTools = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "execute_query_sql", "get_columns", "get_schemas", "get_tables", "execute_dml_sql"
-    };
     private static readonly TimeSpan RevocationTombstoneExpiry = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan CacheBarrierExpiry = TimeSpan.FromMinutes(6);
     private static readonly char[] CorsOriginsSeparators = [',', ';', '\n', '\r'];
@@ -581,7 +578,7 @@ public class McpAccessKeyService(
                 .Select(x => x.PublishedRevision!.Name)
                 .ToListAsync(cancellationToken)
             : [];
-        requested.ExceptWith(BuiltInTools);
+        requested.ExceptWith(McpBuiltInTools.Names);
         requested.ExceptWith(customNames);
         if (requested.Count > 0)
             throw new ArgumentException(

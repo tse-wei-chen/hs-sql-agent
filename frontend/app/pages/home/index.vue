@@ -5,6 +5,7 @@ import {
   getRuntimeAudit,
   getRuntimeAuditDailySummary,
 } from "@/api/runtime";
+import { listDbManagements, type DbManagement } from "@/api/db-management";
 import type { AuditDailySummaryItem } from "@/api/runtime";
 import type { ChartConfig } from "@/components/ui/chart";
 import {
@@ -18,12 +19,17 @@ import { Button } from "@/components/ui/button";
 import {
   ChartContainer,
   ChartCrosshair,
-  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   componentToString,
 } from "@/components/ui/chart";
-import { VisAxis, VisGroupedBar, VisXYContainer, VisDonut, VisSingleContainer  } from "@unovis/vue";
+import {
+  VisAxis,
+  VisGroupedBar,
+  VisXYContainer,
+  VisDonut,
+  VisSingleContainer,
+} from "@unovis/vue";
 import { Donut } from "@unovis/ts";
 
 definePageMeta({
@@ -62,10 +68,13 @@ const loading = ref(false);
 const { $can } = useNuxtApp();
 const canViewKeys = computed(() => $can("/runtime/mcp-keys.view"));
 const canViewAudit = computed(() => $can("/runtime/audit.view"));
+const canViewDatabases = computed(() => $can("/runtime/db-management.view"));
 const keys = ref<McpKeyItem[]>([]);
+const dbManagements = ref<DbManagement[]>([]);
 const recentAudits = ref<AuditItem[]>([]);
 const dailySummary = ref<AuditDailySummaryItem[]>([]);
 type AuditDailySummaryData = (typeof dailySummary.value)[number];
+
 const activeKeyCount = computed(
   () => keys.value.filter((key) => key.isActive).length,
 );
@@ -84,6 +93,45 @@ const successAuditCount = computed(
   () => recentAudits.value.length - failAuditCount.value,
 );
 const latestEventAt = computed(() => recentAudits.value[0]?.createdAt || null);
+const hasUsedActiveKey = computed(() =>
+  keys.value.some((key) => key.isActive && Boolean(key.lastUsedAt)),
+);
+const canShowReadiness = computed(
+  () => canViewKeys.value && canViewDatabases.value,
+);
+const readinessSteps = computed(() => [
+  {
+    id: "database",
+    title: "Add a database connection",
+    description: "Register and test at least one governed database target.",
+    complete: dbManagements.value.length > 0,
+    to: "/runtime/db-management",
+    action: dbManagements.value.length > 0 ? "Manage databases" : "Add database",
+  },
+  {
+    id: "key",
+    title: "Issue an MCP access key",
+    description: "Start with the four default read/query tools; enable DML only when needed.",
+    complete: activeKeyCount.value > 0,
+    to: "/runtime/mcp-keys",
+    action: activeKeyCount.value > 0 ? "Manage keys" : "Issue key",
+  },
+  {
+    id: "request",
+    title: "Connect an agent",
+    description: "Use the issued key from Claude, Cursor, VS Code, or another MCP client at least once.",
+    complete: hasUsedActiveKey.value,
+    to: "/runtime/mcp-keys",
+    action: hasUsedActiveKey.value ? "View key usage" : "Connect client",
+  },
+]);
+const readinessCompleteCount = computed(
+  () => readinessSteps.value.filter((step) => step.complete).length,
+);
+const readinessComplete = computed(
+  () => readinessCompleteCount.value === readinessSteps.value.length,
+);
+
 const keyStatusChartData = computed(() => [
   {
     status: "active",
@@ -107,10 +155,6 @@ const keyStatusChartConfig = {
 } satisfies ChartConfig;
 
 const auditTrendChartConfig = {
-  views: {
-    label: "Page Views",
-    color: undefined,
-  },
   success: {
     label: "Success",
     color: "var(--color-emerald-700)",
@@ -129,9 +173,10 @@ const formatTime = (value?: string | null) => {
 const loadDashboard = async () => {
   loading.value = true;
   try {
-    const [keyResult, latestAuditResult, dailySummaryResult] =
+    const [keyResult, dbResult, latestAuditResult, dailySummaryResult] =
       await Promise.all([
         canViewKeys.value ? listMcpKeys() : Promise.resolve([]),
+        canViewDatabases.value ? listDbManagements() : Promise.resolve([]),
         canViewAudit.value
           ? getRuntimeAudit(1, 8)
           : Promise.resolve({ items: [] }),
@@ -140,6 +185,7 @@ const loadDashboard = async () => {
           : Promise.resolve({ items: [] }),
       ]);
     keys.value = keyResult || [];
+    dbManagements.value = dbResult || [];
     recentAudits.value = latestAuditResult?.items || [];
     dailySummary.value =
       dailySummaryResult?.items.map((item: any) => ({
@@ -157,12 +203,12 @@ onMounted(loadDashboard);
 
 <template>
   <div class="space-y-4">
-    <div class="rounded-xl border bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100 p-4 
-         dark:border-slate-800 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900">
+    <div
+      class="rounded-xl border bg-gradient-to-r from-sky-100 via-cyan-50 to-emerald-100 p-4 dark:border-slate-800 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900"
+    >
       <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <p class="text-xs font-semibold uppercase tracking-widest text-slate-600 
-               dark:text-slate-400">
+          <p class="text-xs font-semibold uppercase tracking-widest text-slate-600 dark:text-slate-400">
             Runtime Dashboard
           </p>
           <h1 class="text-2xl font-semibold text-slate-900 dark:text-slate-100">
@@ -195,41 +241,80 @@ onMounted(loadDashboard);
       <div>{{ expiringSoonKeys.map((key) => key.name).join(", ") }}</div>
     </NuxtLink>
 
+    <Card v-if="canShowReadiness && !readinessComplete" class="border-sky-200">
+      <CardHeader class="gap-2">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle>System Readiness</CardTitle>
+            <CardDescription>
+              Complete the shortest path to the first governed agent request.
+            </CardDescription>
+          </div>
+          <div class="rounded-full border bg-muted/40 px-3 py-1 text-sm font-medium">
+            {{ readinessCompleteCount }} / {{ readinessSteps.length }} complete
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent class="grid gap-3 lg:grid-cols-3">
+        <div
+          v-for="(step, index) in readinessSteps"
+          :key="step.id"
+          class="flex h-full flex-col gap-3 rounded-lg border p-4"
+        >
+          <div class="flex items-center gap-3">
+            <div
+              class="flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold"
+              :class="step.complete
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                : 'border-slate-300 bg-slate-50 text-slate-600'"
+            >
+              {{ step.complete ? "✓" : index + 1 }}
+            </div>
+            <div class="font-medium">{{ step.title }}</div>
+          </div>
+          <p class="flex-1 text-sm text-muted-foreground">{{ step.description }}</p>
+          <Button size="sm" :variant="step.complete ? 'outline' : 'default'" as-child>
+            <NuxtLink :to="step.to">{{ step.action }}</NuxtLink>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <Card v-if="canViewKeys">
         <CardHeader class="pb-2">
           <CardDescription>Total Keys</CardDescription>
           <CardTitle class="text-3xl">{{ keys.length }}</CardTitle>
         </CardHeader>
-        <CardContent class="text-xs text-muted-foreground">Issued server access keys in current environment
+        <CardContent class="text-xs text-muted-foreground">
+          Issued server access keys in current environment
         </CardContent>
       </Card>
       <Card v-if="canViewKeys">
         <CardHeader class="pb-2">
           <CardDescription>Active Keys</CardDescription>
-          <CardTitle class="text-3xl text-emerald-700">{{
-            activeKeyCount
-          }}</CardTitle>
+          <CardTitle class="text-3xl text-emerald-700">{{ activeKeyCount }}</CardTitle>
         </CardHeader>
-        <CardContent class="text-xs text-muted-foreground">Ready for MCP runtime access</CardContent>
+        <CardContent class="text-xs text-muted-foreground">
+          Ready for MCP runtime access
+        </CardContent>
       </Card>
       <Card v-if="canViewKeys">
         <CardHeader class="pb-2">
           <CardDescription>Revoked Keys</CardDescription>
-          <CardTitle class="text-3xl text-destructive">{{
-            revokedKeyCount
-          }}</CardTitle>
+          <CardTitle class="text-3xl text-destructive">{{ revokedKeyCount }}</CardTitle>
         </CardHeader>
-        <CardContent class="text-xs text-muted-foreground">Disabled keys kept for auditability</CardContent>
+        <CardContent class="text-xs text-muted-foreground">
+          Disabled keys kept for auditability
+        </CardContent>
       </Card>
       <Card v-if="canViewAudit">
         <CardHeader class="pb-2">
           <CardDescription>Recent Audit Failures</CardDescription>
-          <CardTitle class="text-3xl text-rose-700">{{
-            failAuditCount
-          }}</CardTitle>
+          <CardTitle class="text-3xl text-rose-700">{{ failAuditCount }}</CardTitle>
         </CardHeader>
-        <CardContent class="text-xs text-muted-foreground">Out of {{ recentAudits.length }} latest events
+        <CardContent class="text-xs text-muted-foreground">
+          Out of {{ recentAudits.length }} latest events
         </CardContent>
       </Card>
     </div>
@@ -238,8 +323,9 @@ onMounted(loadDashboard);
       <Card v-if="canViewKeys || canViewAudit" class="xl:col-span-2">
         <CardHeader>
           <CardTitle>Security Signals</CardTitle>
-          <CardDescription>Real-time status view from MCP keys and recent audit
-            records</CardDescription>
+          <CardDescription>
+            Real-time status view from MCP keys and recent audit records
+          </CardDescription>
         </CardHeader>
         <CardContent class="grid gap-4 md:grid-cols-2">
           <div v-if="canViewKeys" class="rounded-lg border p-3">
@@ -248,19 +334,22 @@ onMounted(loadDashboard);
             </div>
             <ChartContainer :config="keyStatusChartConfig" class="h-[220px] w-full">
               <VisSingleContainer :data="keyStatusChartData">
-                <VisDonut :value="(d: any) => d[d.status]" :arc-width="40" :color="(d: any) =>
-                  keyStatusChartConfig[
-                    d.status as keyof typeof keyStatusChartConfig
-                  ].color
-                  " :cornerRadius="5" :padAngle="0.05" />
-
-                <ChartTooltip :triggers="{
-                  [Donut.selectors.segment]: componentToString(
-                    keyStatusChartConfig,
-                    ChartTooltipContent,
-                    { hideLabel: true },
-                  )!,
-                }" />
+                <VisDonut
+                  :value="(d: any) => d[d.status]"
+                  :arc-width="40"
+                  :color="(d: any) => keyStatusChartConfig[d.status as keyof typeof keyStatusChartConfig].color"
+                  :cornerRadius="5"
+                  :padAngle="0.05"
+                />
+                <ChartTooltip
+                  :triggers="{
+                    [Donut.selectors.segment]: componentToString(
+                      keyStatusChartConfig,
+                      ChartTooltipContent,
+                      { hideLabel: true },
+                    )!,
+                  }"
+                />
               </VisSingleContainer>
             </ChartContainer>
           </div>
@@ -269,52 +358,60 @@ onMounted(loadDashboard);
             <div class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
               7-Day Daily Outcomes
             </div>
-
             <div class="relative h-[220px] w-full">
-              <div v-if="loading"
-                class="absolute inset-0 z-10 flex items-center justify-center bg-background/50 text-sm">
+              <div
+                v-if="loading"
+                class="absolute inset-0 z-10 flex items-center justify-center bg-background/50 text-sm"
+              >
                 Loading...
               </div>
-
               <ChartContainer :config="auditTrendChartConfig" class="aspect-auto h-[250px] w-full" cursor>
                 <VisXYContainer :data="dailySummary" :margin="{ left: -24 }" :y-domain="[0, undefined]">
-                  <VisGroupedBar :x="(d: AuditDailySummaryData) => d.day" :y="[
-                    (d: AuditDailySummaryData) => d.success,
-                    (d: AuditDailySummaryData) => d.failed,
-                  ]" :color="[
-                    auditTrendChartConfig.success.color,
-                    auditTrendChartConfig.failed.color,
-                  ]" :group-padding="0.2" :bar-padding="0.1" :rounded-corners="4" />
-
-                  <VisAxis type="x" :x="(d: AuditDailySummaryData) => d.day" :tick-line="false" :domain-line="false"
-                    :grid-line="false" :tick-format="(d: number) =>
-                      new Date(d).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                      })
-                      " />
-
+                  <VisGroupedBar
+                    :x="(d: AuditDailySummaryData) => d.day"
+                    :y="[
+                      (d: AuditDailySummaryData) => d.success,
+                      (d: AuditDailySummaryData) => d.failed,
+                    ]"
+                    :color="[
+                      auditTrendChartConfig.success.color,
+                      auditTrendChartConfig.failed.color,
+                    ]"
+                    :group-padding="0.2"
+                    :bar-padding="0.1"
+                    :rounded-corners="4"
+                  />
+                  <VisAxis
+                    type="x"
+                    :x="(d: AuditDailySummaryData) => d.day"
+                    :tick-line="false"
+                    :domain-line="false"
+                    :grid-line="false"
+                    :tick-format="(d: number) => new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })"
+                  />
                   <VisAxis type="y" :num-ticks="3" :tick-line="false" :domain-line="false" />
-
                   <ChartTooltip />
-
-                  <ChartCrosshair :x="(d: AuditDailySummaryData) => d.day" :y="[
-                    (d: AuditDailySummaryData) => d.success,
-                    (d: AuditDailySummaryData) => d.failed,
-                  ]" :template="componentToString(
-                    auditTrendChartConfig,
-                    ChartTooltipContent,
-                    {
-                      labelFormatter(d) {
-                        return new Date(d).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        });
+                  <ChartCrosshair
+                    :x="(d: AuditDailySummaryData) => d.day"
+                    :y="[
+                      (d: AuditDailySummaryData) => d.success,
+                      (d: AuditDailySummaryData) => d.failed,
+                    ]"
+                    :template="componentToString(
+                      auditTrendChartConfig,
+                      ChartTooltipContent,
+                      {
+                        labelFormatter(d) {
+                          return new Date(d).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                          });
+                        },
                       },
-                    },
-                  )
-                    " :color="auditTrendChartConfig.success.color" />
+                    )"
+                    :color="auditTrendChartConfig.success.color"
+                  />
                 </VisXYContainer>
               </ChartContainer>
             </div>
@@ -326,8 +423,9 @@ onMounted(loadDashboard);
         <CardHeader class="flex flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>Recent Audit Events</CardTitle>
-            <CardDescription>Latest runtime operations and security
-              activities</CardDescription>
+            <CardDescription>
+              Latest runtime operations and security activities
+            </CardDescription>
           </div>
           <Button variant="outline" size="sm" as-child>
             <NuxtLink to="/runtime/audit">View all</NuxtLink>
@@ -344,16 +442,17 @@ onMounted(loadDashboard);
             <div v-for="item in recentAudits" :key="item.id" class="rounded-lg border p-3">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="text-sm font-medium">{{ item.action }}</span>
-                <span class="rounded-full px-2 py-0.5 text-xs" :class="item.result.toLowerCase() === 'success'
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : 'bg-rose-100 text-rose-700'
-                  ">
+                <span
+                  class="rounded-full px-2 py-0.5 text-xs"
+                  :class="item.result.toLowerCase() === 'success'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-rose-100 text-rose-700'"
+                >
                   {{ item.result }}
                 </span>
               </div>
               <div class="text-xs text-muted-foreground">
-                target: {{ item.target }} | actor: {{ item.actorType }}
-                {{ item.actorId || "" }}
+                target: {{ item.target }} | actor: {{ item.actorType }} {{ item.actorId || "" }}
               </div>
               <div class="text-xs text-muted-foreground">
                 {{ formatTime(item.createdAt) }}
@@ -371,8 +470,11 @@ onMounted(loadDashboard);
           <CardDescription>Jump to runtime management pages</CardDescription>
         </CardHeader>
         <CardContent class="space-y-3">
-          <NuxtLink v-if="canViewKeys" class="block rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm transition hover:bg-sky-100"
-            to="/runtime/mcp-keys">
+          <NuxtLink
+            v-if="canViewKeys"
+            class="block rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm transition hover:bg-sky-100"
+            to="/runtime/mcp-keys"
+          >
             <div class="font-medium text-sky-900">MCP Key Management</div>
             <div class="text-xs text-sky-700">
               Issue, revoke, and configure tool restrictions
@@ -381,14 +483,17 @@ onMounted(loadDashboard);
           <NuxtLink
             v-if="canViewAudit"
             class="block rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm transition hover:bg-emerald-100"
-            to="/runtime/audit">
+            to="/runtime/audit"
+          >
             <div class="font-medium text-emerald-900">Audit Logs</div>
             <div class="text-xs text-emerald-700">
               Inspect operation history and security events
             </div>
           </NuxtLink>
-
-          <div v-if="canViewAudit" class="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground">
+          <div
+            v-if="canViewAudit"
+            class="rounded-lg border bg-muted/40 p-3 text-xs text-muted-foreground"
+          >
             Success events in latest batch: {{ successAuditCount }} /
             {{ recentAudits.length }}
           </div>

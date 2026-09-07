@@ -5,6 +5,7 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Models;
 using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -37,14 +38,25 @@ public class RuntimeAdminController(
     [HttpGet("mcp-keys/available-tools")]
     [HasPermission("/runtime/mcp-keys", "view")]
     public async Task<IActionResult> ListAvailableTools(
-        [FromQuery] int dbManagementId,
+        [FromQuery] int? dbManagementId,
         CancellationToken cancellationToken)
     {
-        if (dbManagementId <= 0)
-            return BadRequest("A valid DbManagementId is required.");
+        if (dbManagementId is <= 0)
+            return BadRequest("DbManagementId must be a positive value when provided.");
 
-        var tools = await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId, cancellationToken);
-        return Ok(tools.Select(x => new { x.Name, x.Type }));
+        if (!dbManagementId.HasValue)
+            return Ok(McpBuiltInTools.Catalog);
+
+        var customTools = (await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId.Value, cancellationToken))
+            .Select(tool => new McpToolDescriptor(
+                tool.Name,
+                tool.Type,
+                $"Custom: {tool.Name}",
+                string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase) ? "high" : "medium",
+                false,
+                false));
+
+        return Ok(McpBuiltInTools.Catalog.Concat(customTools));
     }
 
     [HttpPost("mcp-keys")]
