@@ -7,6 +7,7 @@ using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Models;
 using HsSqlAgent.Server.Authorization;
+using HsSqlAgent.Server.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
@@ -157,8 +158,10 @@ public class RuntimeAdminController(
         "/runtime/mcp-keys.create",
         "/runtime/db-management.create",
         "/runtime/db-management.edit")]
-    public async Task<IActionResult> TestDbConnection([FromBody] TestDbConnectionRequest request, CancellationToken cancellationToken)
+    public async Task<IActionResult> TestDbConnection([FromBody] TestDbConnectionHttpRequest request, CancellationToken cancellationToken)
     {
+        TestDbConnectionBase dbRequest;
+
         if (request.DbSettingMode == 0)
         {
             if (request.DbManagementId == null)
@@ -168,15 +171,32 @@ public class RuntimeAdminController(
             if (dbc == null)
                 return BadRequest($"No DB management entry found for ID {request.DbManagementId.Value}.");
 
-            request.SqlProvider = Enum.TryParse<SqlAgentToolType>(dbc.SqlProvider, out var providerEnum) ? providerEnum : null;
-            request.Host = dbc.Host;
-            request.Port = dbc.Port;
-            request.Username = dbc.Username;
-            request.Password = cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, _hmacSecret);
-            request.Database = dbc.Database;
-            request.ExtraSettings = dbc.ExtraSettings;
+            dbRequest = new TestDbConnectionBase
+            {
+                SqlProvider = Enum.TryParse<SqlAgentToolType>(dbc.SqlProvider, true, out var providerEnum) ? providerEnum : null,
+                Host = dbc.Host,
+                Port = dbc.Port,
+                Username = dbc.Username,
+                Password = cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, _hmacSecret),
+                Database = dbc.Database,
+                ExtraSettings = dbc.ExtraSettings
+            };
         }
-        var result = await testDbConnection.TestDbConnectionAsync(request, cancellationToken);
+        else
+        {
+            dbRequest = new TestDbConnectionBase
+            {
+                SqlProvider = request.SqlProvider,
+                Host = request.Host,
+                Port = request.Port,
+                Username = request.Username,
+                Password = request.Password,
+                Database = request.Database,
+                ExtraSettings = request.ExtraSettings
+            };
+        }
+
+        var result = await testDbConnection.TestDbConnectionAsync(dbRequest, cancellationToken);
         return Ok(new { success = result.IsSuccess, errorMessage = result.ErrorMessage });
     }
 
