@@ -60,6 +60,8 @@ import {
   createMcpOnboardingSnippets,
   allowedToolsRequireElicitation,
   resolveDefaultAllowedTools,
+  resolveMcpAccessPosture,
+  type McpAccessPostureLevel,
   type McpKeyDetail,
   type McpKeyRateLimitMode,
 } from "@/lib/mcpKeyIssuance";
@@ -190,6 +192,41 @@ const lifecycleRequiresElicitation = computed(() =>
     lifecycleDmlToolNames.value,
   ),
 );
+
+const issueAccessPosture = computed(() =>
+  resolveMcpAccessPosture(
+    detail.value.allowedTools,
+    dmlToolNames.value,
+    isWhitelistEnabled.value,
+    detail.value.tableWhitelist.length,
+  ),
+);
+
+const lifecycleTableCount = computed(() =>
+  lifecycleTableWhitelist.value
+    .split(",")
+    .map((table) => table.trim())
+    .filter(Boolean).length,
+);
+
+const lifecycleAccessPosture = computed(() =>
+  resolveMcpAccessPosture(
+    lifecycleAllowedTools.value,
+    lifecycleDmlToolNames.value,
+    lifecycleTableCount.value > 0,
+    lifecycleTableCount.value,
+  ),
+);
+
+const accessPostureClass = (level: McpAccessPostureLevel) => {
+  if (level === "unrestricted") {
+    return "border-red-300 bg-red-50 text-red-900 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200";
+  }
+  if (level === "dml-enabled") {
+    return "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200";
+  }
+  return "border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200";
+};
 
 watch(
   () => detail.value.dbManagementId,
@@ -761,6 +798,18 @@ onMounted(load);
                 New keys start with the four safe read/query tools selected. DML is opt-in.
               </p>
               <div
+                v-if="toolCatalogReady"
+                class="mt-2 rounded-md border p-3 text-sm"
+                :class="accessPostureClass(issueAccessPosture.level)"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-xs font-semibold uppercase tracking-wide">Access posture</span>
+                  <span class="font-medium">{{ issueAccessPosture.title }}</span>
+                </div>
+                <p class="mt-1 text-xs">{{ issueAccessPosture.description }}</p>
+                <p class="mt-1 text-xs font-medium">Data scope: {{ issueAccessPosture.dataScope }}</p>
+              </div>
+              <div
                 v-if="toolCatalogReady && issueRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
               >
@@ -956,6 +1005,17 @@ onMounted(load);
                   </div>
                 </template>
               </MultiSelect>
+              <div
+                class="mt-2 rounded-md border p-3 text-xs"
+                :class="accessPostureClass(lifecycleAccessPosture.level)"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-semibold uppercase tracking-wide">Access posture</span>
+                  <span class="font-medium">{{ lifecycleAccessPosture.title }}</span>
+                </div>
+                <p class="mt-1">{{ lifecycleAccessPosture.description }}</p>
+                <p class="mt-1 font-medium">Data scope: {{ lifecycleAccessPosture.dataScope }}</p>
+              </div>
               <div
                 v-if="lifecycleRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
