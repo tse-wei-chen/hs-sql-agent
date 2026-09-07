@@ -59,7 +59,7 @@ public class SqlAgentToolExecutionTests
                 new QueryExecutionResult(
                     [new Dictionary<string, object?> { ["id"] = 7 }],
                     1,
-                    TimeSpan.Zero,
+                    TimeSpan.FromMilliseconds(12),
                     []),
                 SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres)));
 
@@ -74,7 +74,13 @@ public class SqlAgentToolExecutionTests
 
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", cancellationToken);
 
-        Assert.Contains("\"id\":7", result, StringComparison.Ordinal);
+        Assert.True(result.Success);
+        Assert.Equal("Postgres", result.Provider);
+        Assert.Equal(1, result.RowCount);
+        Assert.Equal(12, result.DurationMs);
+        Assert.Null(result.Error);
+        var row = Assert.Single(result.Rows);
+        Assert.Equal(7, row["id"]);
         typedQueryRuntime.VerifyAll();
         auditService.Verify(x => x.WriteEventAsync(
             "mcp.query.executed",
@@ -135,7 +141,11 @@ public class SqlAgentToolExecutionTests
 
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.secrets", TestContext.Current.CancellationToken);
 
-        Assert.Contains("table denied", result, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Equal("authorization.denied", result.Error.Code);
+        Assert.Equal("Authorization", result.Error.Stage);
+        Assert.Contains("table denied", result.Error.Message, StringComparison.OrdinalIgnoreCase);
         auditService.Verify(x => x.WriteEventAsync(
             "mcp.query.executed",
             "query",
@@ -173,7 +183,10 @@ public class SqlAgentToolExecutionTests
 
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
-        Assert.Contains("tool authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Equal("authorization.denied", result.Error.Code);
+        Assert.Contains("tool authorization context is missing", result.Error.Message, StringComparison.OrdinalIgnoreCase);
         typedQueryRuntime.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
@@ -216,7 +229,10 @@ public class SqlAgentToolExecutionTests
 
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
-        Assert.Contains("authorization context is missing", result, StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Equal("authorization.denied", result.Error.Code);
+        Assert.Contains("authorization context is missing", result.Error.Message, StringComparison.OrdinalIgnoreCase);
         typedQueryRuntime.Verify(x => x.ExecuteAsync(
             It.IsAny<ISqlProvider>(),
             It.IsAny<string>(),
@@ -278,7 +294,10 @@ public class SqlAgentToolExecutionTests
 
         var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
 
-        Assert.Equal("[]", result);
+        Assert.True(result.Success);
+        Assert.Equal(0, result.RowCount);
+        Assert.Empty(result.Rows);
+        Assert.Null(result.Error);
         typedQueryRuntime.VerifyAll();
     }
 
@@ -304,9 +323,12 @@ public class SqlAgentToolExecutionTests
 
         var result = await tool.ExecuteQuerySql("SELECT 1", TestContext.Current.CancellationToken);
 
-        Assert.Equal("Invalid database provider or connection configuration.", result);
-        Assert.DoesNotContain("super-secret", result, StringComparison.Ordinal);
-        Assert.DoesNotContain(secretConnectionString, result, StringComparison.Ordinal);
+        Assert.False(result.Success);
+        Assert.Null(result.Provider);
+        Assert.NotNull(result.Error);
+        Assert.Equal("configuration.invalid", result.Error.Code);
+        Assert.Equal("Invalid database provider or connection configuration.", result.Error.Message);
+        Assert.DoesNotContain("super-secret", result.Error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(secretConnectionString, result.Error.Message, StringComparison.Ordinal);
     }
-
 }

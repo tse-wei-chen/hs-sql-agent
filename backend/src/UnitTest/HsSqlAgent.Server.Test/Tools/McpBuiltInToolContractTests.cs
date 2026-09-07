@@ -1,5 +1,6 @@
 using System.Reflection;
 using Common.Models;
+using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Tools;
 using ModelContextProtocol.Server;
 using Xunit;
@@ -47,5 +48,17 @@ public class McpBuiltInToolContractTests
         var dml = Assert.Single(McpBuiltInTools.Catalog, tool => tool.Name == McpBuiltInTools.ExecuteDmlSql);
         Assert.False(dml.DefaultSelected);
         Assert.Equal("high", dml.Risk);
+    }
+
+    [Fact]
+    public void ExecuteQuerySql_AdvertisesStructuredReadOnlyOutput()
+    {
+        var method = typeof(SqlAgentTool).GetMethod(nameof(SqlAgentTool.ExecuteQuerySql));
+        Assert.NotNull(method);
+
+        var attribute = Assert.Single(method.GetCustomAttributes<McpServerToolAttribute>());
+        Assert.True(attribute.UseStructuredContent);
+        Assert.True(attribute.ReadOnly);
+        Assert.Equal(typeof(Task<McpQueryToolResult>), method.ReturnType);
     }
 }
