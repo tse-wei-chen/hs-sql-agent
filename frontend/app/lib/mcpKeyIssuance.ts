@@ -17,6 +17,18 @@ export interface McpToolSelectionDescriptor {
   defaultSelected: boolean;
 }
 
+export type McpAccessPostureLevel =
+  | "read-query"
+  | "dml-enabled"
+  | "unrestricted";
+
+export interface McpAccessPosture {
+  level: McpAccessPostureLevel;
+  title: string;
+  description: string;
+  dataScope: string;
+}
+
 export function resolveDefaultAllowedTools(
   tools: readonly McpToolSelectionDescriptor[],
 ): string[] {
@@ -35,6 +47,46 @@ export function createInitialMcpKeyDetail(
     rateLimitMode: "Inherit",
     permitLimitOverride: 120,
     windowSecondsOverride: 60,
+  };
+}
+
+export function resolveMcpAccessPosture(
+  allowedTools: readonly string[],
+  dmlToolNames: Iterable<string> = [],
+  restrictTables = false,
+  selectedTableCount = 0,
+): McpAccessPosture {
+  const dataScope = restrictTables
+    ? `${selectedTableCount} table${selectedTableCount === 1 ? "" : "s"}`
+    : "All tables";
+
+  if (allowedTools.length === 0) {
+    return {
+      level: "unrestricted",
+      title: "Unrestricted tool access",
+      description:
+        "All built-in and published tools for this database are allowed, including DML.",
+      dataScope,
+    };
+  }
+
+  const dmlTools = new Set(dmlToolNames);
+  const dmlEnabled = allowedTools.some((name) => dmlTools.has(name));
+
+  if (dmlEnabled) {
+    return {
+      level: "dml-enabled",
+      title: "DML enabled",
+      description: `${allowedTools.length} tools selected. DML still requires the configured human approval flow.`,
+      dataScope,
+    };
+  }
+
+  return {
+    level: "read-query",
+    title: "Read/query only",
+    description: `${allowedTools.length} non-DML tools selected.`,
+    dataScope,
   };
 }
 
