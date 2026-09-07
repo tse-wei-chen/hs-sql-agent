@@ -7,6 +7,7 @@ import {
   createMcpOnboardingSnippets,
   allowedToolsRequireElicitation,
   resolveDefaultAllowedTools,
+  resolveMcpAccessPosture,
 } from "./mcpKeyIssuance";
 
 const catalog = [
@@ -89,6 +90,44 @@ describe("MCP key issuance helpers", () => {
     expect(second.tableWhitelist).toEqual([]);
     expect(second.allowedTools).not.toBe(first.allowedTools);
     expect(second.tableWhitelist).not.toBe(first.tableWhitelist);
+  });
+
+  it("classifies the default key posture as read/query only", () => {
+    const posture = resolveMcpAccessPosture(
+      resolveDefaultAllowedTools(catalog),
+      ["execute_dml_sql"],
+      false,
+    );
+
+    expect(posture).toEqual({
+      level: "read-query",
+      title: "Read/query only",
+      description: "4 non-DML tools selected.",
+      dataScope: "All tables",
+    });
+  });
+
+  it("surfaces explicit DML and table-restricted posture", () => {
+    const posture = resolveMcpAccessPosture(
+      ["execute_query_sql", "execute_dml_sql"],
+      ["execute_dml_sql"],
+      true,
+      2,
+    );
+
+    expect(posture.level).toBe("dml-enabled");
+    expect(posture.title).toBe("DML enabled");
+    expect(posture.description).toContain("human approval");
+    expect(posture.dataScope).toBe("2 tables");
+  });
+
+  it("makes the empty-selection unrestricted posture explicit", () => {
+    const posture = resolveMcpAccessPosture([], ["execute_dml_sql"], true, 1);
+
+    expect(posture.level).toBe("unrestricted");
+    expect(posture.title).toBe("Unrestricted tool access");
+    expect(posture.description).toContain("including DML");
+    expect(posture.dataScope).toBe("1 table");
   });
 
   it("builds direct Streamable HTTP snippets with the MCP server key header", () => {
