@@ -29,6 +29,7 @@ import {
   buildAuditExecutionSummary,
   formatAuditDefinition,
 } from "@/lib/auditPresentation";
+import { parseAuditDrillDownQuery } from "@/lib/auditNavigation";
 
 definePageMeta({
   layout: "default",
@@ -67,6 +68,7 @@ interface AuditRetentionPolicy {
   runHourUtc: number;
 }
 
+const route = useRoute();
 const page = ref(1);
 const pageSize = ref(20);
 const action = ref("");
@@ -99,6 +101,15 @@ const currentFilters = () => ({
   accessKeyId: accessKeyId.value || undefined,
   toolName: toolName.value || undefined,
 });
+
+const applyRouteFilters = () => {
+  const initial = parseAuditDrillDownQuery(route.query as Record<string, unknown>);
+  from.value = initial.from || "";
+  to.value = initial.to || "";
+  dbManagementId.value = initial.dbManagementId;
+  accessKeyId.value = initial.accessKeyId;
+  toolName.value = initial.toolName || "";
+};
 
 const formatTime = (value?: string | null) => {
   if (!value) return "—";
@@ -196,6 +207,7 @@ const prevPage = async () => {
 };
 
 onMounted(async () => {
+  applyRouteFilters();
   await Promise.all([
     load(),
     $can("/runtime/audit.edit") ? loadRetentionPolicy() : Promise.resolve(),
