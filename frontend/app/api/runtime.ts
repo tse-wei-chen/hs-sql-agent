@@ -65,11 +65,13 @@ export const listMcpKeys = async () => {
 export const listAvailableMcpTools = async (
   dbManagementId: number,
 ): Promise<AvailableMcpTool[]> => {
-  const response = await xiorInstanceToken.get(
+  const response = await xiorInstanceToken.get<AvailableMcpTool[]>(
     "/runtime/mcp-keys/available-tools",
     { params: { dbManagementId } },
   );
-  return response.data;
+  // The current form already renders the five built-ins locally. Filter them here
+  // until the MCP key wizard switches entirely to the server-supplied catalog.
+  return response.data.filter((tool) => !tool.isBuiltIn);
 };
 
 export const issueMcpKey = async (payload: IssueMcpKeyRequest) => {
