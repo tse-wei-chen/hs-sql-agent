@@ -38,31 +38,25 @@ public class RuntimeAdminController(
     [HttpGet("mcp-keys/available-tools")]
     [HasPermission("/runtime/mcp-keys", "view")]
     public async Task<IActionResult> ListAvailableTools(
-        [FromQuery] int dbManagementId,
+        [FromQuery] int? dbManagementId,
         CancellationToken cancellationToken)
     {
-        if (dbManagementId <= 0)
-            return BadRequest("A valid DbManagementId is required.");
+        if (dbManagementId is <= 0)
+            return BadRequest("DbManagementId must be a positive value when provided.");
 
-        var builtInTools = new[]
-        {
-            new { Name = McpBuiltInTools.GetSchemas, Type = "Query", DisplayName = "Get schemas", Risk = "low", IsBuiltIn = true },
-            new { Name = McpBuiltInTools.GetTables, Type = "Query", DisplayName = "Get tables", Risk = "low", IsBuiltIn = true },
-            new { Name = McpBuiltInTools.GetColumns, Type = "Query", DisplayName = "Get columns", Risk = "low", IsBuiltIn = true },
-            new { Name = McpBuiltInTools.ExecuteQuerySql, Type = "Query", DisplayName = "Execute query", Risk = "medium", IsBuiltIn = true },
-            new { Name = McpBuiltInTools.ExecuteDmlSql, Type = "DML", DisplayName = "Execute DML", Risk = "high", IsBuiltIn = true }
-        };
-        var customTools = (await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId, cancellationToken))
-            .Select(tool => new
-            {
+        if (!dbManagementId.HasValue)
+            return Ok(McpBuiltInTools.Catalog);
+
+        var customTools = (await customSqlToolService.GetPublishedToolsForDbAsync(dbManagementId.Value, cancellationToken))
+            .Select(tool => new McpToolDescriptor(
                 tool.Name,
                 tool.Type,
-                DisplayName = $"Custom: {tool.Name}",
-                Risk = string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase) ? "high" : "medium",
-                IsBuiltIn = false
-            });
+                $"Custom: {tool.Name}",
+                string.Equals(tool.Type, "DML", StringComparison.OrdinalIgnoreCase) ? "high" : "medium",
+                false,
+                false));
 
-        return Ok(builtInTools.Concat(customTools));
+        return Ok(McpBuiltInTools.Catalog.Concat(customTools));
     }
 
     [HttpPost("mcp-keys")]
