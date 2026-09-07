@@ -6,7 +6,16 @@ import {
   serializeTableWhitelist,
   createMcpOnboardingSnippets,
   allowedToolsRequireElicitation,
+  resolveDefaultAllowedTools,
 } from "./mcpKeyIssuance";
+
+const catalog = [
+  { name: "get_schemas", defaultSelected: true },
+  { name: "get_tables", defaultSelected: true },
+  { name: "get_columns", defaultSelected: true },
+  { name: "execute_query_sql", defaultSelected: true },
+  { name: "execute_dml_sql", defaultSelected: false },
+] as const;
 
 describe("MCP key issuance helpers", () => {
   it.each([
@@ -56,12 +65,26 @@ describe("MCP key issuance helpers", () => {
     );
   });
 
+  it("derives four safe defaults from the server catalog and leaves DML opt-in", () => {
+    const defaults = resolveDefaultAllowedTools(catalog);
+
+    expect(defaults).toEqual([
+      "get_schemas",
+      "get_tables",
+      "get_columns",
+      "execute_query_sql",
+    ]);
+    expect(defaults).not.toContain("execute_dml_sql");
+  });
+
   it("creates independent default array values for each form reset", () => {
-    const first = createInitialMcpKeyDetail();
+    const defaults = resolveDefaultAllowedTools(catalog);
+    const first = createInitialMcpKeyDetail(defaults);
     first.allowedTools.push("execute_dml_sql");
     first.tableWhitelist.push("public.users");
 
-    const second = createInitialMcpKeyDetail();
+    const second = createInitialMcpKeyDetail(defaults);
+    expect(second.allowedTools).toEqual(defaults);
     expect(second.allowedTools).not.toContain("execute_dml_sql");
     expect(second.tableWhitelist).toEqual([]);
     expect(second.allowedTools).not.toBe(first.allowedTools);
@@ -91,11 +114,11 @@ describe("MCP key issuance helpers", () => {
     });
   });
 
-  it("requires Elicitation for unrestricted, built-in DML, and custom DML access", () => {
-    expect(allowedToolsRequireElicitation([])).toBe(true);
-    expect(allowedToolsRequireElicitation(["execute_dml_sql"])).toBe(true);
-    expect(allowedToolsRequireElicitation(["archive_customer"], ["archive_customer"])).toBe(true);
-    expect(allowedToolsRequireElicitation(["execute_query_sql"], ["archive_customer"])).toBe(false);
+  it("requires Elicitation for unrestricted or selected DML tools", () => {
+    const dmlTools = ["execute_dml_sql", "archive_customer"];
+    expect(allowedToolsRequireElicitation([], dmlTools)).toBe(true);
+    expect(allowedToolsRequireElicitation(["execute_dml_sql"], dmlTools)).toBe(true);
+    expect(allowedToolsRequireElicitation(["archive_customer"], dmlTools)).toBe(true);
+    expect(allowedToolsRequireElicitation(["execute_query_sql"], dmlTools)).toBe(false);
   });
-
 });
