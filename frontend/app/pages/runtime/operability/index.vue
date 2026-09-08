@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import ComboboxInput from "@/components/ComboboxInput.vue";
+import RuntimeDoctorCard from "@/components/runtime/RuntimeDoctorCard.vue";
 import {
   getDbHealth,
   getDeliveryStatuses,
@@ -203,6 +204,8 @@ onMounted(load);
         </p>
       </CardContent>
     </Card>
+
+    <RuntimeDoctorCard />
 
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Card>
