@@ -2,7 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
-## [2.0.4] - Unreleased
+## [2.0.5] - Unreleased
+
+### Agent-facing MCP contracts
+
+- Added structured MCP output contracts for all five built-in tools while preserving JSON text fallback compatibility for older MCP clients.
+- `execute_query_sql` now returns typed rows, provider, row count, duration, and machine-readable error details instead of requiring clients to parse free-form strings.
+- `get_schemas`, `get_tables`, and `get_columns` now expose machine-readable schema, table, column, semantic metric, relationship, and metadata structures.
+- `execute_dml_sql` now models `committed`, `pending`, `rejected`, and `failed` outcomes explicitly, including approval request/external references, affected rows, returned rows, and structured failures.
+- Read/query tools are explicitly marked read-only; the safe MCP key default remains four read/query tools selected with DML opt-in.
+
+### SQL Explain and policy simulation
+
+- Added a compile-only SQL Explain / Policy Simulator backed by the real F# compiler pipeline and the selected database runtime capability profile.
+- Query and DML simulations expose rendered target SQL, parameters, referenced tables, compiler decision/boundary, diagnostics with source spans, source/target capability evidence, and policy evidence.
+- Simulations can apply an existing MCP key's tool and table scopes without executing SQL, opening transactions, creating approval requests, or mutating target data.
+- DML affected-row limits remain runtime-preview evidence and are not misrepresented as compile-time proof.
+- Added a Security-page Admin UI for interactive explain/simulation with explicit compile-only labeling.
+
+### Configuration Doctor and deployment readiness
+
+- Added Configuration Doctor under Operability with `Healthy`, `Warning`, and `Error` findings plus concrete remediation guidance.
+- Doctor classifies coordination posture as `SingleNode`, `Distributed`, or `Mixed`, checks Redis completeness and fail-closed distributed limiter/concurrency settings, and diagnoses MCP endpoint, Admin Store, Data Protection, DML webhook, OIDC, OTLP, Alert/SIEM, and secret-placeholder posture without returning secret values.
+- Expanded Home System Readiness into a five-stage launch path: configuration blockers, database, public MCP endpoint, MCP key, and first governed agent request.
+- Doctor warnings remain reviewable while Doctor errors are treated as launch blockers; onboarding may display the public endpoint but never MCP key secrets.
+
+### Release and compatibility
+
+- Set the first-party package version to `2.0.5` and updated NuGet release metadata for the Agent DX, explainability, and readiness release.
+- Existing fail-closed SQL compiler behavior, capability checks, table/tool authorization, DML approval/revalidation/rollback, server-owned transaction boundaries, and Admin Store schema remain unchanged.
+- No Admin Store schema migration is required for this release.
+
+## [2.0.4] - 2026-09-07
 
 ### MCP contract and security
 

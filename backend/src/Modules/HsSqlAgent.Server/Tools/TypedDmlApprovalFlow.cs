@@ -26,7 +26,11 @@ internal sealed class TypedDmlApprovalFlow(
         if (approvalProvider is null)
             return new TypedDmlExecutionTiming(
                 "Error: This MCP client does not support the interactive confirmation required for DML execution. Configure IDmlApprovalProvider to use another approval system.",
-                0, null, false);
+                0,
+                null,
+                false,
+                ErrorCode: "approval.unavailable",
+                ErrorStage: "Approval");
 
         var previewPolicy = securityPolicyRuntimeState.GetCurrent();
         var previewAllowedTables = resolveAllowedTables();
@@ -34,7 +38,14 @@ internal sealed class TypedDmlApprovalFlow(
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
-                return new TypedDmlExecutionTiming("Server busy: maximum concurrent SQL operations reached.", 0, null, false);
+                return new TypedDmlExecutionTiming(
+                    "Server busy: maximum concurrent SQL operations reached.",
+                    0,
+                    null,
+                    false,
+                    ErrorCode: "server.busy",
+                    ErrorStage: "Execution",
+                    Retryable: true);
             session = await runtime.PreviewAsync(
                 provider, connectionString, parsedMutation, previewPolicy, previewAllowedTables, approvalContext, cancellationToken);
         }
@@ -54,7 +65,8 @@ internal sealed class TypedDmlApprovalFlow(
                 session.Preview.AffectedRows,
                 false,
                 DmlApprovalDecision.Pending,
-                approvalRequest.RequestId);
+                approvalRequest.RequestId,
+                approvalResult.ExternalReference);
         if (approvalResult.Decision != DmlApprovalDecision.Approved)
             return new TypedDmlExecutionTiming(
                 approvalResult.Reason ?? "DML execution cancelled by approval provider.",
@@ -69,7 +81,15 @@ internal sealed class TypedDmlApprovalFlow(
         await using var commitLease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
         if (commitLease is null)
             return new TypedDmlExecutionTiming(
-                "Server busy: maximum concurrent SQL operations reached.", approvalWaitDurationMs, session.Preview.AffectedRows, false);
+                "Server busy: maximum concurrent SQL operations reached.",
+                approvalWaitDurationMs,
+                session.Preview.AffectedRows,
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: "server.busy",
+                ErrorStage: "Execution",
+                Retryable: true);
         var commit = await runtime.CommitAsync(
             provider, connectionString, session, currentPolicy, currentAllowedTables, approvalContext, cancellationToken);
         var result = commit.Committed
@@ -83,7 +103,10 @@ internal sealed class TypedDmlApprovalFlow(
             commit.AffectedRows,
             commit.Committed,
             DmlApprovalDecision.Approved,
-            approvalRequest.RequestId);
+            approvalRequest.RequestId,
+            ReturnedRows: commit.ReturnedRows,
+            ErrorCode: commit.Committed ? null : "dml.commit_rejected",
+            ErrorStage: commit.Committed ? null : "Commit");
     }
 }
 
@@ -93,4 +116,9 @@ internal readonly record struct TypedDmlExecutionTiming(
     int? AffectedRows,
     bool Committed,
     DmlApprovalDecision? ApprovalDecision = null,
-    string? ApprovalRequestId = null);
+    string? ApprovalRequestId = null,
+    string? ApprovalExternalReference = null,
+    IReadOnlyList<IReadOnlyDictionary<string, object?>>? ReturnedRows = null,
+    string? ErrorCode = null,
+    string? ErrorStage = null,
+    bool Retryable = false);

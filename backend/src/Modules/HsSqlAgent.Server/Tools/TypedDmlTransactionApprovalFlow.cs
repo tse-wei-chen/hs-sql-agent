@@ -32,7 +32,11 @@ internal sealed class TypedDmlTransactionApprovalFlow(
         if (approvalProvider is null)
             return new TypedDmlExecutionTiming(
                 "Error: This MCP client does not support the interactive confirmation required for DML execution. Configure IDmlApprovalProvider to use another approval system.",
-                0, null, false);
+                0,
+                null,
+                false,
+                ErrorCode: "approval.unavailable",
+                ErrorStage: "Approval");
 
         var previewPolicy = securityPolicyRuntimeState.GetCurrent();
         var previewAllowedTables = resolveAllowedTables();
@@ -40,7 +44,14 @@ internal sealed class TypedDmlTransactionApprovalFlow(
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
-                return new TypedDmlExecutionTiming("Server busy: maximum concurrent SQL operations reached.", 0, null, false);
+                return new TypedDmlExecutionTiming(
+                    "Server busy: maximum concurrent SQL operations reached.",
+                    0,
+                    null,
+                    false,
+                    ErrorCode: "server.busy",
+                    ErrorStage: "Execution",
+                    Retryable: true);
             session = await runtime.PreviewTransactionAsync(
                 provider,
                 connectionString,
@@ -80,7 +91,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 session.Challenge.AffectedRows,
                 false,
                 DmlApprovalDecision.Pending,
-                approvalRequest.RequestId);
+                approvalRequest.RequestId,
+                approvalResult.ExternalReference);
         }
 
         if (approvalResult.Decision != DmlApprovalDecision.Approved)
@@ -100,7 +112,12 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 "Server busy: maximum concurrent SQL operations reached.",
                 approvalWaitDurationMs,
                 session.Challenge.AffectedRows,
-                false);
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: "server.busy",
+                ErrorStage: "Execution",
+                Retryable: true);
 
         var commit = await runtime.CommitTransactionAsync(
             provider,
@@ -121,6 +138,9 @@ internal sealed class TypedDmlTransactionApprovalFlow(
             commit.AffectedRows,
             commit.Committed,
             DmlApprovalDecision.Approved,
-            approvalRequest.RequestId);
+            approvalRequest.RequestId,
+            ReturnedRows: commit.ReturnedRows,
+            ErrorCode: commit.Committed ? null : "dml.commit_rejected",
+            ErrorStage: commit.Committed ? null : "Commit");
     }
 }

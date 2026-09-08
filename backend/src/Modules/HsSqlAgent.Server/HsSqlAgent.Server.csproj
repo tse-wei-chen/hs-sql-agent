@@ -29,6 +29,7 @@
 		<RepositoryUrl>https://github.com/tse-wei-chen/hs-sql-agent.git</RepositoryUrl>
 		<RepositoryType>git</RepositoryType>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageReleaseNotes>2.0.5 adds structured MCP results, compile-only SQL Explain and policy simulation, Configuration Doctor deployment checks, and a unified first-governed-request readiness path.</PackageReleaseNotes>
 		<IncludeSymbols>true</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
 	</PropertyGroup>

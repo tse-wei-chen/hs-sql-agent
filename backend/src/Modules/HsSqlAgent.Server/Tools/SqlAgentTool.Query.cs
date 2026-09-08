@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -10,14 +11,14 @@ namespace HsSqlAgent.Server.Tools;
 
 public partial class SqlAgentTool
 {
-    [McpServerTool, Description(@"
+    [McpServerTool(UseStructuredContent = true, ReadOnly = true), Description(@"
         Execute one SELECT SQL statement. SQL text enters the F# compiler pipeline directly, where it is parsed, bound,
         validated against table authorization and query policy, compiled to an immutable command, then executed.
 
         Use get_schemas/get_tables/get_columns first when you need database structure. Only send a single SELECT statement.
         Supported SQL includes JOINs, WHERE, GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET, DISTINCT, CTEs, subqueries, and UNION/INTERSECT/EXCEPT.
     ")]
-    public async Task<string> ExecuteQuerySql(
+    public async Task<McpQueryToolResult> ExecuteQuerySql(
         [Description("A single SELECT SQL statement to parse, validate, compile, and execute.")]
         string sql,
         CancellationToken cancellationToken = default)
@@ -25,16 +26,31 @@ public partial class SqlAgentTool
         var stopwatch = Stopwatch.StartNew();
         var sqlConfig = await ResolveSqlConfigAsync();
         if (!CheckProviderAndConnectionString(sqlConfig, out var dbType))
-            return InvalidSqlConfigurationMessage;
+        {
+            return McpQueryToolResult.Failed(
+                null,
+                new McpToolError(
+                    "configuration.invalid",
+                    InvalidSqlConfigurationMessage,
+                    "Configuration"));
+        }
 
-        var provider = _sqlProviderFactory.GetProvider(dbType);
         QueryFacts? auditFacts = null;
         try
         {
             ValidateToolAccess("execute_query_sql");
             if (string.IsNullOrWhiteSpace(sql))
-                return "Error: SQL is missing.";
+            {
+                return McpQueryToolResult.Failed(
+                    dbType.ToString(),
+                    new McpToolError(
+                        "validation.sql_missing",
+                        "SQL is missing.",
+                        "Input"),
+                    stopwatch.ElapsedMilliseconds);
+            }
 
+            var provider = _sqlProviderFactory.GetProvider(dbType);
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
             var allowedTables = ResolveTableWhitelist();
             QueryExecutionResult execution;
@@ -69,7 +85,6 @@ public partial class SqlAgentTool
                 }
             }
 
-            var result = JsonSerializer.Serialize(execution.Rows);
             await _auditService.WriteEventAsync(
                 "mcp.query.executed",
                 AuditTarget(auditFacts),
@@ -84,7 +99,11 @@ public partial class SqlAgentTool
                 },
                 $"Provider: {dbType}",
                 cancellationToken);
-            return result;
+            return McpQueryToolResult.Succeeded(
+                dbType.ToString(),
+                execution.RowCount,
+                execution.Duration,
+                execution.Rows);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -107,8 +126,49 @@ public partial class SqlAgentTool
                 },
                 ex.Message,
                 cancellationToken);
-            return "Execution failed: " + ex.Message;
+            return McpQueryToolResult.Failed(
+                dbType.ToString(),
+                DescribeQueryError(ex),
+                stopwatch.ElapsedMilliseconds);
         }
+    }
+
+    private static McpToolError DescribeQueryError(Exception error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+        {
+            var evidence = SqlCompileEvidence.TryGetFromException(current);
+            if (evidence is not null)
+            {
+                return new McpToolError(
+                    evidence.DecisionCode,
+                    error.Message,
+                    evidence.DecisionBoundary.ToString());
+            }
+        }
+
+        return error switch
+        {
+            UnauthorizedAccessException => new McpToolError(
+                "authorization.denied",
+                error.Message,
+                "Authorization"),
+            TimeoutException => new McpToolError(
+                "execution.timeout",
+                error.Message,
+                "Execution",
+                true),
+            InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
+                new McpToolError(
+                    "server.busy",
+                    error.Message,
+                    "Execution",
+                    true),
+            _ => new McpToolError(
+                "execution.failed",
+                error.Message,
+                "Execution")
+        };
     }
 
     private static string AuditTarget(QueryFacts? facts) =>
