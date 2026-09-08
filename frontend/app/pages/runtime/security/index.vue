@@ -6,6 +6,7 @@ import {
   updateSecurityPolicy,
   type SecurityPolicy,
 } from "@/api/security";
+import SqlExplainSimulator from "@/components/runtime/SqlExplainSimulator.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -192,6 +193,8 @@ onMounted(load);
           </p>
         </CardContent>
       </Card>
+
+      <SqlExplainSimulator />
 
       <Card>
         <CardHeader>
