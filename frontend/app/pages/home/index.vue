@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import {
+  getMcpClientConfig,
   listMcpKeys,
   getRuntimeAudit,
   getRuntimeAuditDailySummary,
 } from "@/api/runtime";
+import {
+  getRuntimeDoctor,
+  type RuntimeDoctorResponse,
+} from "@/api/doctor";
 import { listDbManagements, type DbManagement } from "@/api/db-management";
 import type { AuditDailySummaryItem } from "@/api/runtime";
 import type { ChartConfig } from "@/components/ui/chart";
+import { buildSystemReadinessSteps } from "@/lib/systemReadiness";
 import {
   Card,
   CardContent,
@@ -69,10 +75,13 @@ const { $can } = useNuxtApp();
 const canViewKeys = computed(() => $can("/runtime/mcp-keys.view"));
 const canViewAudit = computed(() => $can("/runtime/audit.view"));
 const canViewDatabases = computed(() => $can("/runtime/db-management.view"));
+const canViewOperability = computed(() => $can("/runtime/operability.view"));
 const keys = ref<McpKeyItem[]>([]);
 const dbManagements = ref<DbManagement[]>([]);
 const recentAudits = ref<AuditItem[]>([]);
 const dailySummary = ref<AuditDailySummaryItem[]>([]);
+const runtimeDoctor = ref<RuntimeDoctorResponse | null>(null);
+const mcpEndpoint = ref("");
 type AuditDailySummaryData = (typeof dailySummary.value)[number];
 
 const activeKeyCount = computed(
@@ -99,32 +108,16 @@ const hasUsedActiveKey = computed(() =>
 const canShowReadiness = computed(
   () => canViewKeys.value && canViewDatabases.value,
 );
-const readinessSteps = computed(() => [
-  {
-    id: "database",
-    title: "Add a database connection",
-    description: "Register and test at least one governed database target.",
-    complete: dbManagements.value.length > 0,
-    to: "/runtime/db-management",
-    action: dbManagements.value.length > 0 ? "Manage databases" : "Add database",
-  },
-  {
-    id: "key",
-    title: "Issue an MCP access key",
-    description: "Start with the four default read/query tools; enable DML only when needed.",
-    complete: activeKeyCount.value > 0,
-    to: "/runtime/mcp-keys",
-    action: activeKeyCount.value > 0 ? "Manage keys" : "Issue key",
-  },
-  {
-    id: "request",
-    title: "Connect an agent",
-    description: "Use the issued key from Claude, Cursor, VS Code, or another MCP client at least once.",
-    complete: hasUsedActiveKey.value,
-    to: "/runtime/mcp-keys",
-    action: hasUsedActiveKey.value ? "View key usage" : "Connect client",
-  },
-]);
+const readinessSteps = computed(() =>
+  buildSystemReadinessSteps({
+    includeConfiguration: canViewOperability.value,
+    doctor: runtimeDoctor.value,
+    databaseCount: dbManagements.value.length,
+    activeKeyCount: activeKeyCount.value,
+    mcpEndpoint: mcpEndpoint.value,
+    hasObservedAgentRequest: hasUsedActiveKey.value,
+  }),
+);
 const readinessCompleteCount = computed(
   () => readinessSteps.value.filter((step) => step.complete).length,
 );
@@ -173,20 +166,34 @@ const formatTime = (value?: string | null) => {
 const loadDashboard = async () => {
   loading.value = true;
   try {
-    const [keyResult, dbResult, latestAuditResult, dailySummaryResult] =
-      await Promise.all([
-        canViewKeys.value ? listMcpKeys() : Promise.resolve([]),
-        canViewDatabases.value ? listDbManagements() : Promise.resolve([]),
-        canViewAudit.value
-          ? getRuntimeAudit(1, 8)
-          : Promise.resolve({ items: [] }),
-        canViewAudit.value
-          ? getRuntimeAuditDailySummary(7)
-          : Promise.resolve({ items: [] }),
-      ]);
+    const [
+      keyResult,
+      dbResult,
+      latestAuditResult,
+      dailySummaryResult,
+      doctorResult,
+      clientConfig,
+    ] = await Promise.all([
+      canViewKeys.value ? listMcpKeys() : Promise.resolve([]),
+      canViewDatabases.value ? listDbManagements() : Promise.resolve([]),
+      canViewAudit.value
+        ? getRuntimeAudit(1, 8)
+        : Promise.resolve({ items: [] }),
+      canViewAudit.value
+        ? getRuntimeAuditDailySummary(7)
+        : Promise.resolve({ items: [] }),
+      canViewOperability.value
+        ? getRuntimeDoctor().catch(() => null)
+        : Promise.resolve(null),
+      canViewKeys.value
+        ? getMcpClientConfig().catch(() => ({ mcpEndpoint: "" }))
+        : Promise.resolve({ mcpEndpoint: "" }),
+    ]);
     keys.value = keyResult || [];
     dbManagements.value = dbResult || [];
     recentAudits.value = latestAuditResult?.items || [];
+    runtimeDoctor.value = doctorResult;
+    mcpEndpoint.value = clientConfig?.mcpEndpoint || "";
     dailySummary.value =
       dailySummaryResult?.items.map((item: any) => ({
         day: new Date(item.day).getTime(),
@@ -247,7 +254,8 @@ onMounted(loadDashboard);
           <div>
             <CardTitle>System Readiness</CardTitle>
             <CardDescription>
-              Complete the shortest path to the first governed agent request.
+              Clear deployment blockers, connect a governed target, verify the public MCP endpoint,
+              issue a key, and complete the first agent request.
             </CardDescription>
           </div>
           <div class="rounded-full border bg-muted/40 px-3 py-1 text-sm font-medium">
@@ -255,7 +263,7 @@ onMounted(loadDashboard);
           </div>
         </div>
       </CardHeader>
-      <CardContent class="grid gap-3 lg:grid-cols-3">
+      <CardContent class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <div
           v-for="(step, index) in readinessSteps"
           :key="step.id"
@@ -272,7 +280,9 @@ onMounted(loadDashboard);
             </div>
             <div class="font-medium">{{ step.title }}</div>
           </div>
-          <p class="flex-1 text-sm text-muted-foreground">{{ step.description }}</p>
+          <p class="flex-1 break-words text-sm text-muted-foreground">
+            {{ step.description }}
+          </p>
           <Button size="sm" :variant="step.complete ? 'outline' : 'default'" as-child>
             <NuxtLink :to="step.to">{{ step.action }}</NuxtLink>
           </Button>
