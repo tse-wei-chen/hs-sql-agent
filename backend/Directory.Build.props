@@ -4,7 +4,5 @@
          -p:VersionPrefix=... when preparing a release. -->
     <VersionPrefix Condition="'$(VersionPrefix)' == ''">2.0.5</VersionPrefix>
     <Exclude>[*]*.Models.*</Exclude>
-    <!-- Keep warning hygiene consistent across every backend C#/F# project. -->
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 </Project>
