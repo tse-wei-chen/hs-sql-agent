@@ -349,6 +349,7 @@ jobs:
           git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
           dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj \
             --configuration Release \
+            -p:TreatWarningsAsErrors=false \
             --output artifacts/parity/main
       - name: Capture base main syntax behavior
         run: >
