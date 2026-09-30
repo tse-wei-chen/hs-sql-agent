@@ -1,17 +1,46 @@
 # hs-sql-agent
 
-> **A fail-closed SQL execution and governance boundary for AI agents.**
+> **Turn trusted SQL into governed MCP tools for AI agents.**
 
 <img width="1000" height="500" alt="coverImage" src="https://github.com/user-attachments/assets/e317cee2-7bf3-4b11-94b9-4fdeedb29689" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green?logo=apache)](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/LICENSE) [![Docker](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/docker-publish.yml) [![NuGet](https://img.shields.io/badge/NuGet-Install-0956cc?logo=nuget)](https://www.nuget.org/packages/HsSqlAgent.Hosting) [![CodeQL Advanced](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml/badge.svg?event=release)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/codeql.yml) [![Tests](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/badge.svg)](https://github.com/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml)
 
-`hs-sql-agent` sits between AI-generated SQL and your databases. It accepts raw SQL through MCP, parses it into a structured compiler model, validates source and target capabilities, applies access and execution policy, and only then renders SQL for the target provider.
+`hs-sql-agent` is an open-source **SQL-to-MCP tool factory and governed SQL execution boundary**. Define parameterized SQL in the Admin UI, publish it as a typed MCP tool, and let AI agents supply only the arguments — without writing a new C# method or redeploying your MCP server for every database operation.
+
+Every published tool still runs through the same fail-closed SQL compiler, per-key database/table policy, runtime limits, audit trail, and Safe DML approval controls. Raw SQL tools remain available for cases where an agent genuinely needs flexible ad-hoc querying.
 
 It supports **PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird** and can run as the complete first-party server with its Admin UI or be embedded into an existing ASP.NET Core application.
 
+## Publish SQL as an MCP tool
+
+Instead of teaching the model to regenerate the same query every time, define the SQL shape once:
+
+```sql
+SELECT id, total, status
+FROM orders
+WHERE customer_id = {{ customerId }}
+  AND status = {{ status }}
+```
+
+Declare `customerId` and `status` in **Runtime → Custom Tools**, test the draft, then publish it. hs-sql-agent exposes the published definition to MCP clients as a named tool with a generated JSON input schema.
+
+The agent sees a contract conceptually like:
+
+```text
+get_customer_orders(
+  customerId: number,
+  status: string
+)
+```
+
+The SQL template stays engineer-defined. Placeholders are value parameters only; identifiers and arbitrary SQL fragments cannot be injected through them.
+
+Published custom tools can be **Query** or **DML** tools. Query tools use the same typed compiler and access-policy path as built-in SQL execution. DML tools use the same preview → approval → revalidation → commit protocol, including atomic multi-statement transactions.
+
 ## Why hs-sql-agent?
 
+- **SQL-to-MCP Custom Tools** — Turn engineer-reviewed SQL templates into discoverable MCP tools with typed parameters, descriptions, draft/test/publish lifecycle, revisions, rollback, and database binding.
 - **Fail-closed SQL compiler** — Unsupported or unproven syntax is rejected instead of being silently rewritten with different semantics.
 - **Closed F# compiler core** — SQL enters a closed discriminated-union AST and advances through unforgeable `parsed → bound → canonical → validated → executable` compiler stages.
 - **Six database providers** — PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird with provider-aware validation and lowering.
@@ -68,11 +97,12 @@ See the [ASP.NET Core Integration Guide](https://sql-agent.net/en/docs/integrati
 
 ## How SQL execution works
 
-1. Authenticate the MCP key and establish its database, table, and execution-policy scope.
-2. Parse SQL into the closed compiler model and bind source semantics.
-3. Normalize and validate syntax, semantics, capabilities, and policy.
-4. Render only an executable typestate into provider-specific SQL and parameters.
-5. Execute within configured runtime limits.
+1. Authenticate the MCP key and establish its database, table, tool, and execution-policy scope.
+2. For Custom Tools, resolve the published definition and render declared value parameters into the engineer-defined SQL template.
+3. Parse SQL into the closed compiler model and bind source semantics.
+4. Normalize and validate syntax, semantics, capabilities, and policy.
+5. Render only an executable typestate into provider-specific SQL and parameters.
+6. Execute within configured runtime limits.
 
 The compiler core is provider-driver-free: parsing, validation, normalization, capability proof, lowering, and rendering are kept separate from database drivers and runtime execution.
 
@@ -98,6 +128,7 @@ The documentation site is the source of truth for detailed configuration, integr
 
 - [Documentation Home](https://sql-agent.net/en/docs/)
 - [Quick Start](https://sql-agent.net/en/docs/getting-started/quick-start)
+- [Custom Tools](https://sql-agent.net/en/docs/administration/custom-tools)
 - [ASP.NET Core Integration](https://sql-agent.net/en/docs/integration/aspnet-core)
 - [SQL Support Reference](https://sql-agent.net/en/docs/sql-compiler/sql-support)
 - [Security Overview](https://sql-agent.net/en/docs/security/overview)
