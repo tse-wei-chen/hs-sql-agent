@@ -12,6 +12,7 @@ internal sealed class SqlExecutionPolicyDecision
 {
     private readonly SecurityPolicyModel _policy;
     private readonly ImmutableHashSet<string>? _allowedTables;
+    private ImmutableHashSet<string>? _allowedQueryColumns;
     private readonly string _identityFingerprint;
     private readonly bool _isDml;
 
@@ -44,14 +45,18 @@ internal sealed class SqlExecutionPolicyDecision
 
     // Immutable even if the source HashSet is later changed.
     internal IReadOnlySet<string>? AllowedTables => _allowedTables;
+    internal IReadOnlySet<string>? AllowedQueryColumns => _allowedQueryColumns;
 
     internal static SqlExecutionPolicyDecision ForQuery(
         McpSqlExecutionScope scope,
         SecurityPolicyModel policy)
     {
         ArgumentNullException.ThrowIfNull(scope);
-        return new SqlExecutionPolicyDecision(
+        var decision = new SqlExecutionPolicyDecision(
             scope.ToApprovalContext(), policy, scope.AllowedTables, isDml: false);
+        decision._allowedQueryColumns = scope.AllowedQueryColumns is null
+            ? null : ImmutableHashSet.CreateRange(StringComparer.Ordinal, scope.AllowedQueryColumns);
+        return decision;
     }
 
     internal static SqlExecutionPolicyDecision ForDml(

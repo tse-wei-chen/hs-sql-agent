@@ -63,7 +63,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
-        SqlProviderCapabilityProfile? targetProfile)
+        SqlProviderCapabilityProfile? targetProfile,
+        IReadOnlySet<string>? allowedColumns = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentException.ThrowIfNullOrWhiteSpace(sql);
@@ -72,6 +73,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
+        if (allowedColumns is not null)
+            validationContext = validationContext.WithAllowedQueryColumns(allowedColumns);
         var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
 
         if (targetProfile is not null
@@ -102,7 +105,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         SqlAgentToolType sourceDialect,
         SecurityPolicyModel policy,
         IReadOnlySet<string>? allowedTables,
-        SqlProviderCapabilityProfile? targetProfile)
+        SqlProviderCapabilityProfile? targetProfile,
+        IReadOnlySet<string>? allowedColumns = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentException.ThrowIfNullOrWhiteSpace(sql);
@@ -111,6 +115,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
+        if (allowedColumns is not null)
+            validationContext = validationContext.WithAllowedQueryColumns(allowedColumns);
         var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
         var sourceProfile = targetProfile is not null && sourceDialect == provider.Type
             ? targetProfile
@@ -211,14 +217,24 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         }
     }
 
-    public async Task<QueryExecutionWithFacts> ExecuteWithFactsAsync(
-        ISqlProvider provider,
-        string connectionString,
-        string sql,
-        SqlAgentToolType sourceDialect,
-        SecurityPolicyModel policy,
-        IReadOnlySet<string>? allowedTables,
-        CancellationToken cancellationToken = default)
+    public Task<QueryExecutionWithFacts> ExecuteWithFactsAsync(
+        ISqlProvider provider, string connectionString, string sql, SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy, IReadOnlySet<string>? allowedTables,
+        CancellationToken cancellationToken = default) =>
+        ExecuteWithFactsCoreAsync(provider, connectionString, sql, sourceDialect,
+            policy, allowedTables, null, cancellationToken);
+
+    internal Task<QueryExecutionWithFacts> ExecuteWithRestrictedColumnsAsync(
+        ISqlProvider provider, string connectionString, string sql, SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy, IReadOnlySet<string>? allowedTables,
+        IReadOnlySet<string> allowedColumns, CancellationToken cancellationToken = default) =>
+        ExecuteWithFactsCoreAsync(provider, connectionString, sql, sourceDialect,
+            policy, allowedTables, allowedColumns, cancellationToken);
+
+    private async Task<QueryExecutionWithFacts> ExecuteWithFactsCoreAsync(
+        ISqlProvider provider, string connectionString, string sql, SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy, IReadOnlySet<string>? allowedTables,
+        IReadOnlySet<string>? allowedColumns, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentException.ThrowIfNullOrWhiteSpace(sql);
@@ -246,7 +262,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             sourceDialect,
             policy,
             allowedTables,
-            verifiedProfile.TargetProfile);
+            verifiedProfile.TargetProfile,
+            allowedColumns);
 
         try
         {

@@ -17,7 +17,8 @@ internal sealed class McpSqlExecutionScope
         int dbManagementId,
         string databaseName,
         SqlAgentToolType provider,
-        ImmutableHashSet<string>? allowedTables)
+        ImmutableHashSet<string>? allowedTables,
+        ImmutableHashSet<string>? allowedQueryColumns)
     {
         ToolName = toolName;
         AccessKeyId = accessKeyId;
@@ -25,6 +26,7 @@ internal sealed class McpSqlExecutionScope
         DatabaseName = databaseName;
         Provider = provider;
         AllowedTables = allowedTables;
+        AllowedQueryColumns = allowedQueryColumns;
     }
 
     internal string ToolName { get; }
@@ -36,6 +38,15 @@ internal sealed class McpSqlExecutionScope
     // Null is the existing explicit-unrestricted whitelist contract; a missing
     // context item is NEVER treated as unrestricted.
     internal IReadOnlySet<string>? AllowedTables { get; }
+    // Null means unrestricted, but an empty set is explicitly deny-all.
+    internal IReadOnlySet<string>? AllowedQueryColumns { get; }
+
+    internal void EnsureDmlColumnPolicySupported()
+    {
+        if (AllowedQueryColumns is not null)
+            throw new UnauthorizedAccessException(
+                "This MCP key restricts query columns; DML is denied until mutation column proofs are available.");
+    }
 
     internal static McpSqlExecutionScope Capture(
         HttpContext? context,
@@ -74,8 +85,17 @@ internal sealed class McpSqlExecutionScope
             ? null
             : ImmutableHashSet.CreateRange(StringComparer.OrdinalIgnoreCase, tables);
 
+        if (!context.Items.TryGetValue(McpContextItemKeys.AllowedQueryColumns, out var columnValue)
+            || columnValue is not null and not string)
+            throw new UnauthorizedAccessException("MCP query column authorization context is missing or invalid.");
+
+        var allowedColumns = columnValue is string csv
+            ? ImmutableHashSet.CreateRange(
+                StringComparer.Ordinal,
+                csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            : null;
         return new McpSqlExecutionScope(
-            toolName, accessKeyId, dbManagementId, databaseName.Trim(), provider, allowSet);
+            toolName, accessKeyId, dbManagementId, databaseName.Trim(), provider, allowSet, allowedColumns);
     }
 
     /// <summary>
