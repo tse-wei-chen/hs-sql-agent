@@ -71,6 +71,16 @@ Then open **Runtime → MCP Keys** in the Admin UI and issue a key. The one-time
 
 The plaintext secret is shown only once. See [MCP Client Onboarding](https://sql-agent.net/en/docs/mcp/client-onboarding) for client setup, compatibility, and DML Elicitation requirements.
 
+## Automate the Admin API
+
+Integrations can issue a **Management API Key** in the Admin UI and use the existing `/api` endpoints without an interactive login:
+
+```http
+X-API-Key: hsa_mgmt_<secret>
+```
+
+Management API Keys are independent from MCP access keys (`/mcp`) and human JWT sessions. The key's explicitly granted canonical permissions determine which management actions are allowed; it is not an SQL row-level or tenant-isolation mechanism. See the [Management API Keys guide](https://sql-agent.net/en/docs/integration/management-api-keys) for lifecycle, security boundaries, and integration examples.
+
 ## Use from .NET
 
 For the same batteries-included composition as the official Docker host, install `HsSqlAgent.Hosting`:

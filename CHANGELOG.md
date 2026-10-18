@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.6] - Unreleased (proposed)
+
+### Programmatic administration
+
+- Add dedicated **Management API Keys** for machine-to-machine access to the existing `/api` management endpoints. Authenticate using `X-API-Key: hsa_mgmt_...`; human sessions continue to use `Authorization: Bearer <JWT>`.
+- Provide an Admin UI for issuing, listing, immediately revoking, and rotating Management API Keys, with one-time plaintext display and an explicit allowlist of canonical API permissions.
+- Keep Management API Keys **fully separate** from MCP access keys, MCP tool authorization, and SQL execution. Machine keys cannot operate built-in identity/role administration, edit security policy, or issue other management keys.
+- Persist hashed credentials with expiry / usage metadata in the Admin Store; add **SQLite and PostgreSQL schema migrations**, plus permission and credential-isolation tests.
+- Move in-depth operator and integration guides to the standalone documentation site; `docs/*.md` in the application repository is no longer a documentation home.
+
+### Upgrade notes
+
+- Applying 2.0.6 requires the Admin Store migrations for `ManagementApiKeys` before creating keys.
+- Existing JWT admin authentication and MCP keys are unchanged. No new API key is issued automatically.
+- Management API Keys are currently scoped by canonical API permissions, **not** by database or SaaS tenant; protect these keys as server-to-server credentials.
+- Follow the versioned documentation site's Management API Key guide for the request header and examples.
+
 ## [2.0.5] - Unreleased
 
 ### Agent-facing MCP contracts
