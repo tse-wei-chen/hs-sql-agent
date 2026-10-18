@@ -53,4 +53,14 @@ for method, path in [
     success = [v for k,v in op["responses"].items() if k.startswith("2")]
     assert any("content" in x for x in success), f"Missing typed success schema for {method} {path}"
 
-print(f"Verified {len(operations)} Admin REST operations and critical typed contracts.")
+schemes = spec.get("components", {}).get("securitySchemes", {})
+assert schemes.get("ManagementApiKey", {}).get("name") == "X-API-Key"
+assert schemes.get("AdminBearer", {}).get("scheme") == "bearer"
+def requires(op, scheme):
+    return any(scheme in requirement for requirement in op.get("security", []))
+assert requires(operations["POST", "/api/CustomSqlTool"], "ManagementApiKey")
+assert requires(operations["POST", "/api/CustomSqlTool"], "AdminBearer")
+assert requires(operations["POST", "/api/runtime/management-api-keys"], "AdminBearer")
+assert not requires(operations["POST", "/api/runtime/management-api-keys"], "ManagementApiKey")
+assert not requires(operations["GET", "/api/Auth/first-run"], "ManagementApiKey")
+print(f"Verified {len(operations)} Admin REST operations, typed contracts and credential metadata.")
