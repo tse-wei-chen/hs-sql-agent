@@ -15,6 +15,7 @@ export interface IssueMcpKeyRequest {
   database?: string | null;
   extraSettings?: string | null;
   tableWhitelist?: string | null;
+  allowedQueryColumns?: string | null;
   rateLimitMode?: "Inherit" | "Custom" | "Unlimited";
   permitLimitOverride?: number | null;
   windowSecondsOverride?: number | null;

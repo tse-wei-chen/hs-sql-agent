@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Per-MCP-key query column governance
+
+- Persist `AllowedQueryColumns` on MCP keys with SQLite/PostgreSQL Admin Store
+  migrations, covering issue/edit/list/validate/clone/rotate and key cache invalidation.
+- Add Admin UI opt-in query column restrictions and preserve existing four read-tool
+  defaults; DML remains opt-in.
+- Enforce restricted Query and Custom Query via the F# compiler column proof gate.
+  Keys with restricted columns are denied DML (including durable approval resume);
+  unsupported custom query runtimes cannot silently fall back.
+- `null` policy preserves legacy behavior; an explicit empty policy denies all
+  query columns. Run the new Admin Store migration before deploying these changes.
+
 ### Compiler column authorization boundary
 
 - Add an opt-in single-table column authorization guard in the F# compilation pipeline.

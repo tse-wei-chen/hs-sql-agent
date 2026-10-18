@@ -116,6 +116,29 @@ This is an execution-boundary hardening change, not an additional MCP tool or a
 change to supported SQL grammar. Existing deployments with MCP keys lacking a
 complete database binding must fix the key configuration before upgrading.
 
+## MCP key column allowlists
+
+Each MCP key can optionally store `AllowedQueryColumns` as a comma-separated set
+of simple, case-sensitive column identifiers. `null` means legacy unrestricted
+query columns, whereas an explicit empty string means deny all query columns.
+Admin UI exposes this as an opt-in switch with explicit column names; API clients
+can specify an empty string to deny all reads.
+
+The policy is persisted with the key, copied when cloned or rotated, sent through
+the authenticated MCP request scope, and passed from both built-in Query and
+published Custom Query to the F# compiler. Any unsupported query runtime fails
+closed rather than falling back to unrestricted query execution. The F# proof
+currently supports only one physical table with explicit columns; wildcards,
+CTEs, JOINs, subqueries and set operations are refused when enabled.
+**Any key with a column allowlist (including empty) is denied DML**, including
+durable approval resume. Use a separate DML key with strictly controlled tool
+authorization if mutation is necessary.
+
+Existing keys with `null` policies retain their query behavior; apply both SQLite
+and PostgreSQL Admin Store migrations before deploying this release. Query-column
+restrictions are **not** tenant/RLS or database metadata proofs, and users should
+still use least-privilege database accounts.
+
 ## Typed SQL policy decisions
 
 Each governed Query or Custom Query now captures one defensive snapshot of the

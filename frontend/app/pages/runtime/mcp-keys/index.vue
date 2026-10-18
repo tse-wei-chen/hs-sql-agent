@@ -57,6 +57,7 @@ import {
   formatAllowedToolsLabel,
   resolveMcpKeyExpiry,
   serializeTableWhitelist,
+  serializeAllowedQueryColumns,
   createMcpOnboardingSnippets,
   allowedToolsRequireElicitation,
   resolveDefaultAllowedTools,
@@ -86,6 +87,7 @@ interface McpKeyItem {
   dbManagementId?: number | null;
   dbManagementName?: string | null;
   tableWhitelist?: string | null;
+  allowedQueryColumns?: string | null;
   rateLimitMode: McpKeyRateLimitMode;
   permitLimitOverride?: number | null;
   windowSecondsOverride?: number | null;
@@ -118,6 +120,7 @@ const testing = ref(false);
 const customExpiresAt = ref("");
 const detail = ref<McpKeyDetail>(createInitialMcpKeyDetail());
 const isWhitelistEnabled = ref(false);
+const isColumnRestrictionEnabled = ref(false);
 const selectedSchema = ref<string | undefined>(undefined);
 const availableSchemas = ref<string[]>([]);
 const fetchingSchemas = ref(false);
@@ -139,6 +142,8 @@ const lifecycleAllowedTools = ref<string[]>([]);
 const lifecycleCors = ref("");
 const lifecycleDbManagementId = ref<number | null>(null);
 const lifecycleTableWhitelist = ref("");
+const lifecycleAllowedQueryColumns = ref("");
+const lifecycleColumnRestrictionEnabled = ref(false);
 const lifecycleRateLimitMode = ref<McpKeyRateLimitMode>("Inherit");
 const lifecyclePermitLimit = ref(120);
 const lifecycleWindowSeconds = ref(60);
@@ -412,6 +417,7 @@ const resetForm = () => {
   availableTools.value = builtInTools.value;
   customExpiresAt.value = "";
   isWhitelistEnabled.value = false;
+  isColumnRestrictionEnabled.value = false;
   selectedSchema.value = undefined;
   issuedPlaintextKey.value = "";
   issuedKeyName.value = "";
@@ -431,6 +437,8 @@ const issue = async () => {
       isWhitelistEnabled.value,
       detail.value.tableWhitelist,
     );
+    const allowedQueryColumns = serializeAllowedQueryColumns(
+      isColumnRestrictionEnabled.value, detail.value.allowedQueryColumns);
     issuing.value = true;
     const result = await issueMcpKey({
       name: values.name.trim(),
@@ -442,6 +450,7 @@ const issue = async () => {
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
       dbManagementId: detail.value.dbManagementId || 0,
       tableWhitelist,
+      allowedQueryColumns,
       rateLimitMode: detail.value.rateLimitMode,
       permitLimitOverride:
         detail.value.rateLimitMode === "Custom"
@@ -574,6 +583,8 @@ const openLifecycle = (
   lifecycleCors.value = key.corsAllowedOrigins || "";
   lifecycleDbManagementId.value = key.dbManagementId ?? null;
   lifecycleTableWhitelist.value = key.tableWhitelist || "";
+  lifecycleColumnRestrictionEnabled.value = key.allowedQueryColumns !== null && key.allowedQueryColumns !== undefined;
+  lifecycleAllowedQueryColumns.value = key.allowedQueryColumns || "";
   lifecycleRateLimitMode.value = key.rateLimitMode || "Inherit";
   lifecyclePermitLimit.value =
     key.permitLimitOverride || key.effectivePermitLimit || 120;
@@ -598,6 +609,9 @@ const saveLifecycle = async () => {
         corsAllowedOrigins: lifecycleCors.value.trim() || null,
         dbManagementId: lifecycleDbManagementId.value,
         tableWhitelist: lifecycleTableWhitelist.value.trim() || null,
+        allowedQueryColumns: serializeAllowedQueryColumns(
+          lifecycleColumnRestrictionEnabled.value,
+          lifecycleAllowedQueryColumns.value),
         rateLimitMode: lifecycleRateLimitMode.value,
         permitLimitOverride:
           lifecycleRateLimitMode.value === "Custom"
@@ -820,6 +834,22 @@ onMounted(load);
                 </div>
               </Tabs>
             </Field>
+            <Field class="md:col-span-2 space-y-2">
+              <div class="flex items-center gap-3">
+                <FieldLabel>Restrict Query Columns (Advanced)</FieldLabel>
+                <Switch v-model="isColumnRestrictionEnabled" />
+              </div>
+              <Input
+                v-if="isColumnRestrictionEnabled"
+                v-model="detail.allowedQueryColumns"
+                placeholder="id, status, created_at"
+              />
+              <p class="text-xs text-muted-foreground">
+                Opt-in: only explicit columns of a single physical table can be queried.
+                Wildcards, JOIN, CTE, subqueries and DML fail closed for restricted keys.
+                Leave disabled for legacy unrestricted query columns.
+              </p>
+            </Field>
             <span class="md:col-span-2"><hr /></span>
             <Field class="md:col-span-2">
               <div class="flex items-center justify-between gap-3">
@@ -942,6 +972,7 @@ onMounted(load);
                 issuing ||
                 (detail.expiresAt === 'custom' && !customExpiresAt) ||
                 (isWhitelistEnabled && detail.tableWhitelist.length === 0) ||
+                (isColumnRestrictionEnabled && !detail.allowedQueryColumns.trim()) ||
                 (detail.rateLimitMode === 'Custom' &&
                   (detail.permitLimitOverride < 1 || detail.windowSecondsOverride < 1))
               "
@@ -1034,6 +1065,8 @@ onMounted(load);
 
             <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
               <span>Tools: {{ key.allowedTools || "All current tools" }}</span>
+              <span>Query columns: {{ key.allowedQueryColumns === null || key.allowedQueryColumns === undefined
+                ? "Unrestricted" : key.allowedQueryColumns || "None (deny-all)" }}</span>
               <span>Expires: {{ key.expiresAt || "never" }}</span>
               <span>CORS: {{ key.corsAllowedOrigins || "none" }}</span>
             </div>
@@ -1058,7 +1091,7 @@ onMounted(load);
             A new secret is shown once. The old key is revoked immediately unless a grace period is set.
           </DialogDescription>
           <DialogDescription v-else-if="lifecycleMode === 'clone'">
-            Copies database, tool, CORS, and table restrictions into a new key.
+            Copies database, tool, CORS, table, and column restrictions into a new key.
           </DialogDescription>
           <DialogDescription v-else>
             Changes take effect immediately and invalidate cached authorization.
@@ -1134,6 +1167,21 @@ onMounted(load);
             <Field>
               <FieldLabel>Table whitelist</FieldLabel>
               <Input v-model="lifecycleTableWhitelist" placeholder="schema.table, schema.table" />
+            </Field>
+            <Field>
+              <div class="flex items-center gap-3">
+                <FieldLabel>Restrict Query Columns</FieldLabel>
+                <Switch v-model="lifecycleColumnRestrictionEnabled" />
+              </div>
+              <Input
+                v-if="lifecycleColumnRestrictionEnabled"
+                v-model="lifecycleAllowedQueryColumns"
+                placeholder="id, status, created_at"
+              />
+              <p class="text-xs text-muted-foreground">
+                Restricted keys can query one physical table's explicit columns only.
+                DML and complex SQL fail closed until column provenance is supported.
+              </p>
             </Field>
             <Field>
               <FieldLabel>CORS allowed origins</FieldLabel>

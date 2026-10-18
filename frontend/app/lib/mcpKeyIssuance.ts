@@ -7,6 +7,7 @@ export interface McpKeyDetail {
   corsAllowedOrigins: string;
   dbManagementId: number | null;
   tableWhitelist: string[];
+  allowedQueryColumns: string;
   rateLimitMode: McpKeyRateLimitMode;
   permitLimitOverride: number;
   windowSecondsOverride: number;
@@ -45,6 +46,7 @@ export function createInitialMcpKeyDetail(
     corsAllowedOrigins: "",
     dbManagementId: null,
     tableWhitelist: [],
+    allowedQueryColumns: "",
     rateLimitMode: "Inherit",
     permitLimitOverride: 120,
     windowSecondsOverride: 60,
@@ -128,6 +130,24 @@ export function resolveMcpKeyExpiry(
   }
 
   return new Date(now.getTime() + mode * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export function serializeAllowedQueryColumns(
+  enabled: boolean,
+  input: string,
+): string | null {
+  if (!enabled) return null;
+  const columns = input.split(",").map((part) => part.trim());
+  if (
+    columns.length === 0 ||
+    columns.length > 256 ||
+    columns.some((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+  ) {
+    throw new Error(
+      "Specify comma-separated simple column names without table qualifiers, wildcards or quotes.",
+    );
+  }
+  return [...new Set(columns)].join(",");
 }
 
 export function serializeTableWhitelist(
