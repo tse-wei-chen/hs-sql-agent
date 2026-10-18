@@ -52,15 +52,15 @@ public partial class SqlAgentTool
             }
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
-            var decision = SqlExecutionPolicyDecision.ForQuery(
-                scope, _securityPolicyRuntimeState.GetCurrent());
-            var securityPolicy = decision.PolicySnapshot;
-            var allowedTables = decision.AllowedTables;
             QueryExecutionResult execution;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                var decision = SqlExecutionPolicyDecision.ForQuery(
+                    scope, _securityPolicyRuntimeState.GetCurrent());
+                var securityPolicy = decision.PolicySnapshot;
+                var allowedTables = decision.AllowedTables;
                 if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                 {
                     var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(

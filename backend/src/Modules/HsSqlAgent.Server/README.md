@@ -127,6 +127,10 @@ policy-version algorithm. A changed policy, table scope, principal, database ide
 provider fails closed before the approved commit; the DML runtime still independently
 revalidates approval challenges, SQL plans, affected row sets and transaction isolation.
 
+Decisions are captured after acquiring the execution lease, minimizing authorization
+drift during concurrency queueing; database mutation is still subject to commit-time
+revalidation by the existing DML runtime.
+
 This decision is intentionally scoped to **current execution policy**. It is *not*
 proof of row-level, column-level, tenant, or sensitivity-classification enforcement.
 Those need explicit metadata, SQL semantics and provider capability validation in a

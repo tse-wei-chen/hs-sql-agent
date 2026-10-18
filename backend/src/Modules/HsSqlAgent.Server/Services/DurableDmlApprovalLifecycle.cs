@@ -266,13 +266,14 @@ internal sealed class DurableDmlApprovalLifecycle(
             state.TargetIdentity,
             current.ProviderType,
             state.DatabaseIdentity);
-        var previewDecision = SqlExecutionPolicyDecision.ForDml(
-            approvalContext, securityPolicyRuntimeState.GetCurrent(), current.AllowedTables);
+        SqlExecutionPolicyDecision previewDecision;
         TypedDmlTransactionApprovalSession freshSession;
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
             if (lease is null)
                 throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+            previewDecision = SqlExecutionPolicyDecision.ForDml(
+                approvalContext, securityPolicyRuntimeState.GetCurrent(), current.AllowedTables);
             freshSession = await runtime.PreviewTransactionAsync(
                 current.Provider,
                 current.ConnectionString,
@@ -291,6 +292,12 @@ internal sealed class DurableDmlApprovalLifecycle(
         // Reload authorization and database configuration immediately before commit. Passing the latest
         // whitelist/policy into CommitTransactionAsync makes any change after preview fail closed.
         var commitCurrent = await ResolveCurrentExecutionAsync(context, state, payload, secret, cancellationToken);
+        await using var commitLease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
+        if (commitLease is null)
+            throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+
+        // Re-read policy after the lease is obtained so queueing does not
+        // accidentally authorize execution with an older mutable DTO snapshot.
         var commitDecision = SqlExecutionPolicyDecision.ForDml(
             approvalContext, securityPolicyRuntimeState.GetCurrent(), commitCurrent.AllowedTables);
         try
@@ -302,9 +309,6 @@ internal sealed class DurableDmlApprovalLifecycle(
             throw new DmlApprovalStaleException(
                 "The approved DML policy or execution identity is stale: " + ex.Message);
         }
-        await using var commitLease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
-        if (commitLease is null)
-            throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
 
         var commit = await runtime.CommitTransactionAsync(
             commitCurrent.Provider,

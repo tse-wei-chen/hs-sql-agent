@@ -38,8 +38,7 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorCode: "approval.unavailable",
                 ErrorStage: "Approval");
 
-        var previewDecision = SqlExecutionPolicyDecision.ForDml(
-            approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
+        SqlExecutionPolicyDecision previewDecision;
         TypedDmlTransactionApprovalSession session;
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
@@ -52,6 +51,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                     ErrorCode: "server.busy",
                     ErrorStage: "Execution",
                     Retryable: true);
+            previewDecision = SqlExecutionPolicyDecision.ForDml(
+                approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
             session = await runtime.PreviewTransactionAsync(
                 provider,
                 connectionString,
@@ -104,9 +105,6 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 DmlApprovalDecision.Rejected,
                 approvalRequest.RequestId);
 
-        var currentDecision = SqlExecutionPolicyDecision.ForDml(
-            approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
-        previewDecision.EnsureSameDmlDecision(currentDecision);
         await using var commitLease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
         if (commitLease is null)
             return new TypedDmlExecutionTiming(
@@ -119,6 +117,11 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorCode: "server.busy",
                 ErrorStage: "Execution",
                 Retryable: true);
+
+        // Capture current permissions only after acquiring the execution lease.
+        var currentDecision = SqlExecutionPolicyDecision.ForDml(
+            approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
+        previewDecision.EnsureSameDmlDecision(currentDecision);
 
         var commit = await runtime.CommitTransactionAsync(
             provider,

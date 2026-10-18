@@ -53,14 +53,28 @@ public sealed class SqlCompileEvidenceObserverTests
 
         observer.Observe(evidence);
 
-        var compileMetric = Assert.Single(measurements, item => item.Name == "hsqlagent.sql.compiles");
-        Assert.Equal("translated", Tag(compileMetric, "verdict"));
-        Assert.Equal("completed", Tag(compileMetric, "boundary"));
-        Assert.Equal("postgres", Tag(compileMetric, "source_provider"));
-        Assert.Equal("postgres", Tag(compileMetric, "target_provider"));
-        Assert.DoesNotContain(compileMetric.Tags, tag => tag.Key is "evidence_fingerprint" or "trace_id" or "sql");
+        // MeterListener observes *every* Meter instance sharing the same name,
+        // including instruments created by concurrently running xUnit tests.
+        // Validate this compile decision without assuming a process-global count.
+        var compileMetrics = measurements.Where(item =>
+            item.Name == "hsqlagent.sql.compiles"
+            && Tag(item, "decision_code") == evidence.DecisionCode.ToLowerInvariant()
+            && Tag(item, "verdict") == "translated"
+            && Tag(item, "boundary") == "completed"
+            && Tag(item, "source_provider") == "postgres"
+            && Tag(item, "target_provider") == "postgres").ToArray();
+        Assert.NotEmpty(compileMetrics);
+        foreach (var compileMetric in compileMetrics)
+        {
+            Assert.DoesNotContain(compileMetric.Tags,
+                tag => tag.Key is "evidence_fingerprint" or "trace_id" or "sql");
+        }
 
-        var activity = Assert.Single(activities);
+        // ActivitySource is shared between test instances too: select our
+        // compile's evidence instead of asserting a global one-event count.
+        var activity = Assert.Single(activities.Where(item =>
+            string.Equals(item.GetTagItem("sql.compile.evidence_fingerprint")?.ToString(),
+                evidence.EvidenceFingerprint, StringComparison.Ordinal)));
         Assert.Equal("sql.compile.decision", activity.OperationName);
         Assert.Equal(evidence.EvidenceFingerprint, activity.GetTagItem("sql.compile.evidence_fingerprint"));
         Assert.Null(activity.GetTagItem("db.statement"));
