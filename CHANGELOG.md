@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Governed SQL execution context
 
+- Capture immutable typed query/DML policy decision snapshots at execution boundaries,
+  sharing the existing query and DML compiler policy-version calculation. Detect policy
+  or table-scope drift during both synchronous and durable DML approval before commit.
+  Do not weaken the existing compiler/transaction approval revalidation.
 - Centralize MCP SQL execution authorization into one immutable, request-local scope
   shared by built-in Query/DML and published Custom Query/DML.
 - Fail closed when a SQL execution lacks a trusted MCP access-key identity, database

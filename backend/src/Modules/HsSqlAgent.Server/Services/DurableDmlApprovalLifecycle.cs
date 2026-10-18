@@ -266,7 +266,8 @@ internal sealed class DurableDmlApprovalLifecycle(
             state.TargetIdentity,
             current.ProviderType,
             state.DatabaseIdentity);
-        var previewPolicy = securityPolicyRuntimeState.GetCurrent();
+        var previewDecision = SqlExecutionPolicyDecision.ForDml(
+            approvalContext, securityPolicyRuntimeState.GetCurrent(), current.AllowedTables);
         TypedDmlTransactionApprovalSession freshSession;
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
@@ -276,8 +277,8 @@ internal sealed class DurableDmlApprovalLifecycle(
                 current.Provider,
                 current.ConnectionString,
                 parsedBatch,
-                previewPolicy,
-                current.AllowedTables,
+                previewDecision.PolicySnapshot,
+                previewDecision.AllowedTables,
                 approvalContext,
                 cancellationToken);
         }
@@ -290,7 +291,17 @@ internal sealed class DurableDmlApprovalLifecycle(
         // Reload authorization and database configuration immediately before commit. Passing the latest
         // whitelist/policy into CommitTransactionAsync makes any change after preview fail closed.
         var commitCurrent = await ResolveCurrentExecutionAsync(context, state, payload, secret, cancellationToken);
-        var currentPolicy = securityPolicyRuntimeState.GetCurrent();
+        var commitDecision = SqlExecutionPolicyDecision.ForDml(
+            approvalContext, securityPolicyRuntimeState.GetCurrent(), commitCurrent.AllowedTables);
+        try
+        {
+            previewDecision.EnsureSameDmlDecision(commitDecision);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new DmlApprovalStaleException(
+                "The approved DML policy or execution identity is stale: " + ex.Message);
+        }
         await using var commitLease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
         if (commitLease is null)
             throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
@@ -299,8 +310,8 @@ internal sealed class DurableDmlApprovalLifecycle(
             commitCurrent.Provider,
             commitCurrent.ConnectionString,
             freshSession,
-            currentPolicy,
-            commitCurrent.AllowedTables,
+            commitDecision.PolicySnapshot,
+            commitDecision.AllowedTables,
             approvalContext,
             cancellationToken);
         if (!commit.Committed)

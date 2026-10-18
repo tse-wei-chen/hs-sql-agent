@@ -52,8 +52,10 @@ public partial class SqlAgentTool
             }
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
-            var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
-            var allowedTables = scope.AllowedTables;
+            var decision = SqlExecutionPolicyDecision.ForQuery(
+                scope, _securityPolicyRuntimeState.GetCurrent());
+            var securityPolicy = decision.PolicySnapshot;
+            var allowedTables = decision.AllowedTables;
             QueryExecutionResult execution;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {

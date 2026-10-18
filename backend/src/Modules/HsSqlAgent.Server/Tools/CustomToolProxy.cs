@@ -125,8 +125,10 @@ public class CustomToolProxy(
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
                     QueryExecutionResult execution;
-                    var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
-                    var allowedTables = scope.AllowedTables;
+                    var decision = SqlExecutionPolicyDecision.ForQuery(
+                        scope, _securityPolicyRuntimeState.GetCurrent());
+                    var securityPolicy = decision.PolicySnapshot;
+                    var allowedTables = decision.AllowedTables;
                     if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                     {
                         var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(

@@ -116,6 +116,23 @@ This is an execution-boundary hardening change, not an additional MCP tool or a
 change to supported SQL grammar. Existing deployments with MCP keys lacking a
 complete database binding must fix the key configuration before upgrading.
 
+## Typed SQL policy decisions
+
+Each governed Query or Custom Query now captures one defensive snapshot of the
+current SQL security policy and table whitelist. The execution entry point supplies
+that snapshot to the F# compilation runtime instead of forwarding a mutable policy DTO
+owned by another service. For DML, synchronous approval and durable approval resume
+capture separate preview/commit decisions using the existing **compiler-calculated**
+policy-version algorithm. A changed policy, table scope, principal, database identity or
+provider fails closed before the approved commit; the DML runtime still independently
+revalidates approval challenges, SQL plans, affected row sets and transaction isolation.
+
+This decision is intentionally scoped to **current execution policy**. It is *not*
+proof of row-level, column-level, tenant, or sensitivity-classification enforcement.
+Those need explicit metadata, SQL semantics and provider capability validation in a
+separate phase. The public MCP tool surface, Query/DML SQL grammar, and Admin Store
+schema are unchanged.
+
 ## Standalone server / packaged Admin experience
 
 The first-party ToolBox uses the same modular registration surface as package consumers. It explicitly selects runtime, persistence, built-in identity, MCP, administration API, telemetry, controller mapping, UI, and host-wide exception handling.

@@ -38,8 +38,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorCode: "approval.unavailable",
                 ErrorStage: "Approval");
 
-        var previewPolicy = securityPolicyRuntimeState.GetCurrent();
-        var previewAllowedTables = resolveAllowedTables();
+        var previewDecision = SqlExecutionPolicyDecision.ForDml(
+            approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
         TypedDmlTransactionApprovalSession session;
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
         {
@@ -56,8 +56,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 provider,
                 connectionString,
                 parsedBatch,
-                previewPolicy,
-                previewAllowedTables,
+                previewDecision.PolicySnapshot,
+                previewDecision.AllowedTables,
                 approvalContext,
                 cancellationToken);
         }
@@ -104,8 +104,9 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 DmlApprovalDecision.Rejected,
                 approvalRequest.RequestId);
 
-        var currentPolicy = securityPolicyRuntimeState.GetCurrent();
-        var currentAllowedTables = resolveAllowedTables();
+        var currentDecision = SqlExecutionPolicyDecision.ForDml(
+            approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
+        previewDecision.EnsureSameDmlDecision(currentDecision);
         await using var commitLease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
         if (commitLease is null)
             return new TypedDmlExecutionTiming(
@@ -123,8 +124,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
             provider,
             connectionString,
             session,
-            currentPolicy,
-            currentAllowedTables,
+            currentDecision.PolicySnapshot,
+            currentDecision.AllowedTables,
             approvalContext,
             cancellationToken);
         var result = commit.Committed

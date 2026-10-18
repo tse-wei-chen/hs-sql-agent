@@ -55,7 +55,7 @@ public class SqlAgentToolExecutionTests
                 "Host=localhost;Database=testdb",
                 It.Is<string>(candidate => candidate.Contains("public.users", StringComparison.OrdinalIgnoreCase)),
                 SqlAgentToolType.Postgres,
-                policy,
+                It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == policy.QueryMaxRows && p.QueryTimeoutSeconds == policy.QueryTimeoutSeconds),
                 It.Is<IReadOnlySet<string>?>(tables => tables != null && tables.Contains("public.users")),
                 cancellationToken))
             .ReturnsAsync(new QueryExecutionWithFacts(
@@ -291,7 +291,7 @@ public class SqlAgentToolExecutionTests
                 "Host=localhost;Database=testdb",
                 It.IsAny<string>(),
                 SqlAgentToolType.Postgres,
-                policy,
+                It.Is<SecurityPolicyModel>(p => p.QueryMaxRows == policy.QueryMaxRows && p.QueryTimeoutSeconds == policy.QueryTimeoutSeconds),
                 null,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QueryExecutionWithFacts(
