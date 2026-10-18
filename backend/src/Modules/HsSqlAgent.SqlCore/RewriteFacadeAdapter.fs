@@ -498,7 +498,9 @@ module internal RewriteFacadeAdapter =
         | values -> Some(values |> Seq.toList)
 
     let private queryColumns (cols: IReadOnlySet<string> | null) =
-        if isNull cols then None else Some(cols |> Seq.toList)
+        match cols with
+        | null -> None
+        | values -> Some(values |> Seq.toList)
 
     let private queryPolicy queryMaxRows =
         let queryRows =
@@ -936,7 +938,7 @@ module internal RewriteFacadeAdapter =
                     validationContext.PolicyVersion
                     (dmlPolicy policy)
                     (allowedTables validationContext.AllowedTables)
-                (queryColumns validationContext.AllowedQueryColumns)
+                    (queryColumns validationContext.AllowedQueryColumns)
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
