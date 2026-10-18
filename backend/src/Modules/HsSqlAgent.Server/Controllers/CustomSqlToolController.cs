@@ -89,6 +89,8 @@ public class CustomSqlToolController(
     }
 
     [HttpGet("{id}/revisions")]
+    [ProducesResponseType(typeof(IReadOnlyList<CustomSqlToolRevision>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "view")]
     public async Task<IActionResult> GetRevisions(int id, CancellationToken cancellationToken)
         => await toolService.GetToolByIdAsync(id) == null
@@ -96,6 +98,8 @@ public class CustomSqlToolController(
             : Ok(await toolService.GetRevisionsAsync(id, cancellationToken));
 
     [HttpGet("{id}/impact")]
+    [ProducesResponseType(typeof(CustomSqlToolImpact), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "view")]
     public async Task<IActionResult> GetImpact(int id, CancellationToken cancellationToken)
     {
@@ -104,6 +108,10 @@ public class CustomSqlToolController(
     }
 
     [HttpPost("{id}/publish")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> Publish(
         int id,
@@ -139,6 +147,8 @@ public class CustomSqlToolController(
     }
 
     [HttpPost("{id}/disable")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> Disable(int id, CancellationToken cancellationToken)
     {
@@ -149,6 +159,10 @@ public class CustomSqlToolController(
     }
 
     [HttpPost("{id}/rollback/{revisionId}")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> Rollback(
         int id,
