@@ -26,7 +26,8 @@ public class CustomToolProxy(
     ITypedQueryRuntime? typedQueryRuntime = null,
     TypedDmlRuntime? typedDmlRuntime = null,
     IDmlApprovalProvider? dmlApprovalProvider = null,
-    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null)
+    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null,
+    IServiceProvider? services = null)
 {
     private readonly string _name = name;
     private readonly ICustomSqlToolService _customSqlToolService = customSqlToolService;
@@ -40,6 +41,8 @@ public class CustomToolProxy(
     private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
     private readonly IDmlApprovalProvider? _dmlApprovalProvider = dmlApprovalProvider;
     private readonly IDmlApprovalCompletionSink? _dmlApprovalCompletionSink = dmlApprovalCompletionSink;
+    private readonly IMcpDmlCommitAuthorizationVerifier? _dmlCommitVerifier =
+        services?.GetService(typeof(IMcpDmlCommitAuthorizationVerifier)) as IMcpDmlCommitAuthorizationVerifier;
 
     public async Task<string> Execute(
         JsonElement arguments,
@@ -179,7 +182,11 @@ public class CustomToolProxy(
                     _securityPolicyRuntimeState,
                     _sqlConcurrencyLimiter,
                     () => scope.RefreshAllowedTables(_httpContextAccessor.HttpContext),
-                    _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle);
+                    _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle,
+                    _dmlCommitVerifier,
+                    scope,
+                    tool.Id,
+                    tool.PublishedRevisionId);
                 var dmlExecution = await flow.ExecuteAsync(
                     provider,
                     sqlConfig.ConnectionString,

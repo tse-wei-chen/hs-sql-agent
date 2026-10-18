@@ -150,7 +150,8 @@ public static class HsSqlAgentMcpServiceExtensions
                                     sp.GetRequiredService<ITypedQueryRuntime>(),
                                     sp.GetRequiredService<TypedDmlRuntime>(),
                                     sp.GetService<IDmlApprovalProvider>(),
-                                    sp.GetService<IDmlApprovalCompletionSink>());
+                                    sp.GetService<IDmlApprovalCompletionSink>(),
+                                    services: sp);
                                 var json = JsonSerializer.SerializeToElement((IDictionary<string, object?>)args, AIJsonUtilities.DefaultOptions);
                                 return await proxy.Execute(json, server, ct);
                             });

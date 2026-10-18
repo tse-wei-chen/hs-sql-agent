@@ -5,9 +5,9 @@ namespace Admin.Service.Models;
 
 public static class McpAccessKeyCacheKeys
 {
-    // v4 entries include encrypted runtime DB configuration. Bumping the namespace avoids
-    // consuming older entries that do not carry the full runtime identity during rolling upgrades.
-    private const string ValidationCachePrefix = "mcp_auth_v4_";
+    // v5 includes per-key column governance. Never consume v4 cache records
+    // which lack AllowedQueryColumns and could grant unrestricted SQL.
+    private const string ValidationCachePrefix = "mcp_auth_v5_";
     private const string RevokedCachePrefix = "mcp_auth_revoked_v1_";
     private const string ChangedCachePrefix = "mcp_auth_changed_v1_";
 

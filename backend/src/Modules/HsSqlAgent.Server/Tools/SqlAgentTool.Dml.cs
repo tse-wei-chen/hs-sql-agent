@@ -82,7 +82,9 @@ public partial class SqlAgentTool
                 _securityPolicyRuntimeState,
                 _sqlConcurrencyLimiter,
                 () => scope.RefreshAllowedTables(_httpContextAccessor.HttpContext),
-                _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle);
+                _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle,
+                _dmlCommitVerifier,
+                scope);
             var descriptor = DescribeBatch(parsedBatch);
             var approvalTitle = parsedBatch.Count == 1
                 ? $"{descriptor.Operation} on `{descriptor.Resource}`"

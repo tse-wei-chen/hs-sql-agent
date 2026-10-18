@@ -1,5 +1,6 @@
 using Admin.Service.Interfaces;
 using Admin.Service.Services;
+using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Models;
 
 namespace HsSqlAgent.Server.Extensions;
@@ -29,6 +30,7 @@ public static class HsSqlAgentAdminStoreServiceExtensions
         services.AddAdminDatabase(options.Provider, options.ConnectionString);
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();
+        services.AddScoped<IMcpDmlCommitAuthorizationVerifier, McpDmlCommitAuthorizationVerifier>();
         services.AddScoped<IAuditService, AuditService>();
         services.AddScoped<IOperabilityService, OperabilityService>();
         services.AddScoped<IAuditRetentionService, AuditRetentionService>();

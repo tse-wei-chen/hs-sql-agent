@@ -116,6 +116,20 @@ This is an execution-boundary hardening change, not an additional MCP tool or a
 change to supported SQL grammar. Existing deployments with MCP keys lacking a
 complete database binding must fix the key configuration before upgrading.
 
+## Immediate DML approval authorization fencing
+
+Synchronous MCP Elicitation now **reads Admin Store permissions twice**: under
+the preview lease and again under the commit lease after human approval. It
+checks active/non-expired key, tool and column restrictions, database binding,
+table scope, published Custom DML revision and target connection configuration.
+Any drift invalidates the approval; a missing verifier fails closed.
+Webhook/durable resume retains its independent persisted-state revalidation.
+
+The key-validation cache namespace is bumped to v5 to avoid consuming earlier
+records without the column-policy field. This is an authorization re-read, not
+a database-wide atomic lock. Native database credentials and privileges remain
+important against concurrent revocation after the final authorization check.
+
 ## MCP key column allowlists
 
 Each MCP key can optionally store `AllowedQueryColumns` as a comma-separated set

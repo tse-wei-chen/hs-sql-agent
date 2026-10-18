@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Immediate DML approval revocation safety
+
+- Revalidate MCP key, tool, database target, connection configuration and published
+  Custom DML revision against persisted Admin Store twice: at DML preview and
+  after human approval immediately before Commit. Reject any drift even when
+  the HTTP Request Context remains unchanged.
+- Bind preview/commit authorization snapshots; never trust the key validation
+  cache alone for a delayed approval.
+- Bump MCP validation cache namespace to v5 to avoid older cache entries with
+  absent per-key column-policy fields during rolling upgrades.
+
 ### Per-MCP-key query column governance
 
 - Persist `AllowedQueryColumns` on MCP keys with SQLite/PostgreSQL Admin Store

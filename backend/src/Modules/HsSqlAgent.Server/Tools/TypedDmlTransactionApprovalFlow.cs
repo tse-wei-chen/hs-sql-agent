@@ -16,7 +16,11 @@ internal sealed class TypedDmlTransactionApprovalFlow(
     ISecurityPolicyRuntimeState securityPolicyRuntimeState,
     ISqlExecutionConcurrencyLimiter concurrencyLimiter,
     Func<IReadOnlySet<string>?> resolveAllowedTables,
-    IDurableDmlApprovalLifecycle? durableLifecycle = null)
+    IDurableDmlApprovalLifecycle? durableLifecycle = null,
+    IMcpDmlCommitAuthorizationVerifier? commitAuthorizationVerifier = null,
+    McpSqlExecutionScope? authenticatedScope = null,
+    int? customToolId = null,
+    int? customToolRevisionId = null)
 {
     public async Task<TypedDmlExecutionTiming> ExecuteAsync(
         ISqlProvider provider,
@@ -38,6 +42,11 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorCode: "approval.unavailable",
                 ErrorStage: "Approval");
 
+        if (commitAuthorizationVerifier is null || authenticatedScope is null)
+            throw new UnauthorizedAccessException(
+                "DML approval requires a persistent MCP authorization verifier.");
+
+        McpDmlCommitAuthorizationSnapshot previewAuthorization;
         SqlExecutionPolicyDecision previewDecision;
         TypedDmlTransactionApprovalSession session;
         await using (var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken))
@@ -51,8 +60,14 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                     ErrorCode: "server.busy",
                     ErrorStage: "Execution",
                     Retryable: true);
+            var contextTables = resolveAllowedTables();
+            previewAuthorization = await commitAuthorizationVerifier.CaptureAsync(
+                authenticatedScope, connectionString, customToolId, customToolRevisionId, cancellationToken);
+            if (!SameTables(contextTables, previewAuthorization.AllowedTables))
+                throw new UnauthorizedAccessException("MCP table permissions changed before DML preview.");
             previewDecision = SqlExecutionPolicyDecision.ForDml(
-                approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
+                approvalContext, securityPolicyRuntimeState.GetCurrent(),
+                previewAuthorization.AllowedTables);
             session = await runtime.PreviewTransactionAsync(
                 provider,
                 connectionString,
@@ -118,9 +133,18 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorStage: "Execution",
                 Retryable: true);
 
-        // Capture current permissions only after acquiring the execution lease.
+        // Human approval may outlive the MCP key: HttpContext.Items is NOT an
+        // authority after the await. Read persisted permissions under commit lease.
+        var currentContextTables = resolveAllowedTables();
+        var currentAuthorization = await commitAuthorizationVerifier.CaptureAsync(
+            authenticatedScope, connectionString, customToolId, customToolRevisionId, cancellationToken);
+        previewAuthorization.EnsureUnchanged(currentAuthorization);
+        if (!SameTables(currentContextTables, currentAuthorization.AllowedTables))
+            throw new UnauthorizedAccessException("MCP table permissions changed during DML approval.");
+
         var currentDecision = SqlExecutionPolicyDecision.ForDml(
-            approvalContext, securityPolicyRuntimeState.GetCurrent(), resolveAllowedTables());
+            approvalContext, securityPolicyRuntimeState.GetCurrent(),
+            currentAuthorization.AllowedTables);
         previewDecision.EnsureSameDmlDecision(currentDecision);
 
         var commit = await runtime.CommitTransactionAsync(
@@ -147,4 +171,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
             ErrorCode: commit.Committed ? null : "dml.commit_rejected",
             ErrorStage: commit.Committed ? null : "Commit");
     }
+
+    private static bool SameTables(IReadOnlySet<string>? first, IReadOnlySet<string>? second) =>
+        first is null ? second is null
+        : second is not null && first.Count == second.Count && first.All(second.Contains);
 }

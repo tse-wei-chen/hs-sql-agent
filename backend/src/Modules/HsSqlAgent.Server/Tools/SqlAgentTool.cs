@@ -16,7 +16,8 @@ public partial class SqlAgentTool(
     ITypedQueryRuntime? typedQueryRuntime = null,
     TypedDmlRuntime? typedDmlRuntime = null,
     IDmlApprovalProvider? dmlApprovalProvider = null,
-    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null)
+    IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null,
+    IServiceProvider? services = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
@@ -28,4 +29,6 @@ public partial class SqlAgentTool(
     private readonly TypedDmlRuntime _typedDmlRuntime = typedDmlRuntime ?? new TypedDmlRuntime();
     private readonly IDmlApprovalProvider? _dmlApprovalProvider = dmlApprovalProvider;
     private readonly IDmlApprovalCompletionSink? _dmlApprovalCompletionSink = dmlApprovalCompletionSink;
+    private readonly IMcpDmlCommitAuthorizationVerifier? _dmlCommitVerifier =
+        services?.GetService(typeof(IMcpDmlCommitAuthorizationVerifier)) as IMcpDmlCommitAuthorizationVerifier;
 }
