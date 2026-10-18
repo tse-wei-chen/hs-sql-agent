@@ -22,7 +22,8 @@ All notable changes to this project will be documented in this file.
   Every explicit SELECT/WHERE/GROUP/HAVING/ORDER expression is checked; wildcards,
   joins, CTEs, subqueries and unsupported provenance fail closed with policy diagnostics.
 - Bind the immutable column scope into the compiler policy version and plan fingerprint;
-  unconfigured query/DML behavior stays unchanged. MCP key policy UI is not included yet.
+  unconfigured query/DML behavior stays unchanged. The following per-key governance
+  milestone connects this compiler capability to MCP runtime and Admin UI.
 
 ### Governed SQL execution context
 

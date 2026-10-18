@@ -120,6 +120,9 @@ DML and unproven source shapes fail closed while enabled. Comparison is delibera
 case-sensitive until quoted identifier semantics are fully modeled. Empty policy
 means deny all reads; absence of policy preserves existing compiler behavior.
 
-The normalized allowlist digest is included in the plan policy version. This
-opt-in Compiler API does **not** yet imply MCP-key/UI policy integration, row
-isolation, tenant scoping or metadata-backed cross-table column provenance.
+The normalized allowlist digest is included in the plan policy version.
+`HsSqlAgent.Server` now binds the **MCP-key query column allowlist** to this
+compiler contract for both built-in and published Custom Query tools. Restricted
+keys reject any DML path. The standalone SqlCore library itself remains opt-in.
+Neither integration claims row-level isolation, tenant scoping or
+metadata-backed cross-table column provenance.
