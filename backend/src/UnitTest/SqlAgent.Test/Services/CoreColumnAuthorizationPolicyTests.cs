@@ -52,6 +52,15 @@ public sealed class CoreColumnAuthorizationPolicyTests
     }
 
     [Fact]
+    public void DistinctOn_DoesNotBypassColumnPolicy()
+    {
+        Assert.Throws<UnauthorizedAccessException>(() => SqlCoreFacade.CompileQuery(
+            "SELECT DISTINCT ON (secret) id FROM orders",
+            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Restricted("id"), new SqlExecutionPlanPolicy(25)));
+    }
+
+    [Fact]
     public void ChangingColumnSet_ChangesPolicyVersionWithoutMutatingExistingScope()
     {
         var set = new HashSet<string> { "id" };

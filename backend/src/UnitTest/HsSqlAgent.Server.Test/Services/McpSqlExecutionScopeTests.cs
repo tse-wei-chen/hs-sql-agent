@@ -111,6 +111,9 @@ public sealed class McpSqlExecutionScopeTests
         context.Items[McpContextItemKeys.AllowedQueryColumns] = "secret";
         Assert.DoesNotContain("secret", scope.AllowedQueryColumns!);
         Assert.Throws<UnauthorizedAccessException>(() => scope.EnsureDmlColumnPolicySupported());
+        var original = McpSqlExecutionScope.Capture(
+            AuthorizedContext(), "execute_dml_sql", SqlAgentToolType.Postgres);
+        Assert.Throws<UnauthorizedAccessException>(() => original.RefreshAllowedTables(context));
         context.Items[McpContextItemKeys.AllowedQueryColumns] = string.Empty;
         Assert.Empty(McpSqlExecutionScope.Capture(
             context, "execute_query_sql", SqlAgentToolType.Postgres).AllowedQueryColumns!);

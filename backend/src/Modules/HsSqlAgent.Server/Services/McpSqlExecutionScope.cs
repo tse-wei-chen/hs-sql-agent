@@ -131,6 +131,8 @@ internal sealed class McpSqlExecutionScope
     internal IReadOnlySet<string>? RefreshAllowedTables(HttpContext? context)
     {
         var latest = Capture(context, ToolName, Provider);
+        // Do not allow a pending DML approval to bypass a newly restricted key.
+        latest.EnsureDmlColumnPolicySupported();
         if (latest.AccessKeyId != AccessKeyId
             || latest.DbManagementId != DbManagementId
             || !string.Equals(latest.DatabaseName, DatabaseName, StringComparison.Ordinal)

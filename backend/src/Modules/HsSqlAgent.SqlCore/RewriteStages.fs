@@ -2120,6 +2120,10 @@ module internal RewriteStages =
                             "Restricted column policy requires a single physical FROM table."
                 if permitted.Count = 0 then
                     deny "SQL_POLICY_COLUMN_NOT_ALLOWED" "Empty column allowlist denies all reads."
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn expressions ->
+                    expressions |> NonEmpty.iter (checkExpr qualifiers)
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
                 select.Projection |> List.iter (fun x -> checkExpr qualifiers x.Expression)
                 select.Where |> Option.iter (checkExpr qualifiers)
                 select.GroupBy |> List.iter (checkExpr qualifiers)
