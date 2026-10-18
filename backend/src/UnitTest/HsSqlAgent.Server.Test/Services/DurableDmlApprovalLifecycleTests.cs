@@ -133,6 +133,87 @@ public sealed class DurableDmlApprovalLifecycleTests
         Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InteractiveDmlApproval_AlwaysChecksFreshStoredKeyBeforeCommit(bool revokeDuringApproval)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var runtime = new TypedDmlRuntime();
+        var policy = CreatePolicyState();
+        var parsed = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+            fixture.SqlProvider, fixture.TargetConnectionString,
+            "INSERT INTO items (id, name) VALUES (55, 'approved')",
+            SqlAgentToolType.Sqlite, TestContext.Current.CancellationToken);
+
+        var http = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        http.Items[Common.Models.McpContextItemKeys.AccessKeyId] = AccessKeyId;
+        http.Items[Common.Models.McpContextItemKeys.DbManagementId] = DbManagementId;
+        http.Items[Common.Models.McpContextItemKeys.DatabaseName] = fixture.TargetDatabasePath;
+        http.Items[Common.Models.McpContextItemKeys.SqlProvider] = "Sqlite";
+        http.Items[Common.Models.McpContextItemKeys.AllowedTools] = RequiredTool;
+        http.Items[Common.Models.McpContextItemKeys.TableWhitelist] = string.Empty;
+        http.Items[Common.Models.McpContextItemKeys.AllowedQueryColumns] = null;
+        var scope = McpSqlExecutionScope.Capture(http, RequiredTool, SqlAgentToolType.Sqlite);
+
+        await using var adminScope = fixture.Services.CreateAsyncScope();
+        var setter = new Mock<SqlAgent.Service.Interfaces.IDbSetterService>();
+        setter.Setup(x => x.BuildDbConnectionAsync(
+                It.IsAny<BuildDbConnectionModel>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(fixture.TargetConnectionString);
+        var crypto = new Mock<ICryptoService>();
+        crypto.Setup(x => x.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
+            .Returns(string.Empty);
+        var verifier = new McpDmlCommitAuthorizationVerifier(
+            adminScope.ServiceProvider.GetRequiredService<IAdminContext>(),
+            setter.Object,
+            crypto.Object,
+            Microsoft.Extensions.Options.Options.Create(
+                new McpKeySettings { HmacSecretKey = HmacSecret }));
+
+        var approval = new CallbackApprovalProvider(async () =>
+        {
+            if (!revokeDuringApproval) return;
+            await using var mutableScope = fixture.Services.CreateAsyncScope();
+            var admin = mutableScope.ServiceProvider.GetRequiredService<AdminContext>();
+            var key = await admin.McpAccessKeys.SingleAsync(
+                x => x.Id == AccessKeyId, TestContext.Current.CancellationToken);
+            key.IsActive = false;
+            key.RevokedAt = DateTime.UtcNow;
+            await admin.SaveChangesAsync(TestContext.Current.CancellationToken);
+        });
+
+        var flow = new TypedDmlTransactionApprovalFlow(
+            runtime, policy, new SqlExecutionConcurrencyLimiter(policy),
+            () => scope.RefreshAllowedTables(http), null, verifier, scope);
+        var execute = () => flow.ExecuteAsync(
+            fixture.SqlProvider, fixture.TargetConnectionString, parsed,
+            scope.ToApprovalContext(), approval, "Interactive INSERT",
+            TestContext.Current.CancellationToken);
+
+        if (revokeDuringApproval)
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(execute);
+            Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+        }
+        else
+        {
+            var result = await execute();
+            Assert.True(result.Committed);
+            Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+        }
+    }
+
+    private sealed class CallbackApprovalProvider(Func<Task> onApproval) : IDmlApprovalProvider
+    {
+        public async ValueTask<DmlApprovalResult> RequestApprovalAsync(
+            DmlApprovalRequest request, CancellationToken cancellationToken = default)
+        {
+            await onApproval();
+            return DmlApprovalResult.Approve(request, approverIdentity: "test-reviewer");
+        }
+    }
+
     private static async Task<DmlApprovalRequest> PersistPendingInsertAsync(Fixture fixture)
     {
         const string sql = "INSERT INTO items (id, name) VALUES (1, 'Alice')";
