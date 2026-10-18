@@ -16,6 +16,8 @@ public class McpAccessKey
     public string? SqlProvider { get; set; }
     public int? DbManagementId { get; set; }
     public string? TableWhitelist { get; set; }
+    // Null = unrestricted; an empty string explicitly denies all query columns.
+    public string? AllowedQueryColumns { get; set; }
     public McpKeyRateLimitMode RateLimitMode { get; set; } = McpKeyRateLimitMode.Inherit;
     public int? PermitLimitOverride { get; set; }
     public int? WindowSecondsOverride { get; set; }

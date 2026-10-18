@@ -16,6 +16,7 @@ public class McpAccessKeyListItem
     public bool IsExpired { get; set; }
     public bool IsExpiringSoon { get; set; }
     public string? TableWhitelist { get; set; }
+    public string? AllowedQueryColumns { get; set; }
     public DateTime CreatedAt { get; set; }
     public McpKeyRateLimitMode RateLimitMode { get; set; }
     public int? PermitLimitOverride { get; set; }

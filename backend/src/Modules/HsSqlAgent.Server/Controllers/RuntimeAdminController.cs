@@ -79,6 +79,7 @@ public class RuntimeAdminController(
                 CorsAllowedOrigins = request.CorsAllowedOrigins,
                 DbManagementId = request.DbManagementId,
                 TableWhitelist = request.TableWhitelist,
+                AllowedQueryColumns = request.AllowedQueryColumns,
                 RateLimitMode = request.RateLimitMode,
                 PermitLimitOverride = request.PermitLimitOverride,
                 WindowSecondsOverride = request.WindowSecondsOverride

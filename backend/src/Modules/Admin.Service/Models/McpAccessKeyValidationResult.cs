@@ -12,6 +12,7 @@ public class McpAccessKeyValidationResult
     public int? DbManagementId { get; set; }
     public McpRuntimeDatabaseConfiguration? DatabaseConfiguration { get; set; }
     public string? TableWhitelist { get; set; }
+    public string? AllowedQueryColumns { get; set; }
     public DateTime? ExpiresAt { get; set; }
     public McpKeyRateLimitMode RateLimitMode { get; set; }
     public int? PermitLimitOverride { get; set; }

@@ -95,6 +95,7 @@ public class McpAccessKeyAuthMiddleware(
         context.Items[McpContextItemKeys.DbManagementId] = validation.DbManagementId;
         context.Items[McpContextItemKeys.DatabaseName] = databaseName;
         context.Items[McpContextItemKeys.TableWhitelist] = validation.TableWhitelist ?? string.Empty;
+        context.Items[McpContextItemKeys.AllowedQueryColumns] = validation.AllowedQueryColumns;
         context.Items[McpContextItemKeys.RateLimitMode] = validation.RateLimitMode;
         context.Items[McpContextItemKeys.PermitLimitOverride] = validation.PermitLimitOverride;
         context.Items[McpContextItemKeys.WindowSecondsOverride] = validation.WindowSecondsOverride;

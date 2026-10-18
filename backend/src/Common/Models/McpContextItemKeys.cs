@@ -11,6 +11,7 @@ public static class McpContextItemKeys
     public const string DbManagementId = "McpDbManagementId";
     public const string DatabaseName = "McpDatabaseName";
     public const string TableWhitelist = "McpTableWhitelist";
+    public const string AllowedQueryColumns = "McpAllowedQueryColumns";
     public const string PermitLimitOverride = "McpPermitLimitOverride";
     public const string WindowSecondsOverride = "McpWindowSecondsOverride";
     public const string RateLimitMode = "McpRateLimitMode";

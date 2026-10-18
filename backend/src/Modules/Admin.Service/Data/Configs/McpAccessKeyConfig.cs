@@ -18,6 +18,7 @@ public class McpAccessKeyConfig : IEntityTypeConfiguration<McpAccessKey>
         builder.Property(x => x.SqlProvider).HasMaxLength(32);
         builder.Property(x => x.DbManagementId);
         builder.Property(x => x.TableWhitelist);
+        builder.Property(x => x.AllowedQueryColumns).HasMaxLength(4000);
         builder.Property(x => x.RateLimitMode)
             .HasConversion<string>()
             .HasMaxLength(16)

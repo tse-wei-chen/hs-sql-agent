@@ -12,6 +12,7 @@ public class McpAccessKeyIssueResult
     public string? SqlProvider { get; set; }
     public int? DbManagementId { get; set; }
     public string? TableWhitelist { get; set; }
+    public string? AllowedQueryColumns { get; set; }
     public McpKeyRateLimitMode RateLimitMode { get; set; }
     public int? PermitLimitOverride { get; set; }
     public int? WindowSecondsOverride { get; set; }

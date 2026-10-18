@@ -42,6 +42,7 @@ public class McpAccessKeyService(
 
         var plaintext = GenerateRawKey();
         var entity = CreateEntity(request, plaintext, actorId);
+        entity.AllowedQueryColumns = NormalizeAllowedQueryColumns(request.AllowedQueryColumns);
 
         _context.McpAccessKeys.Add(entity);
         await _context.SaveChangesAsync(cancellationToken);
@@ -73,6 +74,7 @@ public class McpAccessKeyService(
                 SqlProvider = x.SqlProvider,
                 DbManagementId = x.DbManagementId,
                 TableWhitelist = x.TableWhitelist,
+                AllowedQueryColumns = x.AllowedQueryColumns,
                 RateLimitMode = x.RateLimitMode,
                 PermitLimitOverride = x.PermitLimitOverride,
                 WindowSecondsOverride = x.WindowSecondsOverride,
@@ -135,6 +137,7 @@ public class McpAccessKeyService(
         entity.CorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins);
         entity.DbManagementId = request.DbManagementId;
         entity.TableWhitelist = NormalizeNullable(request.TableWhitelist);
+        entity.AllowedQueryColumns = NormalizeAllowedQueryColumns(request.AllowedQueryColumns);
         entity.RateLimitMode = request.RateLimitMode;
         entity.PermitLimitOverride = request.PermitLimitOverride;
         entity.WindowSecondsOverride = request.WindowSecondsOverride;
@@ -158,6 +161,7 @@ public class McpAccessKeyService(
             SqlProvider = entity.SqlProvider,
             DbManagementId = entity.DbManagementId,
             TableWhitelist = entity.TableWhitelist,
+            AllowedQueryColumns = entity.AllowedQueryColumns,
             RateLimitMode = entity.RateLimitMode,
             PermitLimitOverride = entity.PermitLimitOverride,
             WindowSecondsOverride = entity.WindowSecondsOverride,
@@ -195,6 +199,7 @@ public class McpAccessKeyService(
             CorsAllowedOrigins = oldKey.CorsAllowedOrigins,
             DbManagementId = oldKey.DbManagementId,
             TableWhitelist = oldKey.TableWhitelist,
+            AllowedQueryColumns = oldKey.AllowedQueryColumns,
             RateLimitMode = oldKey.RateLimitMode,
             PermitLimitOverride = oldKey.PermitLimitOverride,
             WindowSecondsOverride = oldKey.WindowSecondsOverride
@@ -244,6 +249,7 @@ public class McpAccessKeyService(
             CorsAllowedOrigins = source.CorsAllowedOrigins,
             DbManagementId = source.DbManagementId,
             TableWhitelist = source.TableWhitelist,
+            AllowedQueryColumns = source.AllowedQueryColumns,
             RateLimitMode = source.RateLimitMode,
             PermitLimitOverride = source.PermitLimitOverride,
             WindowSecondsOverride = source.WindowSecondsOverride
@@ -340,6 +346,7 @@ public class McpAccessKeyService(
             DbManagementId = entity.DbManagementId,
             DatabaseConfiguration = databaseConfiguration,
             TableWhitelist = entity.TableWhitelist,
+            AllowedQueryColumns = entity.AllowedQueryColumns,
             ExpiresAt = entity.ExpiresAt,
             RateLimitMode = entity.RateLimitMode,
             PermitLimitOverride = entity.PermitLimitOverride,
@@ -380,6 +387,7 @@ public class McpAccessKeyService(
             CorsAllowedOrigins = NormalizeCorsAllowedOrigins(request.CorsAllowedOrigins),
             DbManagementId = request.DbManagementId,
             TableWhitelist = NormalizeNullable(request.TableWhitelist),
+            AllowedQueryColumns = NormalizeAllowedQueryColumns(request.AllowedQueryColumns),
             RateLimitMode = request.RateLimitMode,
             PermitLimitOverride = request.PermitLimitOverride,
             WindowSecondsOverride = request.WindowSecondsOverride,
@@ -402,6 +410,7 @@ public class McpAccessKeyService(
             SqlProvider = entity.SqlProvider,
             DbManagementId = entity.DbManagementId,
             TableWhitelist = entity.TableWhitelist,
+            AllowedQueryColumns = entity.AllowedQueryColumns,
             RateLimitMode = entity.RateLimitMode,
             PermitLimitOverride = entity.PermitLimitOverride,
             WindowSecondsOverride = entity.WindowSecondsOverride
@@ -584,6 +593,20 @@ public class McpAccessKeyService(
             throw new ArgumentException(
                 $"AllowedTools contains tools that are not currently published for the selected database: {string.Join(", ", requested.Order())}.",
                 nameof(allowedTools));
+    }
+
+    // A configured empty list means deny-all; NEVER normalize it to null (unrestricted).
+    internal static string? NormalizeAllowedQueryColumns(string? value)
+    {
+        if (value is null) return null;
+        if (value.Length > 4000) throw new ArgumentException("AllowedQueryColumns exceeds 4000 characters.", nameof(value));
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var columns = value.Split(',', StringSplitOptions.TrimEntries);
+        if (columns.Length > 256 || columns.Any(column =>
+                column.Length is < 1 or > 128 ||
+                !System.Text.RegularExpressions.Regex.IsMatch(column, @"^[A-Za-z_][A-Za-z0-9_]*$")))
+            throw new ArgumentException("AllowedQueryColumns must contain simple comma-separated column names (no wildcard, quotes or qualifiers).", nameof(value));
+        return string.Join(',', columns.Distinct(StringComparer.Ordinal));
     }
 
     private static string? NormalizeNullable(string? value)
