@@ -28,5 +28,6 @@ public sealed class HasAnyPermissionAttribute : Attribute, IFilterFactory, IOrde
     public IFilterMetadata CreateInstance(IServiceProvider serviceProvider)
         => new HsSqlAgentPermissionAuthorizationFilter(
             serviceProvider.GetRequiredService<IHsSqlAgentPermissionAuthorizer>(),
+            serviceProvider.GetRequiredService<HsSqlAgent.Server.Services.IManagementApiKeyService>(),
             _permissions);
 }

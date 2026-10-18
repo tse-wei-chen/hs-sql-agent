@@ -4,6 +4,7 @@ using FluentValidation;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Filters;
+using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -18,6 +19,7 @@ public static class HsSqlAgentAdminApiServiceExtensions
 
         var services = builder.Services;
         services.TryAddScoped<IHsSqlAgentPermissionAuthorizer, MissingHsSqlAgentPermissionAuthorizer>();
+        services.AddScoped<IManagementApiKeyService, ManagementApiKeyService>();
         services.AddScoped<HsSqlAgentValidationFilter>();
         services.AddScoped<HsSqlAgentExceptionFilter>();
         services.AddControllers()

@@ -86,7 +86,9 @@ public class AuditService(
         var inferred = CreateHttpContext();
         var actorId = httpContext?.User?.FindFirstValue(JwtRegisteredClaimNames.Sub)
                       ?? httpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier);
-        var actorType = actorId == null ? "system" : "admin";
+        var actorType = actorId == null ? "system" :
+            httpContext?.User?.FindFirst("hsa_actor_type")?.Value == "management-api-key"
+                ? "management-api-key" : "admin";
         if (actorId == null &&
             httpContext?.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var keyIdObj) == true &&
             keyIdObj != null)
