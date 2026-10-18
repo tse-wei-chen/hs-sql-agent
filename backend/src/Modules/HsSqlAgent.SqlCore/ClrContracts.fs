@@ -628,21 +628,37 @@ type DmlResultRowAssurance private (targetTable: string, operation: DmlOperation
 type SqlPlanValidationContext private (
     policyVersion: string,
     allowedTables: IReadOnlySet<string> | null,
-    dmlResultRowAssurance: DmlResultRowAssurance | null) =
+    dmlResultRowAssurance: DmlResultRowAssurance | null,
+    allowedQueryColumns: IReadOnlySet<string> | null) =
 
     new(policyVersion: string) =
-        SqlPlanValidationContext(policyVersion, null, null)
+        SqlPlanValidationContext(policyVersion, null, null, null)
 
     new(policyVersion: string, allowedTables: IReadOnlySet<string> | null) =
-        SqlPlanValidationContext(policyVersion, allowedTables, null)
+        SqlPlanValidationContext(policyVersion, allowedTables, null, null)
 
     member _.PolicyVersion = policyVersion
     member _.AllowedTables = allowedTables
     member _.DmlResultRowAssurance = dmlResultRowAssurance
+    member _.AllowedQueryColumns = allowedQueryColumns
+
+    /// Opt-in restricted query columns. The compiler rejects unproven provenance.
+    member _.WithAllowedQueryColumns(columns: IReadOnlySet<string>) =
+        ArgumentNullException.ThrowIfNull(columns)
+        let snapshot = ImmutableHashSet.CreateRange(StringComparer.Ordinal, columns)
+        for col in snapshot do
+            if String.IsNullOrWhiteSpace(col) || col.Contains(".") || col = "*" then
+                invalidArg "columns" "Column policy entries must be simple column names."
+        let sorted = snapshot |> Seq.sortWith (fun x y -> StringComparer.Ordinal.Compare(x, y))
+        let digest =
+            sorted |> String.concat "\n" |> System.Text.Encoding.UTF8.GetBytes
+            |> System.Security.Cryptography.SHA256.HashData |> Convert.ToHexString
+        SqlPlanValidationContext(policyVersion + "|query-columns:" + digest,
+                                 allowedTables, dmlResultRowAssurance, snapshot)
 
     member _.WithDmlResultRowAssurance(assurance: DmlResultRowAssurance) =
         ArgumentNullException.ThrowIfNull(assurance)
-        SqlPlanValidationContext(policyVersion, allowedTables, assurance)
+        SqlPlanValidationContext(policyVersion, allowedTables, assurance, allowedQueryColumns)
 
 [<Sealed>]
 type SqlExecutionPlanPolicy(queryMaxRows: int) =

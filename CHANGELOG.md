@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Compiler column authorization boundary
+
+- Add an opt-in single-table column authorization guard in the F# compilation pipeline.
+  Every explicit SELECT/WHERE/GROUP/HAVING/ORDER expression is checked; wildcards,
+  joins, CTEs, subqueries and unsupported provenance fail closed with policy diagnostics.
+- Bind the immutable column scope into the compiler policy version and plan fingerprint;
+  unconfigured query/DML behavior stays unchanged. MCP key policy UI is not included yet.
+
 ### Governed SQL execution context
 
 - Capture immutable typed query/DML policy decision snapshots at execution boundaries,

@@ -109,3 +109,17 @@ independently capability-gated.
 - SQL lowering is rendered directly from the validated canonical Core AST; SqlCore has no query-builder backend dependency.
 
 Project: https://github.com/tse-wei-chen/hs-sql-agent
+
+## Opt-in column authorization proof
+
+`SqlPlanValidationContext.WithAllowedQueryColumns(IReadOnlySet<string>)` enables
+an explicit single-table SELECT column allowlist enforced inside the closed F# AST
+compiler. Every reference in projections, predicates, grouping, ordering, and
+expressions must be permitted; `SELECT *`, CTEs, JOINs, set operations, subqueries,
+DML and unproven source shapes fail closed while enabled. Comparison is deliberately
+case-sensitive until quoted identifier semantics are fully modeled. Empty policy
+means deny all reads; absence of policy preserves existing compiler behavior.
+
+The normalized allowlist digest is included in the plan policy version. This
+opt-in Compiler API does **not** yet imply MCP-key/UI policy integration, row
+isolation, tenant scoping or metadata-backed cross-table column provenance.

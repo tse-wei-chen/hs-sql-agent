@@ -64,14 +64,16 @@ module internal RewritePipeline =
               Target: VerifiedTarget
               ConflictProofs: ConflictProofs
               Policy: ExecutionPolicy
-              AllowedTables: string list option }
+              AllowedTables: string list option
+              AllowedQueryColumns: string list option }
 
-    let internal createOptions source target conflictProofs policy allowedTables =
+    let internal createOptions source target conflictProofs policy allowedTables allowedColumns =
         { Source = source
           Target = target
           ConflictProofs = conflictProofs
           Policy = policy
-          AllowedTables = allowedTables }
+          AllowedTables = allowedTables
+          AllowedQueryColumns = allowedColumns }
 
     let private sourceProvider = function
         | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
@@ -135,6 +137,7 @@ module internal RewritePipeline =
             sourceSemantics.MySqlPipes
             (VerifiedSource.profile source)
             (VerifiedTarget.profile target)
+        |> RewriteStages.validateAllowedQueryColumns options.AllowedQueryColumns
         |> RewriteStages.validate
             options.AllowedTables
             targetRuntime

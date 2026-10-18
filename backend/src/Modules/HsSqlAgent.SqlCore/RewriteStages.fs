@@ -2022,6 +2022,114 @@ module internal RewriteStages =
                 mergeInsert.InsertValues
                 |> NonEmpty.iter (validateSemanticExpr targetRuntime InsertValueClause false false))
 
+    /// Column access is deliberately limited to one physical FROM table.
+    /// Unsupported provenance MUST reject, not silently fall back to full access.
+    let validateAllowedQueryColumns (allowedColumns: string list option) canonical =
+        match allowedColumns with
+        | None -> canonical
+        | Some allowed ->
+            let document = Canonical.value canonical
+            let deny code message =
+                let diagnostic = SqlDiagnostic(
+                    code, SqlDiagnosticStage.Policy, SqlDiagnosticCategory.Policy,
+                    message, if document.Span.Start < 0 then null
+                             else SqlDiagnosticSpan(document.Span.Start, document.Span.Length))
+                let error = UnauthorizedAccessException(message)
+                error.Data[diagnosticDataKey] <- diagnostic
+                raise error
+
+            let permitted = HashSet<string>(allowed, StringComparer.Ordinal)
+            let rec checkExpr qualifiers expr =
+                let checkColumn identifier binding =
+                    match binding with
+                    | Some ProjectionAlias -> ()
+                    | _ ->
+                        let parts = Identifier.parts identifier |> List.map (fun p -> p.Value)
+                        let matchesQualifier =
+                            qualifiers |> List.exists (fun (prefix: string list) ->
+                                parts.Length = prefix.Length + 1
+                                && (parts |> List.take prefix.Length) = prefix)
+                        if parts.Length <> 1 && not matchesQualifier then
+                            deny "SQL_POLICY_COLUMN_PROVENANCE_UNPROVABLE"
+                                "Column authorization requires a proven single-table reference."
+                        if not (permitted.Contains(List.last parts)) then
+                            deny "SQL_POLICY_COLUMN_NOT_ALLOWED"
+                                "SQL plan references a column that is not authorized."
+                match expr with
+                | Spanned(_, inner) -> checkExpr qualifiers inner
+                | Column id -> checkColumn id None
+                | BoundColumn(id, binding) -> checkColumn id (Some binding)
+                | Wildcard _ ->
+                    deny "SQL_POLICY_COLUMN_WILDCARD_UNPROVABLE"
+                        "Wildcard access is not authorized by a restricted column policy."
+                | OrderOrdinal _ | Literal _ | Interval _ -> ()
+                | DateAdd(_, a, b) | DateDiff(_, a, b) | Binary(_, a, b) ->
+                    checkExpr qualifiers a
+                    checkExpr qualifiers b
+                | Unary(_, x) | Cast(x, _) | Extract(_, x) | IsNull(x, _)
+                | PostgresJsonAccess(x, _, _) -> checkExpr qualifiers x
+                | Like(x, y, _, _, _) | RegexMatch(x, y)
+                | FilteredAggregate(x, y) ->
+                    checkExpr qualifiers x
+                    checkExpr qualifiers y
+                | RawRegexCall(args, _) -> args |> List.iter (checkExpr qualifiers)
+                | FunctionCall call ->
+                    call.Arguments |> List.iter (checkExpr qualifiers)
+                    call.AggregateOrderBy |> List.iter (fun x -> checkExpr qualifiers x.Expression)
+                | Windowed(x, w) ->
+                    checkExpr qualifiers x
+                    w.PartitionBy |> List.iter (checkExpr qualifiers)
+                    w.OrderBy |> List.iter (fun y -> checkExpr qualifiers y.Expression)
+                | SimpleCase(x, branches, fallback) ->
+                    checkExpr qualifiers x
+                    branches |> NonEmpty.iter (fun b ->
+                        checkExpr qualifiers b.Match
+                        checkExpr qualifiers b.Result)
+                    fallback |> Option.iter (checkExpr qualifiers)
+                | SearchedCase(branches, fallback) ->
+                    branches |> NonEmpty.iter (fun b ->
+                        checkExpr qualifiers b.Condition
+                        checkExpr qualifiers b.Result)
+                    fallback |> Option.iter (checkExpr qualifiers)
+                | InList(x, items, _) ->
+                    checkExpr qualifiers x
+                    items |> NonEmpty.iter (checkExpr qualifiers)
+                | Between(x, a, b, _) ->
+                    checkExpr qualifiers x
+                    checkExpr qualifiers a
+                    checkExpr qualifiers b
+                | InSubquery _ | ScalarSubquery _ | Exists _ ->
+                    deny "SQL_POLICY_COLUMN_PROVENANCE_UNPROVABLE"
+                        "Subquery column provenance cannot be proven by the restricted policy."
+
+            match document.Statement with
+            | QueryStatement query ->
+                let select = query.Head
+                if not select.Ctes.IsEmpty || not select.Joins.IsEmpty
+                   || not query.SetOperations.IsEmpty then
+                    deny "SQL_POLICY_COLUMN_PROVENANCE_UNPROVABLE"
+                        "Restricted column policy does not support CTEs, JOINs or set operations."
+                let qualifiers =
+                    match select.From with
+                    | Some (NamedTable(table, alias)) ->
+                        let parts = Identifier.parts table |> List.map (fun x -> x.Value)
+                        [parts; [List.last parts]] @
+                            (alias |> Option.map (fun x -> [ [x.Value] ]) |> Option.defaultValue [])
+                    | _ ->
+                        deny "SQL_POLICY_COLUMN_PROVENANCE_UNPROVABLE"
+                            "Restricted column policy requires a single physical FROM table."
+                if permitted.Count = 0 then
+                    deny "SQL_POLICY_COLUMN_NOT_ALLOWED" "Empty column allowlist denies all reads."
+                select.Projection |> List.iter (fun x -> checkExpr qualifiers x.Expression)
+                select.Where |> Option.iter (checkExpr qualifiers)
+                select.GroupBy |> List.iter (checkExpr qualifiers)
+                select.Having |> Option.iter (checkExpr qualifiers)
+                query.OrderBy |> List.iter (fun x -> checkExpr qualifiers x.Expression)
+            | _ ->
+                deny "SQL_POLICY_COLUMN_QUERY_ONLY"
+                    "Query column policy cannot authorize DML; use a separate mutation policy."
+            canonical
+
     let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
         let document = Canonical.value canonical
 
