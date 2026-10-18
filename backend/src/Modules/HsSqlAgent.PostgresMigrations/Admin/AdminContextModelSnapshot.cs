@@ -657,6 +657,26 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                     b.ToTable("DmlApprovalRequests", (string)null);
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.ManagementApiKey", b =>
+                {
+                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("integer");
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+                    b.Property<string>("Name").IsRequired().HasMaxLength(100).HasColumnType("character varying(100)");
+                    b.Property<string>("KeyPrefix").IsRequired().HasMaxLength(24).HasColumnType("character varying(24)");
+                    b.Property<string>("KeyHash").IsRequired().HasMaxLength(64).HasColumnType("character varying(64)");
+                    b.Property<string>("PermissionsJson").IsRequired().HasMaxLength(4000).HasColumnType("character varying(4000)");
+                    b.Property<string>("CreatedBy").HasMaxLength(128).HasColumnType("character varying(128)");
+                    b.Property<DateTime>("CreatedAt").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime>("ExpiresAt").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime?>("LastUsedAt").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime?>("RevokedAt").HasColumnType("timestamp with time zone");
+                    b.Property<string>("RevokedBy").HasMaxLength(128).HasColumnType("character varying(128)");
+                    b.HasKey("Id");
+                    b.HasIndex("KeyPrefix");
+                    b.HasIndex("KeyHash").IsUnique();
+                    b.ToTable("ManagementApiKeys");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.McpAccessKey", b =>
                 {
                     b.Property<int>("Id")

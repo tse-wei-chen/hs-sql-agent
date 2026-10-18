@@ -7,6 +7,7 @@ public interface IAdminContext
 {
     DbSet<AuditLog> AuditLogs { get; }
     DbSet<McpAccessKey> McpAccessKeys { get; }
+    DbSet<ManagementApiKey> ManagementApiKeys { get; }
     DbSet<CustomSqlTool> CustomSqlTools { get; }
     DbSet<CustomSqlToolRevision> CustomSqlToolRevisions { get; }
     DbSet<DbManagement> DbManagement { get; }

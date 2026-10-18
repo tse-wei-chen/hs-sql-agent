@@ -636,6 +636,25 @@ namespace HsSqlAgent.SqliteMigrations.Admin
                     b.ToTable("DmlApprovalRequests", (string)null);
                 });
 
+            modelBuilder.Entity("Admin.Service.Data.Entites.ManagementApiKey", b =>
+                {
+                    b.Property<int>("Id").ValueGeneratedOnAdd().HasColumnType("INTEGER");
+                    b.Property<string>("Name").IsRequired().HasMaxLength(100).HasColumnType("TEXT");
+                    b.Property<string>("KeyPrefix").IsRequired().HasMaxLength(24).HasColumnType("TEXT");
+                    b.Property<string>("KeyHash").IsRequired().HasMaxLength(64).HasColumnType("TEXT");
+                    b.Property<string>("PermissionsJson").IsRequired().HasMaxLength(4000).HasColumnType("TEXT");
+                    b.Property<string>("CreatedBy").HasMaxLength(128).HasColumnType("TEXT");
+                    b.Property<DateTime>("CreatedAt").HasColumnType("TEXT");
+                    b.Property<DateTime>("ExpiresAt").HasColumnType("TEXT");
+                    b.Property<DateTime?>("LastUsedAt").HasColumnType("TEXT");
+                    b.Property<DateTime?>("RevokedAt").HasColumnType("TEXT");
+                    b.Property<string>("RevokedBy").HasMaxLength(128).HasColumnType("TEXT");
+                    b.HasKey("Id");
+                    b.HasIndex("KeyPrefix");
+                    b.HasIndex("KeyHash").IsUnique();
+                    b.ToTable("ManagementApiKeys");
+                });
+
             modelBuilder.Entity("Admin.Service.Data.Entites.McpAccessKey", b =>
                 {
                     b.Property<int>("Id")
