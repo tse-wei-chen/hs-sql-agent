@@ -45,6 +45,27 @@ public sealed class SqlExecutionPolicyDecisionTests
     }
 
     [Fact]
+    public void QueryDecision_ContainsImmutableColumnPolicyFromAuthenticatedScope()
+    {
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Items[Common.Models.McpContextItemKeys.AllowedTools] = "execute_query_sql";
+        context.Items[Common.Models.McpContextItemKeys.TableWhitelist] = "public.users";
+        context.Items[Common.Models.McpContextItemKeys.AllowedQueryColumns] = "id";
+        context.Items[Common.Models.McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 11;
+        context.Items[Common.Models.McpContextItemKeys.DatabaseName] = "orders";
+        context.Items[Common.Models.McpContextItemKeys.SqlProvider] = "Postgres";
+
+        var scope = McpSqlExecutionScope.Capture(context, "execute_query_sql", SqlAgentToolType.Postgres);
+        var decision = SqlExecutionPolicyDecision.ForQuery(scope, new SecurityPolicyModel());
+        context.Items[Common.Models.McpContextItemKeys.AllowedQueryColumns] = "secret";
+
+        Assert.Contains("id", decision.AllowedQueryColumns!);
+        Assert.DoesNotContain("secret", decision.AllowedQueryColumns!);
+        Assert.Single(decision.AllowedQueryColumns!);
+    }
+
+    [Fact]
     public void PolicyRevalidation_DeniesChangedTableScope()
     {
         var policy = new SecurityPolicyModel();

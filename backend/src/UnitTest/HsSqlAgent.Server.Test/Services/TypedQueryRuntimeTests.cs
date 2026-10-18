@@ -140,6 +140,31 @@ public class TypedQueryRuntimeTests
     }
 
     [Fact]
+    public void RestrictedColumnRuntime_CompilesThroughActualFSharpProofAndRejectsSecrets()
+    {
+        var runtime = new TypedQueryRuntime();
+        var provider = CreateProvider(SqlAgentToolType.Postgres);
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "public.users" };
+        var columns = new HashSet<string>(StringComparer.Ordinal) { "id" };
+
+        var allowed = runtime.CompileWithFacts(
+            provider.Object, "SELECT id FROM public.users WHERE id = 1",
+            SqlAgentToolType.Postgres, CreatePolicy(), tables, null, columns);
+        Assert.Contains("public.users", allowed.Facts.ReferencedTables, StringComparer.OrdinalIgnoreCase);
+        Assert.NotEmpty(allowed.Command.PlanFingerprint);
+
+        var denied = Assert.Throws<UnauthorizedAccessException>(() => runtime.CompileWithFacts(
+            provider.Object, "SELECT id FROM public.users WHERE secret = 1",
+            SqlAgentToolType.Postgres, CreatePolicy(), tables, null, columns));
+        Assert.Contains("not authorized", denied.Message, StringComparison.OrdinalIgnoreCase);
+
+        var unrestricted = runtime.CompileWithFacts(
+            provider.Object, "SELECT id FROM public.users WHERE secret = 1",
+            SqlAgentToolType.Postgres, CreatePolicy(), tables, null);
+        Assert.NotEqual(unrestricted.Command.PlanFingerprint, allowed.Command.PlanFingerprint);
+    }
+
+    [Fact]
     public void CreateVerifiedTargetProfile_UsesOpenConnectionServerVersion()
     {
         var connection = new Mock<DbConnection>();
