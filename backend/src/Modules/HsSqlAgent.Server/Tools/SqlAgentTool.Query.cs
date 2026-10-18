@@ -61,7 +61,18 @@ public partial class SqlAgentTool
                     scope, _securityPolicyRuntimeState.GetCurrent());
                 var securityPolicy = decision.PolicySnapshot;
                 var allowedTables = decision.AllowedTables;
-                if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
+                if (decision.AllowedQueryColumns is { } allowedColumns)
+                {
+                    if (_typedQueryRuntime is not TypedQueryRuntime restrictedRuntime)
+                        throw new UnauthorizedAccessException(
+                            "Restricted column enforcement is unavailable in the configured query runtime.");
+                    var compiledExecution = await restrictedRuntime.ExecuteWithRestrictedColumnsAsync(
+                        provider, sqlConfig.ConnectionString, sql, dbType,
+                        securityPolicy, allowedTables, allowedColumns, cancellationToken);
+                    auditFacts = compiledExecution.Facts;
+                    execution = compiledExecution.Execution;
+                }
+                else if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                 {
                     var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
                         provider,

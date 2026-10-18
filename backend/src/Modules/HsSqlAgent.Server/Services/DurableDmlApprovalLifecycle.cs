@@ -343,6 +343,9 @@ internal sealed class DurableDmlApprovalLifecycle(
             throw new DmlApprovalStaleException("The MCP access key that requested this DML is no longer active.");
         if (key.DbManagementId != state.DbManagementId)
             throw new DmlApprovalStaleException("The MCP access key is no longer bound to the approved database.");
+        if (key.AllowedQueryColumns is not null)
+            throw new DmlApprovalStaleException(
+                "The approving MCP key now restricts query columns and cannot execute DML.");
         if (!IsToolAllowed(key.AllowedTools, state.RequiredToolName))
             throw new DmlApprovalStaleException("The MCP access key no longer has permission to use the approved DML tool.");
 

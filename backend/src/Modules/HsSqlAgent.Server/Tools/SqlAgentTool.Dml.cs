@@ -66,6 +66,7 @@ public partial class SqlAgentTool
 
             var scope = McpSqlExecutionScope.Capture(
                 _httpContextAccessor.HttpContext, "execute_dml_sql", dbType);
+            scope.EnsureDmlColumnPolicySupported();
             var accessKeyId = scope.AccessKeyId;
             var dbManagementId = scope.DbManagementId;
 
