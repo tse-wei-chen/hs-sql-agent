@@ -122,9 +122,9 @@ internal sealed class McpDmlCommitAuthorizationVerifier(
         // equivalent effective permissions. Re-issuing an approval is safer.
         var material = JsonSerializer.Serialize(new
         {
-            key.Id, key.KeyHash, key.IsActive, key.RevokedAt, key.ExpiresAt,
+            KeyId = key.Id, key.KeyHash, key.IsActive, key.RevokedAt, key.ExpiresAt,
             key.DbManagementId, key.AllowedTools, key.TableWhitelist, key.AllowedQueryColumns,
-            db.Id, db.SqlProvider, db.Database, db.Host, db.Port, db.Username,
+            DatabaseId = db.Id, db.SqlProvider, db.Database, db.Host, db.Port, db.Username,
             db.PasswordHash, db.ExtraSettings, db.UpdatedAt,
             customToolId, customToolRevisionId,
             ToolName = scope.ToolName
