@@ -39,6 +39,7 @@ public sealed class CustomToolTransactionProxyTests
         context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         context.Items[Common.Models.McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[Common.Models.McpContextItemKeys.AllowedTools] = string.Empty;
+        context.Items[Common.Models.McpContextItemKeys.AllowedQueryColumns] = null;
         context.Items[Common.Models.McpContextItemKeys.TableWhitelist] = string.Empty;
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         httpContextAccessor.SetupGet(x => x.HttpContext).Returns(context);

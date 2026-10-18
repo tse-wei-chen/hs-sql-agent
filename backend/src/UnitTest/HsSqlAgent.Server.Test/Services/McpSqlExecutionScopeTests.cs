@@ -12,6 +12,7 @@ public sealed class McpSqlExecutionScopeTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql,execute_dml_sql,orders_tool";
         context.Items[McpContextItemKeys.TableWhitelist] = "public.orders, public.order_items";
+        context.Items[McpContextItemKeys.AllowedQueryColumns] = null;
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
         context.Items[McpContextItemKeys.DbManagementId] = 42;
         context.Items[McpContextItemKeys.DatabaseName] = "orders";
@@ -20,6 +21,7 @@ public sealed class McpSqlExecutionScopeTests
     }
 
     [Theory]
+    [InlineData(McpContextItemKeys.AllowedQueryColumns)]
     [InlineData(McpContextItemKeys.AllowedTools)]
     [InlineData(McpContextItemKeys.TableWhitelist)]
     [InlineData(McpContextItemKeys.AccessKeyId)]
@@ -97,6 +99,21 @@ public sealed class McpSqlExecutionScopeTests
         context.Items[McpContextItemKeys.AllowedTools] = "orders_tool";
         context.Items[McpContextItemKeys.DbManagementId] = 99;
         Assert.Throws<UnauthorizedAccessException>(() => scope.RefreshAllowedTables(context));
+    }
+
+    [Fact]
+    public void RestrictedColumns_AreCapturedAndDmlDenied()
+    {
+        var context = AuthorizedContext();
+        context.Items[McpContextItemKeys.AllowedQueryColumns] = "id,status";
+        var scope = McpSqlExecutionScope.Capture(context, "execute_query_sql", SqlAgentToolType.Postgres);
+        Assert.Contains("id", scope.AllowedQueryColumns!);
+        context.Items[McpContextItemKeys.AllowedQueryColumns] = "secret";
+        Assert.DoesNotContain("secret", scope.AllowedQueryColumns!);
+        Assert.Throws<UnauthorizedAccessException>(() => scope.EnsureDmlColumnPolicySupported());
+        context.Items[McpContextItemKeys.AllowedQueryColumns] = string.Empty;
+        Assert.Empty(McpSqlExecutionScope.Capture(
+            context, "execute_query_sql", SqlAgentToolType.Postgres).AllowedQueryColumns!);
     }
 
     [Theory]

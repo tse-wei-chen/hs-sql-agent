@@ -58,6 +58,7 @@ public class CustomToolProxyTests
         context.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         context.Items[Common.Models.McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[Common.Models.McpContextItemKeys.AllowedTools] = string.Empty;
+        context.Items[Common.Models.McpContextItemKeys.AllowedQueryColumns] = null;
         context.Items[Common.Models.McpContextItemKeys.TableWhitelist] = string.Empty;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(context);
 
@@ -191,6 +192,7 @@ public class CustomToolProxyTests
         var emptyContext = new DefaultHttpContext();
         emptyContext.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
         emptyContext.Items[Common.Models.McpContextItemKeys.AllowedTools] = string.Empty;
+        emptyContext.Items[Common.Models.McpContextItemKeys.AllowedQueryColumns] = null;
         emptyContext.Items[Common.Models.McpContextItemKeys.TableWhitelist] = string.Empty;
         _httpContextAccessorMock.Setup(h => h.HttpContext).Returns(emptyContext);
 

@@ -196,6 +196,33 @@ public class McpAccessKeyServiceTests
             key.WindowSecondsOverride == 30)), Times.Once);
     }
 
+    [Theory]
+    [InlineData("id,secret", "id,secret")]
+    [InlineData(" id , id , status ", "id,status")]
+    [InlineData("", "")]
+    public async Task IssueKeyAsync_ShouldPersistColumnPolicy(string columns, string expected)
+    {
+        var request = new IssueMcpAccessKeyModel { Name = "Restricted key", AllowedQueryColumns = columns };
+        var mockDbSet = new Mock<Microsoft.EntityFrameworkCore.DbSet<McpAccessKey>>();
+        _contextMock.Setup(x => x.McpAccessKeys).Returns(mockDbSet.Object);
+        var result = await _service.IssueKeyAsync(request, "tester", TestContext.Current.CancellationToken);
+        Assert.Equal(expected, result.AllowedQueryColumns);
+        mockDbSet.Verify(x => x.Add(It.Is<McpAccessKey>(key =>
+            key.AllowedQueryColumns == expected)), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("id,public.secret")]
+    [InlineData("*")]
+    [InlineData("id,,secret")]
+    [InlineData("id;secret")]
+    public async Task IssueKeyAsync_RejectsInvalidColumnPolicy(string columns)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => _service.IssueKeyAsync(
+            new IssueMcpAccessKeyModel { Name = "Invalid policy", AllowedQueryColumns = columns },
+            "tester", TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task IssueKeyAsync_ShouldRejectIncompleteCustomRateLimit()
     {

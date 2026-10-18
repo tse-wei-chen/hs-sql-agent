@@ -193,6 +193,7 @@ public class SqlAgentToolMetadataTests
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
         context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
+        context.Items[McpContextItemKeys.AllowedQueryColumns] = null;
         context.Items[McpContextItemKeys.TableWhitelist] = tableWhitelist;
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
 
