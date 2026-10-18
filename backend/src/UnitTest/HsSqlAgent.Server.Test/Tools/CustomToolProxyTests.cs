@@ -271,6 +271,20 @@ public class CustomToolProxyTests
 
         var approval = new DecliningApprovalClient();
 
+        // The proxy is instantiated manually in this test, not through the
+        // registered Admin Store DI scope. Provide explicit test-only proof.
+        var verifier = new Mock<IMcpDmlCommitAuthorizationVerifier>();
+        verifier.Setup(x => x.CaptureAsync(
+                It.IsAny<McpSqlExecutionScope>(),
+                It.IsAny<string>(),
+                It.IsAny<int?>(),
+                It.IsAny<int?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpDmlCommitAuthorizationSnapshot("test-approved-context", null));
+        var services = new Mock<IServiceProvider>();
+        services.Setup(x => x.GetService(typeof(IMcpDmlCommitAuthorizationVerifier)))
+            .Returns(verifier.Object);
+
         var dmlProxy = new CustomToolProxy(
             "insert_user",
             _toolServiceMock.Object,
@@ -279,7 +293,8 @@ public class CustomToolProxyTests
             _auditServiceMock.Object,
             _queryValueParserMock.Object,
             _securityPolicyRuntimeStateMock.Object,
-            _sqlConcurrencyLimiterMock.Object);
+            _sqlConcurrencyLimiterMock.Object,
+            services: services.Object);
 
         var result = await dmlProxy.Execute(
             JsonSerializer.SerializeToElement(new { }),

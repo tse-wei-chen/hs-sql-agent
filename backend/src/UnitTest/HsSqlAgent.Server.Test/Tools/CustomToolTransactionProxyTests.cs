@@ -71,6 +71,20 @@ public sealed class CustomToolTransactionProxyTests
             .ReturnsAsync(Mock.Of<IAsyncDisposable>());
 
         var approval = new CapturingDecliningApprovalProvider();
+        // The proxy is instantiated manually in this test, not through the
+        // registered Admin Store DI scope. Provide explicit test-only proof.
+        var verifier = new Mock<IMcpDmlCommitAuthorizationVerifier>();
+        verifier.Setup(x => x.CaptureAsync(
+                It.IsAny<McpSqlExecutionScope>(),
+                It.IsAny<string>(),
+                It.IsAny<int?>(),
+                It.IsAny<int?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new McpDmlCommitAuthorizationSnapshot("test-approved-context", null));
+        var services = new Mock<IServiceProvider>();
+        services.Setup(x => x.GetService(typeof(IMcpDmlCommitAuthorizationVerifier)))
+            .Returns(verifier.Object);
+
         var proxy = new CustomToolProxy(
             "archive_order",
             toolService.Object,
@@ -80,7 +94,8 @@ public sealed class CustomToolTransactionProxyTests
             Mock.Of<IQueryValueParserService>(),
             policyState.Object,
             limiter.Object,
-            dmlApprovalProvider: approval);
+            dmlApprovalProvider: approval,
+            services: services.Object);
 
         var result = await proxy.Execute(
             JsonSerializer.SerializeToElement(new { }),
