@@ -661,6 +661,10 @@ namespace HsSqlAgent.SqliteMigrations.Admin
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("AllowedQueryColumns")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("AllowedTools")
                         .HasMaxLength(2048)
                         .HasColumnType("TEXT");

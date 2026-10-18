@@ -685,6 +685,10 @@ namespace HsSqlAgent.PostgresMigrations.Admin
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("AllowedQueryColumns")
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)");
+
                     b.Property<string>("AllowedTools")
                         .HasMaxLength(2048)
                         .HasColumnType("character varying(2048)");
