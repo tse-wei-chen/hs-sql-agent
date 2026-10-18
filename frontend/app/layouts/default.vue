@@ -43,6 +43,7 @@ const breadcrumbs = computed(() => {
       runtime: "Runtime Admin",
       "db-management": "DB Management",
       "mcp-keys": "MCP Keys",
+      "management-api-keys": "Management API Keys",
       "custom-tools": "Custom Tools",
       audit: "Audit",
       security: "Security Policy",
