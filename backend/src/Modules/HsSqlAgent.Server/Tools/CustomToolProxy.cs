@@ -84,27 +84,8 @@ public class CustomToolProxy(
         string renderedSql = string.Empty;
         try
         {
-            ValidateToolAccess();
+            McpSqlExecutionScope.EnsureToolAllowed(_httpContextAccessor.HttpContext, _name);
             var sqlConfig = ResolveSqlConfig();
-            var dbManagementId = ResolveDbManagementId();
-            if (dbManagementId is null)
-            {
-                var error = "Error: The authenticated key is not bound to a database.";
-                await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
-                return error;
-            }
-
-            tool = await _customSqlToolService.GetPublishedToolByNameAsync(
-                _name,
-                dbManagementId.Value,
-                cancellationToken);
-            if (tool == null)
-            {
-                var error = $"Error: Published tool '{_name}' is not available for this database.";
-                await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
-                return error;
-            }
-
             if (string.IsNullOrWhiteSpace(sqlConfig.Provider) || string.IsNullOrWhiteSpace(sqlConfig.ConnectionString))
             {
                 var error = "Error: SQL configuration (provider/connection string) is missing.";
@@ -115,6 +96,17 @@ public class CustomToolProxy(
             if (!Enum.TryParse<SqlAgentToolType>(sqlConfig.Provider, true, out var dbType))
             {
                 var error = $"Error: Invalid SQL provider '{sqlConfig.Provider}'.";
+                await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
+                return error;
+            }
+
+            var scope = McpSqlExecutionScope.Capture(_httpContextAccessor.HttpContext, _name, dbType);
+            var dbManagementId = scope.DbManagementId;
+            tool = await _customSqlToolService.GetPublishedToolByNameAsync(
+                _name, dbManagementId, cancellationToken);
+            if (tool is null)
+            {
+                var error = $"Error: Published tool '{_name}' is not available for this database.";
                 await _auditService.WriteLogAsync($"mcp.{_name}.executed", _name, "failed", error);
                 return error;
             }
@@ -134,7 +126,7 @@ public class CustomToolProxy(
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
                     QueryExecutionResult execution;
                     var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
-                    var allowedTables = ResolveTableWhitelist();
+                    var allowedTables = scope.AllowedTables;
                     if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                     {
                         var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
@@ -156,8 +148,7 @@ public class CustomToolProxy(
             }
             else if (isDml)
             {
-                var accessKeyId = ResolveAccessKeyId()
-                                  ?? throw new UnauthorizedAccessException("DML approval requires a stable MCP access-key identity.");
+                var accessKeyId = scope.AccessKeyId;
                 var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
                     provider,
                     sqlConfig.ConnectionString,
@@ -168,14 +159,12 @@ public class CustomToolProxy(
                 foreach (var statement in parsedDml.Statements)
                     TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
 
-                var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(
-                    _httpContextAccessor.HttpContext,
-                    dbType);
+                var approvalContext = scope.ToApprovalContext();
                 var flow = new TypedDmlTransactionApprovalFlow(
                     _typedDmlRuntime,
                     _securityPolicyRuntimeState,
                     _sqlConcurrencyLimiter,
-                    ResolveTableWhitelist,
+                    () => scope.RefreshAllowedTables(_httpContextAccessor.HttpContext),
                     _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle);
                 var dmlExecution = await flow.ExecuteAsync(
                     provider,
@@ -189,7 +178,7 @@ public class CustomToolProxy(
                         renderedSql,
                         _name,
                         accessKeyId,
-                        dbManagementId.Value,
+                        dbManagementId,
                         dbType,
                         tool.Id,
                         tool.PublishedRevisionId));
@@ -362,44 +351,7 @@ public class CustomToolProxy(
         return new SqlRuntimeConfig();
     }
 
-    private int? ResolveDbManagementId()
-    {
-        var context = _httpContextAccessor.HttpContext;
-        return context?.Items.TryGetValue(McpContextItemKeys.DbManagementId, out var value) == true
-               && value is int id ? id : null;
-    }
 
-    private int? ResolveAccessKeyId()
-    {
-        var context = _httpContextAccessor.HttpContext;
-        return context?.Items.TryGetValue(McpContextItemKeys.AccessKeyId, out var value) == true
-               && value is int id ? id : null;
-    }
-
-    private HashSet<string>? ResolveTableWhitelist()
-    {
-        var context = _httpContextAccessor.HttpContext
-            ?? throw new UnauthorizedAccessException("MCP table authorization context is missing.");
-        if (!context.Items.TryGetValue(McpContextItemKeys.TableWhitelist, out var whitelistValue))
-            throw new UnauthorizedAccessException("MCP table authorization context is missing.");
-        var tableWhitelist = whitelistValue?.ToString();
-        if (string.IsNullOrWhiteSpace(tableWhitelist)) return null;
-        return tableWhitelist.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private void ValidateToolAccess()
-    {
-        var context = _httpContextAccessor.HttpContext
-            ?? throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
-        if (!context.Items.TryGetValue(McpContextItemKeys.AllowedTools, out var allowedToolsValue))
-            throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
-        var allowedTools = allowedToolsValue?.ToString();
-        if (string.IsNullOrWhiteSpace(allowedTools)) return;
-        if (!allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Any(x => string.Equals(x, _name, StringComparison.OrdinalIgnoreCase)))
-            throw new UnauthorizedAccessException($"API key does not have permission to use tool: {_name}");
-    }
 }
 
 internal interface IDmlApprovalClient

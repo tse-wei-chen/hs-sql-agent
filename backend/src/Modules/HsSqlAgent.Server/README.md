@@ -93,6 +93,29 @@ app.UseHsSqlAgentMcp();
 
 If `AddHsSqlAgentMcp()` is not selected, MCP options and MCP services are not installed.
 
+## Governed MCP SQL execution scope
+
+Query, DML, and published Custom SQL tools share a single request-local authorization
+scope captured from the authenticated MCP key. The scope requires a valid positive
+access-key ID, target database ID, non-empty database identity, matching SQL provider,
+tool authorization and a present table-whitelist context before entering the compiler
+or DML approval runtime. An absent context fails closed; this also applies to embedded
+ASP.NET Core hosts using the MCP capability.
+
+- MCP keys must be bound to a real database with a stable ID and name.
+- A *present, explicitly empty* tool list or table whitelist retains the existing
+  unrestricted behavior; a **missing** authorization context never grants access.
+- Table lists are immutable request snapshots. During DML approval, tool and table
+  permissions are re-read and execution identity cannot change. Existing DML
+  policy-version fingerprints govern whether modified table policies invalidate approval.
+- Admin API authorization is separate from MCP SQL execution authorization.
+  These checks do **not** implement row-level, column-level or tenant isolation;
+  use database-native restrictions and least-privilege credentials as appropriate.
+
+This is an execution-boundary hardening change, not an additional MCP tool or a
+change to supported SQL grammar. Existing deployments with MCP keys lacking a
+complete database binding must fix the key configuration before upgrading.
+
 ## Standalone server / packaged Admin experience
 
 The first-party ToolBox uses the same modular registration surface as package consumers. It explicitly selects runtime, persistence, built-in identity, MCP, administration API, telemetry, controller mapping, UI, and host-wide exception handling.

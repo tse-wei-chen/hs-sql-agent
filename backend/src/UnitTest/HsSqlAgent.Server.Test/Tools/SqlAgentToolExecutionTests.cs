@@ -27,6 +27,9 @@ public class SqlAgentToolExecutionTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[McpContextItemKeys.DbManagementId] = 42;
+        context.Items[McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
         context.Items[McpContextItemKeys.TableWhitelist] = "public.users";
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
@@ -109,6 +112,9 @@ public class SqlAgentToolExecutionTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[McpContextItemKeys.DbManagementId] = 42;
+        context.Items[McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
         context.Items[McpContextItemKeys.TableWhitelist] = "public.users";
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
@@ -169,6 +175,9 @@ public class SqlAgentToolExecutionTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[McpContextItemKeys.DbManagementId] = 42;
+        context.Items[McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[McpContextItemKeys.TableWhitelist] = string.Empty;
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
 
@@ -212,6 +221,9 @@ public class SqlAgentToolExecutionTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[McpContextItemKeys.DbManagementId] = 42;
+        context.Items[McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);
         securityPolicyState.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
@@ -258,6 +270,9 @@ public class SqlAgentToolExecutionTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
         context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AccessKeyId] = 7;
+        context.Items[McpContextItemKeys.DbManagementId] = 42;
+        context.Items[McpContextItemKeys.DatabaseName] = "testdb";
         context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
         context.Items[McpContextItemKeys.TableWhitelist] = string.Empty;
         httpContextAccessor.Setup(x => x.HttpContext).Returns(context);

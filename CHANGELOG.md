@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Governed SQL execution context
+
+- Centralize MCP SQL execution authorization into one immutable, request-local scope
+  shared by built-in Query/DML and published Custom Query/DML.
+- Fail closed when a SQL execution lacks a trusted MCP access-key identity, database
+  binding, matching provider, tool-authorization context or table-authorization context.
+- Derive DML approval identity from that same scope and re-evaluate tool and table
+  permissions during preview/commit without allowing the caller or target database
+  to switch within an approval.
+- Preserve the existing explicit-empty allowlist behavior. **Upgrade note:** MCP
+  access keys must carry a complete database binding (key ID, database ID and name);
+  requests lacking those trusted fields are now rejected instead of reaching SQL
+  execution. No Admin Store schema migration or MCP tool-name change is required.
+
 ## [2.0.6] - Unreleased (proposed)
 
 ### Programmatic administration

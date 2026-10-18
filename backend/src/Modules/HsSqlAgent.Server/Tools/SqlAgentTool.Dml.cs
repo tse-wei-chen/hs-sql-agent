@@ -36,7 +36,8 @@ public partial class SqlAgentTool
         string? providerName = null;
         try
         {
-            ValidateToolAccess("execute_dml_sql");
+            McpSqlExecutionScope.EnsureToolAllowed(
+                _httpContextAccessor.HttpContext, "execute_dml_sql");
             if (string.IsNullOrWhiteSpace(sql))
             {
                 return McpDmlToolResult.Failed(
@@ -63,10 +64,10 @@ public partial class SqlAgentTool
             }
             providerName = dbType.ToString();
 
-            var accessKeyId = ResolveAccessKeyId()
-                              ?? throw new UnauthorizedAccessException("DML approval requires a stable MCP access-key identity.");
-            var dbManagementId = ResolveDbManagementId()
-                                 ?? throw new UnauthorizedAccessException("DML approval requires a stable target database identity.");
+            var scope = McpSqlExecutionScope.Capture(
+                _httpContextAccessor.HttpContext, "execute_dml_sql", dbType);
+            var accessKeyId = scope.AccessKeyId;
+            var dbManagementId = scope.DbManagementId;
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             parsedBatch = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
@@ -74,12 +75,12 @@ public partial class SqlAgentTool
             foreach (var statement in parsedBatch.Statements)
                 TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
 
-            var approvalContext = DmlApprovalExecutionContextResolver.FromMcp(_httpContextAccessor.HttpContext, dbType);
+            var approvalContext = scope.ToApprovalContext();
             var flow = new TypedDmlTransactionApprovalFlow(
                 _typedDmlRuntime,
                 _securityPolicyRuntimeState,
                 _sqlConcurrencyLimiter,
-                ResolveTableWhitelist,
+                () => scope.RefreshAllowedTables(_httpContextAccessor.HttpContext),
                 _dmlApprovalCompletionSink as IDurableDmlApprovalLifecycle);
             var descriptor = DescribeBatch(parsedBatch);
             var approvalTitle = parsedBatch.Count == 1

@@ -38,7 +38,8 @@ public partial class SqlAgentTool
         QueryFacts? auditFacts = null;
         try
         {
-            ValidateToolAccess("execute_query_sql");
+            var scope = McpSqlExecutionScope.Capture(
+                _httpContextAccessor.HttpContext, "execute_query_sql", dbType);
             if (string.IsNullOrWhiteSpace(sql))
             {
                 return McpQueryToolResult.Failed(
@@ -52,7 +53,7 @@ public partial class SqlAgentTool
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
             var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
-            var allowedTables = ResolveTableWhitelist();
+            var allowedTables = scope.AllowedTables;
             QueryExecutionResult execution;
             await using (var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken))
             {

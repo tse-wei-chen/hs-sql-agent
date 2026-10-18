@@ -31,6 +31,9 @@ public class DmlApprovalExecutionContextSecurityTests
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
         context.Items[McpContextItemKeys.DbManagementId] = 11;
+        context.Items[McpContextItemKeys.AllowedTools] = string.Empty;
+        context.Items[McpContextItemKeys.TableWhitelist] = string.Empty;
+        context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
 
         var error = Assert.Throws<UnauthorizedAccessException>(() =>
             DmlApprovalExecutionContextResolver.FromMcp(
