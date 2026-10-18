@@ -244,6 +244,9 @@ jobs:
         working-directory: frontend
       - run: pnpm test
         working-directory: frontend
+      - name: Verify static frontend output
+        run: pnpm generate
+        working-directory: frontend
 
   frontend-lint:
     runs-on: ubuntu-latest
