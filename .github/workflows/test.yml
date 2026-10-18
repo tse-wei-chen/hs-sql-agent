@@ -205,6 +205,29 @@ jobs:
         shell: bash
         run: bash .github/scripts/nuget-consumer-smoke.sh artifacts/packages
 
+
+  admin-api-openapi:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Generate OpenAPI from all first-party Admin MVC controllers
+        run: dotnet build backend/src/Tools/HsSqlAgent.ApiSpec/HsSqlAgent.ApiSpec.csproj --configuration Debug
+      - name: Verify generated contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/verify-admin-openapi.py artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hs-sql-agent-admin-openapi
+          path: artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
+          if-no-files-found: error
+
   frontend-test:
     runs-on: ubuntu-latest
     permissions:

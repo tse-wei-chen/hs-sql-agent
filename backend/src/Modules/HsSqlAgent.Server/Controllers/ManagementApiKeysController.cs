@@ -15,15 +15,19 @@ public sealed class ManagementApiKeysController(
 {
     // Reuse existing security.edit permission; do not introduce separate authentication/role seed requirements.
     [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<ManagementApiKeyView>), StatusCodes.Status200OK)]
     [HasPermission("/runtime/security", "edit")]
     public async Task<IActionResult> List(CancellationToken cancellationToken)
         => Ok(await keys.ListAsync(cancellationToken));
 
     [HttpGet("permissions")]
+    [ProducesResponseType(typeof(IReadOnlyList<string>), StatusCodes.Status200OK)]
     [HasPermission("/runtime/security", "edit")]
     public IActionResult Permissions() => Ok(ManagementApiKeyPermissions.Grantable);
 
     [HttpPost]
+    [ProducesResponseType(typeof(IssuedManagementApiKey), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [HasPermission("/runtime/security", "edit")]
     public async Task<IActionResult> Issue([FromBody] ManagementApiKeyRequest request, CancellationToken cancellationToken)
     {
@@ -39,6 +43,9 @@ public sealed class ManagementApiKeysController(
     }
 
     [HttpPost("{id:int}/rotate")]
+    [ProducesResponseType(typeof(IssuedManagementApiKey), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     [HasPermission("/runtime/security", "edit")]
     public async Task<IActionResult> Rotate(int id, CancellationToken cancellationToken)
     {
@@ -55,6 +62,8 @@ public sealed class ManagementApiKeysController(
     }
 
     [HttpPost("{id:int}/revoke")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/security", "edit")]
     public async Task<IActionResult> Revoke(int id, CancellationToken cancellationToken)
     {

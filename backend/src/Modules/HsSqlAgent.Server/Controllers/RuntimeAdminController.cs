@@ -30,6 +30,7 @@ public class RuntimeAdminController(
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
     [HttpGet("mcp-keys")]
+    [ProducesResponseType(typeof(IReadOnlyCollection<McpAccessKeyListItem>), StatusCodes.Status200OK)]
     [HasPermission("/runtime/mcp-keys", "view")]
     public async Task<IActionResult> ListKeys(CancellationToken cancellationToken)
     {
@@ -61,6 +62,8 @@ public class RuntimeAdminController(
     }
 
     [HttpPost("mcp-keys")]
+    [ProducesResponseType(typeof(McpAccessKeyIssueResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [HasPermission("/runtime/mcp-keys", "create")]
     public async Task<IActionResult> IssueKey([FromBody] IssueMcpAccessKeyRequest request, CancellationToken cancellationToken)
     {
@@ -100,6 +103,8 @@ public class RuntimeAdminController(
     }
 
     [HttpPut("mcp-keys/{id:int}")]
+    [ProducesResponseType(typeof(McpAccessKeyListItem), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/mcp-keys", "edit")]
     public async Task<IActionResult> UpdateKey(
         int id,
@@ -118,6 +123,8 @@ public class RuntimeAdminController(
     }
 
     [HttpPost("mcp-keys/{id:int}/rotate")]
+    [ProducesResponseType(typeof(McpAccessKeyIssueResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/mcp-keys", "edit")]
     public async Task<IActionResult> RotateKey(
         int id,
@@ -136,6 +143,8 @@ public class RuntimeAdminController(
     }
 
     [HttpPost("mcp-keys/{id:int}/clone")]
+    [ProducesResponseType(typeof(McpAccessKeyIssueResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/mcp-keys", "create")]
     public async Task<IActionResult> CloneKey(
         int id,
