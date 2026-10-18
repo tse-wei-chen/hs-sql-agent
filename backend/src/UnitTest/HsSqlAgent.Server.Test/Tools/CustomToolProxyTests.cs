@@ -273,17 +273,9 @@ public class CustomToolProxyTests
 
         // The proxy is instantiated manually in this test, not through the
         // registered Admin Store DI scope. Provide explicit test-only proof.
-        var verifier = new Mock<IMcpDmlCommitAuthorizationVerifier>();
-        verifier.Setup(x => x.CaptureAsync(
-                It.IsAny<McpSqlExecutionScope>(),
-                It.IsAny<string>(),
-                It.IsAny<int?>(),
-                It.IsAny<int?>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new McpDmlCommitAuthorizationSnapshot("test-approved-context", null));
         var services = new Mock<IServiceProvider>();
         services.Setup(x => x.GetService(typeof(IMcpDmlCommitAuthorizationVerifier)))
-            .Returns(verifier.Object);
+            .Returns(new TestMcpDmlCommitAuthorizationVerifier());
 
         var dmlProxy = new CustomToolProxy(
             "insert_user",
