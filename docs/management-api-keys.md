@@ -14,9 +14,12 @@ The server persists a SHA-256 digest of a 256-bit random key and a short non-sec
 
 ## Call existing APIs
 
+Use the `X-API-Key` header for Management API Keys. `Authorization: Bearer <JWT>` remains reserved for human admin authentication. A request with both headers is rejected rather than falling back to another identity.
+ 
+
 ```bash
 curl -X POST "https://agent.example.com/api/CustomSqlTool" \
-  -H "Authorization: Bearer ${HS_MANAGEMENT_API_KEY}" \
+  -H "X-API-Key: ${HS_MANAGEMENT_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"name":"saas_demo_orders","type":"Query","dbManagementId":1,"sqlTemplate":"SELECT id FROM orders WHERE company_id = 9527"}'
 ```

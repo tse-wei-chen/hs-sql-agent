@@ -18,13 +18,19 @@ internal sealed class HsSqlAgentPermissionAuthorizationFilter(
         if (httpContext.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() is not null)
             return;
 
-        var authorization = httpContext.Request.Headers.Authorization.ToString();
-        const string bearer = "Bearer ";
-        if (authorization.StartsWith(bearer, StringComparison.OrdinalIgnoreCase)
-            && authorization[bearer.Length..].StartsWith(ManagementApiKeyService.TokenPrefix, StringComparison.Ordinal))
+        // The Management API uses an explicit API-key header, not the human JWT Bearer scheme.
+        // Reject malformed or mixed credentials; never silently fall back to human authorization.
+        if (httpContext.Request.Headers.TryGetValue("X-API-Key", out var apiKeyHeader))
         {
-            // Independently authenticate machine credentials; never impersonate a JWT/admin session.
-            var valid = await managementKeys.ValidateAsync(authorization[bearer.Length..], httpContext.RequestAborted);
+            if (apiKeyHeader.Count != 1
+                || string.IsNullOrWhiteSpace(apiKeyHeader[0])
+                || !string.IsNullOrEmpty(httpContext.Request.Headers.Authorization.ToString()))
+            {
+                context.Result = new UnauthorizedResult();
+                return;
+            }
+
+            var valid = await managementKeys.ValidateAsync(apiKeyHeader[0]!, httpContext.RequestAborted);
             if (valid is null)
             {
                 context.Result = new UnauthorizedResult();
