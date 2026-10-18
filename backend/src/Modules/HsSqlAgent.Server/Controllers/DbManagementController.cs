@@ -16,6 +16,8 @@ public class DbManagementController(
     IAuditService auditService) : ControllerBase
 {
     [HttpPost]
+    [ProducesResponseType(typeof(DbManagementVM), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [HasPermission("/runtime/db-management", "create")]
     public async Task<IActionResult> CreateDb([FromBody] DbManagementRequest request, CancellationToken cancellationToken)
     {
@@ -32,6 +34,8 @@ public class DbManagementController(
     }
 
     [HttpGet("{id}")]
+    [ProducesResponseType(typeof(DbManagementVM), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetDbById(int id, CancellationToken cancellationToken)
     {
@@ -40,11 +44,14 @@ public class DbManagementController(
     }
 
     [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<DbManagementVM>), StatusCodes.Status200OK)]
     [HasPermission("/runtime/db-management", "view")]
     public async Task<IActionResult> GetAllDbs(CancellationToken cancellationToken)
         => Ok(await dbManagementService.GetAllDbsAsync(cancellationToken));
 
     [HttpPut("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [HasPermission("/runtime/db-management", "edit")]
     public async Task<IActionResult> UpdateDb(int id, [FromBody] DbManagementRequest request, CancellationToken cancellationToken)
     {
@@ -56,6 +63,7 @@ public class DbManagementController(
     }
 
     [HttpDelete("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
     [HasPermission("/runtime/db-management", "delete")]
     public async Task<IActionResult> DeleteDb(int id, CancellationToken cancellationToken)
     {

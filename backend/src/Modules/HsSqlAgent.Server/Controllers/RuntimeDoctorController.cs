@@ -1,6 +1,7 @@
 using Admin.Service.Interfaces;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.Server.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace HsSqlAgent.Server.Controllers;
@@ -14,6 +15,7 @@ public sealed class RuntimeDoctorController(
     IMcpAccessKeyService keyService) : ControllerBase
 {
     [HttpGet]
+    [ProducesResponseType(typeof(RuntimeDoctorResponse), StatusCodes.Status200OK)]
     [HasPermission("/runtime/operability", "view")]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {

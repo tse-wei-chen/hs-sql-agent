@@ -26,11 +26,14 @@ public class CustomSqlToolController(
     ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ControllerBase
 {
     [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<CustomSqlTool>), StatusCodes.Status200OK)]
     [HasPermission("/runtime/custom-tools", "view")]
     public async Task<IActionResult> GetAllTools()
         => Ok(await toolService.GetAllToolsAsync());
 
     [HttpGet("{id}")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "view")]
     public async Task<IActionResult> GetTool(int id)
     {
@@ -39,6 +42,8 @@ public class CustomSqlToolController(
     }
 
     [HttpPost]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [HasPermission("/runtime/custom-tools", "create")]
     public async Task<IActionResult> CreateTool([FromBody] CustomSqlTool tool)
     {
@@ -53,6 +58,9 @@ public class CustomSqlToolController(
     }
 
     [HttpPut("{id}")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> UpdateTool(int id, [FromBody] CustomSqlTool tool)
     {
@@ -69,6 +77,8 @@ public class CustomSqlToolController(
     }
 
     [HttpDelete("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "delete")]
     public async Task<IActionResult> DeleteTool(int id)
     {
@@ -79,6 +89,8 @@ public class CustomSqlToolController(
     }
 
     [HttpGet("{id}/revisions")]
+    [ProducesResponseType(typeof(IReadOnlyList<CustomSqlToolRevision>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "view")]
     public async Task<IActionResult> GetRevisions(int id, CancellationToken cancellationToken)
         => await toolService.GetToolByIdAsync(id) == null
@@ -86,6 +98,8 @@ public class CustomSqlToolController(
             : Ok(await toolService.GetRevisionsAsync(id, cancellationToken));
 
     [HttpGet("{id}/impact")]
+    [ProducesResponseType(typeof(CustomSqlToolImpact), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "view")]
     public async Task<IActionResult> GetImpact(int id, CancellationToken cancellationToken)
     {
@@ -94,6 +108,10 @@ public class CustomSqlToolController(
     }
 
     [HttpPost("{id}/publish")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> Publish(
         int id,
@@ -129,6 +147,8 @@ public class CustomSqlToolController(
     }
 
     [HttpPost("{id}/disable")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> Disable(int id, CancellationToken cancellationToken)
     {
@@ -139,6 +159,10 @@ public class CustomSqlToolController(
     }
 
     [HttpPost("{id}/rollback/{revisionId}")]
+    [ProducesResponseType(typeof(CustomSqlTool), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     [HasPermission("/runtime/custom-tools", "edit")]
     public async Task<IActionResult> Rollback(
         int id,
