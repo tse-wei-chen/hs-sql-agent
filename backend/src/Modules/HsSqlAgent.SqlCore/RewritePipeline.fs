@@ -122,7 +122,10 @@ module internal RewritePipeline =
         let bound = parsed |> RewriteBinder.bind sourceProviderType
         match options.SchemaSnapshot with
         | None -> bound
-        | Some snapshot -> RewriteSchemaValidation.verify sourceProviderType snapshot bound
+        | Some snapshot ->
+            bound
+            |> RewriteSchemaValidation.verify sourceProviderType snapshot
+            |> RewriteSchemaTypeValidation.verify sourceProviderType snapshot
 
     let private finishBound options bound =
         let source = options.Source
