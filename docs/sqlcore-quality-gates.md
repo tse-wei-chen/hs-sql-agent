@@ -36,11 +36,13 @@ published as measured percentages or silently set to 100.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, NATURAL/USING coalescing
       and DML conflict/MERGE key proofs.
-- [x] Establish PostgreSQL 16 / SQLite runtime differential execution for seven
-      portable query shapes: native + both lowering directions, ordered result-row
-      and NULL parity under identical seeded fixtures (four executions per shape).
-      CI requires PostgreSQL availability; local runs without it report a skip.
-- [ ] Extend real-provider differential execution to the remaining four engines,
+- [x] Establish PostgreSQL 16, MySQL 8 and SQLite execution-result parity
+      for seven portable SELECT scenarios over identical seeded fixtures.
+      All nine source/target combinations are compiled and executed per
+      scenario (63 compiled executions), comparing ordered rows and NULL
+      semantics to a PostgreSQL native baseline.
+      CI requires both PostgreSQL and MySQL; local runs explicitly skip if absent.
+- [ ] Extend real-provider differential execution to the remaining three engines,
       provider versions/session settings, DML affected-row semantics, and capability
       pairs outside this intentionally small portable SELECT subset.
 - [ ] Expand capability evidence across temporal arithmetic, UPSERT, joined DML,
