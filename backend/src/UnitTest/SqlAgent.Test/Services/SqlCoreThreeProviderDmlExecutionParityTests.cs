@@ -65,7 +65,7 @@ public sealed class SqlCoreThreeProviderDmlExecutionParityTests
         var cancellationToken = TestContext.Current.CancellationToken;
 
         await using var postgres = new NpgsqlConnection(postgresConnection);
-        await using var mysql = new MySqlConnection(mysqlConnection);
+        await using var mysql = new MySqlConnection(new MySqlConnectionStringBuilder(mysqlConnection) { Pooling = false }.ConnectionString);
         await using var sqlite = new SqliteConnection("Data Source=:memory:");
 
         await postgres.OpenAsync(cancellationToken);
@@ -132,7 +132,7 @@ public sealed class SqlCoreThreeProviderDmlExecutionParityTests
         var token = TestContext.Current.CancellationToken;
 
         await using var postgres = new NpgsqlConnection(postgresConnection);
-        await using var mysql = new MySqlConnection(mysqlConnection);
+        await using var mysql = new MySqlConnection(new MySqlConnectionStringBuilder(mysqlConnection) { Pooling = false }.ConnectionString);
         await using var sqlite = new SqliteConnection("Data Source=:memory:");
 
         await postgres.OpenAsync(token);

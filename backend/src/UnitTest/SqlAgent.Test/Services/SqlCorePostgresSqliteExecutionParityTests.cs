@@ -59,7 +59,7 @@ public sealed class SqlCoreThreeProviderExecutionParityTests
         await postgres.OpenAsync(cancellationToken);
         await using var sqlite = new SqliteConnection("Data Source=:memory:");
         await sqlite.OpenAsync(cancellationToken);
-        await using var mysql = new MySqlConnection(mysqlConnectionString);
+        await using var mysql = new MySqlConnection(new MySqlConnectionStringBuilder(mysqlConnectionString) { Pooling = false }.ConnectionString);
         await mysql.OpenAsync(cancellationToken);
 
         await ExecuteAsync(postgres,
