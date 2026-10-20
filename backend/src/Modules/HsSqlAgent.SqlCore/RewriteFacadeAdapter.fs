@@ -666,7 +666,7 @@ module internal RewriteFacadeAdapter =
                 append table.Name
                 append (string table.Columns.Count)
                 table.Columns
-                |> Seq.sortWith StringComparer.Ordinal.Compare
+                |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left, right))
                 |> Seq.iter append)
             builder.ToString()
             |> Encoding.UTF8.GetBytes
