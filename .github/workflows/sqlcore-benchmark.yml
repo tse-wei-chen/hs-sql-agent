@@ -1,0 +1,38 @@
+name: SqlCore benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Measured compilations per case (1..100000)"
+        required: true
+        default: "1000"
+      warmup:
+        description: "Warmup compilations per case (0..100000)"
+        required: true
+        default: "100"
+
+permissions:
+  contents: read
+
+jobs:
+  sqlcore-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Run Release SQL compiler benchmark
+        env:
+          ITERATIONS: ${{ inputs.iterations }}
+          WARMUP: ${{ inputs.warmup }}
+        run: |
+          dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- \
+            --iterations "$ITERATIONS" --warmup "$WARMUP" --output artifacts/sqlcore-perf.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sqlcore-perf
+          path: artifacts/sqlcore-perf.json
+          if-no-files-found: error

@@ -19,6 +19,7 @@ published as measured percentages or silently set to 100.
 - [x] Retain the single typed F# compiler pipeline and six-dialect parser/rendering boundary.
 - [x] Reject demonstrably always-true UPDATE/DELETE predicates unless full-table authority is explicit.
 - [x] Add six-dialect regression cases and runtime-boundary diagnostic tests.
+- [x] Add an opt-in, Release-mode compiler performance harness with structured JSON and a PR smoke test.
 - [ ] Verify required CI jobs and any differential-parity job relevant to the PR.
 
 ## Next implementation gates (not done in this change)
