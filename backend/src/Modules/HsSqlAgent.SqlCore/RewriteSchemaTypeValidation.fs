@@ -14,7 +14,8 @@ module internal RewriteSchemaTypeValidation =
 
     type private Source =
         { Qualifiers: string list
-          Kinds: Map<string, SqlSchemaValueKind> }
+          Kinds: Map<string, SqlSchemaValueKind>
+          Columns: string list }
 
     type private Scope =
         { Parent: Scope option
@@ -22,7 +23,7 @@ module internal RewriteSchemaTypeValidation =
 
     type private Catalog =
         { Dialect: SqlAgentToolType
-          Tables: Map<string, Map<string, SqlSchemaValueKind>> }
+          Tables: Map<string, (string * SqlSchemaValueKind) list> }
 
     let private keyPart dialect (part: IdentifierPart) =
         match dialect with
@@ -67,7 +68,7 @@ module internal RewriteSchemaTypeValidation =
                 (table.TypedColumns
                  |> Seq.map (fun column ->
                      catalogPart dialect column.Name, column.Kind)
-                 |> Map.ofSeq))
+                 |> Seq.toList))
             |> Map.ofSeq
         { Dialect = dialect; Tables = tables }
 
@@ -79,16 +80,29 @@ module internal RewriteSchemaTypeValidation =
         | None when full = tail -> [ full ]
         | None -> [ full; tail ]
 
-    let private emptyKinds = Map.empty<string, SqlSchemaValueKind>
+    let private columnsSource qualifiers columns =
+        let names = columns |> List.map fst
+        let kinds =
+            if (List.distinct names).Length <> names.Length then Map.empty
+            else
+                columns
+                |> List.map (fun (name, kind) -> name, Option.defaultValue SqlSchemaValueKind.Unknown kind)
+                |> Map.ofList
+        { Qualifiers = qualifiers; Kinds = kinds; Columns = names }
 
     let private namedSource catalog name alias =
-        { Qualifiers = sourceKey catalog name alias
-          Kinds = Map.tryFind (keyIdentifier catalog.Dialect name) catalog.Tables
-                  |> Option.defaultValue emptyKinds }
+        let columns =
+            Map.tryFind (keyIdentifier catalog.Dialect name) catalog.Tables
+            |> Option.defaultValue []
+            |> List.map (fun (name, kind) -> name, Some kind)
+        columnsSource (sourceKey catalog name alias) columns
 
-    let private sourceAlias catalog alias =
-        { Qualifiers = [ keyPart catalog.Dialect alias ]
-          Kinds = emptyKinds }
+    let private sourceAlias catalog alias columns =
+        columnsSource [ keyPart catalog.Dialect alias ] columns
+
+    let private cteSource catalog name alias ctes =
+        columnsSource (sourceKey catalog name alias)
+            (Map.tryFind (keyIdentifier catalog.Dialect name) ctes |> Option.defaultValue [])
 
     let private typeKnown kind =
         match kind with
@@ -161,11 +175,15 @@ module internal RewriteSchemaTypeValidation =
             Some SqlSchemaValueKind.Numeric
         | _ -> None
 
-    let rec private expression catalog scope span expr =
-        let evaluate = expression catalog scope Span.unknown
+    let rec private expression catalog ctes scope span expr =
+        let evaluate = expression catalog ctes scope Span.unknown
         match expr with
-        | Spanned(current, value) -> expression catalog scope current value
+        | Spanned(current, value) -> expression catalog ctes scope current value
         | BoundColumn(_, ColumnBinding.ProjectionAlias) -> None
+        | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
+            match scope.Parent with
+            | Some parent -> columnKind catalog parent identifier
+            | None -> None
         | Column identifier | BoundColumn(identifier, _) ->
             columnKind catalog scope identifier
         | Literal literal -> literalKind literal
@@ -215,15 +233,18 @@ module internal RewriteSchemaTypeValidation =
             evaluate value |> ignore
             Some SqlSchemaValueKind.Boolean
         | Exists(query, _) ->
-            queryTypes catalog (Some scope) query |> ignore
+            queryTypes catalog ctes (Some scope) query |> ignore
             Some SqlSchemaValueKind.Boolean
         | InSubquery(value, query, _) ->
-            evaluate value |> ignore
-            queryTypes catalog (Some scope) query |> ignore
+            let left = evaluate value
+            match queryTypes catalog ctes (Some scope) query with
+            | [ (_, right) ] -> compatible span left right "IN subquery"
+            | _ -> ()
             Some SqlSchemaValueKind.Boolean
         | ScalarSubquery query ->
-            queryTypes catalog (Some scope) query |> ignore
-            None
+            match queryTypes catalog ctes (Some scope) query with
+            | [ (_, projected) ] -> projected
+            | _ -> None
         | RegexMatch(a, b) ->
             evaluate a |> ignore
             evaluate b |> ignore
@@ -266,56 +287,98 @@ module internal RewriteSchemaTypeValidation =
             fallback |> Option.iter (fun item -> evaluate item |> ignore)
             None
 
-    and private tableSource catalog parent table =
+    and private tableSource catalog ctes parent table =
         match table with
         | NamedTable(name, alias) -> namedSource catalog name alias
-        | CteTable(name, alias) -> { Qualifiers = sourceKey catalog name alias; Kinds = emptyKinds }
+        | CteTable(name, alias) -> cteSource catalog name alias ctes
         | DerivedTable(query, alias) ->
-            queryTypes catalog None query |> ignore
-            sourceAlias catalog alias
+            queryTypes catalog ctes None query |> sourceAlias catalog alias
         | LateralDerivedTable(query, alias) ->
-            queryTypes catalog parent query |> ignore
-            sourceAlias catalog alias
+            queryTypes catalog ctes parent query |> sourceAlias catalog alias
 
-    and private queryTypes catalog parent (query: Query) =
-        // CTE shape/name constraints are already proved by RewriteSchemaValidation.
-        query.Head.Ctes |> List.iter (fun cte -> queryTypes catalog None cte.Query |> ignore)
+    and private queryTypes catalog inheritedCtes parent (query: Query) =
+        let mutable ctes = inheritedCtes
+        // Sequential visibility follows the already validated CTE lexical scope.
+        for cte in query.Head.Ctes do
+            let output = queryTypes catalog ctes None cte.Query
+            let names =
+                if cte.ColumnAliases.IsEmpty then output |> List.map fst
+                else cte.ColumnAliases |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+            let typed =
+                List.zip names (output |> List.map snd)
+                |> List.choose (fun (name, kind) -> name |> Option.map (fun value -> value, kind))
+            ctes <- Map.add (keyPart catalog.Dialect cte.Name) typed ctes
+
         let initial =
             { Parent = parent
               Sources =
                 match query.Head.From with
                 | None -> []
-                | Some table -> [ tableSource catalog parent table ] }
+                | Some table -> [ tableSource catalog ctes parent table ] }
         let mutable scope = initial
         for join in query.Head.Joins do
-            let joinParent =
+            let sourceParent =
                 match join.Source with
                 | LateralDerivedTable _ -> Some scope
                 | _ -> scope.Parent
-            let added = tableSource catalog joinParent join.Source
+            let added = tableSource catalog ctes sourceParent join.Source
             let combined = { scope with Sources = scope.Sources @ [ added ] }
             match join with
             | OnJoin(_, _, predicate) ->
-                expression catalog combined Span.unknown predicate |> ignore
+                expression catalog ctes combined Span.unknown predicate |> ignore
             | _ -> ()
             scope <- combined
-        let inspect value = expression catalog scope Span.unknown value |> ignore
+
+        let evaluate = expression catalog ctes scope Span.unknown
+        let inspect value = evaluate value |> ignore
         match query.Head.DistinctMode with
         | SelectDistinct.DistinctOn items -> items |> NonEmpty.iter inspect
         | _ -> ()
-        query.Head.Projection |> List.iter (fun item -> inspect item.Expression)
         query.Head.Where |> Option.iter inspect
         query.Head.GroupBy |> List.iter inspect
         query.Head.Having |> Option.iter inspect
         query.OrderBy |> List.iter (fun item -> inspect item.Expression)
-        query.SetOperations |> List.iter (fun branch ->
-            queryTypes catalog parent branch.Query |> ignore)
+
+        let projection =
+            query.Head.Projection
+            |> List.collect (fun item ->
+                match item.Alias, Expr.unspan item.Expression with
+                | Some alias, _ ->
+                    [ Some(keyPart catalog.Dialect alias), evaluate item.Expression ]
+                | None, Column identifier
+                | None, BoundColumn(identifier, _) ->
+                    [ Some(Identifier.parts identifier |> List.last |> keyPart catalog.Dialect),
+                      evaluate item.Expression ]
+                | None, Wildcard None ->
+                    scope.Sources
+                    |> List.collect (fun source ->
+                        source.Columns |> List.map (fun name ->
+                            Some name, (Map.tryFind name source.Kinds |> Option.bind typeKnown)))
+                | None, Wildcard(Some identifier) ->
+                    let qualifier = keyIdentifier catalog.Dialect identifier
+                    scope.Sources
+                    |> List.filter (fun source -> List.contains qualifier source.Qualifiers)
+                    |> List.collect (fun source ->
+                        source.Columns |> List.map (fun name ->
+                            Some name, (Map.tryFind name source.Kinds |> Option.bind typeKnown)))
+                | _ -> [ None, evaluate item.Expression ])
+
+        // Keep only family proofs shared across every set-operation branch.
+        query.SetOperations
+        |> List.fold (fun output branch ->
+            let candidate = queryTypes catalog ctes parent branch.Query
+            if List.length output <> List.length candidate then output
+            else
+                List.map2 (fun (name, left) (_, right) ->
+                    name, (if left = right then left else None)) output candidate)
+            projection
 
     let private document catalog (document: Document) =
         let root = { Parent = None; Sources = [] }
-        let inspect scope value = expression catalog scope Span.unknown value |> ignore
+        let ctes = Map.empty<string, (string * SqlSchemaValueKind option) list>
+        let inspect scope value = expression catalog ctes scope Span.unknown value |> ignore
         match document.Statement with
-        | QueryStatement query -> queryTypes catalog None query
+        | QueryStatement query -> queryTypes catalog ctes None query |> ignore
         | InsertStatement insert ->
             let target = namedSource catalog insert.Target None
             match insert.Input with
@@ -332,20 +395,20 @@ module internal RewriteSchemaTypeValidation =
                         List.zip columnTypes values
                         |> List.iter (fun (targetKind, value) ->
                             compatible document.Span targetKind
-                                (expression catalog root Span.unknown value) "INSERT assignment"))
-            | QuerySource query -> queryTypes catalog None query
+                                (expression catalog ctes root Span.unknown value) "INSERT assignment"))
+            | QuerySource query -> queryTypes catalog ctes None query |> ignore
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item ->
                 inspect { root with Sources = [ target ] } item.Expression)
         | UpdateStatement update ->
             let target = namedSource catalog update.Target update.TargetAlias
-            let others = update.From |> List.map (tableSource catalog None)
+            let others = update.From |> List.map (tableSource catalog ctes None)
             let scope = { root with Sources = target :: others }
             let targetScope = { root with Sources = [ target ] }
             update.Assignments |> List.iter (fun item ->
                 compatible document.Span
                     (columnKind catalog targetScope item.Target)
-                    (expression catalog scope Span.unknown item.Value)
+                    (expression catalog ctes scope Span.unknown item.Value)
                     "UPDATE assignment")
             update.Where |> Option.iter (inspect scope)
             update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
@@ -353,7 +416,7 @@ module internal RewriteSchemaTypeValidation =
             let target = namedSource catalog delete.Target delete.TargetAlias
             let scope =
                 { root with
-                    Sources = target :: (delete.Using |> List.map (tableSource catalog None)) }
+                    Sources = target :: (delete.Using |> List.map (tableSource catalog ctes None)) }
             delete.Where |> Option.iter (inspect scope)
             delete.Returning |> List.iter (fun item -> inspect { root with Sources = [ target ] } item.Expression)
         | MergeStatement _ -> () // Name binding already rejects MERGE in strict snapshot mode.
