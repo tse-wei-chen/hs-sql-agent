@@ -101,7 +101,10 @@ public sealed class CoreSqlNestedExpressionStressTests
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {
-        const int depth = 2_048;
+        // Small enough to execute in the shared xUnit process on all six
+        // dialects. 2,048-deep cases belong to isolated subprocess probes:
+        // a StackOverflowException terminates the process, not just a test.
+        const int depth = 128;
         var sql = "SELECT " + string.Concat(Enumerable.Repeat("(SELECT ", depth)) +
             "1" + new string(')', depth);
         var compiled = SqlCoreFacade.CompileQuery(

@@ -86,9 +86,11 @@ published as measured percentages or silently set to 100.
 - [x] Render narrow single-projection nested scalar SELECT wrapper chains in
       linear SQL-string space using an iterative wrapper walk and StringBuilder.
       Preserve parameter ordering, Oracle/Firebird dummy FROM, nontrivial
-      aliases and non-simple query fallback. Add all-six-dialect 2,048-level
-      scalar nesting regressions. Re-measure the previous 85.60 MB allocation
-      baseline before claiming any new result.
+      aliases and non-simple query fallback. Add all-six-dialect 128-level
+      in-process regressions and separate all-six-dialect 2,048-level
+      subprocess probes (Stack Overflow must not kill xUnit). CI prints
+      allocation/exit-status evidence per shape; compare the prior 85.60 MB
+      allocation baseline only after measurement.
 - [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.

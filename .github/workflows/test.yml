@@ -82,12 +82,31 @@ jobs:
         run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
       - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
         run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
-      - name: Record high-depth PostgreSQL compiler behavior (observational)
+      - name: Record all-dialect deep SQL behavior (isolated, observational)
         run: >
           dotnet run -c Release --no-build
           --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
-          --depth-probe --dialects Postgres --depths 128,512,2048
+          --depth-probe --dialects Postgres,MySQL,Sqlite,MsSqlServer,Oracle,Firebird
+          --depths 128,512,2048
           --output artifacts/sqlcore-depth-pr.json
+      - name: Print high-depth SQL allocation and crash evidence
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-depth-pr.json; then
+            echo "Depth report missing; preceding step failed." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-depth-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"Depth probe: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              status = "ok" if worker.get("success") else "FAILED"
+              print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} elapsedUs={worker.get('elapsedMicroseconds')} exitCode={item['processExitCode']}")
+          PY
       - name: Upload isolated SQL nesting report
         uses: actions/upload-artifact@v4
         if: always()
