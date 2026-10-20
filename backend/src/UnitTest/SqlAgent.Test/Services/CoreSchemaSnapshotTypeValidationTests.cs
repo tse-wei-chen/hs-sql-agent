@@ -99,6 +99,26 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         Assert.NotEmpty(command.Sql);
     }
 
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void SchemaBoundDmlFingerprint_IsRecomputableAtPreviewAndCommit(
+        SqlAgentToolType dialect)
+    {
+        var context = Context(dialect, typed: true);
+        var command = SqlCoreFacade.CompileDml(
+            "DELETE FROM users WHERE id = 7", dialect, dialect, context);
+
+        // Preview/commit intentionally compute the fingerprint from the approved command.
+        // The schema proof must not disappear at that boundary.
+        Assert.Equal(
+            command.PlanFingerprint,
+            HsSqlAgent.SqlCore.Core.Execution.DmlFingerprintService.ComputePlanFingerprint(
+                command, context.PolicyVersion));
+        Assert.NotNull(command.CompileEvidence);
+        Assert.Contains(command.CompileEvidence!.Assurances,
+            assurance => assurance.Kind == "sqlcore.schema_snapshot");
+    }
+
     [Fact]
     public void TypeProofChangesAlterPlanAndEvidenceIdentity()
     {
