@@ -60,7 +60,7 @@ public sealed class CoreSchemaSnapshotBindingTests
     {
         var context = Context(dialect);
         var compiled = SqlCoreFacade.CompileQuery(
-            "SELECT u.id, u.name FROM users u WHERE u.active = true",
+            "SELECT u.id, u.name FROM users u WHERE u.id = 7",
             dialect, dialect, context, new SqlExecutionPlanPolicy(10));
         Assert.NotEmpty(compiled.Sql);
         Assert.NotEmpty(compiled.Parameters);
