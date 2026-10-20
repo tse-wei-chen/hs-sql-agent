@@ -179,7 +179,7 @@ internal static class SqlCoreDepthProbe
                 completed,
                 processExitCode = process.ExitCode,
                 wallMilliseconds = Math.Round(wall.Elapsed.TotalMilliseconds, 2),
-                worker = parsedResult?.RootElement,
+                worker = parsedResult?.RootElement.Clone(),
                 processError = succeeded ? null : standardError.Result[..Math.Min(300, standardError.Result.Length)]
             });
             }
