@@ -30,6 +30,9 @@ published as measured percentages or silently set to 100.
 - [x] Add optional immutable portable type metadata with proven incompatible
       comparisons, arithmetic and DML assignment rejection; include schema digest
       in plan/evidence fingerprints.
+- [x] Propagate proven column type families through ordinary CTE and derived
+      projections, sequential CTE references, computed aliases, wildcard ordering,
+      scalar subqueries, and IN subqueries; keep conflicts unproven rather than guessing.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, NATURAL/USING coalescing
       and DML conflict/MERGE key proofs.

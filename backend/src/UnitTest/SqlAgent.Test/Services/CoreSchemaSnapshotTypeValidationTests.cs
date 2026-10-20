@@ -137,6 +137,111 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
             untyped.CompileEvidence!.EvidenceFingerprint);
     }
 
+
+    public static IEnumerable<object[]> TypedProjectionRejections()
+    {
+        foreach (var dialect in Enum.GetValues<SqlAgentToolType>())
+        {
+            yield return new object[]
+            {
+                dialect, "WITH x AS (SELECT id FROM users) SELECT id FROM x WHERE id = 'bad'"
+            };
+            yield return new object[]
+            {
+                dialect, "WITH x(key_id) AS (SELECT id FROM users) SELECT key_id FROM x WHERE key_id = 'bad'"
+            };
+            yield return new object[]
+            {
+                dialect, "WITH x AS (SELECT id AS k FROM users), " +
+                         "y AS (SELECT k FROM x) SELECT k FROM y WHERE k = 'bad'"
+            };
+            yield return new object[]
+            {
+                dialect, "SELECT d.id FROM (SELECT id FROM users) d WHERE d.id = 'bad'"
+            };
+            yield return new object[]
+            {
+                dialect, "SELECT d.computed FROM (SELECT id + 1 AS computed FROM users) d " +
+                         "WHERE d.computed = 'bad'"
+            };
+            yield return new object[]
+            {
+                dialect, "SELECT id FROM users WHERE id IN (SELECT name FROM users)"
+            };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TypedProjectionRejections))]
+    public void TypedCteAndDerivedProjections_RejectIncompatibleOuterPredicates(
+        SqlAgentToolType dialect, string sql)
+    {
+        var exception = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, Context(dialect, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", exception.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.SemanticValidation, exception.Diagnostic?.Stage);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void TypedCteAndDerivedProjections_PreserveValidPredicates(
+        SqlAgentToolType dialect)
+    {
+        var sqls = new[]
+        {
+            "WITH x(k) AS (SELECT id FROM users) SELECT k FROM x WHERE k = 7",
+            "SELECT d.id FROM (SELECT id FROM users) d WHERE d.id = 7",
+            "SELECT d.computed FROM (SELECT id + 1 AS computed FROM users) d WHERE d.computed = 8",
+            "SELECT id FROM users WHERE id IN (SELECT id FROM users)"
+        };
+        foreach (var sql in sqls)
+        {
+            var command = SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, Context(dialect, typed: true),
+                new SqlExecutionPlanPolicy());
+            Assert.NotEmpty(command.Sql);
+        }
+    }
+
+    [Fact]
+    public void PostgreSql_CorrelatedSubqueryAndScalarProjection_CarryColumnTypeProofs()
+    {
+        var snapshot = new SqlSchemaSnapshot(
+            SqlAgentToolType.Postgres, "typed-v2",
+            new[]
+            {
+                SqlSchemaTable.WithTypes("users",
+                    new[]
+                    {
+                        new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("name", SqlSchemaValueKind.Text)
+                    }),
+                SqlSchemaTable.WithTypes("orders",
+                    new[]
+                    {
+                        new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("user_id", SqlSchemaValueKind.Numeric)
+                    })
+            });
+        var context = new SqlPlanValidationContext("typed-v2").WithSchemaSnapshot(snapshot);
+        var statements = new[]
+        {
+            "SELECT id FROM users WHERE id = (SELECT name FROM users)",
+            "SELECT u.id FROM users u WHERE EXISTS " +
+            "(SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.user_id = 'bad')"
+        };
+        foreach (var sql in statements)
+        {
+            var error = Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileQuery(
+                    sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                    context, new SqlExecutionPlanPolicy()));
+            Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+        }
+    }
+
     [Fact]
     public void TypedColumnInputs_AreDefensivelyCopiedAndValidated()
     {
