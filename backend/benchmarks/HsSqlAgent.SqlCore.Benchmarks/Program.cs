@@ -5,6 +5,8 @@ using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 
+if (SqlCoreDepthProbe.TryRun(args)) return;
+
 var options = BenchmarkOptions.Parse(args);
 var cases = new[]
 {

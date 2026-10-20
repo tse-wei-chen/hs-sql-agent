@@ -80,6 +80,8 @@ jobs:
         run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)
         run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
+      - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
+        run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
 
   sqlagent-test:
     runs-on: ubuntu-latest
