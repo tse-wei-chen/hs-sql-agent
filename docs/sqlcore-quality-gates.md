@@ -63,8 +63,12 @@ published as measured percentages or silently set to 100.
       DML capability intersections and affected-row behavior.
 - [ ] Expand capability evidence across temporal arithmetic, UPSERT, joined DML,
       RETURNING/OUTPUT, NULL and collation rules without speculative lowering.
-- [ ] Add resource-exhaustion limits for deeply nested/long SQL; benchmark parse,
-      binding, validation and rendering latency/allocations across input sizes.
+- [x] Add fail-closed lexical budgets before AST allocation:
+      4,194,304 UTF-16 code units per SQL input and 131,072 tokens,
+      with source-span, Lexical-stage typed diagnostics.
+- [ ] Add a bounded AST/parser recursion depth and stage-wise parse,
+      binding, validation and rendering latency/allocation benchmarks across
+      nested and adversarial input sizes.
 - [ ] Collect realistic anonymized application queries and DML scripts as separate
       regression corpora, without lowering the existing generated matrix floors.
 - [ ] Distinguish compile-time SQL-policy proofs from server-time transaction,
