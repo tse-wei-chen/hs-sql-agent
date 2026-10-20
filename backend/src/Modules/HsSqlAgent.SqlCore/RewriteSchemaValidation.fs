@@ -17,7 +17,8 @@ module internal RewriteSchemaValidation =
 
     let private reject code span message : 'T =
         let diagnosticSpan =
-            if Span.isKnown span then SqlDiagnosticSpan(span.Start, span.Length) else null
+            if Span.isKnown span then SqlDiagnosticSpan(span.Start, span.Length)
+            else Unchecked.defaultof<SqlDiagnosticSpan>
         let diagnostic =
             SqlDiagnostic(code, SqlDiagnosticStage.Binding, SqlDiagnosticCategory.Binding, message, diagnosticSpan)
         raise (SqlCompilationException(message, diagnostic))
