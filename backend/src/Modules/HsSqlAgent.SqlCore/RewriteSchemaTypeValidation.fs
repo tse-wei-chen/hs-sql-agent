@@ -176,6 +176,7 @@ module internal RewriteSchemaTypeValidation =
         | _ -> None
 
     let rec private expression catalog ctes scope span expr =
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let evaluate = expression catalog ctes scope Span.unknown
         match expr with
         | Spanned(current, value) -> expression catalog ctes scope current value

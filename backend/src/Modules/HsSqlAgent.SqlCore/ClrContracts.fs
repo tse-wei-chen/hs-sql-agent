@@ -96,6 +96,7 @@ type SqlDiagnosticCategory =
     | Semantic = 4
     | Policy = 5
     | Invariant = 6
+    | Resource = 7
 
 [<Sealed>]
 type SqlDiagnosticSpan(start: int, length: int) =

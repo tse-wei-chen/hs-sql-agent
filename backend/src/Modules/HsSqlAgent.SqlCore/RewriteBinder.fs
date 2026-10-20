@@ -133,6 +133,7 @@ module internal RewriteBinder =
                 invalidOp (context + " references unknown table/alias qualifier '" + qualifier + "'.")
 
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
+        RewriteStackSafety.compile SqlDiagnosticStage.Binding
         match expression with
         | Spanned(span, inner) -> bindExpr scope inner |> Expr.withSpan span
         | Column identifier -> bindColumn scope identifier
@@ -492,6 +493,7 @@ module internal RewriteBinder =
             Having = select.Having |> Option.map (bindExpr scope) }, scope, visibleCtes
 
     and private bindQuery dialect parentScope inheritedCtes (query: Query) : Query =
+        RewriteStackSafety.compile SqlDiagnosticStage.Binding
         let head, headScope, visibleCtes = bindSelect dialect parentScope inheritedCtes query.Head
         let setOperations =
             query.SetOperations

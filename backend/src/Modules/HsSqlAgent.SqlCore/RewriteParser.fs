@@ -682,7 +682,9 @@ module internal RewriteParser =
             | _ -> fail cursor.Current "Invalid local DATETIME literal in CAST"
         | _ -> Cast(expression, target)
 
-    let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
+    let rec private parseExpression (cursor: Cursor) : Expr =
+        RewriteStackSafety.parse cursor.Current.Start
+        parseOr cursor
 
     and private parseOr (cursor: Cursor) =
         let start = cursor.Current.Start
@@ -1961,6 +1963,7 @@ module internal RewriteParser =
         orderBy, limit, offset, fetchPercent, fetchWithTies
 
     and private parseQuery cursor =
+        RewriteStackSafety.parse cursor.Current.Start
         let start = cursor.Current.Start
         let ctes = parseCtes cursor
         let head, top = parseSelectWithCtes cursor ctes

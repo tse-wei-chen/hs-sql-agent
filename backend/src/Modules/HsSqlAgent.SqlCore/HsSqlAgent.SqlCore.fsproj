@@ -44,6 +44,7 @@
     <Compile Include="RuntimeContracts.fs" />
     <Compile Include="RewriteCoreModel.fs" />
     <Compile Include="RewriteTypestate.fs" />
+    <Compile Include="RewriteStackSafety.fs" />
     <Compile Include="RewriteCapabilityProvenance.fs" />
     <Compile Include="RewriteLegacyAstAdapter.fs" />
     <Compile Include="RewriteLexer.fs" />

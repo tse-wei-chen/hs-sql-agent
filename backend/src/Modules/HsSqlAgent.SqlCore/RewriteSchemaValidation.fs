@@ -132,6 +132,7 @@ module internal RewriteSchemaValidation =
         | Some name -> qualifiedSource scope (keyIdentifier catalog.Dialect name) span |> ignore
 
     let rec private expression catalog ctes scope span expr =
+        RewriteStackSafety.compile SqlDiagnosticStage.Binding
         let child = expression catalog ctes scope Span.unknown
         match expr with
         | Spanned(current, value) -> expression catalog ctes scope current value

@@ -255,6 +255,7 @@ module internal RewriteRenderer =
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
     let rec private renderExpr (ctx: RenderContext) expression =
+        RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
         | Expr.Spanned(_, inner) -> renderExpr ctx inner
         | Expr.Column identifier
@@ -1330,6 +1331,7 @@ module internal RewriteRenderer =
             prefix + renderPaging ctx query ordered
 
     and private renderQueryCore (ctx: RenderContext) (query: Query) =
+        RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         if isSetQuery query && hasTail query then renderSetTailWrapper ctx query
         elif ctx.Provider = SqlServer
              && query.Offset |> Option.exists (fun value -> NonNegativeRowCount.value value > 0)
