@@ -624,26 +624,61 @@ type DmlResultRowAssurance private (targetTable: string, operation: DmlOperation
             invalidArg "targetTable" "DML result-row assurance requires a non-empty target table."
         DmlResultRowAssurance(targetTable.Trim(), operation)
 
-/// Host-provided catalog table, with defensive immutable copies of its column inventory.
+/// Portable, opt-in type families, never provider-native SQL type declarations.
+/// Unknown is intentional: name-only catalogs preserve earlier checking behavior.
+type SqlSchemaValueKind =
+    | Unknown = 0
+    | Boolean = 1
+    | Numeric = 2
+    | Text = 3
+    | Temporal = 4
+    | Binary = 5
+    | Json = 6
+
 [<Sealed>]
-type SqlSchemaTable(name: string, columns: IEnumerable<string>) =
+type SqlSchemaColumn(name: string, kind: SqlSchemaValueKind) =
+    do
+        if String.IsNullOrWhiteSpace(name) || name <> name.Trim() then
+            invalidArg "name" "Schema column names must be non-empty and trimmed."
+        if not (Enum.IsDefined(kind)) then
+            invalidArg "kind" "Unknown schema value-kind enum value."
+    member _.Name = name
+    member _.Kind = kind
+
+/// Host-provided immutable catalog table; both typed and legacy name-only paths
+/// take defensive copies, so callers cannot mutate a compilation's proof inputs.
+[<Sealed>]
+type SqlSchemaTable private (name: string, definitions: ImmutableArray<SqlSchemaColumn>) =
     do ArgumentException.ThrowIfNullOrWhiteSpace(name)
-    do ArgumentNullException.ThrowIfNull(columns)
-    let names =
-        columns
-        |> Seq.map (fun column ->
-            if String.IsNullOrWhiteSpace(column) || column <> column.Trim() then
-                invalidArg "columns" "Column names must be non-empty and trimmed."
-            column)
-        |> ImmutableArray.CreateRange<string>
     do
         if name.Split('.') |> Array.exists String.IsNullOrWhiteSpace then
             invalidArg "name" "Table identifier parts must be non-empty."
-        if names.IsEmpty then invalidArg "columns" "Schema tables require at least one column."
-        if (names |> Seq.distinct |> Seq.length) <> names.Length then
+        if definitions.IsDefaultOrEmpty then
+            invalidArg "columns" "Schema tables require at least one column."
+        if definitions |> Seq.exists (fun c -> Object.ReferenceEquals(c, null)) then
+            invalidArg "columns" "Schema columns cannot be null."
+        if (definitions |> Seq.map (fun c -> c.Name) |> Seq.distinct |> Seq.length) <> definitions.Length then
             invalidArg "columns" "Schema tables may not declare duplicate column names."
+
+    let names =
+        definitions |> Seq.map (fun c -> c.Name) |> ImmutableArray.CreateRange<string>
+
+    new(name: string, columns: IEnumerable<string>) =
+        SqlSchemaTable(
+            name,
+            if isNull (box columns) then nullArg "columns"
+            else
+                columns
+                |> Seq.map (fun column -> SqlSchemaColumn(column, SqlSchemaValueKind.Unknown))
+                |> ImmutableArray.CreateRange<SqlSchemaColumn>)
+
+    static member WithTypes(name: string, columns: IEnumerable<SqlSchemaColumn>) =
+        ArgumentNullException.ThrowIfNull(columns)
+        SqlSchemaTable(name, ImmutableArray.CreateRange<SqlSchemaColumn>(columns))
+
     member _.Name = name
     member _.Columns : IReadOnlyList<string> = names
+    member _.TypedColumns : IReadOnlyList<SqlSchemaColumn> = definitions
 
 /// Metadata is copied on construction. Version identifies the supplied snapshot;
 /// it does not imply catalog freshness or transaction-level execution guarantees.
