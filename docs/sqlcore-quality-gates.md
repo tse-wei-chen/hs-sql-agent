@@ -27,8 +27,12 @@ published as measured percentages or silently set to 100.
 
 - [x] Introduce an opt-in immutable metadata snapshot, table/column name resolution,
       ambiguity detection, and strict fail-closed gates for unproven SQL shapes.
-- [ ] Extend schema binding with column types, nullability, expressions/functions,
-      recursive CTE projection, NATURAL/USING coalescing and DML conflict/MERGE key proofs.
+- [x] Add optional immutable portable type metadata with proven incompatible
+      comparisons, arithmetic and DML assignment rejection; include schema digest
+      in plan/evidence fingerprints.
+- [ ] Expand provider-exact type coercions, function overloads, nullability,
+      typed CTE/derived projections, recursive CTE, NATURAL/USING coalescing
+      and DML conflict/MERGE key proofs.
 - [ ] Add provider-backed differential **execution** for each cross-dialect translation that
       claims semantic equivalence. Current differential parity compares compiler versions,
       not execution results of all six providers.

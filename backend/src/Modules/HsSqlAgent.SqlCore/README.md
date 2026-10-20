@@ -141,6 +141,32 @@ The host is responsible for capturing trustworthy catalog metadata and versionin
 Do not treat schema validation as a replacement for runtime DML approval, access control
 or transaction-row verification.
 
+
+### Optional portable type-family proofs
+
+Typed metadata is an additional opt-in contract. Existing `new SqlSchemaTable(name, string[])`
+remains name-only (`Unknown` type family). To validate proven type conflicts:
+
+```csharp
+var typed = SqlSchemaTable.WithTypes(
+    "users",
+    new[] {
+        new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+        new SqlSchemaColumn("name", SqlSchemaValueKind.Text)
+    });
+var typedContext = new SqlPlanValidationContext("strict-v1")
+    .WithSchemaSnapshot(new SqlSchemaSnapshot(
+        SqlAgentToolType.Postgres, "catalog-v1", new[] { typed }));
+```
+
+In typed snapshot mode, the compiler rejects **provably incompatible** comparisons,
+numeric arithmetic, LIKE operands and literal INSERT/UPDATE assignments with
+`SQL_SCHEMA_TYPE_MISMATCH` at `SemanticValidation`.
+Explicitly `Unknown` columns, casts, function results, unproven CTE/derived output types
+and provider-specific implicit coercions are not claimed as proven. This is
+*not* a provider-exact type checker or NULL/collation/overload solver.
+Typed metadata is part of compilation fingerprint and evidence identity.
+
 ## DML predicate safety
 
 With the default DML policy, UPDATE and DELETE require a WHERE clause. The compiler now also
