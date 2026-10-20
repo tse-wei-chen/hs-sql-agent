@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open System.Runtime.CompilerServices
 open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.SqlParsing
 
 /// Last-resort *runtime-adaptive* stack protection, never an arbitrary SQL
 /// nesting-depth cap. Prefer iterative traversal where semantics permit.
