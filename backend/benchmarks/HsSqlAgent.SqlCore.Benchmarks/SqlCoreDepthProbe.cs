@@ -105,6 +105,37 @@ internal static class SqlCoreDepthProbe
         var dialects = smoke
             ? new[] { SqlAgentToolType.Postgres }
             : Enum.GetValues<SqlAgentToolType>();
+
+        // Explicit CLI slices let CI collect high-depth evidence while the
+        // gate remains a fast 8/32-depth smoke. Unknown shapes and dialects
+        // must fail immediately rather than silently measuring the wrong set.
+        var requestedDepths = ReadOption(args, "--depths");
+        if (requestedDepths is not null)
+        {
+            depths = requestedDepths.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => int.Parse(value, System.Globalization.CultureInfo.InvariantCulture))
+                .ToArray();
+            if (depths.Length == 0 || depths.Any(value => value is < 1 or > 4_096))
+                throw new ArgumentOutOfRangeException(nameof(args), "Depths must be 1..4096.");
+        }
+        var requestedDialects = ReadOption(args, "--dialects");
+        if (requestedDialects is not null)
+        {
+            dialects = requestedDialects.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => Enum.Parse<SqlAgentToolType>(value, ignoreCase: true))
+                .ToArray();
+            if (dialects.Length == 0 || dialects.Distinct().Count() != dialects.Length)
+                throw new ArgumentException("Dialects must be non-empty and unique.");
+        }
+        var shapes = Shapes;
+        var requestedShapes = ReadOption(args, "--shapes");
+        if (requestedShapes is not null)
+        {
+            shapes = requestedShapes.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            if (shapes.Length == 0 || shapes.Distinct().Count() != shapes.Length
+                || shapes.Any(value => !Shapes.Contains(value, StringComparer.Ordinal)))
+                throw new ArgumentException("Unknown or repeated depth-probe shape.");
+        }
         var outputIndex = Array.IndexOf(args, "--output");
         var outputPath = outputIndex >= 0 && outputIndex + 1 < args.Length
             ? args[outputIndex + 1]
@@ -112,8 +143,9 @@ internal static class SqlCoreDepthProbe
 
         var observations = new List<object>();
         var failures = 0;
+        var crashesOrTimeouts = 0;
         foreach (var dialect in dialects)
-        foreach (var shape in Shapes)
+        foreach (var shape in shapes)
         foreach (var depth in depths)
         {
             using var process = new Process { StartInfo = NewWorker(shape, depth, dialect) };
@@ -133,6 +165,12 @@ internal static class SqlCoreDepthProbe
             var succeeded = completed && process.ExitCode == 0;
             if (!succeeded) failures++;
             var reported = standardOutput.Result.Trim();
+            var parsedResult = reported.Length > 0
+                ? JsonDocument.Parse(reported)
+                : null;
+            if (!completed || parsedResult is null) crashesOrTimeouts++;
+            using (parsedResult)
+            {
             observations.Add(new
             {
                 dialect = dialect.ToString(),
@@ -141,9 +179,10 @@ internal static class SqlCoreDepthProbe
                 completed,
                 processExitCode = process.ExitCode,
                 wallMilliseconds = Math.Round(wall.Elapsed.TotalMilliseconds, 2),
-                worker = reported.Length > 0 ? reported : null,
+                worker = parsedResult?.RootElement,
                 processError = succeeded ? null : standardError.Result[..Math.Min(300, standardError.Result.Length)]
             });
+            }
         }
 
         var report = JsonSerializer.Serialize(new
@@ -153,6 +192,7 @@ internal static class SqlCoreDepthProbe
             runtimes = dialects.Length,
             samples = observations.Count,
             failures,
+            crashesOrTimeouts,
             stackOverflowOrTimeoutDoesNotCrashParent = true,
             observations
         }, new JsonSerializerOptions { WriteIndented = true });
@@ -171,6 +211,15 @@ internal static class SqlCoreDepthProbe
         if (smoke && failures > 0)
             throw new InvalidOperationException(
                 $"SQL depth smoke probe: {failures} of {observations.Count} child processes failed.");
+    }
+
+    private static string? ReadOption(string[] args, string flag)
+    {
+        var index = Array.IndexOf(args, flag);
+        if (index < 0) return null;
+        if (index + 1 >= args.Length)
+            throw new ArgumentException("Missing value for " + flag);
+        return args[index + 1];
     }
 
     private static ProcessStartInfo NewWorker(string shape, int depth, SqlAgentToolType dialect)

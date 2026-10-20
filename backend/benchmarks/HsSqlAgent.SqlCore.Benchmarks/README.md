@@ -27,6 +27,10 @@ dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks
 The sweep launches a fresh process for each combination of all six dialects,
 four input shapes (pure parenthesis wrappers, nested scalar subqueries,
 prefix-NOT chains, left-deep AND chains), and 8/32/128/512/2048 nesting units.
+For targeted investigation, pass `--dialects Postgres,Sqlite`, 
+`--shapes prefix-not,left-deep-and`, or `--depths 128,512,2048`.
+PR CI additionally records a **non-gating** PostgreSQL 12-case sweep at
+128/512/2048 nesting units and uploads `sqlcore-depth-pr.json` for analysis.
 The subprocess reports compilation latency and current-thread allocations,
 and its parent records process exit status, timeout and wall time.
 

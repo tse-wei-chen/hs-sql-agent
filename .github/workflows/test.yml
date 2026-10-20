@@ -82,6 +82,19 @@ jobs:
         run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
       - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
         run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
+      - name: Record high-depth PostgreSQL compiler behavior (observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres --depths 128,512,2048
+          --output artifacts/sqlcore-depth-pr.json
+      - name: Upload isolated SQL nesting report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sqlcore-depth-pr
+          path: artifacts/sqlcore-depth-pr.json
+          if-no-files-found: warn
 
   sqlagent-test:
     runs-on: ubuntu-latest
