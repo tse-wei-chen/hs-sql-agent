@@ -101,6 +101,22 @@ Oracle 26 joined DELETE participates in the PostgreSQL/SQL Server joined-delete 
 Oracle documents duplicate source matches as deleting each target row once. RETURNING/OUTPUT remains
 independently capability-gated.
 
+
+## DML predicate safety
+
+With the default DML policy, UPDATE and DELETE require a WHERE clause. The compiler now also
+rejects WHERE conditions **provably TRUE for every row**, such as `WHERE 1 = 1`,
+`WHERE 1 = 1 OR id = 5`, and `WHERE NOT (1 = 0)`.
+These denials carry stable Policy-stage diagnostic codes
+`SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE` and
+`SQL_POLICY_DELETE_UNBOUNDED_PREDICATE`. Explicit full-table DML authorization bypasses
+this restriction, while missing-WHERE diagnostics remain unchanged.
+
+This is a conservative proof, **not a completeness claim**: column-dependent tautologies,
+unknown functions, implicit type conversions and collation-sensitive expressions are not
+treated as known constants. Enforcement of per-request DML row counts, previews, approvals,
+permissions, and query resource limits remains the responsibility of the hosting runtime.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and

@@ -43,6 +43,56 @@ module internal RewritePolicy =
         error.Data[diagnosticDataKey] <- diagnostic
         raise error
 
+
+    // A conservative three-valued proof: only expressions that are TRUE for every row
+    // are considered unbounded. Never simplify unknown column comparisons, NULL
+    // semantics, collation-sensitive string comparisons or provider functions here.
+    type private PredicateTruth = AlwaysTrue | AlwaysFalse | UnknownTruth
+
+    let private truth value = if value then AlwaysTrue else AlwaysFalse
+
+    let private literalEquality left right =
+        match Expr.unspan left, Expr.unspan right with
+        | Literal(ScalarValue.Integer x), Literal(ScalarValue.Integer y) -> Some(x = y)
+        | Literal(ScalarValue.Decimal x), Literal(ScalarValue.Decimal y) -> Some(x = y)
+        | Literal(ScalarValue.Boolean x), Literal(ScalarValue.Boolean y) -> Some(x = y)
+        | _ -> None
+
+    let rec private constantPredicate expression =
+        match expression with
+        | Spanned(_, inner) -> constantPredicate inner
+        | Literal(ScalarValue.Boolean value) -> truth value
+        | Unary(UnaryOperator.Not, inner) ->
+            match constantPredicate inner with
+            | AlwaysTrue -> AlwaysFalse
+            | AlwaysFalse -> AlwaysTrue
+            | UnknownTruth -> UnknownTruth
+        | Binary(BinaryOperator.Equal, left, right) ->
+            literalEquality left right |> Option.map truth |> Option.defaultValue UnknownTruth
+        | Binary(BinaryOperator.NotEqual, left, right) ->
+            literalEquality left right |> Option.map (not >> truth) |> Option.defaultValue UnknownTruth
+        | Binary(BinaryOperator.And, left, right) ->
+            match constantPredicate left, constantPredicate right with
+            | AlwaysFalse, _ | _, AlwaysFalse -> AlwaysFalse
+            | AlwaysTrue, AlwaysTrue -> AlwaysTrue
+            | _ -> UnknownTruth
+        | Binary(BinaryOperator.Or, left, right) ->
+            match constantPredicate left, constantPredicate right with
+            | AlwaysTrue, _ | _, AlwaysTrue -> AlwaysTrue
+            | AlwaysFalse, AlwaysFalse -> AlwaysFalse
+            | _ -> UnknownTruth
+        | IsNull(inner, negated) ->
+            match Expr.unspan inner with
+            | Literal ScalarValue.Null -> truth (not negated)
+            | Literal _ -> truth negated
+            | _ -> UnknownTruth
+        | _ -> UnknownTruth
+
+    let private denyUnboundedPredicate code (document: Document) (expression: Expr) =
+        let sourceSpan = Expr.span expression
+        let span = if Span.isKnown sourceSpan then sourceSpan else document.Span
+        deny code span "Security policy requires a selective mutation predicate; this WHERE expression is provably TRUE for every row. Explicit full-table authorization is required."
+
     let private clampQueryLimit span (rowCap: RowCap) (query: Query) =
         match rowCap with
         | Unlimited -> query
@@ -70,10 +120,20 @@ module internal RewritePolicy =
         let statement =
             match document.Statement with
             | QueryStatement query -> QueryStatement(clampQueryLimit document.Span policy.QueryRows query)
-            | UpdateStatement update when update.Where.IsNone && policy.UpdateSafety = RequirePredicate ->
-                deny "SQL_POLICY_UPDATE_REQUIRES_WHERE" document.Span "Security policy denies UPDATE without WHERE."
-            | DeleteStatement delete when delete.Where.IsNone && policy.DeleteSafety = RequirePredicate ->
-                deny "SQL_POLICY_DELETE_REQUIRES_WHERE" document.Span "Security policy denies DELETE without WHERE."
+            | UpdateStatement update when policy.UpdateSafety = RequirePredicate ->
+                match update.Where with
+                | None ->
+                    deny "SQL_POLICY_UPDATE_REQUIRES_WHERE" document.Span "Security policy denies UPDATE without WHERE."
+                | Some expression when constantPredicate expression = AlwaysTrue ->
+                    denyUnboundedPredicate "SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE" document expression
+                | Some _ -> UpdateStatement update
+            | DeleteStatement delete when policy.DeleteSafety = RequirePredicate ->
+                match delete.Where with
+                | None ->
+                    deny "SQL_POLICY_DELETE_REQUIRES_WHERE" document.Span "Security policy denies DELETE without WHERE."
+                | Some expression when constantPredicate expression = AlwaysTrue ->
+                    denyUnboundedPredicate "SQL_POLICY_DELETE_UNBOUNDED_PREDICATE" document expression
+                | Some _ -> DeleteStatement delete
             | statement -> statement
         { document with Statement = statement }
 
