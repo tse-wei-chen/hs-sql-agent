@@ -71,6 +71,9 @@ published as measured percentages or silently set to 100.
       consuming pure wrapper chains in one expression parse. Regression
       coverage includes 2,048 wrappers across six dialects and nested scalar
       subquery / non-redundant arithmetic controls.
+- [x] Reject unbalanced parentheses during lexical scanning rather than
+      recursing through tens of thousands of unmatched opening groups;
+      six-dialect tests assert typed lexical diagnostic codes at 25,000 opens.
 - [ ] Characterize inherently nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.

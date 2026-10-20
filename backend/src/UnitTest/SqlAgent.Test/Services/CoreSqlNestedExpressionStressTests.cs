@@ -1,5 +1,7 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.SqlParsing;
 using HsSqlAgent.SqlCore.Enums;
 using Xunit;
 
@@ -68,14 +70,44 @@ public sealed class CoreSqlNestedExpressionStressTests
         Assert.NotEmpty(compiled.Sql);
     }
 
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void ExcessiveUnmatchedGrouping_FailsLexicallyBeforeParserRecursion(
+        SqlAgentToolType dialect)
+    {
+        // Below the independent SQL source-length and token-count limits,
+        // but large enough to exhaust a naive recursive-descent call stack.
+        var text = "SELECT " + new string('(', 25_000) + "1";
+        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(
+            text, dialect, dialect,
+            new SqlPlanValidationContext("iterative-grouping-v1"),
+            new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic?.Stage);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void ExtraClosingParenthesis_IsRejectedWithTypedLexicalDiagnostic(
+        SqlAgentToolType dialect)
+    {
+        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(
+            "SELECT 1)", dialect, dialect,
+            new SqlPlanValidationContext("iterative-grouping-v1"),
+            new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void UnmatchedGrouping_IsStillRejected()
     {
         const int depth = 128;
         var sql = "SELECT " + new string('(', depth) + "1" + new string(')', depth - 1);
-        Assert.ThrowsAny<Exception>(() => SqlCoreFacade.CompileQuery(
+        var error = Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileQuery(
             sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("iterative-grouping-v1"),
             new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic?.Stage);
     }
 }

@@ -109,8 +109,10 @@ module internal RewriteLexer =
         let length = sql.Length
         let tokens = ResizeArray<Token>()
         let mutable i = 0
+        let mutable groupingDepth = 0
+        let mutable outermostOpen = -1
 
-        let resourceError code message start spanLength : 'T =
+        let lexicalError code message start spanLength : 'T =
             let spanLength = max 1 spanLength
             let detail = message + " Position " + string start + "."
             raise (
@@ -124,7 +126,7 @@ module internal RewriteLexer =
                         SqlDiagnosticSpan(start, spanLength))))
 
         if length > MaxSqlSourceLength then
-            resourceError
+            lexicalError
                 "SQL_LEXICAL_INPUT_LIMIT"
                 ("SQL text exceeds the maximum " + string MaxSqlSourceLength
                  + " UTF-16 code units.")
@@ -132,10 +134,27 @@ module internal RewriteLexer =
 
         let add kind start finish =
             if tokens.Count >= MaxTokens then
-                resourceError
+                lexicalError
                     "SQL_LEXICAL_TOKEN_LIMIT"
                     ("SQL text exceeds the maximum " + string MaxTokens + " lexical tokens.")
                     start (finish - start)
+
+            // A malformed input with tens of thousands of unmatched open
+            // parentheses must never enter recursive-descent parsing.
+            // This is a grammatical balance check, not a depth limit.
+            match kind with
+            | Symbol '(' ->
+                if groupingDepth = 0 then outermostOpen <- start
+                groupingDepth <- groupingDepth + 1
+            | Symbol ')' ->
+                if groupingDepth = 0 then
+                    lexicalError
+                        "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
+                        "Unexpected closing parenthesis without a matching opening parenthesis."
+                        start (finish - start)
+                groupingDepth <- groupingDepth - 1
+            | _ -> ()
+
             tokens.Add({ Kind = kind; Start = start; Length = finish - start })
 
         let parseError message start spanLength : 'T =
@@ -529,6 +548,12 @@ module internal RewriteLexer =
                 | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                 | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                 i <- i + 1
+
+        if groupingDepth <> 0 then
+            lexicalError
+                "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
+                "SQL text ends with an opening parenthesis that has no matching closing parenthesis."
+                outermostOpen 1
 
         tokens.Add({ Kind = End; Start = length; Length = 0 })
         tokens |> Seq.toList
