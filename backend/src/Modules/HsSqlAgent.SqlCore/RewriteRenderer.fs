@@ -354,6 +354,8 @@ module internal RewriteRenderer =
         | Expr.Unary(UnaryOperator.Not, operand) -> "NOT (" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Negate, operand) -> "(-" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
+        | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
+            renderLeftDeepBoolean ctx renderExpr chain
         | Expr.Binary(operator, left, right) ->
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
@@ -471,10 +473,8 @@ module internal RewriteRenderer =
             | Literal(ScalarValue.Boolean false) -> "(1 = 0)"
             | Unary(UnaryOperator.Not, operand) ->
                 "NOT (" + renderPredicate ctx operand + ")"
-            | Binary(BinaryOperator.And, left, right) ->
-                "(" + renderPredicate ctx left + " AND " + renderPredicate ctx right + ")"
-            | Binary(BinaryOperator.Or, left, right) ->
-                "(" + renderPredicate ctx left + " OR " + renderPredicate ctx right + ")"
+            | Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
+                renderLeftDeepBoolean ctx renderPredicate chain
             | SimpleCase(input, branches, fallback) when isBooleanExpression expression ->
                 let cases =
                     branches
@@ -504,6 +504,34 @@ module internal RewriteRenderer =
             | _ -> renderExpr ctx expression
         | PostgreSql | MySql | SQLite | Firebird ->
             renderExpr ctx expression
+
+    // Preserve every original parenthesis and operand's left-to-right
+    // parameter-binding order, but avoid building each intermediate prefix
+    // string on long left-deep AND/OR chains. This is a rendering traversal
+    // optimization, not boolean reassociation or AST canonicalization.
+    and private renderLeftDeepBoolean
+        (ctx: RenderContext)
+        (renderLeaf: RenderContext -> Expr -> string)
+        expression =
+        let operations = ResizeArray<BinaryOperator * Expr>()
+        let mutable current = expression
+        let mutable descending = true
+        while descending do
+            match Expr.unspan current with
+            | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
+                operations.Add(op, right)
+                current <- left
+            | _ -> descending <- false
+
+        let builder = StringBuilder()
+        for _ in 1 .. operations.Count do
+            builder.Append('(') |> ignore
+        builder.Append(renderLeaf ctx current) |> ignore
+        for index = operations.Count - 1 downto 0 do
+            let op, right = operations[index]
+            builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
+            builder.Append(renderLeaf ctx right).Append(')') |> ignore
+        builder.ToString()
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()

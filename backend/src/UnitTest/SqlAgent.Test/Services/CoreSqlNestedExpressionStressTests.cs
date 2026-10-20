@@ -70,6 +70,34 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void BooleanChainRendering_PreservesParenthesizationAndParameterOrder(
+        SqlAgentToolType dialect)
+    {
+        var context = new SqlPlanValidationContext("left-deep-render-v1");
+        string Compile(string sql) => SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql;
+
+        Assert.Equal(
+            Compile("SELECT id FROM users WHERE (id = 7 AND id = 8) AND id = 9"),
+            Compile("SELECT id FROM users WHERE id = 7 AND id = 8 AND id = 9"));
+        Assert.NotEqual(
+            Compile("SELECT id FROM users WHERE (id = 7 OR id = 8) AND id = 9"),
+            Compile("SELECT id FROM users WHERE id = 7 OR id = 8 AND id = 9"));
+
+        // Mixed operators retain the original tree shape and each operand's
+        // binding order without exploiting commutativity or short-circuiting.
+        var sql = "SELECT id FROM users WHERE (id = 7 OR id = 8) AND id = 9";
+        Assert.NotEmpty(Compile(sql));
+        const int depth = 512;
+        var longExpression = string.Join(" AND ",
+            Enumerable.Repeat("id = 7", depth));
+        var longSql = Compile("SELECT id FROM users WHERE " + longExpression);
+        Assert.NotEmpty(longSql);
+        Assert.True(longSql.Length > depth);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void MixedArithmeticGrouping_PreservesPrecedence(
         SqlAgentToolType dialect)
     {

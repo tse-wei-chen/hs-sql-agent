@@ -78,7 +78,12 @@ published as measured percentages or silently set to 100.
 - [x] Reject unbalanced parentheses during lexical scanning rather than
       recursing through tens of thousands of unmatched opening groups;
       six-dialect tests assert typed lexical diagnostic codes at 25,000 opens.
-- [ ] Characterize inherently nested subqueries, expression trees, and AST
+- [x] Eliminate quadratic intermediate SQL string construction in
+      rendering left-deep AND/OR chains with a StringBuilder and iterative
+      left-spine walk. Preserve exact parentheses, source operand order, and
+      parameters without boolean reassociation. Six-dialect regressions cover
+      mixed operator precedence and 512-term chains.
+- [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.
 - [ ] Collect realistic anonymized application queries and DML scripts as separate
