@@ -20,13 +20,15 @@ published as measured percentages or silently set to 100.
 - [x] Reject demonstrably always-true UPDATE/DELETE predicates unless full-table authority is explicit.
 - [x] Add six-dialect regression cases and runtime-boundary diagnostic tests.
 - [x] Add an opt-in, Release-mode compiler performance harness with structured JSON and a PR smoke test.
-- [ ] Verify required CI jobs and any differential-parity job relevant to the PR.
+- [x] Verify first-batch CI jobs, including differential syntax parity, before this round.
+- [ ] Verify CI for the new schema-aware stage.
 
 ## Next implementation gates (not done in this change)
 
-- [ ] Introduce an opt-in immutable schema snapshot from the host and a strict, scoped
-      column/table/type resolver. Avoid relying on unqualified-name heuristics.
-      Keep the compiler driver-free; explicitly distinguish a missing proof from a proven fact.
+- [x] Introduce an opt-in immutable metadata snapshot, table/column name resolution,
+      ambiguity detection, and strict fail-closed gates for unproven SQL shapes.
+- [ ] Extend schema binding with column types, nullability, expressions/functions,
+      recursive CTE projection, NATURAL/USING coalescing and DML conflict/MERGE key proofs.
 - [ ] Add provider-backed differential **execution** for each cross-dialect translation that
       claims semantic equivalence. Current differential parity compares compiler versions,
       not execution results of all six providers.

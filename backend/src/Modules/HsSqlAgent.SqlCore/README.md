@@ -102,6 +102,45 @@ Oracle documents duplicate source matches as deleting each target row once. RETU
 independently capability-gated.
 
 
+## Opt-in metadata-backed column validation
+
+The compiler accepts an immutable, version-labelled, **host-provided** `SqlSchemaSnapshot`.
+It checks physical table existence, qualified/unqualified column references, join predicates,
+ambiguous columns, CTE/derived projections, correlated subqueries, and ordinary
+INSERT/UPDATE/DELETE target columns against that snapshot.
+
+```csharp
+using HsSqlAgent.SqlCore.Core.Pipeline;
+
+var schema = new SqlSchemaSnapshot(
+    SqlAgentToolType.Postgres,
+    "catalog-snapshot-2026-10",
+    new[] {
+        new SqlSchemaTable("public.users", new[] { "id", "name", "active" })
+    });
+var context = new SqlPlanValidationContext("app-policy-v2")
+    .WithSchemaSnapshot(schema);
+var command = SqlCoreFacade.CompileQuery(
+    "SELECT id, name FROM public.users WHERE active = true",
+    SqlAgentToolType.Postgres,
+    SqlAgentToolType.Postgres,
+    context,
+    new SqlExecutionPlanPolicy(100));
+```
+
+Without a snapshot, prior compilation behavior is unchanged. With a snapshot, unverifiable
+shapes (currently recursive CTEs, NATURAL JOIN, MERGE and UPSERT conflict clauses) **fail
+closed**, using typed Binding-stage diagnostics. Missing tables and columns, ambiguous columns
+and unprovable projected column names also fail closed. The input snapshot must use actual
+provider-catalog identifier spelling, including PostgreSQL and Oracle case rules.
+
+This first stage establishes **name-existence** proofs, not a complete type checker:
+function overloads, SQL expression types, NULL behavior, collations, generated columns,
+uniqueness, metadata freshness and execution-time catalog drift are not yet proven.
+The host is responsible for capturing trustworthy catalog metadata and versioning it.
+Do not treat schema validation as a replacement for runtime DML approval, access control
+or transaction-row verification.
+
 ## DML predicate safety
 
 With the default DML policy, UPDATE and DELETE require a WHERE clause. The compiler now also
