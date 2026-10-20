@@ -81,7 +81,7 @@ type DmlFingerprintService private () =
             match schemaDigest with
             | None -> policyVersion
             | Some digest ->
-                if digest.Length <> 64 || digest |> Seq.exists (fun ch -> not (Uri.IsHexDigit ch)) then
+                if digest.Length <> 64 || (digest |> Seq.exists (fun ch -> not (Uri.IsHexDigit ch))) then
                     invalidArg "mutationCommand" "Schema proof SHA-256 must be 64 hex characters."
                 policyVersion + "|schema-sha256=" + digest.ToLowerInvariant()
 
