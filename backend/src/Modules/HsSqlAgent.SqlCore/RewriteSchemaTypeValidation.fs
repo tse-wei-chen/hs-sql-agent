@@ -292,9 +292,15 @@ module internal RewriteSchemaTypeValidation =
         | NamedTable(name, alias) -> namedSource catalog name alias
         | CteTable(name, alias) -> cteSource catalog name alias ctes
         | DerivedTable(query, alias) ->
-            queryTypes catalog ctes None query |> sourceAlias catalog alias
+            queryTypes catalog ctes None query
+            |> List.choose (fun (name, kind) ->
+                name |> Option.map (fun value -> value, kind))
+            |> sourceAlias catalog alias
         | LateralDerivedTable(query, alias) ->
-            queryTypes catalog ctes parent query |> sourceAlias catalog alias
+            queryTypes catalog ctes parent query
+            |> List.choose (fun (name, kind) ->
+                name |> Option.map (fun value -> value, kind))
+            |> sourceAlias catalog alias
 
     and private queryTypes catalog inheritedCtes parent (query: Query) =
         let mutable ctes = inheritedCtes
