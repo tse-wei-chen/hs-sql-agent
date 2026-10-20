@@ -42,9 +42,15 @@ published as measured percentages or silently set to 100.
       scenario (63 compiled executions), comparing ordered rows and NULL
       semantics to a PostgreSQL native baseline.
       CI requires both PostgreSQL and MySQL; local runs explicitly skip if absent.
+- [x] Add transactional real-provider INSERT/UPDATE/DELETE parity for the
+      PostgreSQL / MySQL / SQLite 3x3 source-target matrix: 5 portable DML
+      scenarios x 9 compilation paths (45 executions). Assert affected-row
+      counts, ordered row state, NULL writes, zero-match deletes and rollback.
+      Also verify duplicate-key failure rolls back an earlier statement for
+      all three provider engines.
 - [ ] Extend real-provider differential execution to the remaining three engines,
-      provider versions/session settings, DML affected-row semantics, and capability
-      pairs outside this intentionally small portable SELECT subset.
+      provider versions/session settings, DML capability intersections and
+      affected-row behavior beyond these portable fixtures.
 - [ ] Expand capability evidence across temporal arithmetic, UPSERT, joined DML,
       RETURNING/OUTPUT, NULL and collation rules without speculative lowering.
 - [ ] Add resource-exhaustion limits for deeply nested/long SQL; benchmark parse,
