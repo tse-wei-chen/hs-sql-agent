@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
@@ -57,6 +59,60 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     // Retained only so existing provider subclasses do not need unrelated test-hook churn in this
     // strangler step. No shared test invokes the legacy DML compatibility surface.
     protected abstract DmlDefinition CreateInsertDml();
+
+
+    [Fact]
+    public virtual async Task SqlCore_NativeTypedSchemaQuery_ExecutesAgainstProviderDatabase()
+    {
+        // Reuses each provider's existing seeded fixture, including SQL Server,
+        // Oracle and Firebird Testcontainers, instead of starting extra servers.
+        var provider = Strategy.DbType;
+        string CatalogName(string identifier) => provider switch
+        {
+            SqlAgentToolType.Postgres => identifier.ToLowerInvariant(),
+            SqlAgentToolType.Oracle or SqlAgentToolType.Firebird =>
+                identifier.ToUpperInvariant(),
+            _ => identifier
+        };
+
+        var id = TestUserIdColumn;
+        var name = TestUserNameColumn;
+        var sql = $"SELECT {id}, {name} FROM {TestTableName} ORDER BY {id}";
+        var snapshot = new SqlSchemaSnapshot(
+            provider,
+            "provider-native-execution-v1",
+            [
+                SqlSchemaTable.WithTypes(
+                    CatalogName(TestTableName),
+                    [
+                        new SqlSchemaColumn(
+                            CatalogName(id), SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn(
+                            CatalogName(name), SqlSchemaValueKind.Text)
+                    ])
+            ]);
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, provider, provider,
+            new SqlPlanValidationContext("native-execution-v1")
+                .WithSchemaSnapshot(snapshot),
+            new SqlExecutionPlanPolicy(0));
+        Assert.Empty(compiled.Parameters);
+
+        await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = compiled.Sql;
+        await using var reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var names = new List<string>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            Assert.False(reader.IsDBNull(1));
+            names.Add(reader.GetString(1));
+        }
+
+        Assert.Equal(new[] { "Alice", "Bob", "Charlie" }, names);
+    }
 
     [Fact]
     public virtual async Task GetTablesAsync_ShouldReturnTables()

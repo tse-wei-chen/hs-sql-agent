@@ -48,6 +48,11 @@ published as measured percentages or silently set to 100.
       counts, ordered row state, NULL writes, zero-match deletes and rollback.
       Also verify duplicate-key failure rolls back an earlier statement for
       all three provider engines.
+- [x] Add typed-schema SqlCore native compile + actual execution assertions to
+      the shared strategy integration fixture. This exercises PostgreSQL,
+      MySQL, SQLite, SQL Server 2022, Oracle XE 21, and Firebird using their
+      existing databases without launching duplicate fixtures. Native execution
+      is **not** evidence of cross-dialect equivalence.
 - [ ] Extend real-provider differential execution to the remaining three engines,
       provider versions/session settings, DML capability intersections and
       affected-row behavior beyond these portable fixtures.
