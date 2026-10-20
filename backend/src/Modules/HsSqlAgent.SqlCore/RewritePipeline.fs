@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.RewriteParser
@@ -64,14 +65,16 @@ module internal RewritePipeline =
               Target: VerifiedTarget
               ConflictProofs: ConflictProofs
               Policy: ExecutionPolicy
-              AllowedTables: string list option }
+              AllowedTables: string list option
+              SchemaSnapshot: SqlSchemaSnapshot option }
 
-    let internal createOptions source target conflictProofs policy allowedTables =
+    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) =
         { Source = source
           Target = target
           ConflictProofs = conflictProofs
           Policy = policy
-          AllowedTables = allowedTables }
+          AllowedTables = allowedTables
+          SchemaSnapshot = Option.ofObj schemaSnapshot }
 
     let private sourceProvider = function
         | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
@@ -116,7 +119,10 @@ module internal RewritePipeline =
             options.Source
             |> VerifiedSource.dialect
             |> sourceProvider
-        parsed |> RewriteBinder.bind sourceProviderType
+        let bound = parsed |> RewriteBinder.bind sourceProviderType
+        match options.SchemaSnapshot with
+        | None -> bound
+        | Some snapshot -> RewriteSchemaValidation.verify sourceProviderType snapshot bound
 
     let private finishBound options bound =
         let source = options.Source

@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
