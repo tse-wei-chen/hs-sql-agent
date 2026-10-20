@@ -38,6 +38,38 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void LongNotChains_CompileToThreeValuedLogicEquivalentPredicates(
+        SqlAgentToolType dialect)
+    {
+        var context = new SqlPlanValidationContext("iterative-not-v1");
+        const int depth = 2_048;
+
+        string Compile(string predicate) =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM users WHERE " + predicate,
+                dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql;
+
+        var basePredicate = Compile("id = 7");
+        var oddPredicate = Compile("NOT id = 7");
+
+        // The same equivalence holds for UNKNOWN: NOT NOT UNKNOWN = UNKNOWN.
+        Assert.Equal(
+            basePredicate,
+            Compile(string.Concat(Enumerable.Repeat("NOT ", depth)) + "id = 7"));
+        Assert.Equal(
+            oddPredicate,
+            Compile(string.Concat(Enumerable.Repeat("NOT ", depth + 1)) + "id = 7"));
+
+        Assert.Equal(
+            Compile("id IS NULL"),
+            Compile("NOT NOT id IS NULL"));
+        Assert.Equal(
+            Compile("NOT (id = 7 OR id = 8)"),
+            Compile("NOT NOT NOT (id = 7 OR id = 8)"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void MixedArithmeticGrouping_PreservesPrecedence(
         SqlAgentToolType dialect)
     {

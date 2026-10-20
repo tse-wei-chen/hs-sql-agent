@@ -66,6 +66,10 @@ published as measured percentages or silently set to 100.
 - [x] Add fail-closed lexical budgets before AST allocation:
       4,194,304 UTF-16 code units per SQL input and 131,072 tokens,
       with source-span, Lexical-stage typed diagnostics.
+- [x] Parse arbitrary prefix-NOT chains iteratively and canonicalize
+      double-negation with a SQL three-valued-logic proof, retaining UNKNOWN
+      semantics and source spans. Six-dialect tests cover 2,049 prefixes,
+      null checks, and nested AND/OR predicates.
 - [x] Eliminate recursive Parser calls for structurally redundant grouping
       parentheses by precomputing matching delimiters iteratively and
       consuming pure wrapper chains in one expression parse. Regression

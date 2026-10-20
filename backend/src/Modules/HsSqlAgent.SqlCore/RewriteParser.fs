@@ -698,10 +698,18 @@ module internal RewriteParser =
 
     and private parseNot (cursor: Cursor) =
         let start = cursor.Current.Start
-        if acceptKeyword "NOT" cursor then
-            Unary(UnaryOperator.Not, parseNot cursor) |> markExpr start cursor
-        else
-            parseComparison cursor
+        let mutable negations = 0
+        while acceptKeyword "NOT" cursor do
+            negations <- negations + 1
+
+        let predicate = parseComparison cursor
+        // SQL three-valued logic obeys NOT (NOT x) = x, including UNKNOWN.
+        // Collapsing an even prefix chain avoids both recursive parser calls
+        // and an arbitrarily deep Unary AST that Binder/Renderer must traverse.
+        // Preserve the complete source span for diagnostics and inspection.
+        if negations = 0 then predicate
+        elif negations % 2 = 0 then markExpr start cursor predicate
+        else Unary(UnaryOperator.Not, predicate) |> markExpr start cursor
 
     and private parseComparison (cursor: Cursor) =
         let start = cursor.Current.Start
