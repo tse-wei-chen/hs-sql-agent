@@ -647,6 +647,38 @@ module internal RewriteFacadeAdapter =
             allowed
             schemaSnapshot
 
+
+    // Hash actual immutable schema metadata, not only its host-provided version.
+    // Distinct schema proofs must never share a DML authorization/cache plan identity.
+    let private schemaDigest (snapshot: SqlSchemaSnapshot | null) =
+        match snapshot with
+        | null -> None
+        | value ->
+            let builder = StringBuilder()
+            let append (text: string) =
+                builder.Append(text.Length).Append(':').Append(text).Append(';') |> ignore
+            append "sqlcore-schema-v1"
+            append (string value.Provider)
+            append value.Version
+            value.Tables
+            |> Seq.sortWith (fun a b -> StringComparer.Ordinal.Compare(a.Name, b.Name))
+            |> Seq.iter (fun table ->
+                append table.Name
+                append (string table.Columns.Count)
+                table.Columns
+                |> Seq.sortWith StringComparer.Ordinal.Compare
+                |> Seq.iter append)
+            builder.ToString()
+            |> Encoding.UTF8.GetBytes
+            |> SHA256.HashData
+            |> Convert.ToHexString
+            |> fun digest -> Some(digest.ToLowerInvariant())
+
+    let private fingerprintPolicyVersion policyVersion schema =
+        match schemaDigest schema with
+        | None -> policyVersion
+        | Some digest -> policyVersion + "|schema-sha256=" + digest
+
     let private compileEvidenceContext
         source
         target
@@ -656,7 +688,8 @@ module internal RewriteFacadeAdapter =
         resultRowAssurance
         policyVersion
         (policy: RewritePolicy.ExecutionPolicy)
-        allowed =
+        allowed
+        schemaSnapshot =
 
         CompileEvidenceBuilder.create
             source
@@ -670,6 +703,7 @@ module internal RewriteFacadeAdapter =
             (not policy.AllowUnboundedUpdate)
             (not policy.AllowUnboundedDelete)
             allowed
+            (schemaDigest schemaSnapshot)
 
     let private run (options: RewritePipeline.CompileOptions) (sql: string) =
         try
@@ -695,12 +729,12 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private buildTranslatedCommand evidenceContext target policyVersion (parsed: ParsedSql) (rendered: RenderedCommand) =
+    let private buildTranslatedCommand evidenceContext target policyVersion schemaSnapshot (parsed: ParsedSql) (rendered: RenderedCommand) =
         let parameterValues = parameters target rendered.Parameters
         let kind = RewriteCompatibilityAstAdapter.kind parsed
         let command =
             CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, fingerprintPolicyVersion policyVersion schemaSnapshot)
         let evidence =
             CompileEvidenceBuilder.build
                 evidenceContext
@@ -723,6 +757,7 @@ module internal RewriteFacadeAdapter =
                 policyVersion
                 policy
                 allowed
+                schemaSnapshot
         try
             let parsed, rendered =
                 run
@@ -738,7 +773,7 @@ module internal RewriteFacadeAdapter =
                         allowed
                         schemaSnapshot)
                     sql
-            buildTranslatedCommand evidenceContext target policyVersion parsed rendered
+            buildTranslatedCommand evidenceContext target policyVersion schemaSnapshot parsed rendered
         with ex ->
             attachRejectedEvidence evidenceContext ex
             reraise()
@@ -766,14 +801,14 @@ module internal RewriteFacadeAdapter =
         let queryExecutionPolicy = queryPolicy executionPolicy.QueryMaxRows
         let allowed = allowedTables validationContext.AllowedTables
         let evidenceContext =
-            compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed
+            compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed validationContext.SchemaSnapshot
         try
             let parsed, facts, rendered =
                 runWithQueryFacts
                     (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed validationContext.SchemaSnapshot)
                     sql
             let command =
-                buildTranslatedCommand evidenceContext target validationContext.PolicyVersion parsed rendered
+                buildTranslatedCommand evidenceContext target validationContext.PolicyVersion validationContext.SchemaSnapshot parsed rendered
             if command.Kind <> SqlStatementKind.Query then
                 let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
                 attachReclassifiedEvidence command SqlCompileDecisionBoundary.InputValidation "SQL_API_STATEMENT_KIND_MISMATCH" error
@@ -844,6 +879,7 @@ module internal RewriteFacadeAdapter =
                 policyVersion
                 policy
                 allowed
+                schemaSnapshot
         try
             if parsed.EnforceSourceDialectSyntax then
                 match parsed.RawSql with
@@ -872,7 +908,7 @@ module internal RewriteFacadeAdapter =
             let kind = legacyKind parsed.Statement
             let parameterValues = parameters target rendered.Parameters
             let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, fingerprintPolicyVersion policyVersion schemaSnapshot)
             let evidence =
                 CompileEvidenceBuilder.build
                     evidenceContext

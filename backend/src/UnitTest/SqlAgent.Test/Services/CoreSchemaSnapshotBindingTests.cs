@@ -162,6 +162,48 @@ public sealed class CoreSchemaSnapshotBindingTests
     }
 
     [Fact]
+    public void SnapshotContentAndVersion_AreBoundToPlanAndEvidenceFingerprints()
+    {
+        static SqlPlanValidationContext WithSchema(string version, params string[] columnNames) =>
+            new SqlPlanValidationContext("same-policy-v1").WithSchemaSnapshot(
+                new SqlSchemaSnapshot(SqlAgentToolType.Postgres, version, new[]
+                {
+                    new SqlSchemaTable("users", columnNames)
+                }));
+
+        static CompiledSqlCommand Compile(SqlPlanValidationContext context) =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM users", SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy(10));
+
+        var baseline = Compile(WithSchema("v1", "id", "name"));
+        var reordered = Compile(WithSchema("v1", "name", "id"));
+        var revisedColumns = Compile(WithSchema("v1", "id", "status"));
+        var revisedVersion = Compile(WithSchema("v2", "id", "name"));
+
+        Assert.Equal(baseline.PlanFingerprint, reordered.PlanFingerprint);
+        Assert.NotEqual(baseline.PlanFingerprint, revisedColumns.PlanFingerprint);
+        Assert.NotEqual(baseline.PlanFingerprint, revisedVersion.PlanFingerprint);
+        Assert.NotNull(baseline.CompileEvidence);
+        Assert.Equal(baseline.CompileEvidence!.EvidenceFingerprint,
+            reordered.CompileEvidence!.EvidenceFingerprint);
+        Assert.NotEqual(baseline.CompileEvidence.EvidenceFingerprint,
+            revisedColumns.CompileEvidence!.EvidenceFingerprint);
+        Assert.NotEqual(baseline.CompileEvidence.EvidenceFingerprint,
+            revisedVersion.CompileEvidence!.EvidenceFingerprint);
+
+        var baselineDml = SqlCoreFacade.CompileDml(
+            "DELETE FROM users WHERE id = 7",
+            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            WithSchema("v1", "id", "name"));
+        var revisedDml = SqlCoreFacade.CompileDml(
+            "DELETE FROM users WHERE id = 7",
+            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            WithSchema("v2", "id", "name"));
+        Assert.NotEqual(baselineDml.PlanFingerprint, revisedDml.PlanFingerprint);
+    }
+
+    [Fact]
     public void SnapshotCopiesInputColumnsAndRejectsWrongDialect()
     {
         var cols = new List<string> { "id" };
