@@ -83,6 +83,12 @@ published as measured percentages or silently set to 100.
       left-spine walk. Preserve exact parentheses, source operand order, and
       parameters without boolean reassociation. Six-dialect regressions cover
       mixed operator precedence and 512-term chains.
+- [x] Render narrow single-projection nested scalar SELECT wrapper chains in
+      linear SQL-string space using an iterative wrapper walk and StringBuilder.
+      Preserve parameter ordering, Oracle/Firebird dummy FROM, nontrivial
+      aliases and non-simple query fallback. Add all-six-dialect 2,048-level
+      scalar nesting regressions. Re-measure the previous 85.60 MB allocation
+      baseline before claiming any new result.
 - [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.

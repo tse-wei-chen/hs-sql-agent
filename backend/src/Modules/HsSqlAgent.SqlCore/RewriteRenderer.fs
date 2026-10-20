@@ -460,7 +460,49 @@ module internal RewriteRenderer =
             + renderSubquery ctx query + "))"
         | Expr.Between(value, lower, upper, negated) -> "(" + renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper + ")"
         | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
-        | Expr.ScalarSubquery query -> "(" + renderSubquery ctx query + ")"
+        | Expr.ScalarSubquery query ->
+            // Materializing the entire inner SELECT at every level was O(n^2)
+            // in SQL-string allocations for a pure nested scalar SELECT chain.
+            // Preserve provider-specific dummy FROM and bind the innermost
+            // literal exactly once, without changing any expression order.
+            let mutable current = query
+            let mutable wrappers = 0
+            let mutable scanning = true
+            while scanning do
+                let head = current.Head
+                let simple =
+                    head.Ctes.IsEmpty
+                    && head.DistinctMode = SelectDistinct.AllRows
+                    && head.From.IsNone && head.Joins.IsEmpty
+                    && head.Where.IsNone && head.GroupBy.IsEmpty
+                    && head.Having.IsNone
+                    && current.SetOperations.IsEmpty && not (hasTail current)
+                if not simple then scanning <- false
+                else
+                    match head.Projection with
+                    | [ { Alias = None; Expression = value } ] ->
+                        match Expr.unspan value with
+                        | Expr.ScalarSubquery child ->
+                            wrappers <- wrappers + 1
+                            current <- child
+                        | _ -> scanning <- false
+                    | _ -> scanning <- false
+
+            if wrappers = 0 then "(" + renderSubquery ctx query + ")"
+            else
+                let dummySource =
+                    match ctx.Provider with
+                    | Oracle -> " FROM DUAL"
+                    | Firebird -> " FROM RDB$DATABASE"
+                    | _ -> ""
+                let builder = StringBuilder()
+                builder.Append('(') |> ignore
+                for _ in 1 .. wrappers do builder.Append("SELECT (") |> ignore
+                builder.Append(renderSubquery ctx current) |> ignore
+                for _ in 1 .. wrappers do
+                    builder.Append(')').Append(dummySource) |> ignore
+                builder.Append(')') |> ignore
+                builder.ToString()
         | Expr.Exists(query, negated) ->
             (if negated then "NOT EXISTS (" else "EXISTS (") + renderSubquery ctx query + ")"
 

@@ -98,6 +98,47 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 2_048;
+        var sql = "SELECT " + string.Concat(Enumerable.Repeat("(SELECT ", depth)) +
+            "1" + new string(')', depth);
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("nested-scalar-render-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+        Assert.Single(compiled.Parameters);
+        Assert.Equal(depth + 1, compiled.Sql.Split("SELECT ", StringSplitOptions.None).Length - 1);
+        Assert.True(compiled.Sql.Length > depth * 7);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void ScalarSubqueryWrappers_PreserveProjectionAliasesAndBindingOrder(
+        SqlAgentToolType dialect)
+    {
+        var context = new SqlPlanValidationContext("nested-scalar-render-v1");
+        string Compile(string sql) =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql;
+
+        Assert.NotEqual(
+            Compile("SELECT (SELECT 1)"),
+            Compile("SELECT (SELECT 1 AS inner_value)"));
+        Assert.NotEqual(
+            Compile("SELECT (SELECT 1)"),
+            Compile("SELECT (SELECT 1) AS outer_value"));
+
+        var pair = SqlCoreFacade.CompileQuery(
+            "SELECT (SELECT 1), (SELECT 2)",
+            dialect, dialect, context, new SqlExecutionPlanPolicy());
+        Assert.Equal(2, pair.Parameters.Length);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void MixedArithmeticGrouping_PreservesPrecedence(
         SqlAgentToolType dialect)
     {
