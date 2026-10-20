@@ -53,9 +53,14 @@ published as measured percentages or silently set to 100.
       MySQL, SQLite, SQL Server 2022, Oracle XE 21, and Firebird using their
       existing databases without launching duplicate fixtures. Native execution
       is **not** evidence of cross-dialect equivalence.
-- [ ] Extend real-provider differential execution to the remaining three engines,
-      provider versions/session settings, DML capability intersections and
-      affected-row behavior beyond these portable fixtures.
+- [x] Add six-source × six-target real-provider executions for four
+      narrowly portable literal-free SELECT shapes, reusing existing
+      PostgreSQL, MySQL, SQLite, SQL Server, Oracle and Firebird fixtures:
+      144 cross-dialect executions, deterministic row-order/value assertions.
+      Not a claim of complete six-provider semantic equivalence.
+- [ ] Extend real-provider differential execution beyond the narrow six-provider
+      intersection: provider versions/session settings, parameter binding,
+      DML capability intersections and affected-row behavior.
 - [ ] Expand capability evidence across temporal arithmetic, UPSERT, joined DML,
       RETURNING/OUTPUT, NULL and collation rules without speculative lowering.
 - [ ] Add resource-exhaustion limits for deeply nested/long SQL; benchmark parse,

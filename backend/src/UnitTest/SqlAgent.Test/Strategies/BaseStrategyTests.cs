@@ -115,6 +115,90 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     [Fact]
+    public virtual async Task SqlCore_AllSixSourceDialects_ExecutePortableQueriesOnProvider()
+    {
+        // Every existing real-provider fixture supplies one target; running all
+        // six sources in this shared base covers all 36 source/target pairs.
+        // These are narrowly portable, literal-free queries: no unproven
+        // collation, parameter conventions or provider-specific coercion claims.
+        var target = Strategy.DbType;
+        var sources = new[]
+        {
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Sqlite,
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Oracle,
+            SqlAgentToolType.Firebird
+        };
+
+        string CatalogName(SqlAgentToolType dialect, string value) => dialect switch
+        {
+            SqlAgentToolType.Postgres => value.ToLowerInvariant(),
+            SqlAgentToolType.Oracle or SqlAgentToolType.Firebird => value.ToUpperInvariant(),
+            _ => value
+        };
+
+        var id = TestUserIdColumn;
+        var name = TestUserNameColumn;
+        var table = TestTableName;
+        var cases = new (string Sql, string[] ExpectedNames)[]
+        {
+            ($"SELECT {id}, {name} FROM {table} ORDER BY {id}",
+                ["Alice", "Bob", "Charlie"]),
+            ($"SELECT {id}, {name} FROM {table} ORDER BY {id} DESC",
+                ["Charlie", "Bob", "Alice"]),
+            ($"WITH scoped AS (SELECT {id}, {name} FROM {table}) " +
+                $"SELECT {id}, {name} FROM scoped ORDER BY {id}",
+                ["Alice", "Bob", "Charlie"]),
+            ($"SELECT {id}, {name} FROM {table} WHERE {name} IS NOT NULL ORDER BY {id}",
+                ["Alice", "Bob", "Charlie"])
+        };
+
+        await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        var assertions = 0;
+        foreach (var source in sources)
+        {
+            var snapshot = new SqlSchemaSnapshot(
+                source, "six-dialect-native-data-v1",
+                [
+                    SqlSchemaTable.WithTypes(CatalogName(source, table),
+                    [
+                        new SqlSchemaColumn(CatalogName(source, id), SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn(CatalogName(source, name), SqlSchemaValueKind.Text)
+                    ])
+                ]);
+            var context = new SqlPlanValidationContext("six-provider-execution-v1")
+                .WithSchemaSnapshot(snapshot);
+
+            foreach (var (sql, expectedNames) in cases)
+            {
+                var compiled = SqlCoreFacade.CompileQuery(
+                    sql, source, target, context, new SqlExecutionPlanPolicy(0));
+
+                // This first six-by-six intersection deliberately has no SQL
+                // parameters. Parameterized cases need separate provider rules.
+                Assert.Empty(compiled.Parameters);
+                await using var command = connection.CreateCommand();
+                command.CommandText = compiled.Sql;
+                await using var reader = await command.ExecuteReaderAsync(
+                    TestContext.Current.CancellationToken);
+                var actual = new List<string>();
+                while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+                {
+                    Assert.False(reader.IsDBNull(1));
+                    actual.Add(reader.GetString(1));
+                }
+                Assert.Equal(expectedNames, actual);
+                assertions++;
+            }
+        }
+        Assert.Equal(24, assertions); // per provider fixture: 6 sources x 4 shapes
+    }
+
+    [Fact]
     public virtual async Task GetTablesAsync_ShouldReturnTables()
     {
         var tables = await Strategy.GetTablesAsync(
