@@ -66,9 +66,14 @@ published as measured percentages or silently set to 100.
 - [x] Add fail-closed lexical budgets before AST allocation:
       4,194,304 UTF-16 code units per SQL input and 131,072 tokens,
       with source-span, Lexical-stage typed diagnostics.
-- [ ] Add a bounded AST/parser recursion depth and stage-wise parse,
-      binding, validation and rendering latency/allocation benchmarks across
-      nested and adversarial input sizes.
+- [x] Eliminate recursive Parser calls for structurally redundant grouping
+      parentheses by precomputing matching delimiters iteratively and
+      consuming pure wrapper chains in one expression parse. Regression
+      coverage includes 2,048 wrappers across six dialects and nested scalar
+      subquery / non-redundant arithmetic controls.
+- [ ] Characterize inherently nested subqueries, expression trees, and AST
+      traversals with isolated subprocess probes and stage-wise measurements
+      before choosing any recursion budget.
 - [ ] Collect realistic anonymized application queries and DML scripts as separate
       regression corpora, without lowering the existing generated matrix floors.
 - [ ] Distinguish compile-time SQL-policy proofs from server-time transaction,
