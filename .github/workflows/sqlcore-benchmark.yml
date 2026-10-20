@@ -11,6 +11,11 @@ on:
         description: "Warmup compilations per case (0..100000)"
         required: true
         default: "100"
+      depth_probe:
+        description: "Run isolated deep-SQL process probes (observational, not a release gate)"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,8 +36,15 @@ jobs:
         run: |
           dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- \
             --iterations "$ITERATIONS" --warmup "$WARMUP" --output artifacts/sqlcore-perf.json
+      - name: Measure deep SQL in isolated subprocesses
+        if: inputs.depth_probe == true
+        run: |
+          dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- \
+            --depth-probe --output artifacts/sqlcore-depth.json
       - uses: actions/upload-artifact@v4
         with:
           name: sqlcore-perf
-          path: artifacts/sqlcore-perf.json
+          path: |
+            artifacts/sqlcore-perf.json
+            artifacts/sqlcore-depth.json
           if-no-files-found: error

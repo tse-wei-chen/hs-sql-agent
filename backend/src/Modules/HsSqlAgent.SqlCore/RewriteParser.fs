@@ -119,15 +119,19 @@ module internal RewriteParser =
         // Pair delimiters once, in linear time and with an explicit heap stack.
         // Used only to elide redundant grouping parentheses, never to change
         // SELECT subquery, function-call or operator precedence semantics.
-        let matchingClose = Array.create data.Length -1
-        do
+        // Most SQL never needs grouping-chain analysis. Build the delimiter
+        // index lazily so ordinary SELECT/DML hot paths avoid the extra
+        // O(token count) pass and matching-table allocations entirely.
+        let matchingClose = lazy (
+            let positions = Array.create data.Length -1
             let pending = System.Collections.Generic.Stack<int>()
             for position = 0 to data.Length - 1 do
                 match data[position].Kind with
                 | Symbol '(' -> pending.Push(position)
                 | Symbol ')' when pending.Count > 0 ->
-                    matchingClose[pending.Pop()] <- position
+                    positions[pending.Pop()] <- position
                 | _ -> ()
+            positions)
 
         member _.Current = data[index]
 
@@ -142,7 +146,7 @@ module internal RewriteParser =
                     match data[next].Kind with
                     | Keyword "SELECT" | Keyword "WITH" -> true
                     | _ -> false
-                let close = matchingClose[opening]
+                let close = matchingClose.Value[opening]
                 if data[opening].Kind <> Symbol '('
                    || subquery
                    || close < 0
