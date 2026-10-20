@@ -107,12 +107,33 @@ jobs:
               status = "ok" if worker.get("success") else "FAILED"
               print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} elapsedUs={worker.get('elapsedMicroseconds')} exitCode={item['processExitCode']}")
           PY
+      - name: Measure constrained-stack SQL compilation (observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres,MsSqlServer,Oracle,Firebird
+          --shapes nested-scalar-subquery,left-deep-and
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-small-stack-pr.json
+      - name: Summarize constrained-stack resource diagnostics
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-small-stack-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"Constrained-stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} exit={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
+          PY
       - name: Upload isolated SQL nesting report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sqlcore-depth-pr
-          path: artifacts/sqlcore-depth-pr.json
+          path: |
+            artifacts/sqlcore-depth-pr.json
+            artifacts/sqlcore-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

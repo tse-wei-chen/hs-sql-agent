@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text.Json;
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.SqlParsing;
 using HsSqlAgent.SqlCore.Enums;
 
 /// <summary>
@@ -33,11 +35,23 @@ internal static class SqlCoreDepthProbe
 
     private static void RunWorker(string[] args)
     {
-        if (args.Length != 4 || !int.TryParse(args[2], out var depth) ||
+        if ((args.Length != 4 && args.Length != 6) ||
+            !int.TryParse(args[2], out var depth) ||
             depth is < 1 or > 4_096 ||
             !Enum.TryParse<SqlAgentToolType>(args[3], out var dialect))
         {
-            throw new ArgumentException("Worker args: --depth-probe-worker <shape> <depth> <dialect>");
+            throw new ArgumentException(
+                "Worker args: --depth-probe-worker <shape> <depth> <dialect> [--stack-bytes N]");
+        }
+
+        int? stackBytes = null;
+        if (args.Length == 6)
+        {
+            if (args[4] != "--stack-bytes" ||
+                !int.TryParse(args[5], out var parsedStack) ||
+                parsedStack is < 262_144 or > 16_777_216)
+                throw new ArgumentException("Managed worker stack must be 262144..16777216 bytes.");
+            stackBytes = parsedStack;
         }
 
         var shape = args[1];
@@ -57,45 +71,74 @@ internal static class SqlCoreDepthProbe
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
 
-        var stopwatch = Stopwatch.StartNew();
-        var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
-        try
+        string? report = null;
+        var exitCode = 0;
+        void CompileOnThisThread()
         {
-            var command = SqlCoreFacade.CompileQuery(
-                query, dialect, dialect,
-                new SqlPlanValidationContext("depth-probe-v1"),
-                new SqlExecutionPlanPolicy());
-            stopwatch.Stop();
-            Console.WriteLine(JsonSerializer.Serialize(new
+            var stopwatch = Stopwatch.StartNew();
+            var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+            try
             {
-                success = true,
-                shape,
-                dialect = dialect.ToString(),
-                depth,
-                sqlChars = query.Length,
-                elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
-                allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
-                renderedChars = command.Sql.Length,
-                error = (string?)null
-            }));
+                var compiled = SqlCoreFacade.CompileQuery(
+                    query, dialect, dialect,
+                    new SqlPlanValidationContext("depth-probe-v1"),
+                    new SqlExecutionPlanPolicy());
+                stopwatch.Stop();
+                report = JsonSerializer.Serialize(new
+                {
+                    success = true,
+                    shape,
+                    dialect = dialect.ToString(),
+                    depth,
+                    stackBytes,
+                    sqlChars = query.Length,
+                    elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
+                    allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
+                    renderedChars = compiled.Sql.Length,
+                    diagnosticCode = (string?)null,
+                    error = (string?)null
+                });
+            }
+            catch (Exception error)
+            {
+                stopwatch.Stop();
+                exitCode = 2;
+                var diagnosticCode = error switch
+                {
+                    SqlParseException parseError => parseError.Diagnostic?.Code,
+                    SqlCompilationException compileError => compileError.Diagnostic?.Code,
+                    _ => null
+                };
+                report = JsonSerializer.Serialize(new
+                {
+                    success = false,
+                    shape,
+                    dialect = dialect.ToString(),
+                    depth,
+                    stackBytes,
+                    sqlChars = query.Length,
+                    elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
+                    allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
+                    renderedChars = 0,
+                    diagnosticCode,
+                    error = error.GetType().Name + ": " +
+                        error.Message[..Math.Min(250, error.Message.Length)]
+                });
+            }
         }
-        catch (Exception error)
+
+        if (stackBytes is { } size)
         {
-            stopwatch.Stop();
-            Console.WriteLine(JsonSerializer.Serialize(new
-            {
-                success = false,
-                shape,
-                dialect = dialect.ToString(),
-                depth,
-                sqlChars = query.Length,
-                elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
-                allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
-                renderedChars = 0,
-                error = error.GetType().Name + ": " + error.Message[..Math.Min(250, error.Message.Length)]
-            }));
-            Environment.ExitCode = 2;
+            // The entire *process* is already isolated by RunSweep. An actual
+            // StackOverflowException kills only this child, not the CI runner.
+            var thread = new Thread(CompileOnThisThread, size);
+            thread.Start();
+            thread.Join();
         }
+        else CompileOnThisThread();
+
+        Console.WriteLine(report);
+        Environment.ExitCode = exitCode;
     }
 
     private static void RunSweep(string[] args)
@@ -141,6 +184,17 @@ internal static class SqlCoreDepthProbe
             ? args[outputIndex + 1]
             : null;
 
+        var stackOption = ReadOption(args, "--stack-bytes");
+        int? stackBytes = null;
+        if (stackOption is not null)
+        {
+            if (!int.TryParse(stackOption, out var stackValue) ||
+                stackValue is < 262_144 or > 16_777_216)
+                throw new ArgumentOutOfRangeException(nameof(args),
+                    "Managed probe worker stack must be 262144..16777216 bytes.");
+            stackBytes = stackValue;
+        }
+
         var observations = new List<object>();
         var failures = 0;
         var crashesOrTimeouts = 0;
@@ -148,7 +202,7 @@ internal static class SqlCoreDepthProbe
         foreach (var shape in shapes)
         foreach (var depth in depths)
         {
-            using var process = new Process { StartInfo = NewWorker(shape, depth, dialect) };
+            using var process = new Process { StartInfo = NewWorker(shape, depth, dialect, stackBytes) };
             var wall = Stopwatch.StartNew();
             process.Start();
 
@@ -176,6 +230,7 @@ internal static class SqlCoreDepthProbe
                 dialect = dialect.ToString(),
                 shape,
                 depth,
+                stackBytes,
                 completed,
                 processExitCode = process.ExitCode,
                 wallMilliseconds = Math.Round(wall.Elapsed.TotalMilliseconds, 2),
@@ -222,7 +277,7 @@ internal static class SqlCoreDepthProbe
         return args[index + 1];
     }
 
-    private static ProcessStartInfo NewWorker(string shape, int depth, SqlAgentToolType dialect)
+    private static ProcessStartInfo NewWorker(string shape, int depth, SqlAgentToolType dialect, int? stackBytes)
     {
         var executable = Environment.ProcessPath
             ?? throw new InvalidOperationException("Cannot locate current benchmark executable.");
@@ -241,6 +296,11 @@ internal static class SqlCoreDepthProbe
         command.ArgumentList.Add(shape);
         command.ArgumentList.Add(depth.ToString(System.Globalization.CultureInfo.InvariantCulture));
         command.ArgumentList.Add(dialect.ToString());
+        if (stackBytes is { } amount)
+        {
+            command.ArgumentList.Add("--stack-bytes");
+            command.ArgumentList.Add(amount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
         return command;
     }
 }

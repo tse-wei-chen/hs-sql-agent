@@ -91,6 +91,14 @@ published as measured percentages or silently set to 100.
       subprocess probes (Stack Overflow must not kill xUnit). CI prints
       allocation/exit-status evidence per shape; compare the prior 85.60 MB
       allocation baseline only after measurement.
+- [x] Add RuntimeHelpers.TryEnsureSufficientExecutionStack checks at major
+      recursive parser, binder, normalizer, schema verifier and renderer entry
+      points; fail with SQL_COMPILER_STACK_RESERVE and Resource diagnostic
+      instead of introducing an arbitrary MaxAstDepth. This is a last-resort
+      safeguard, not a guarantee of unlimited recursion on small threads.
+- [x] Record constrained 256 KiB managed-stack subthread observations inside
+      child processes; failures and crashes are visible in CI but are not
+      silently counted as successful SQL compilations.
 - [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.
