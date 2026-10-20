@@ -197,6 +197,7 @@ internal static class SqlCoreDepthProbe
 
         var observations = new List<object>();
         var failures = 0;
+        var resourceRejections = 0;
         var crashesOrTimeouts = 0;
         foreach (var dialect in dialects)
         foreach (var shape in shapes)
@@ -223,6 +224,15 @@ internal static class SqlCoreDepthProbe
                 ? JsonDocument.Parse(reported)
                 : null;
             if (!completed || parsedResult is null) crashesOrTimeouts++;
+            // A resource diagnostic is a *successful fail-closed safety
+            // decision*, not evidence that SQL execution succeeded.
+            var resourceRejected =
+                completed && process.ExitCode == 2
+                && parsedResult is not null
+                && parsedResult.RootElement.TryGetProperty("diagnosticCode", out var code)
+                && code.ValueKind == JsonValueKind.String
+                && code.GetString() == "SQL_COMPILER_STACK_RESERVE";
+            if (resourceRejected) resourceRejections++;
             using (parsedResult)
             {
             observations.Add(new
@@ -247,6 +257,8 @@ internal static class SqlCoreDepthProbe
             runtimes = dialects.Length,
             samples = observations.Count,
             failures,
+            resourceRejections,
+            unexpectedFailures = failures - resourceRejections,
             crashesOrTimeouts,
             stackOverflowOrTimeoutDoesNotCrashParent = true,
             observations
@@ -266,6 +278,11 @@ internal static class SqlCoreDepthProbe
         if (smoke && failures > 0)
             throw new InvalidOperationException(
                 $"SQL depth smoke probe: {failures} of {observations.Count} child processes failed.");
+        if (stackBytes is not null && (failures != resourceRejections || crashesOrTimeouts > 0))
+            throw new InvalidOperationException(
+                $"Constrained-stack safety regression: {failures - resourceRejections} " +
+                $"unexpected failures and {crashesOrTimeouts} crashes/timeouts. " +
+                "Only successful compilation or typed SQL_COMPILER_STACK_RESERVE rejection is allowed.");
     }
 
     private static string? ReadOption(string[] args, string flag)

@@ -121,7 +121,7 @@ jobs:
           import json
           with open("artifacts/sqlcore-small-stack-pr.json", encoding="utf-8") as src:
               report = json.load(src)
-          print(f"Constrained-stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          print(f"Constrained-stack: samples={report['samples']} expectedResourceRejections={report['resourceRejections']} unexpectedFailures={report['unexpectedFailures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
           for item in report["observations"]:
               worker = item.get("worker") or {}
               print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} exit={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")

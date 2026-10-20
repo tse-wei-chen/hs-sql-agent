@@ -96,9 +96,14 @@ published as measured percentages or silently set to 100.
       points; fail with SQL_COMPILER_STACK_RESERVE and Resource diagnostic
       instead of introducing an arbitrary MaxAstDepth. This is a last-resort
       safeguard, not a guarantee of unlimited recursion on small threads.
-- [x] Record constrained 256 KiB managed-stack subthread observations inside
-      child processes; failures and crashes are visible in CI but are not
-      silently counted as successful SQL compilations.
+- [x] Add a **gated** constrained-stack safety matrix: 256 KiB managed
+      threads run 512/2048-deep nested scalar SELECT and left-deep AND across
+      PostgreSQL, SQL Server, Oracle and Firebird in independent processes.
+      All 16 cases returned the typed SQL_COMPILER_STACK_RESERVE resource
+      diagnostic with zero crashes/timeouts. The matrix accepts either normal
+      compilation or this typed fail-closed result; any other failure or crash
+      fails the CI syntax-matrix job. This test is about host process safety,
+      not an arbitrary SQL nesting-depth limit.
 - [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.
