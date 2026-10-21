@@ -166,6 +166,7 @@ public class RedisDmlApprovalChallengeStoreTests
         Assert.NotNull(capturedScript);
         Assert.Contains("redis.call('GET'", capturedScript);
         Assert.Contains("redis.call('SET'", capturedScript);
+        Assert.Contains("registered['ok'] ~= 'OK'", capturedScript);
         Assert.Contains("redis.call('DEL'", capturedScript);
         Assert.Equal(3, capturedKeys!.Length);
         Assert.All(capturedKeys, key => Assert.Contains("{dml-approval}", key.ToString()));

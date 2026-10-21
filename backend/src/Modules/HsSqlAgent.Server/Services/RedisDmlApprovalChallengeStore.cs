@@ -37,7 +37,11 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
                 return 0
             end
         end
-        if redis.call('SET', KEYS[count + 1], ARGV[count + 2], 'PX', ARGV[count + 3], 'NX') ~= 'OK' then
+        -- Redis Lua returns a status reply table ({ ok = 'OK' }) for SET.
+        -- A plain string comparison always fails and must not be used here.
+        local registered = redis.call('SET',
+            KEYS[count + 1], ARGV[count + 2], 'PX', ARGV[count + 3], 'NX')
+        if not registered or registered['ok'] ~= 'OK' then
             return 0
         end
         for i = 1, count do
