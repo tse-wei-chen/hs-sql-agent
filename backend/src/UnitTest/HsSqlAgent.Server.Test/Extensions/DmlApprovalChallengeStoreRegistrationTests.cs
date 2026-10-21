@@ -10,6 +10,22 @@ namespace HsSqlAgent.Server.Test.Extensions;
 public class DmlApprovalChallengeStoreRegistrationTests
 {
     [Fact]
+    public void NativeSchemaFreshnessRegistration_UsesOneSharedVerifierAndIsIdempotent()
+    {
+        var services = new ServiceCollection();
+        services.AddHsSqlAgentNativeDmlSchemaFreshness();
+        services.AddHsSqlAgentNativeDmlSchemaFreshness();
+
+        using var provider = services.BuildServiceProvider();
+        var source = provider.GetRequiredService<IDmlSchemaSnapshotSource>();
+        var verifier = provider.GetRequiredService<IDmlSchemaSnapshotFreshnessVerifier>();
+        Assert.IsType<NativeDmlSchemaSnapshotService>(source);
+        Assert.Same(source, verifier);
+        Assert.Single(services, item => item.ServiceType == typeof(IDmlSchemaSnapshotSource));
+        Assert.Single(services, item => item.ServiceType == typeof(IDmlSchemaSnapshotFreshnessVerifier));
+    }
+
+    [Fact]
     public void AddHsSqlAgent_ShouldRegisterMemoryApprovalStoreByDefault()
     {
         var services = new ServiceCollection();

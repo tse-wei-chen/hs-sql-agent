@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using HsSqlAgent.Provider.Abstractions;
 using Xunit;
 
 namespace SqlAgent.Test.Providers;
