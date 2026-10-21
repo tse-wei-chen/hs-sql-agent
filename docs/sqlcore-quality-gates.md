@@ -416,10 +416,23 @@ published as measured percentages or silently set to 100.
       `IAuditService.WriteEventAsync` failure after the approved target INSERT.
       It verifies the row exists, terminal state is `Executed`, the completion
       reports success, and restarting the service cannot replay the approval.
-- [ ] The admin-store terminal `SaveChangesAsync` after a confirmed target
-      COMMIT is still a separate persistence boundary. A failure to save that
-      state cannot undo the target commit; operational reconciliation and
-      stronger recovery evidence remain separate work.
+- [x] Treat Admin Store terminal `SaveChangesAsync` failure **after a
+      confirmed target COMMIT** as a distinct, non-retryable outcome,
+      `dml.approval_state_unknown`, rather than overwriting the already
+      committed operation with `Failed`. Attempt to persist a terminal
+      `OutcomeUnknown` marker using independent bounded cleanup I/O; when
+      that second write fails, the previously persisted `Executing` claim
+      remains non-replayable across service restarts. A successful terminal
+      write may have committed despite an acknowledgement failure, so no
+      automatic replay or inference of rollback is made. The returned message
+      explicitly states that the **target COMMIT succeeded** while the Admin
+      Store status needs reconciliation. Tests inject both a failed terminal
+      save and a failed fallback save after a real approved SQLite INSERT,
+      checking physical rows, persisted status, error code and restart replay.
+- [ ] Add explicit operator-assisted reconciliation of an `Executing`
+      or `OutcomeUnknown` durable approval. The service must not infer
+      transaction failure from a terminal Admin Store outage and must not
+      reset the old approval to `Pending`.
 
 ## Proof model
 

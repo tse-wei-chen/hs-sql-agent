@@ -14,6 +14,7 @@ using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Models;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using SqlAgent.Service.Factories;
@@ -107,6 +108,66 @@ public sealed class DurableDmlApprovalLifecycleTests
             Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
         }
 
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TargetCommittedButAdminStateSaveFails_NeverReturnsFailedOrReexecutes(
+        bool fallbackStateSaveAlsoFails)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var services = fixture.CreateRestartedServices(
+            failTerminalSave: true,
+            failUnknownSave: fallbackStateSaveAlsoFails))
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, result.Status);
+            Assert.Equal("dml.approval_state_unknown", result.ErrorCode);
+            Assert.False(result.Retryable);
+            Assert.Equal(1, result.AffectedRows);
+            Assert.Contains("COMMIT succeeded", result.Message, StringComparison.Ordinal);
+            Assert.Contains("do not retry", result.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(
+                x => x.RequestId == request.RequestId, TestContext.Current.CancellationToken);
+            Assert.Equal(
+                fallbackStateSaveAlsoFails ? "Executing" : "OutcomeUnknown",
+                state.Status);
+            Assert.NotEqual("Failed", state.Status);
+
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var retry = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(
+                fallbackStateSaveAlsoFails
+                    ? DmlApprovalCompletionStatus.AlreadyProcessing
+                    : DmlApprovalCompletionStatus.OutcomeUnknown,
+                retry.Status);
+            Assert.False(retry.Retryable);
+            Assert.Contains("Do not retry", retry.Message, StringComparison.OrdinalIgnoreCase);
+            if (!fallbackStateSaveAlsoFails)
+                Assert.Equal("dml.approval_state_unknown", retry.ErrorCode);
+        }
+
+        // A fresh service instance must not execute the approval again.
         Assert.Equal(1L, await fixture.CountTargetRowsAsync());
     }
 
@@ -269,6 +330,32 @@ public sealed class DurableDmlApprovalLifecycleTests
         return state;
     }
 
+    /// <summary>
+    /// Inject Admin Store persistence failures only after the target DB has
+    /// finished committing. The first Executing claim must always persist.
+    /// </summary>
+    private sealed class TerminalApprovalSaveFailureInterceptor(bool failUnknownSave)
+        : SaveChangesInterceptor
+    {
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            var statuses = eventData.Context?.ChangeTracker
+                .Entries<DmlApprovalRequestState>()
+                .Where(x => x.State == EntityState.Modified)
+                .Select(x => x.Entity.Status)
+                .ToArray() ?? [];
+
+            if (statuses.Contains("Executed", StringComparer.Ordinal)
+                || (failUnknownSave && statuses.Contains("OutcomeUnknown", StringComparer.Ordinal)))
+                throw new IOException("Injected Admin Store terminal SaveChanges failure.");
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private Fixture(
@@ -365,17 +452,32 @@ public sealed class DurableDmlApprovalLifecycleTests
                 connectionStringFactory);
         }
 
-        public ServiceProvider CreateRestartedServices(bool failAudit = false) =>
-            BuildServices(AdminDatabasePath, failAudit);
+        public ServiceProvider CreateRestartedServices(
+            bool failAudit = false,
+            bool failTerminalSave = false,
+            bool failUnknownSave = false) =>
+            BuildServices(AdminDatabasePath, failAudit, failTerminalSave, failUnknownSave);
 
-        private static ServiceProvider BuildServices(string adminDatabasePath, bool failAudit = false)
+        private static ServiceProvider BuildServices(
+            string adminDatabasePath,
+            bool failAudit = false,
+            bool failTerminalSave = false,
+            bool failUnknownSave = false)
         {
             var adminConnectionString = new SqliteConnectionStringBuilder
             {
                 DataSource = adminDatabasePath
             }.ToString();
             var serviceCollection = new ServiceCollection();
-            serviceCollection.AddDbContext<AdminContext>(options => options.UseSqlite(adminConnectionString));
+            var terminalFailure = failTerminalSave
+                ? new TerminalApprovalSaveFailureInterceptor(failUnknownSave)
+                : null;
+            serviceCollection.AddDbContext<AdminContext>(options =>
+            {
+                options.UseSqlite(adminConnectionString);
+                if (terminalFailure is not null)
+                    options.AddInterceptors(terminalFailure);
+            });
             serviceCollection.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
             if (failAudit)
             {

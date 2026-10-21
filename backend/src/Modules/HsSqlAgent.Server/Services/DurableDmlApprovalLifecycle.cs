@@ -56,6 +56,13 @@ internal sealed class DurableDmlApprovalLifecycle(
     private const string Expired = "Expired";
     private const string Failed = "Failed";
     private const string OutcomeUnknown = "OutcomeUnknown";
+    // The target COMMIT was acknowledged, but the separate Admin Store write
+    // could not be confirmed. Store the distinction in the durable reason,
+    // without changing the persisted Status enum or database schema.
+    private const string ConfirmedCommitStateUnknownReason =
+        "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
+        "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
+    private const string ApprovalStateUnknownCode = "dml.approval_state_unknown";
 
     public async Task PersistPendingAsync(
         DmlApprovalRequest request,
@@ -164,11 +171,17 @@ internal sealed class DurableDmlApprovalLifecycle(
                         ? DmlApprovalCompletionStatus.OutcomeUnknown
                         : DmlApprovalCompletionStatus.AlreadyCompleted,
                 string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
-                    ? "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
-                    : $"DML approval request is already in terminal or processing state '{state.Status}'.")
+                    ? IsConfirmedCommitStateUnknown(state)
+                        ? ConfirmedCommitStateUnknownReason
+                        : "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
+                    : string.Equals(state.Status, Executing, StringComparison.Ordinal)
+                        ? "DML approval is already executing or requires reconciliation. Do not retry; inspect the target database state."
+                        : $"DML approval request is already in terminal state '{state.Status}'.")
             {
                 ErrorCode = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
-                    ? "dml.commit_outcome_unknown" : null
+                    ? IsConfirmedCommitStateUnknown(state)
+                        ? ApprovalStateUnknownCode
+                        : "dml.commit_outcome_unknown" : null
             };
         }
 
@@ -215,7 +228,25 @@ internal sealed class DurableDmlApprovalLifecycle(
             state.Status = terminalStatus;
             state.Reason = execution.Message;
             state.UpdatedAt = DateTime.UtcNow;
-            await context.SaveChangesAsync(cancellationToken);
+            if (execution.Status == DmlApprovalCompletionStatus.Executed)
+            {
+                try
+                {
+                    await context.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception persistenceFailure)
+                {
+                    // A confirmed target COMMIT precedes this separate Admin
+                    // Store save. Never fall into the generic Failed handler:
+                    // the primary operation was already physically committed.
+                    return await HandleConfirmedCommitStateFailureAsync(
+                        context, state, execution, persistenceFailure);
+                }
+            }
+            else
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
 
             // The target DB has already committed for Executed. Audit I/O is
             // secondary and must never rewrite a committed approval as Failed.
@@ -295,6 +326,57 @@ internal sealed class DurableDmlApprovalLifecycle(
                 DmlApprovalCompletionStatus.Failed,
                 "Durable DML approval execution failed and will not be retried automatically: " + ex.Message);
         }
+    }
+
+    private static bool IsConfirmedCommitStateUnknown(DmlApprovalRequestState state) =>
+        state.Reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true;
+
+    private async Task<DmlApprovalCompletionResult> HandleConfirmedCommitStateFailureAsync(
+        IAdminContext context,
+        DmlApprovalRequestState state,
+        DmlApprovalCompletionResult confirmedCommit,
+        Exception persistenceFailure)
+    {
+        // A failed SaveChanges acknowledgement may mean the Admin Store
+        // already persisted Executed; if not, Executing is durably claimed.
+        // A best-effort separate write can mark OutcomeUnknown, but must
+        // never make the request Pending, Failed, or executable again.
+        state.Status = OutcomeUnknown;
+        state.Reason = ConfirmedCommitStateUnknownReason;
+        state.UpdatedAt = DateTime.UtcNow;
+        try
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await context.SaveChangesAsync(cleanup.Token);
+        }
+        catch (Exception)
+        {
+            // At least the earlier Executing claim remains non-replayable.
+            // Do not infer that the target database transaction rolled back.
+        }
+
+        try
+        {
+            using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await AuditCompletionAsync(
+                state, "admin_state_unknown", "outcome_unknown",
+                ConfirmedCommitStateUnknownReason + " Admin error: " +
+                    persistenceFailure.GetType().Name,
+                confirmedCommit.AffectedRows, auditTimeout.Token);
+        }
+        catch (Exception)
+        {
+            // Failure to record diagnostics must not hide the confirmed
+            // physical write or imply that retrying the approval is safe.
+        }
+
+        return new DmlApprovalCompletionResult(
+            DmlApprovalCompletionStatus.OutcomeUnknown,
+            ConfirmedCommitStateUnknownReason,
+            confirmedCommit.AffectedRows)
+        {
+            ErrorCode = ApprovalStateUnknownCode
+        };
     }
 
     private async Task<DmlApprovalCompletionResult> ExecuteApprovedAsync(
