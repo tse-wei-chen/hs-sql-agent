@@ -243,7 +243,8 @@ public sealed class DmlPlanFactory(
             fingerprint,
             validationContext.PolicyVersion,
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
-            maxAffectedRows);
+            maxAffectedRows,
+            SchemaSnapshot: validationContext.SchemaSnapshot);
     }
 
     private async Task<ValidatedDmlPlan> CreateInsertValuesPlanAsync(
@@ -354,7 +355,8 @@ public sealed class DmlPlanFactory(
             ApprovalTtl: approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             MaxAffectedRows: maxAffectedRows,
             ApprovalMode: DmlApprovalMode.InsertValues,
-            InsertRows: previewRows);
+            InsertRows: previewRows,
+            SchemaSnapshot: validationContext.SchemaSnapshot);
     }
 
     private async Task<SqlPlanValidationContext> PrepareResultRowValidationContextAsync(
@@ -415,11 +417,8 @@ public sealed class DmlPlanFactory(
                 $"SQL Server OUTPUT without INTO remains fail-closed because resolved target '{schema}.{table}' has an enabled {operation.ToString().ToUpperInvariant()} trigger.");
         }
 
-        var metadataBackedContext = new SqlPlanValidationContext(
-            validationContext.PolicyVersion,
-            validationContext.AllowedTables);
-
-        return metadataBackedContext.WithDmlResultRowAssurance(
+        // Preserve the same immutable schema proof while adding SQL Server trigger assurance.
+        return validationContext.WithDmlResultRowAssurance(
             DmlResultRowAssurance.NoEnabledTriggers(
                 $"{schema}.{table}",
                 operation));

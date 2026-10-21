@@ -135,7 +135,8 @@ public sealed class DmlCoordinator(
             // A compile-time snapshot digest alone does not attest to the live database.
             // Verify inside the same transaction before either INSERT or row-set DML.
             await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                connection, transaction, plan.MutationCommand, _schemaFreshnessVerifier, cancellationToken);
+                connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                _schemaFreshnessVerifier, cancellationToken);
 
             if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             {

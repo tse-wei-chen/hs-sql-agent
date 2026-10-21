@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.MySql;
 
-public class MySqlProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader
+public class MySqlProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader, IProviderTransactionDmlPlanningMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.MySQL;
 
@@ -171,13 +171,41 @@ public class MySqlProvider : SqlProviderBase, IProviderConnectionMetadataReader,
             r.PRIMARY_KEY_ORDINAL is null ? null : Convert.ToInt32(r.PRIMARY_KEY_ORDINAL)))];
     }
 
-    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+    public Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
         DbConnection connection,
         string? schemaName,
         string tableName,
         bool includeColumns,
         DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default) =>
+        ReadPlanningMetadataAsync(
+            connection, null, schemaName, tableName, includeColumns, triggerOperation, cancellationToken);
+
+    public Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataInTransactionAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+            throw new InvalidOperationException("Schema metadata transaction does not belong to its connection.");
+        return ReadPlanningMetadataAsync(
+            connection, transaction, schemaName, tableName, includeColumns, triggerOperation, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> ReadPlanningMetadataAsync(
+        DbConnection connection,
+        DbTransaction? transaction,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
@@ -199,7 +227,7 @@ public class MySqlProvider : SqlProviderBase, IProviderConnectionMetadataReader,
             var targets = await connection.QueryAsync(new CommandDefinition(
                 targetSql,
                 new { schemaName, tableName },
-                cancellationToken: cancellationToken));
+                transaction: transaction, cancellationToken: cancellationToken));
             return [.. targets.Select(row => new DatabaseDmlPlanningMetadata(
                 (string)row.TABLE_SCHEMA,
                 (string)row.TABLE_NAME,
@@ -232,7 +260,7 @@ public class MySqlProvider : SqlProviderBase, IProviderConnectionMetadataReader,
         var rows = (await connection.QueryAsync(new CommandDefinition(
             sql,
             new { schemaName, tableName },
-            cancellationToken: cancellationToken))).ToArray();
+            transaction: transaction, cancellationToken: cancellationToken))).ToArray();
 
         return [.. rows
             .GroupBy(row => ((string)row.TABLE_SCHEMA, (string)row.TABLE_NAME))

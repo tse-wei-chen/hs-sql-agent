@@ -164,7 +164,8 @@ public sealed class DmlSchemaSnapshotFreshnessTests
             ApprovalTtl: TimeSpan.FromMinutes(5),
             MaxAffectedRows: 1,
             ApprovalMode: DmlApprovalMode.InsertValues,
-            InsertRows: rows);
+            InsertRows: rows,
+            SchemaSnapshot: snapshot);
     }
 
     private static string Digest(ValidatedDmlPlan plan) =>
@@ -218,9 +219,11 @@ public sealed class DmlSchemaSnapshotFreshnessTests
 
         public Task<string?> ReadCurrentSchemaDigestAsync(
             DbConnection connection, DbTransaction transaction,
-            SqlAgentToolType provider, CancellationToken cancellationToken = default)
+            SqlAgentToolType provider, SqlSchemaSnapshot expectedSnapshot,
+            CancellationToken cancellationToken = default)
         {
             Assert.Equal(SqlAgentToolType.Sqlite, provider);
+            Assert.Equal("live-schema-v1", expectedSnapshot.Version);
             Assert.Same(connection, transaction.Connection);
             SawActiveTransaction = true;
             ReadCount++;

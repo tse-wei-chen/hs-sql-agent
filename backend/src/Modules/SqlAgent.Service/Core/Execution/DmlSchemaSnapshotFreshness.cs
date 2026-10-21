@@ -31,6 +31,7 @@ public interface IDmlSchemaSnapshotFreshnessVerifier
         DbConnection connection,
         DbTransaction transaction,
         SqlAgentToolType provider,
+        SqlSchemaSnapshot expectedSnapshot,
         CancellationToken cancellationToken = default);
 }
 
@@ -44,6 +45,7 @@ internal static class DmlSchemaSnapshotFreshness
         DbConnection connection,
         DbTransaction transaction,
         CompiledSqlCommand command,
+        SqlSchemaSnapshot? expectedSnapshot,
         IDmlSchemaSnapshotFreshnessVerifier? verifier,
         CancellationToken cancellationToken)
     {
@@ -66,12 +68,18 @@ internal static class DmlSchemaSnapshotFreshness
         if (digests.Length != 1 || !IsSha256(digests[0]))
             throw new InvalidOperationException("DML schema assurance is malformed; commit rejected.");
 
+        if (expectedSnapshot is null
+            || expectedSnapshot.Provider != command.TargetProvider
+            || !string.Equals(expectedSnapshot.Sha256, digests[0], StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "DML compiled schema assurance and the immutable plan snapshot disagree; commit rejected.");
+
         if (verifier is null)
             throw new InvalidOperationException(
                 "DML was compiled with a schema snapshot, but no live schema freshness verifier is configured; commit rejected.");
 
         var current = await verifier.ReadCurrentSchemaDigestAsync(
-            connection, transaction, command.TargetProvider, cancellationToken);
+            connection, transaction, command.TargetProvider, expectedSnapshot, cancellationToken);
 
         if (current is null || !IsSha256(current)
             || !string.Equals(current, digests[0], StringComparison.OrdinalIgnoreCase))

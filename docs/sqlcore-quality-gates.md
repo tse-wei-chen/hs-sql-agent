@@ -66,6 +66,20 @@ published as measured percentages or silently set to 100.
       copy an expected digest. This is **not automatic database schema
       discovery**; the default runtime without both registrations remains
       snapshot-free and does not claim production-wide schema freshness.
+- [x] Add transaction-enlisted DML planning metadata readers for all six providers
+      by extending their existing catalog queries, preserving the old non-transactional
+      interface and preventing commit metadata from escaping the active transaction.
+- [x] Provide opt-in built-in `NativeDmlSchemaSnapshotService` for all six DBs,
+      wired with `services.AddHsSqlAgentNativeDmlSchemaFreshness()`.
+      It supports single physical-target INSERT VALUES, UPDATE and DELETE,
+      verifies complete schema/table resolution, and rejects ambiguous objects
+      and unsupported multi-source shapes. The snapshot's deterministic native
+      metadata version records actual column names, provider data types, primary
+      key membership and key ordinals; native type changes remain detectable
+      even though the compiler uses conservative Unknown portable type kinds.
+      It re-reads matching metadata through the transaction-bound reader before
+      mutation. Host-supplied source/verifier remains supported, and no automatic
+      opt-in is imposed on existing deployments.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

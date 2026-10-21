@@ -51,6 +51,57 @@ public sealed class ProviderDmlPlanningMetadataTests
             });
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void AllProviders_ExposeTransactionEnlistedDmlMetadata(SqlAgentToolType provider)
+    {
+        object instance = provider switch
+        {
+            SqlAgentToolType.Postgres => new HsSqlAgent.Provider.PostgreSql.PostgresProvider(),
+            SqlAgentToolType.MySQL => new HsSqlAgent.Provider.MySql.MySqlProvider(),
+            SqlAgentToolType.Sqlite => new HsSqlAgent.Provider.Sqlite.SqliteProvider(),
+            SqlAgentToolType.MsSqlServer => new HsSqlAgent.Provider.SqlServer.MsSqlServerProvider(),
+            SqlAgentToolType.Oracle => new HsSqlAgent.Provider.Oracle.OracleProvider(),
+            SqlAgentToolType.Firebird => new HsSqlAgent.Provider.Firebird.FirebirdProvider(),
+            _ => throw new ArgumentOutOfRangeException(nameof(provider))
+        };
+        Assert.IsAssignableFrom<IProviderConnectionDmlPlanningMetadataReader>(instance);
+        Assert.IsAssignableFrom<IProviderTransactionDmlPlanningMetadataReader>(instance);
+    }
+
+    [Fact]
+    public async Task SqliteTransactionSnapshot_UsesCallerTransactionAndRejectsDifferentConnection()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var transaction = await connection.BeginTransactionAsync(
+            TestContext.Current.CancellationToken);
+        var reader = (IProviderTransactionDmlPlanningMetadataReader)new SqliteProvider();
+        var result = await reader.GetDmlPlanningMetadataInTransactionAsync(
+            connection, transaction, null, "users", includeColumns: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(2, Assert.Single(result).Columns.Count);
+
+        await using var other = new SqliteConnection("Data Source=:memory:");
+        await other.OpenAsync(TestContext.Current.CancellationToken);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            reader.GetDmlPlanningMetadataInTransactionAsync(
+                other, transaction, null, "users", includeColumns: true,
+                cancellationToken: TestContext.Current.CancellationToken));
+        await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     [Fact]
     public async Task SqliteSnapshot_WithoutColumnsStillResolvesPhysicalTarget()
     {

@@ -61,7 +61,8 @@ internal sealed class DmlAtomicTransactionCoordinator(
                 // Revalidate each proof after earlier statements in the same atomic
                 // transaction. A changed or unreadable schema aborts the whole batch.
                 await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                    connection, transaction, plan.MutationCommand, _schemaFreshnessVerifier, cancellationToken);
+                    connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                    _schemaFreshnessVerifier, cancellationToken);
 
                 if (approved.AffectedRows < 0)
                     throw new InvalidOperationException("Approved DML affected row count cannot be negative.");

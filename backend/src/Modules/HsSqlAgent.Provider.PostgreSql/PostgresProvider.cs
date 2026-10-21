@@ -5,7 +5,7 @@ using HsSqlAgent.Provider.Abstractions;
 
 namespace HsSqlAgent.Provider.PostgreSql;
 
-public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader
+public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataReader, IProviderConnectionDmlPlanningMetadataReader, IProviderTransactionDmlPlanningMetadataReader
 {
     public override SqlAgentToolType DbType => SqlAgentToolType.Postgres;
 
@@ -164,13 +164,41 @@ public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataRead
             r.primary_key_ordinal is null ? null : Convert.ToInt32(r.primary_key_ordinal)))];
     }
 
-    public async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
+    public Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataAsync(
         DbConnection connection,
         string? schemaName,
         string tableName,
         bool includeColumns,
         DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default) =>
+        ReadPlanningMetadataAsync(
+            connection, null, schemaName, tableName, includeColumns, triggerOperation, cancellationToken);
+
+    public Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataInTransactionAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
         CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (!ReferenceEquals(transaction.Connection, connection))
+            throw new InvalidOperationException("Schema metadata transaction does not belong to its connection.");
+        return ReadPlanningMetadataAsync(
+            connection, transaction, schemaName, tableName, includeColumns, triggerOperation, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> ReadPlanningMetadataAsync(
+        DbConnection connection,
+        DbTransaction? transaction,
+        string? schemaName,
+        string tableName,
+        bool includeColumns,
+        DmlOperation? triggerOperation,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
@@ -191,7 +219,7 @@ public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataRead
             var targets = await connection.QueryAsync(new CommandDefinition(
                 targetSql,
                 new { schemaName, tableName },
-                cancellationToken: cancellationToken));
+                transaction: transaction, cancellationToken: cancellationToken));
             return [.. targets.Select(row => new DatabaseDmlPlanningMetadata(
                 (string)row.table_schema,
                 (string)row.table_name,
@@ -225,7 +253,7 @@ public class PostgresProvider : SqlProviderBase, IProviderConnectionMetadataRead
         var rows = (await connection.QueryAsync(new CommandDefinition(
             sql,
             new { schemaName, tableName },
-            cancellationToken: cancellationToken))).ToArray();
+            transaction: transaction, cancellationToken: cancellationToken))).ToArray();
 
         return [.. rows
             .GroupBy(row => ((string)row.table_schema, (string)row.table_name))

@@ -1,4 +1,6 @@
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
@@ -16,6 +18,22 @@ namespace HsSqlAgent.Server.Extensions;
 
 public static class HsSqlAgentRuntimeServiceExtensions
 {
+    /// <summary>
+    /// Opt into the built-in six-provider single-target DML snapshot reader and
+    /// commit-transaction schema freshness verifier. Register on IServiceCollection
+    /// before resolving TypedDmlRuntime. Unsupported shapes are rejected, not skipped.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentNativeDmlSchemaFreshness(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        services.TryAddSingleton<NativeDmlSchemaSnapshotService>();
+        services.TryAddSingleton<IDmlSchemaSnapshotSource>(
+            sp => sp.GetRequiredService<NativeDmlSchemaSnapshotService>());
+        services.TryAddSingleton<IDmlSchemaSnapshotFreshnessVerifier>(
+            sp => sp.GetRequiredService<NativeDmlSchemaSnapshotService>());
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)

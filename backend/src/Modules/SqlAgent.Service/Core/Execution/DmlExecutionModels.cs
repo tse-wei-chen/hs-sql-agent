@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -31,7 +32,8 @@ public sealed record ValidatedDmlPlan(
     TimeSpan ApprovalTtl,
     int MaxAffectedRows = 0,
     DmlApprovalMode ApprovalMode = DmlApprovalMode.RowSetMutation,
-    ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default);
+    ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default,
+    SqlSchemaSnapshot? SchemaSnapshot = null);
 
 public sealed record DmlPreview(
     DmlOperation Operation,
