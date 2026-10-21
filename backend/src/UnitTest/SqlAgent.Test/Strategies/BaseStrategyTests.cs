@@ -238,7 +238,15 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             return plan;
         }
 
-        await ExecuteAsync($"CREATE TABLE {tableName} (ID INTEGER PRIMARY KEY, NAME VARCHAR(80))");
+        // Oracle defaults to deferred segment creation. A first INSERT into
+        // a segment-less table in SERIALIZABLE isolation can raise ORA-08177:
+        // materialize the *test-owned* segment at CREATE TABLE, never relax
+        // the real DML transaction's isolation to make this test pass.
+        var tableDefinition =
+            $"CREATE TABLE {tableName} (ID INTEGER PRIMARY KEY, NAME VARCHAR(80))";
+        if (provider == SqlAgentToolType.Oracle)
+            tableDefinition += " SEGMENT CREATION IMMEDIATE";
+        await ExecuteAsync(tableDefinition);
         try
         {
             var coordinator = new DmlCoordinator(

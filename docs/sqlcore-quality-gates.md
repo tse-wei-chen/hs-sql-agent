@@ -131,6 +131,15 @@ published as measured percentages or silently set to 100.
       changes causing a real approved INSERT to be rejected, and isolation
       from unrelated DDL. This does **not** claim coverage of every SQLite
       external FK, view, session setting, or cross-table trigger dependency.
+- [x] Keep the real Oracle schema-bound end-to-end approval test on
+      **Serializable** rather than downgrading transaction isolation to avoid
+      Oracle `ORA-08177`. Oracle defaults to deferred segment creation for
+      new empty tables; the test's own table now specifies
+      `SEGMENT CREATION IMMEDIATE`, materializing storage before the first
+      approved INSERT. Production Oracle applications using empty,
+      segment-less tables may still see a fail-closed serialization error
+      until the table segment exists; this is a database constraint, not
+      evidence that the schema verifier should bypass the DML transaction.
 - [x] Extend Oracle 21c and Firebird native Snapshot to **v2** with
       provider-specific, scoped, transaction-enlisted definition inventory.
       Oracle reads `ALL_TAB_COLS` (including hidden/virtual/identity and
