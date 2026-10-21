@@ -87,6 +87,61 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
             parsed, dialect, context, new SqlExecutionPlanPolicy()).Sql);
     }
 
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void TypedSnapshot_RejectsIncompatibleInsertSelectAssignments(
+        SqlAgentToolType dialect)
+    {
+        var context = Context(dialect, typed: true);
+        var sqls = new[]
+        {
+            "INSERT INTO users (name) SELECT id FROM users",
+            "INSERT INTO users (id, name) SELECT name, id FROM users"
+        };
+
+        foreach (var sql in sqls)
+        {
+            var error = Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileDml(sql, dialect, dialect, context));
+            Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+            Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void TypedSnapshot_AcceptsCompatibleInsertSelectAssignments(
+        SqlAgentToolType dialect)
+    {
+        var context = Context(dialect, typed: true);
+        var sqls = new[]
+        {
+            "INSERT INTO users (name) SELECT name FROM users",
+            "INSERT INTO users (id, name) SELECT id, name FROM users"
+        };
+
+        foreach (var sql in sqls)
+            Assert.NotEmpty(SqlCoreFacade.CompileDml(sql, dialect, dialect, context).Sql);
+
+        // A name-only snapshot cannot prove a type-family mismatch.
+        Assert.NotEmpty(SqlCoreFacade.CompileDml(
+            "INSERT INTO users (name) SELECT id FROM users",
+            dialect, dialect, Context(dialect, typed: false)).Sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void TypedSnapshot_RejectsInsertSelectProjectionWidthMismatch(
+        SqlAgentToolType dialect)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileDml(
+                "INSERT INTO users (name) SELECT id, name FROM users",
+                dialect, dialect, Context(dialect, typed: true)));
+        Assert.Equal("SQL_SCHEMA_SHAPE_UNPROVABLE", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
+    }
+
     [Fact]
     public void NameOnlySchema_StillAcceptsPreviouslyUnprovenTypeCoercions()
     {

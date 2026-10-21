@@ -388,13 +388,13 @@ module internal RewriteSchemaTypeValidation =
         | QueryStatement query -> queryTypes catalog ctes None query |> ignore
         | InsertStatement insert ->
             let target = namedSource catalog insert.Target None
+            let columnTypes =
+                insert.Columns
+                |> List.map (fun item ->
+                    Map.tryFind (keyPart catalog.Dialect item) target.Kinds
+                    |> Option.bind typeKnown)
             match insert.Input with
             | Values rows ->
-                let columnTypes =
-                    insert.Columns
-                    |> List.map (fun item ->
-                        Map.tryFind (keyPart catalog.Dialect item) target.Kinds
-                        |> Option.bind typeKnown)
                 rows |> NonEmpty.iter (fun row ->
                     let values = NonEmpty.toList row
                     values |> List.iter (inspect root)
@@ -403,7 +403,13 @@ module internal RewriteSchemaTypeValidation =
                         |> List.iter (fun (targetKind, value) ->
                             compatible document.Span targetKind
                                 (expression catalog ctes root Span.unknown value) "INSERT assignment"))
-            | QuerySource query -> queryTypes catalog ctes None query |> ignore
+            | QuerySource query ->
+                let projections = queryTypes catalog ctes None query |> List.map snd
+                // Implicit target-column order is not proven by the portable snapshot.
+                if not insert.Columns.IsEmpty && projections.Length = columnTypes.Length then
+                    List.zip columnTypes projections
+                    |> List.iter (fun (targetKind, projectedKind) ->
+                        compatible document.Span targetKind projectedKind "INSERT SELECT assignment")
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item ->
                 inspect { root with Sources = [ target ] } item.Expression)

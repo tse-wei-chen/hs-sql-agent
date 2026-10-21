@@ -296,7 +296,11 @@ module internal RewriteSchemaValidation =
             | Values rows ->
                 rows |> NonEmpty.iter (NonEmpty.iter (
                     expression catalog emptyCtes emptyScope Span.unknown))
-            | QuerySource query -> queryColumns catalog emptyCtes None query |> ignore
+            | QuerySource query ->
+                let projected = queryColumns catalog emptyCtes None query
+                if not insert.Columns.IsEmpty && projected.Length <> insert.Columns.Length then
+                    reject "SQL_SCHEMA_SHAPE_UNPROVABLE" doc.Span (
+                        "INSERT target-column count and SELECT projection width differ in strict snapshot mode.")
             | DefaultValues -> ()
             if insert.Conflict.IsSome then
                 reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
