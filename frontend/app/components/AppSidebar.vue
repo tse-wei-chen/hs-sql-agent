@@ -58,6 +58,7 @@ const data = ref({
         { title: "Audit", url: "/runtime/audit", permission: Permissions.Runtime.Audit.View },
         { title: "Security", url: "/runtime/security", permission: Permissions.Runtime.Security.View },
         { title: "Management API Keys", url: "/runtime/management-api-keys", permission: Permissions.Runtime.Security.Edit },
+        { title: "DML Reconciliation", url: "/runtime/dml-reconciliation", permission: Permissions.Runtime.Security.Edit },
         { title: "Operability", url: "/runtime/operability", permission: Permissions.Runtime.Operability.View },
       ],
     },

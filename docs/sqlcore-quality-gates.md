@@ -469,6 +469,15 @@ published as measured percentages or silently set to 100.
       carrying UTC or an explicit timezone offset and normalizes it to UTC
       before validating the observed state. Ambiguous timezone-free
       timestamps fail closed rather than guessing the operator's locale.
+      The Admin Console exposes a Security-edit-only reconciliation page
+      under Runtime Management. It lists bounded, nonsecret facts;
+      `Executing` is read-only. Other dispositions require the exact
+      request ID, a referenced external evidence artifact, rationale,
+      acknowledgement of independent verification, and a server-advertised
+      allowed resolution. The page sends the original status and timestamp
+      without computing a new claim, re-fetches on concurrency conflict,
+      and cannot enable forbidden statuses by modifying the server reply.
+      Backend authorization and final state checks remain authoritative.
       The resulting AttestedCommitted / AttestedNotCommitted /
       AttestedIndeterminate statuses are permanently non-replayable;
       the prefix makes clear these are human attestations, not independent
