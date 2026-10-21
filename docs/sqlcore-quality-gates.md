@@ -96,8 +96,23 @@ published as measured percentages or silently set to 100.
       A real PostgreSQL concurrency test
       asserts ALTER times out while the guarded transaction is held, succeeds
       after rollback, and changes the schema digest. This specific lock
-      guarantee is **not** attributed to MySQL, SQLite, SQL Server, Oracle,
-      or Firebird without comparable proofs.
+      guarantee is **not** attributed to SQLite, Oracle, or Firebird
+      without comparable proofs.
+- [x] Add opt-in native **MySQL metadata-lock fencing** before commit-time
+      catalog attestation. A transaction-bound table SELECT acquires a metadata
+      lock retained until commit/rollback; deliberately do **not** issue
+      `LOCK TABLES` (which can implicitly commit a user transaction).
+      Integration tests use MySQL 8 with both empty and nonempty tables:
+      concurrent ALTER must reach metadata `lock_wait_timeout`, then succeed
+      only after the verifier transaction releases the lock.
+- [x] Add opt-in native **SQL Server table-lock fencing** before commit-time
+      catalog attestation, using `TABLOCK, HOLDLOCK` within the existing
+      Serializable transaction. The table S lock conflicts with DDL's Sch-M
+      until commit/rollback. Tests cover empty and nonempty SQL Server 2022
+      tables, enforce a bounded `LOCK_TIMEOUT` for concurrent ALTER, and
+      assert digest drift after transaction release. **Operational tradeoff:**
+      the held S lock can temporarily block other sessions' DML too. Native
+      freshness remains opt-in; do not misstate this as a nonblocking guard.
 - [x] Fail closed if an approved DML plan contains a Schema Snapshot but
       its compiled mutation command has lost snapshot compile evidence, or
       lacks the corresponding assurance. Single and batch SQLite approval

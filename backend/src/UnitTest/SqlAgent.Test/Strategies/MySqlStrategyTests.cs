@@ -1,4 +1,7 @@
 using System.Text.Json;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
+using SqlAgent.Service.Core.Execution;
 using MySql.Data.MySqlClient;
 using Testcontainers.MySql;
 using Xunit;
@@ -81,6 +84,69 @@ public class MySqlStrategyTests(MySqlFixture fixture) : BaseStrategyTests<MySqlS
 
     protected override string TableNotFoundErrorCode => "1146";
     protected override string ColumnNotFoundErrorCode => "1054";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeSchemaFreshness_MySqlMetadataLockBlocksConcurrentDdlUntilTransactionEnds(bool withRow)
+    {
+        // A SELECT referencing the physical table acquires a MySQL metadata lock
+        // held until the explicit transaction ends, even for an empty table.
+        var token = TestContext.Current.CancellationToken;
+        var table = "HSMDL_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var full = $"`{TestSchemaName}`.`{table}`";
+        await using var guarded = new MySqlConnection(Fixture.ConnectionString);
+        await using var ddl = new MySqlConnection(Fixture.ConnectionString);
+        await guarded.OpenAsync(token);
+        await ddl.OpenAsync(token);
+
+        async Task ExecuteAsync(MySqlConnection connection, string sql)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        await ExecuteAsync(ddl, $"CREATE TABLE {full} (ID INT PRIMARY KEY, NAME VARCHAR(50)) ENGINE=InnoDB");
+        try
+        {
+            if (withRow)
+                await ExecuteAsync(ddl, $"INSERT INTO {full} (ID, NAME) VALUES (1, 'Alice')");
+
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {full} (ID, NAME) VALUES (2, 'Bob')", SqlAgentToolType.MySQL);
+            var native = new NativeDmlSchemaSnapshotService();
+            var snapshot = await native.CaptureAsync(
+                guarded, SqlAgentToolType.MySQL, parsed, token);
+            Assert.NotNull(snapshot);
+
+            await using (var transaction = await guarded.BeginTransactionAsync(token))
+            {
+                Assert.Equal(snapshot.Sha256, await native.ReadCurrentSchemaDigestAsync(
+                    guarded, transaction, SqlAgentToolType.MySQL, snapshot, token));
+
+                await ExecuteAsync(ddl, "SET SESSION lock_wait_timeout = 1");
+                await using var blocked = ddl.CreateCommand();
+                blocked.CommandText = $"ALTER TABLE {full} ADD COLUMN FENCED INT";
+                var error = await Assert.ThrowsAsync<MySqlException>(() =>
+                    blocked.ExecuteNonQueryAsync(token));
+                Assert.Equal(1205, error.Number);
+                await transaction.RollbackAsync(token);
+            }
+
+            await ExecuteAsync(ddl, $"ALTER TABLE {full} ADD COLUMN FENCED INT");
+            await using var changedTransaction = await guarded.BeginTransactionAsync(token);
+            var changed = await native.ReadCurrentSchemaDigestAsync(
+                guarded, changedTransaction, SqlAgentToolType.MySQL, snapshot, token);
+            Assert.NotEqual(snapshot.Sha256, changed);
+            await changedTransaction.RollbackAsync(token);
+        }
+        finally
+        {
+            await ExecuteAsync(ddl, $"DROP TABLE {full}");
+        }
+    }
+
 
     [Fact]
     public override async Task GetColumnsAsync_ShouldReturnColumnTypes()

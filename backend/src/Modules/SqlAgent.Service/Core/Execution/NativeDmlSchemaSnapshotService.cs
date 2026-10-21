@@ -108,9 +108,21 @@ public sealed class NativeDmlSchemaSnapshotService :
         // concurrent DML, but conflicts with ALTER/DROP's ACCESS EXCLUSIVE until
         // this SAME transaction commits or rolls back. Lock before checking the
         // catalog so the checked shape cannot be swapped underneath the write.
-        if (provider == SqlAgentToolType.Postgres)
-            await PinPostgresSchemaAsync(
-                connection, transaction, schema, table, cancellationToken);
+        switch (provider)
+        {
+            case SqlAgentToolType.Postgres:
+                await PinPostgresSchemaAsync(
+                    connection, transaction, schema, table, cancellationToken);
+                break;
+            case SqlAgentToolType.MySQL:
+                await PinMySqlSchemaAsync(
+                    connection, transaction, schema, table, cancellationToken);
+                break;
+            case SqlAgentToolType.MsSqlServer:
+                await PinMsSqlServerSchemaAsync(
+                    connection, transaction, schema, table, cancellationToken);
+                break;
+        }
 
         var readers = ForProvider(provider);
         var matches = await readers.Commit.GetDmlPlanningMetadataInTransactionAsync(
@@ -136,6 +148,47 @@ public sealed class NativeDmlSchemaSnapshotService :
         command.CommandText =
             $"LOCK TABLE {Quote(schema)}.{Quote(table)} IN ACCESS SHARE MODE";
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task PinMySqlSchemaAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string schema,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        // MySQL's normal table reference takes a shared metadata lock (MDL),
+        // retained for the current explicit transaction. NEVER use LOCK TABLES:
+        // that statement can implicitly commit the already-approved DML transaction.
+        static string Quote(string identifier) =>
+            "`" + identifier.Replace("`", "``", StringComparison.Ordinal) + "`";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            $"SELECT 1 FROM {Quote(schema)}.{Quote(table)} LIMIT 1";
+        await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    private static async Task PinMsSqlServerSchemaAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string schema,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        // SQL Server Sch-S locks used during statement execution are not enough:
+        // they are released at statement completion. TABLOCK + HOLDLOCK retains
+        // a TABLE S lock until commit/rollback, conflicting with DDL's Sch-M.
+        // This may also block other sessions' DML. Strict mode is opt-in.
+        static string Quote(string identifier) =>
+            "[" + identifier.Replace("]", "]]", StringComparison.Ordinal) + "]";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            $"SELECT TOP (1) 1 FROM {Quote(schema)}.{Quote(table)} WITH (TABLOCK, HOLDLOCK)";
+        await command.ExecuteScalarAsync(cancellationToken);
     }
 
     private static Readers ForProvider(SqlAgentToolType provider) =>
