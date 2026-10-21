@@ -114,6 +114,11 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         if (result.IsNull)
             return false;
 
+        // A challenge must not become executable after its absolute expiry,
+        // even when a delayed Redis response returns a previously stored value.
+        if (challenge.ExpiresAt <= _timeProvider.GetUtcNow())
+            return false;
+
         var payload = result.ToString();
         if (string.IsNullOrWhiteSpace(payload))
             return false;

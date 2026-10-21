@@ -104,6 +104,22 @@ public class RedisDmlApprovalChallengeStoreTests
     }
 
     [Fact]
+    public async Task TryConsumeAsync_RejectsExpiredChallengeEvenWhenRedisReturnsStoredPayload()
+    {
+        var issued = DateTimeOffset.UtcNow;
+        var challenge = CreateChallenge(issued, "expired-after-get");
+        var database = new Mock<IDatabase>();
+        database.Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .ReturnsAsync(RedisResult.Create((RedisValue)JsonSerializer.Serialize(challenge)));
+        var store = CreateStore(database.Object, issued.AddMinutes(6));
+
+        Assert.False(await store.TryConsumeAsync(challenge,
+            TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task TryConsumeAsync_ModifiedChallenge_ShouldBurnNonceAndFailClosed()
     {
         var now = DateTimeOffset.UtcNow;
