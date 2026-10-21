@@ -56,6 +56,8 @@ internal sealed class DurableDmlApprovalLifecycle(
     private const string Expired = "Expired";
     private const string Failed = "Failed";
     private const string OutcomeUnknown = "OutcomeUnknown";
+    // Distinct, persisted Admin Store uncertainty. Fits the existing 24-character Status column.
+    private const string ApprovalStateUnknown = "ApprovalStateUnknown";
     // The target COMMIT was acknowledged, but the separate Admin Store write
     // could not be confirmed. Store the distinction in the durable reason,
     // without changing the persisted Status enum or database schema.
@@ -164,24 +166,31 @@ internal sealed class DurableDmlApprovalLifecycle(
 
         if (!string.Equals(state.Status, Pending, StringComparison.Ordinal))
         {
+            // Read legacy OutcomeUnknown records distinguished by Reason text,
+            // but new Admin Store failures persist a dedicated machine state.
+            var approvalStateUnknown = string.Equals(state.Status, ApprovalStateUnknown, StringComparison.Ordinal)
+                || (string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                    && IsLegacyConfirmedCommitStateUnknown(state));
+            var commitOutcomeUnknown = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                && !approvalStateUnknown;
+
             return new DmlApprovalCompletionResult(
                 string.Equals(state.Status, Executing, StringComparison.Ordinal)
                     ? DmlApprovalCompletionStatus.AlreadyProcessing
-                    : string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                    : approvalStateUnknown || commitOutcomeUnknown
                         ? DmlApprovalCompletionStatus.OutcomeUnknown
                         : DmlApprovalCompletionStatus.AlreadyCompleted,
-                string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
-                    ? IsConfirmedCommitStateUnknown(state)
-                        ? ConfirmedCommitStateUnknownReason
-                        : "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
-                    : string.Equals(state.Status, Executing, StringComparison.Ordinal)
-                        ? "DML approval is already executing or requires reconciliation. Do not retry; inspect the target database state."
-                        : $"DML approval request is already in terminal state '{state.Status}'.")
+                approvalStateUnknown
+                    ? ConfirmedCommitStateUnknownReason
+                    : commitOutcomeUnknown
+                        ? "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
+                        : string.Equals(state.Status, Executing, StringComparison.Ordinal)
+                            ? "DML approval is already executing or requires reconciliation. Do not retry; inspect the target database state."
+                            : $"DML approval request is already in terminal state '{state.Status}'.")
             {
-                ErrorCode = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
-                    ? IsConfirmedCommitStateUnknown(state)
-                        ? ApprovalStateUnknownCode
-                        : "dml.commit_outcome_unknown" : null
+                ErrorCode = approvalStateUnknown
+                    ? ApprovalStateUnknownCode
+                    : commitOutcomeUnknown ? "dml.commit_outcome_unknown" : null
             };
         }
 
@@ -328,7 +337,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         }
     }
 
-    private static bool IsConfirmedCommitStateUnknown(DmlApprovalRequestState state) =>
+    private static bool IsLegacyConfirmedCommitStateUnknown(DmlApprovalRequestState state) =>
         state.Reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true;
 
     private async Task<DmlApprovalCompletionResult> HandleConfirmedCommitStateFailureAsync(
@@ -341,7 +350,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         // already persisted Executed; if not, Executing is durably claimed.
         // A best-effort separate write can mark OutcomeUnknown, but must
         // never make the request Pending, Failed, or executable again.
-        state.Status = OutcomeUnknown;
+        state.Status = ApprovalStateUnknown;
         state.Reason = ConfirmedCommitStateUnknownReason;
         state.UpdatedAt = DateTime.UtcNow;
         try

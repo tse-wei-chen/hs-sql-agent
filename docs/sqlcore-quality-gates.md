@@ -438,6 +438,11 @@ published as measured percentages or silently set to 100.
       acknowledged* but Admin Store terminal persistence was not.
       An `Executing` status after failed fallback persistence is an
       operator-reconciliation state, not permission to repeat the write.
+- [x] Persist new Admin Store terminal-save uncertainty as distinct
+      `ApprovalStateUnknown` (20 characters, fits the existing Status
+      column) rather than classifying new records by matching English
+      `Reason` text. Legacy `OutcomeUnknown` records remain readable,
+      retaining the original non-replayable approval and error codes.
 - [ ] Add explicit operator-assisted reconciliation of an `Executing`
       or `OutcomeUnknown` durable approval. The service must not infer
       transaction failure from a terminal Admin Store outage and must not

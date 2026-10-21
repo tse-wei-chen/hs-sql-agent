@@ -147,7 +147,7 @@ public sealed class DurableDmlApprovalLifecycleTests
             var state = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(
                 x => x.RequestId == request.RequestId, TestContext.Current.CancellationToken);
             Assert.Equal(
-                fallbackStateSaveAlsoFails ? "Executing" : "OutcomeUnknown",
+                fallbackStateSaveAlsoFails ? "Executing" : "ApprovalStateUnknown",
                 state.Status);
             Assert.NotEqual("Failed", state.Status);
 
@@ -205,7 +205,7 @@ public sealed class DurableDmlApprovalLifecycleTests
             // The first terminal write completed. The fallback might have
             // conservatively replaced it with OutcomeUnknown; neither permits
             // a second execution.
-            Assert.Contains(stored.Status, new[] { "Executed", "OutcomeUnknown" });
+            Assert.Contains(stored.Status, new[] { "Executed", "ApprovalStateUnknown" });
 
             var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
             var repeat = await lifecycle.CompleteAsync(
@@ -216,9 +216,45 @@ public sealed class DurableDmlApprovalLifecycleTests
                 DmlApprovalCompletionStatus.AlreadyCompleted,
                 DmlApprovalCompletionStatus.OutcomeUnknown
             });
+            if (stored.Status == "ApprovalStateUnknown")
+                Assert.Equal("dml.approval_state_unknown", repeat.ErrorCode);
         }
 
         Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task LegacyApprovalStateUnknown_RemainsClassifiedWithoutReExecuting()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == request.RequestId,
+                TestContext.Current.CancellationToken);
+            state.Status = "OutcomeUnknown";
+            state.Reason =
+                "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
+                "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var repeat = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, repeat.Status);
+            Assert.Equal("dml.approval_state_unknown", repeat.ErrorCode);
+            Assert.False(repeat.Retryable);
+        }
+
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
     [Fact]
