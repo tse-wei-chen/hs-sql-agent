@@ -90,7 +90,10 @@ published as measured percentages or silently set to 100.
       schema-qualified, safely quoted physical target **before** reading the
       transactional catalog. The lock lasts until commit/rollback and blocks
       ALTER/DROP's ACCESS EXCLUSIVE lock, closing this provider's final
-      schema-read-to-DML-write DDL window. A real PostgreSQL concurrency test
+      schema-read-to-DML-write DDL window. Validate that transaction.Connection
+      is the exact supplied connection before executing any provider lock or
+      metadata query, so cross-connection calls fail in the shared guard first.
+      A real PostgreSQL concurrency test
       asserts ALTER times out while the guarded transaction is held, succeeds
       after rollback, and changes the schema digest. This specific lock
       guarantee is **not** attributed to MySQL, SQLite, SQL Server, Oracle,

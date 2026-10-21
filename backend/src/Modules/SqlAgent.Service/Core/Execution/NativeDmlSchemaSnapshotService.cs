@@ -82,6 +82,13 @@ public sealed class NativeDmlSchemaSnapshotService :
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(transaction);
         ArgumentNullException.ThrowIfNull(expectedSnapshot);
+        // Reject cross-connection transactions *before* any provider lock or
+        // catalog SQL. Relying on provider validation is not sufficient: a
+        // PostgreSQL LOCK TABLE on the wrong connection can execute outside an
+        // explicit transaction, yielding a provider-specific error instead.
+        if (!ReferenceEquals(transaction.Connection, connection))
+            throw new InvalidOperationException(
+                "Schema freshness transaction does not belong to its database connection.");
         if (expectedSnapshot.Provider != provider || expectedSnapshot.Tables.Count != 1)
             return null;
 
