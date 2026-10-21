@@ -21,6 +21,7 @@ public sealed class DurableDmlReconciliationService(
 {
     private const string Executing = "Executing";
     private const string OutcomeUnknown = "OutcomeUnknown";
+    private const string RollbackOutcomeUnknown = "RollbackOutcomeUnknown";
     private const string ApprovalStateUnknown = "ApprovalStateUnknown";
 
     public async Task<IReadOnlyList<DurableDmlReconciliationItem>> ListAsync(
@@ -34,6 +35,7 @@ public sealed class DurableDmlReconciliationService(
         // encrypted SQL resume payload, approval token, or fingerprints.
         var states = await adminContext.DmlApprovalRequests.AsNoTracking()
             .Where(x => x.Status == Executing || x.Status == OutcomeUnknown
+                        || x.Status == RollbackOutcomeUnknown
                         || x.Status == ApprovalStateUnknown)
             .OrderByDescending(x => x.UpdatedAt)
             .ThenBy(x => x.RequestId)
@@ -71,8 +73,8 @@ public sealed class DurableDmlReconciliationService(
         if (request.ExpectedUpdatedAt.Kind == DateTimeKind.Unspecified)
             throw new ArgumentException(
                 "ExpectedUpdatedAt must carry an explicit UTC marker or offset, not a timezone-ambiguous local timestamp.");
-        if (request.ExpectedStatus is not (OutcomeUnknown or ApprovalStateUnknown))
-            throw new ArgumentException("Only OutcomeUnknown or ApprovalStateUnknown approvals may be resolved. Executing requires independently proven worker quiescence.");
+        if (request.ExpectedStatus is not (OutcomeUnknown or RollbackOutcomeUnknown or ApprovalStateUnknown))
+            throw new ArgumentException("Only terminal uncertain approvals can be resolved. Executing requires independently proven worker quiescence.");
 
         // These are *operator-attested* terminal dispositions; none can be replayed.
         var destination = request.Resolution switch
@@ -91,7 +93,7 @@ public sealed class DurableDmlReconciliationService(
             throw new InvalidOperationException("Approval state changed since inspection; reload before reconciling.");
         // Age does not fence a live worker. Never override Executing while the
         // original SQL transaction might still be in flight.
-        if (state.Status is not (OutcomeUnknown or ApprovalStateUnknown))
+        if (state.Status is not (OutcomeUnknown or RollbackOutcomeUnknown or ApprovalStateUnknown))
             throw new InvalidOperationException("Only terminal uncertain approvals can be reconciled; Executing requires a separate worker-fencing proof.");
 
         // An ApprovalStateUnknown state (or its legacy OutcomeUnknown encoding)
@@ -187,10 +189,11 @@ public sealed class DurableDmlReconciliationService(
         var evidence = knownCommit ? "TargetCommitAcknowledged"
             : status == Executing ? "WorkerFencingRequired"
             : status == OutcomeUnknown ? "PhysicalCommitUnknown"
+            : status == RollbackOutcomeUnknown ? "RollbackUnconfirmed"
             : "TerminalAttestation";
         string[] resolutions = status == Executing
             ? []
-            : status is OutcomeUnknown or ApprovalStateUnknown
+            : status is OutcomeUnknown or RollbackOutcomeUnknown or ApprovalStateUnknown
                 ? knownCommit ? ["committed"] : ["committed", "not_committed", "indeterminate"]
                 : [];
         return new DurableDmlReconciliationItem(

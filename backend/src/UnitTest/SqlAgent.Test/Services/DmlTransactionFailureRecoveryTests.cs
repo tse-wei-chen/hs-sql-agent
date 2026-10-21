@@ -51,6 +51,46 @@ public sealed class DmlTransactionFailureRecoveryTests
     }
 
     [Fact]
+    public async Task FailedDmlThenFailedRollback_ThrowsDistinctTypedUncertaintyWithoutLosingOriginalFailures()
+    {
+        var sqlFailure = new IOException("Mutation response was lost.");
+        var rollbackFailure = new InvalidOperationException("ROLLBACK transport was unavailable.");
+        var transaction = new FailingTransaction(commitFailure: null, rollbackFailure: rollbackFailure);
+
+        await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, sqlFailure);
+        var error = Assert.Throws<DmlRollbackOutcomeUnknownException>(() =>
+            DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(sqlFailure));
+
+        Assert.Same(sqlFailure, error.InnerException);
+        Assert.Same(rollbackFailure, error.RollbackFailure);
+        Assert.Same(rollbackFailure, sqlFailure.Data[DmlTransactionFailureRecovery.RollbackFailureDataKey]);
+        Assert.Contains("must not be replayed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, transaction.RollbackAttempts);
+    }
+
+    [Fact]
+    public async Task CleanRollbackPreservesPrimaryExceptionAndKnownCommitUncertaintyIsNotDowngraded()
+    {
+        var mutationFailure = new IOException("Noncommitted mutation failed.");
+        await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
+            new FailingTransaction(commitFailure: null, rollbackFailure: null), mutationFailure);
+
+        // Known-clean cleanup leaves the original exception and stack unchanged.
+        DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(mutationFailure);
+        var commitFailure = new DmlCommitOutcomeUnknownException(
+            new IOException("COMMIT acknowledgement lost"));
+        await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
+            new FailingTransaction(commitFailure: null,
+                rollbackFailure: new IOException("Cleanup after COMMIT failed")), commitFailure);
+
+        // Once COMMIT was attempted, COMMIT-unknown takes priority over
+        // lower-fidelity rollback diagnostics.
+        DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(commitFailure);
+        Assert.IsType<IOException>(
+            commitFailure.Data[DmlTransactionFailureRecovery.RollbackFailureDataKey]);
+    }
+
+    [Fact]
     public async Task CleanCommit_DoesNotCreateUncertainOutcomeOrRollback()
     {
         var transaction = new FailingTransaction(null, null);

@@ -121,6 +121,7 @@ internal sealed class DmlAtomicTransactionCoordinator(
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+            DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
             throw;
         }
     }

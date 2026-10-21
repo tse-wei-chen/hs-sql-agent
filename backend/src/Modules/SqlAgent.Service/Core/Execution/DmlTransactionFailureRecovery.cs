@@ -20,6 +20,26 @@ public sealed class DmlCommitOutcomeUnknownException : InvalidOperationException
 }
 
 /// <summary>
+/// A DML attempt failed before any acknowledged COMMIT, and a subsequent
+/// ROLLBACK could not be confirmed. It would be unsafe to report a definite
+/// failure or allow the consumed approval to be replayed.
+/// </summary>
+public sealed class DmlRollbackOutcomeUnknownException : InvalidOperationException
+{
+    public DmlRollbackOutcomeUnknownException(Exception originalFailure, Exception rollbackFailure)
+        : base(
+            "DML rollback outcome is unknown: the database transaction could not be confirmed rolled back. " +
+            "The one-time approval was consumed and must not be replayed. " +
+            "Investigate physical database effects before starting a new preview.",
+            originalFailure)
+    {
+        RollbackFailure = rollbackFailure;
+    }
+
+    public Exception RollbackFailure { get; }
+}
+
+/// <summary>
 /// Shared failure handling for single and atomic DML. A failed COMMIT must never
 /// be misreported as a definitive rollback; rollback errors must not replace
 /// the original SQL/cancellation/commit failure.
@@ -42,6 +62,18 @@ internal static class DmlTransactionFailureRecovery
             // does not prove whether COMMIT reached the database.
             throw new DmlCommitOutcomeUnknownException(cause);
         }
+    }
+
+    // Invoke only after rollback cleanup. Preserve the original exception
+    // and stack on a clean rollback; on a failed rollback surface a separate
+    // typed terminal uncertainty, except when COMMIT was already uncertain.
+    internal static void ThrowIfRollbackUnconfirmed(Exception failure)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+        if (failure is DmlCommitOutcomeUnknownException)
+            return;
+        if (failure.Data[RollbackFailureDataKey] is Exception rollbackFailure)
+            throw new DmlRollbackOutcomeUnknownException(failure, rollbackFailure);
     }
 
     internal static async Task RollbackWithoutMaskingAsync(

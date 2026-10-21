@@ -498,6 +498,21 @@ published as measured percentages or silently set to 100.
       An attestation is **not** cryptographic proof of transaction outcome
       or a distributed atomic commit; operators must independently
       investigate physical effects first.
+- [x] Separate COMMIT acknowledgement uncertainty from failure to confirm
+      a ROLLBACK after DML error. The shared transaction recovery layer now
+      emits `DmlRollbackOutcomeUnknownException` when a rollback attempt also
+      fails, preserving the original SQL exception and rollback failure.
+      Both single and atomic DML coordinators propagate this typed result
+      rather than turning it into a definitive SQL failure.
+      Durable approvals record a distinct `RollbackOutcomeUnknown`
+      status (within the existing Status length), return
+      `dml.rollback_outcome_unknown`, and never re-execute the consumed
+      approval after restart. The authenticated operator inventory classifies
+      it as `RollbackUnconfirmed` with conservative evidence-based choices.
+      An already-unknown COMMIT remains `DmlCommitOutcomeUnknownException`
+      even when secondary rollback cleanup also fails. The scope of this
+      gate is process/provider rollback acknowledgement, **not** proof of
+      the physical outcome in a disconnected database.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.

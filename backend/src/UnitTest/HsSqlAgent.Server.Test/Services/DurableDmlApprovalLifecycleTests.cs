@@ -291,6 +291,41 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task PreviouslyUnconfirmedRollback_RemainsDistinctAndNonReplayableAfterRestart()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == request.RequestId,
+                TestContext.Current.CancellationToken);
+            state.Status = "RollbackOutcomeUnknown";
+            state.Reason = "Mutation failed and ROLLBACK acknowledgement was lost.";
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var replay = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, replay.Status);
+            Assert.Equal("dml.rollback_outcome_unknown", replay.ErrorCode);
+            Assert.False(replay.Retryable);
+            Assert.Contains("could not be confirmed", replay.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Do not retry", replay.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
     public async Task PreviouslyUnknownCommitOutcome_RemainsTerminalWithoutReExecutingApproval()
     {
         await using var fixture = await Fixture.CreateAsync();

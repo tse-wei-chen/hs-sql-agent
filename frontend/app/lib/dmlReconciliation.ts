@@ -22,8 +22,10 @@ export function permittedDmlResolutions(
   ) {
     safe = ["committed"];
   } else if (
-    item.commitEvidence === "PhysicalCommitUnknown" &&
-    item.status === "OutcomeUnknown"
+    ((item.commitEvidence === "PhysicalCommitUnknown" &&
+      item.status === "OutcomeUnknown") ||
+      (item.commitEvidence === "RollbackUnconfirmed" &&
+        item.status === "RollbackOutcomeUnknown"))
   ) {
     safe = unknownOutcomeChoices;
   }
@@ -78,6 +80,8 @@ export function dmlCommitEvidenceDescription(evidence: string): string {
       return "The target COMMIT may or may not have completed. Review independent evidence.";
     case "WorkerFencingRequired":
       return "Execution may still be running. No settlement is allowed without real worker fencing.";
+    case "RollbackUnconfirmed":
+      return "A failed DML attempt could not confirm rollback. Inspect independent target evidence; do not retry the consumed approval.";
     default:
       return "Unknown evidence classification. Settlement is unavailable.";
   }

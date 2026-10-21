@@ -19,6 +19,7 @@ public sealed class DurableDmlReconciliationServiceTests
     [InlineData("OutcomeUnknown", "not_committed", "AttestedNotCommitted")]
     [InlineData("OutcomeUnknown", "indeterminate", "AttestedIndeterminate")]
     [InlineData("ApprovalStateUnknown", "committed", "AttestedCommitted")]
+    [InlineData("RollbackOutcomeUnknown", "indeterminate", "AttestedIndeterminate")]
     public async Task OperatorAttestation_IsPersistedWithAuditAndCannotBeReissued(
         string initialStatus, string resolution, string expectedTerminalStatus)
     {
@@ -30,8 +31,12 @@ public sealed class DurableDmlReconciliationServiceTests
 
         Assert.Equal("request-1", pending.RequestId);
         Assert.Equal(initialStatus, pending.Status);
-        Assert.Equal(initialStatus == "ApprovalStateUnknown"
-            ? "TargetCommitAcknowledged" : "PhysicalCommitUnknown", pending.CommitEvidence);
+        Assert.Equal(initialStatus switch
+        {
+            "ApprovalStateUnknown" => "TargetCommitAcknowledged",
+            "RollbackOutcomeUnknown" => "RollbackUnconfirmed",
+            _ => "PhysicalCommitUnknown"
+        }, pending.CommitEvidence);
         Assert.Contains(resolution, pending.AllowedResolutions);
         if (initialStatus == "ApprovalStateUnknown")
             Assert.Equal(["committed"], pending.AllowedResolutions);

@@ -207,6 +207,7 @@ public sealed class DmlCoordinator(
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+            DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
             throw;
         }
     }

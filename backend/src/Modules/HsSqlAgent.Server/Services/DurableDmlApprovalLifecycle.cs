@@ -56,6 +56,9 @@ internal sealed class DurableDmlApprovalLifecycle(
     private const string Expired = "Expired";
     private const string Failed = "Failed";
     private const string OutcomeUnknown = "OutcomeUnknown";
+    // A failed ROLLBACK is not evidence of an actual rollback. This state
+    // remains consumed and intentionally distinct from a lost COMMIT reply.
+    private const string RollbackOutcomeUnknown = "RollbackOutcomeUnknown";
     // Distinct, persisted Admin Store uncertainty. Fits the existing 24-character Status column.
     private const string ApprovalStateUnknown = "ApprovalStateUnknown";
     // The target COMMIT was acknowledged, but the separate Admin Store write
@@ -171,24 +174,28 @@ internal sealed class DurableDmlApprovalLifecycle(
             var approvalStateUnknown = HasConfirmedTargetCommit(state);
             var commitOutcomeUnknown = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
                 && !approvalStateUnknown;
+            var rollbackOutcomeUnknown = string.Equals(state.Status, RollbackOutcomeUnknown, StringComparison.Ordinal);
 
             return new DmlApprovalCompletionResult(
                 string.Equals(state.Status, Executing, StringComparison.Ordinal)
                     ? DmlApprovalCompletionStatus.AlreadyProcessing
-                    : approvalStateUnknown || commitOutcomeUnknown
+                    : approvalStateUnknown || commitOutcomeUnknown || rollbackOutcomeUnknown
                         ? DmlApprovalCompletionStatus.OutcomeUnknown
                         : DmlApprovalCompletionStatus.AlreadyCompleted,
                 approvalStateUnknown
                     ? ConfirmedCommitStateUnknownReason
                     : commitOutcomeUnknown
                         ? "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
+                        : rollbackOutcomeUnknown
+                            ? "DML rollback could not be confirmed. Approval is consumed; inspect the target database. Do not retry this approval."
                         : string.Equals(state.Status, Executing, StringComparison.Ordinal)
                             ? "DML approval is already executing or requires reconciliation. Do not retry; inspect the target database state."
                             : $"DML approval request is already in terminal state '{state.Status}'.")
             {
                 ErrorCode = approvalStateUnknown
                     ? ApprovalStateUnknownCode
-                    : commitOutcomeUnknown ? "dml.commit_outcome_unknown" : null
+                    : commitOutcomeUnknown ? "dml.commit_outcome_unknown"
+                    : rollbackOutcomeUnknown ? "dml.rollback_outcome_unknown" : null
             };
         }
 
@@ -309,6 +316,39 @@ internal sealed class DurableDmlApprovalLifecycle(
                 DmlApprovalCompletionStatus.OutcomeUnknown, ex.Message)
             {
                 ErrorCode = "dml.commit_outcome_unknown"
+            };
+        }
+        catch (DmlRollbackOutcomeUnknownException ex)
+        {
+            // A mutation failed, then rollback could not be confirmed.
+            // Treat this as target-state uncertainty, not definite Failed.
+            state.Status = RollbackOutcomeUnknown;
+            state.Reason = ex.Message;
+            state.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await context.SaveChangesAsync(cleanup.Token);
+            }
+            catch (Exception)
+            {
+                // The durably claimed Executing state is also non-replayable.
+            }
+
+            try
+            {
+                using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await AuditCompletionAsync(state, "outcome_unknown", "rollback_outcome_unknown",
+                    ex.Message, null, auditTimeout.Token);
+            }
+            catch (Exception)
+            {
+                // Secondary audit failure never changes the target outcome.
+            }
+
+            return new DmlApprovalCompletionResult(DmlApprovalCompletionStatus.OutcomeUnknown, ex.Message)
+            {
+                ErrorCode = "dml.rollback_outcome_unknown"
             };
         }
         catch (DmlApprovalStaleException ex)

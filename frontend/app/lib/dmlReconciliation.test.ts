@@ -53,6 +53,19 @@ describe("durable DML reconciliation operator guardrails", () => {
     }
   });
 
+  it("exposes rollback uncertainty separately from a lost COMMIT acknowledgement", () => {
+    const item: DmlReconciliationItem = {
+      ...base, status: "RollbackOutcomeUnknown",
+      commitEvidence: "RollbackUnconfirmed",
+    };
+    expect(permittedDmlResolutions(item)).toEqual([
+      "committed", "not_committed", "indeterminate",
+    ]);
+    expect(canSubmitDmlReconciliation(item, form)).toBe(true);
+    expect(dmlCommitEvidenceDescription(item.commitEvidence)).toContain("could not confirm rollback");
+    expect(permittedDmlResolutions({ ...item, status: "Executing" })).toEqual([]);
+  });
+
   it("requires independent review, bounded evidence and exact request ID", () => {
     expect(canSubmitDmlReconciliation(base, form)).toBe(true);
     expect(canSubmitDmlReconciliation(base, { ...form, confirmedIndependentReview: false })).toBe(false);
