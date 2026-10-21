@@ -110,8 +110,15 @@ published as measured percentages or silently set to 100.
       each provider must capture a live catalog, attest its digest using the
       exact open transaction, reject a transaction from another connection,
       and detect an added column on an isolated physical table. This is
-      **12 real-provider tests** reusing pinned provider fixtures; it does not
-      prove each DB prevents concurrent DDL after the freshness read.
+      **12 real-provider tests** reusing pinned provider fixtures.
+- [x] Add a six-provider **end-to-end approved INSERT VALUES** gate to the
+      existing real-provider strategy fixture: a native compiled schema-bound
+      plan goes through Preview and Commit successfully without DDL, then
+      changing the same isolated table's DDL after a second Preview must
+      reject that old approval before execution. Assert the committed row
+      count remains unchanged. This gate exercises coordinator, challenge,
+      provider transaction and native metadata together; it does not prove
+      each DB prevents concurrent DDL after the freshness read.
 - [ ] Extend real-provider differential execution beyond the narrow six-provider
       intersection: provider versions/session settings, parameter binding,
       DML capability intersections and affected-row behavior.

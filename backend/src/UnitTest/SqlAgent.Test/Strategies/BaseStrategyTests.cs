@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+using System.Data.Common;
 using System.Globalization;
 using System.Text.Json;
 using HsSqlAgent.SqlCore;
@@ -139,6 +141,103 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         {
             await ExecuteAsync($"DROP TABLE {tableName}");
         }
+    }
+
+    [Fact]
+    public virtual async Task NativeDmlSchemaFreshness_RealProviderApprovalCommitsAndRejectsStaleSchema()
+    {
+        // End-to-end proof on ALL SIX real provider fixtures, including the actual
+        // DmlCoordinator and its one-time approval store. Each test owns its table.
+        var provider = Strategy.DbType;
+        var token = TestContext.Current.CancellationToken;
+        var tableName = "HSAPP_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        const string policyVersion = "native-dml-execution-proof-v1";
+        const string approvalContext = "native-dml-execution-approval-v1";
+        var freshness = new NativeDmlSchemaSnapshotService();
+        var connectionString = Fixture.ConnectionString;
+        await using var connection = ProviderStrategy.CreateConnection(connectionString);
+        await connection.OpenAsync(token);
+        var serverVersion = RuntimeServerProfileVerifier.Capture(provider, connection).ServerVersionIdentity;
+
+        async Task ExecuteAsync(string sql)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        async Task<long> CountRowsAsync()
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {tableName}";
+            return Convert.ToInt64(await command.ExecuteScalarAsync(token));
+        }
+
+        async Task<ValidatedDmlPlan> PlanAsync(long id)
+        {
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {tableName} (ID, NAME) VALUES ({id}, 'Alice')", provider);
+            var snapshot = await freshness.CaptureAsync(connection, provider, parsed, token);
+            Assert.NotNull(snapshot);
+            var compiled = CoreDmlCompiler.CreateDefault().Compile(
+                parsed, provider, new SqlPlanValidationContext(policyVersion).WithSchemaSnapshot(snapshot));
+            var rows = ImmutableArray.Create(ImmutableDictionary.CreateRange<string, object?>(
+                StringComparer.OrdinalIgnoreCase,
+                [
+                    new KeyValuePair<string, object?>("ID", id),
+                    new KeyValuePair<string, object?>("NAME", "Alice")
+                ]));
+            return new ValidatedDmlPlan(
+                DmlOperation.Insert, snapshot.Tables[0].Name, compiled,
+                MatchQueryCommand: null,
+                RowIdentityColumns: ImmutableArray<string>.Empty,
+                RowIdentityAssurance: DmlRowIdentityAssurance.CountOnly,
+                PlanFingerprint: DmlFingerprintService.ComputePlanFingerprint(compiled, policyVersion),
+                PolicyVersion: policyVersion,
+                ApprovalTtl: TimeSpan.FromMinutes(5),
+                MaxAffectedRows: 1,
+                ApprovalMode: DmlApprovalMode.InsertValues,
+                InsertRows: rows,
+                SchemaSnapshot: snapshot);
+        }
+
+        await ExecuteAsync($"CREATE TABLE {tableName} (ID INTEGER PRIMARY KEY, NAME VARCHAR(80))");
+        try
+        {
+            var coordinator = new DmlCoordinator(
+                new ProviderFixtureConnectionFactory(value => ProviderStrategy.CreateConnection(value)),
+                schemaFreshnessVerifier: freshness);
+
+            var approved = await PlanAsync(1);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, approved, approvalContext, token, serverVersion);
+            var committed = await coordinator.CommitAsync(
+                connectionString, approved, preview.Challenge, approvalContext, token, serverVersion);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            Assert.Equal(1L, await CountRowsAsync());
+
+            var stale = await PlanAsync(2);
+            var stalePreview = await coordinator.PreviewAsync(
+                connectionString, stale, approvalContext, token, serverVersion);
+
+            await ExecuteAsync($"ALTER TABLE {tableName} ADD EXTRA_COL INTEGER");
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.CommitAsync(
+                    connectionString, stale, stalePreview.Challenge, approvalContext, token, serverVersion));
+            Assert.Contains("stale", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1L, await CountRowsAsync());
+        }
+        finally
+        {
+            await ExecuteAsync($"DROP TABLE {tableName}");
+        }
+    }
+
+    private sealed class ProviderFixtureConnectionFactory(Func<string, DbConnection> create) : IDbConnectionFactory
+    {
+        public DbConnection Create(string connectionString) => create(connectionString);
     }
 
     [Fact]
