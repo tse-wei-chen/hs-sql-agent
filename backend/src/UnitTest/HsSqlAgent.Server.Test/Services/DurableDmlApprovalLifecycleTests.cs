@@ -203,7 +203,7 @@ public sealed class DurableDmlApprovalLifecycleTests
             var stored = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(
                 x => x.RequestId == request.RequestId, TestContext.Current.CancellationToken);
             // The first terminal write completed. The fallback might have
-            // conservatively replaced it with OutcomeUnknown; neither permits
+            // conservatively replaced it with ApprovalStateUnknown; neither permits
             // a second execution.
             Assert.Contains(stored.Status, new[] { "Executed", "ApprovalStateUnknown" });
 
@@ -252,6 +252,39 @@ public sealed class DurableDmlApprovalLifecycleTests
             Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, repeat.Status);
             Assert.Equal("dml.approval_state_unknown", repeat.ErrorCode);
             Assert.False(repeat.Retryable);
+        }
+
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task ApprovalStateUnknown_ClassificationDoesNotDependOnReasonText()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == request.RequestId,
+                TestContext.Current.CancellationToken);
+            state.Status = "ApprovalStateUnknown";
+            state.Reason = "Operator-supplied annotation, not a classification string.";
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var replay = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, replay.Status);
+            Assert.Equal("dml.approval_state_unknown", replay.ErrorCode);
+            Assert.False(replay.Retryable);
+            Assert.Contains("COMMIT succeeded", replay.Message, StringComparison.Ordinal);
         }
 
         Assert.Equal(0L, await fixture.CountTargetRowsAsync());
@@ -438,7 +471,7 @@ public sealed class DurableDmlApprovalLifecycleTests
 
             if ((!failTerminalSaveAfterSuccess
                     && statuses.Contains("Executed", StringComparer.Ordinal))
-                || (failUnknownSave && statuses.Contains("OutcomeUnknown", StringComparer.Ordinal)))
+                || (failUnknownSave && statuses.Contains("ApprovalStateUnknown", StringComparer.Ordinal)))
                 throw new IOException("Injected Admin Store terminal SaveChanges failure.");
 
             return base.SavingChangesAsync(eventData, result, cancellationToken);

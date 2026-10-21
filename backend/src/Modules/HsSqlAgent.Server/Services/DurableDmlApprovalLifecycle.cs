@@ -59,8 +59,8 @@ internal sealed class DurableDmlApprovalLifecycle(
     // Distinct, persisted Admin Store uncertainty. Fits the existing 24-character Status column.
     private const string ApprovalStateUnknown = "ApprovalStateUnknown";
     // The target COMMIT was acknowledged, but the separate Admin Store write
-    // could not be confirmed. Store the distinction in the durable reason,
-    // without changing the persisted Status enum or database schema.
+    // could not be confirmed. Keep the human explanation separate from the
+    // machine-readable Status so editing Reason never changes the error code.
     private const string ConfirmedCommitStateUnknownReason =
         "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
         "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
@@ -348,8 +348,8 @@ internal sealed class DurableDmlApprovalLifecycle(
     {
         // A failed SaveChanges acknowledgement may mean the Admin Store
         // already persisted Executed; if not, Executing is durably claimed.
-        // A best-effort separate write can mark OutcomeUnknown, but must
-        // never make the request Pending, Failed, or executable again.
+        // A best-effort separate write can mark ApprovalStateUnknown, but
+        // must never make the request Pending, Failed, or executable again.
         state.Status = ApprovalStateUnknown;
         state.Reason = ConfirmedCommitStateUnknownReason;
         state.UpdatedAt = DateTime.UtcNow;
