@@ -455,13 +455,23 @@ published as measured percentages or silently set to 100.
       **cannot be resolved**: their age is not evidence that an in-flight
       worker has stopped. Only terminal `OutcomeUnknown` and
       `ApprovalStateUnknown` are currently eligible.
-      The resulting Reconciled* states are permanently non-replayable.
-      Status transition and an operator-attributed AuditLog record are
-      saved atomically in the Admin Store and protected by the status
-      concurrency token. No target database connection or mutation is
-      performed. An attestation is **not** cryptographic proof of
-      transaction outcome or a distributed atomic commit; operators
-      must independently investigate physical effects first.
+      The resulting AttestedCommitted / AttestedNotCommitted /
+      AttestedIndeterminate statuses are permanently non-replayable;
+      the prefix makes clear these are human attestations, not independent
+      compiler or physical COMMIT proofs. A confirmed target COMMIT
+      (`ApprovalStateUnknown` or its legacy `OutcomeUnknown` encoding)
+      can only be attested as committed; operator input cannot contradict
+      a previously acknowledged database COMMIT.
+      Status transition, an operator-attributed AuditLog and (when SIEM
+      integration is enabled) its durable outbound delivery are committed
+      in a single Admin Store transaction, protected by optimistic status
+      concurrency. The ordinary audit redactor is applied to free-form
+      operator evidence before storing the attestation or SIEM payload.
+      Notification failure after successful persistence does not reset
+      the approval. No target database connection or mutation is performed.
+      An attestation is **not** cryptographic proof of transaction outcome
+      or a distributed atomic commit; operators must independently
+      investigate physical effects first.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.

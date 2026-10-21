@@ -1,10 +1,13 @@
 using Admin.Service.Data;
 using Admin.Service.Data.Entites;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Controllers;
 using HsSqlAgent.Server.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;
@@ -12,8 +15,10 @@ namespace HsSqlAgent.Server.Test.Services;
 public sealed class DurableDmlReconciliationServiceTests
 {
     [Theory]
-    [InlineData("OutcomeUnknown", "committed", "ReconciledCommitted")]
-    [InlineData("ApprovalStateUnknown", "not_committed", "ReconciledNotCommitted")]
+    [InlineData("OutcomeUnknown", "committed", "AttestedCommitted")]
+    [InlineData("OutcomeUnknown", "not_committed", "AttestedNotCommitted")]
+    [InlineData("OutcomeUnknown", "indeterminate", "AttestedIndeterminate")]
+    [InlineData("ApprovalStateUnknown", "committed", "AttestedCommitted")]
     public async Task OperatorAttestation_IsPersistedWithAuditAndCannotBeReissued(
         string initialStatus, string resolution, string expectedTerminalStatus)
     {
@@ -102,8 +107,9 @@ public sealed class DurableDmlReconciliationServiceTests
         var ct = TestContext.Current.CancellationToken;
         // Hold the original status concurrency token in a second DbContext.
         _ = await staleContext.DmlApprovalRequests.SingleAsync(ct);
-        var first = new DurableDmlReconciliationService(firstContext);
-        var second = new DurableDmlReconciliationService(staleContext);
+        var siem = Options.Create(new OperabilitySettings { SiemWebhookUrl = "https://siem.example.test/audit" });
+        var first = new DurableDmlReconciliationService(firstContext, siem);
+        var second = new DurableDmlReconciliationService(staleContext, siem);
         var item = Assert.Single(await first.ListAsync(10, ct));
         var command = new DurableDmlReconciliationRequest(item.Status, item.UpdatedAt,
             "committed", "CASE-777", "Physical rows inspected by the operator.");
@@ -113,8 +119,9 @@ public sealed class DurableDmlReconciliationServiceTests
             second.ReconcileAsync(item.RequestId, command with { Note = "Second conflicting claim" },
                 "second-admin", ct));
         Assert.Equal(1, await firstContext.AuditLogs.AsNoTracking().CountAsync(ct));
+        Assert.Equal(1, await firstContext.OutboundDeliveries.AsNoTracking().CountAsync(ct));
         var saved = await firstContext.DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
-        Assert.Equal("ReconciledCommitted", saved.Status);
+        Assert.Equal("AttestedCommitted", saved.Status);
     }
 
     [Fact]
@@ -134,6 +141,92 @@ public sealed class DurableDmlReconciliationServiceTests
             new(item.Status, item.UpdatedAt, "committed", "CASE-3", "Evidence"), "", ct));
         Assert.Equal(0, await db.AuditLogs.CountAsync(ct));
         Assert.Equal("OutcomeUnknown", (await db.DmlApprovalRequests.AsNoTracking().SingleAsync(ct)).Status);
+    }
+
+    [Theory]
+    [InlineData("ApprovalStateUnknown", false)]
+    [InlineData("OutcomeUnknown", true)]
+    public async Task ConfirmedTargetCommit_CannotBeContradictedByOperatorAttestation(
+        string status, bool legacyRecord)
+    {
+        await using var fixture = await Fixture.CreateAsync(status, 60);
+        await using var db = fixture.NewContext();
+        var ct = TestContext.Current.CancellationToken;
+        if (legacyRecord)
+        {
+            var original = await db.DmlApprovalRequests.SingleAsync(ct);
+            original.Reason =
+                "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
+                "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
+            await db.SaveChangesAsync(ct);
+            db.ChangeTracker.Clear();
+        }
+
+        var service = new DurableDmlReconciliationService(db);
+        var item = Assert.Single(await service.ListAsync(10, ct));
+        foreach (var resolution in new[] { "not_committed", "indeterminate" })
+        {
+            var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.ReconcileAsync(item.RequestId,
+                    new(item.Status, item.UpdatedAt, resolution, "CASE-CONFIRMED", "Operator observation"),
+                    "operator", ct));
+            Assert.Contains("COMMIT is already confirmed", failure.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(status, (await db.DmlApprovalRequests.AsNoTracking().SingleAsync(ct)).Status);
+        Assert.Equal(0, await db.AuditLogs.CountAsync(ct));
+        Assert.Equal(0, await db.OutboundDeliveries.CountAsync(ct));
+
+        var result = await service.ReconcileAsync(item.RequestId,
+            new(item.Status, item.UpdatedAt, "committed", "CASE-CONFIRMED", "Reviewed confirmed transaction"),
+            "operator", ct);
+        Assert.NotNull(result);
+        Assert.Equal("AttestedCommitted", result.Status);
+    }
+
+    [Fact]
+    public async Task Reconciliation_WritesRedactedAtomicSiemOutbox_AndIgnoresSignalFailure()
+    {
+        await using var fixture = await Fixture.CreateAsync("OutcomeUnknown", 60);
+        await using var db = fixture.NewContext();
+        var ct = TestContext.Current.CancellationToken;
+        var service = new DurableDmlReconciliationService(
+            db,
+            Options.Create(new OperabilitySettings { SiemWebhookUrl = "https://siem.example.test/events" }),
+            new FailingDeliverySignal());
+        var pending = Assert.Single(await service.ListAsync(10, ct));
+
+        var outcome = await service.ReconcileAsync("request-1",
+            new(pending.Status, pending.UpdatedAt, "committed",
+                "INC-123 password=sensitive123",
+                "Verified receipt; Bearer abc123token"),
+            "admin-operator", ct);
+        Assert.NotNull(outcome);
+        Assert.Equal("AttestedCommitted", outcome.Status);
+
+        var stored = await db.DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+        var audit = await db.AuditLogs.AsNoTracking().SingleAsync(ct);
+        var delivery = await db.OutboundDeliveries.AsNoTracking().SingleAsync(ct);
+
+        Assert.Equal("AttestedCommitted", stored.Status);
+        Assert.Equal("siem", delivery.Category);
+        Assert.Equal($"siem:{audit.EventId:N}", delivery.DedupeKey);
+        Assert.Equal("pending", delivery.Status);
+        Assert.Equal("https://siem.example.test/events", delivery.TargetUrl);
+        Assert.Contains("dml.approval.reconciled", delivery.Payload, StringComparison.Ordinal);
+        foreach (var raw in new[] { stored.Reason, audit.Detail, delivery.Payload })
+        {
+            Assert.DoesNotContain("sensitive123", raw, StringComparison.Ordinal);
+            Assert.DoesNotContain("abc123token", raw, StringComparison.Ordinal);
+            Assert.Contains("[REDACTED]", raw, StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class FailingDeliverySignal : IOutboundDeliverySignal
+    {
+        public void Notify() => throw new InvalidOperationException("Worker signal unavailable");
+        public ValueTask<bool> WaitAsync(CancellationToken cancellationToken) => ValueTask.FromResult(false);
+        public bool TryRead() => false;
     }
 
     [Fact]

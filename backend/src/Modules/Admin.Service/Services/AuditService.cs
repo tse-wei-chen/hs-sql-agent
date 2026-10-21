@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Common.Models;
-using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -407,20 +406,5 @@ public class AuditService(
         }
     }
 
-    private static string? Redact(string? value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return value;
-
-        var redacted = Regex.Replace(
-            value,
-            @"(?i)\b(password|pwd|token|api[_-]?key|secret)\s*[=:]\s*[^;\s]+",
-            "$1=[REDACTED]",
-            RegexOptions.CultureInvariant);
-        return Regex.Replace(
-            redacted,
-            @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
-            "Bearer [REDACTED]",
-            RegexOptions.CultureInvariant);
-    }
+    private static string? Redact(string? value) => AuditTextRedactor.Redact(value);
 }

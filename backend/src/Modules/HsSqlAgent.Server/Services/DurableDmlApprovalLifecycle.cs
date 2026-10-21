@@ -168,9 +168,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         {
             // Read legacy OutcomeUnknown records distinguished by Reason text,
             // but new Admin Store failures persist a dedicated machine state.
-            var approvalStateUnknown = string.Equals(state.Status, ApprovalStateUnknown, StringComparison.Ordinal)
-                || (string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
-                    && IsLegacyConfirmedCommitStateUnknown(state));
+            var approvalStateUnknown = HasConfirmedTargetCommit(state);
             var commitOutcomeUnknown = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
                 && !approvalStateUnknown;
 
@@ -337,8 +335,16 @@ internal sealed class DurableDmlApprovalLifecycle(
         }
     }
 
-    private static bool IsLegacyConfirmedCommitStateUnknown(DmlApprovalRequestState state) =>
-        state.Reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true;
+    /// <summary>
+    /// Acknowledged target COMMIT is durable evidence, independent of the
+    /// Admin Store terminal-write acknowledgement. Older versions persisted
+    /// these records as OutcomeUnknown with a known, exact reason prefix.
+    /// Never allow reconciliation to contradict this confirmed COMMIT.
+    /// </summary>
+    internal static bool HasConfirmedTargetCommit(DmlApprovalRequestState state) =>
+        string.Equals(state.Status, ApprovalStateUnknown, StringComparison.Ordinal)
+        || (string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+            && state.Reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true);
 
     private async Task<DmlApprovalCompletionResult> HandleConfirmedCommitStateFailureAsync(
         IAdminContext context,

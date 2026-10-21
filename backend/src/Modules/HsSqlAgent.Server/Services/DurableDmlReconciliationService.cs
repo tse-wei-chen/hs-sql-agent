@@ -1,7 +1,11 @@
 using System.Text.Json;
 using Admin.Service.Data;
 using Admin.Service.Data.Entites;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
+using Admin.Service.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -10,7 +14,10 @@ namespace HsSqlAgent.Server.Services;
 /// recompiles SQL, reissues approval tokens or executes a DML statement.
 /// The disposition is an operator attestation, not an independent commit proof.
 /// </summary>
-public sealed class DurableDmlReconciliationService(AdminContext adminContext)
+public sealed class DurableDmlReconciliationService(
+    AdminContext adminContext,
+    IOptions<OperabilitySettings>? operabilitySettings = null,
+    IOutboundDeliverySignal? deliverySignal = null)
 {
     private const string Executing = "Executing";
     private const string OutcomeUnknown = "OutcomeUnknown";
@@ -56,9 +63,9 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
         // These are *operator-attested* terminal dispositions; none can be replayed.
         var destination = request.Resolution switch
         {
-            "committed" => "ReconciledCommitted",
-            "not_committed" => "ReconciledNotCommitted",
-            "indeterminate" => "ReconciledIndeterminate",
+            "committed" => "AttestedCommitted",
+            "not_committed" => "AttestedNotCommitted",
+            "indeterminate" => "AttestedIndeterminate",
             _ => throw new ArgumentException("Resolution must be committed, not_committed or indeterminate.")
         };
 
@@ -72,6 +79,14 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
         if (state.Status is not (OutcomeUnknown or ApprovalStateUnknown))
             throw new InvalidOperationException("Only terminal uncertain approvals can be reconciled; Executing requires a separate worker-fencing proof.");
 
+        // An ApprovalStateUnknown state (or its legacy OutcomeUnknown encoding)
+        // means that the target database COMMIT was positively acknowledged.
+        // A human attestation must not contradict that historical fact.
+        if (DurableDmlApprovalLifecycle.HasConfirmedTargetCommit(state)
+            && request.Resolution != "committed")
+            throw new InvalidOperationException(
+                "The target database COMMIT is already confirmed. This approval cannot be attested as not committed or indeterminate.");
+
         var originalStatus = state.Status;
         var now = DateTime.UtcNow;
         // The existing 2,000-character Reason field retains the operator's
@@ -80,8 +95,8 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
         {
             resolution = request.Resolution,
             actor,
-            evidenceReference = request.EvidenceReference,
-            note = request.Note,
+            evidenceReference = AuditTextRedactor.Redact(request.EvidenceReference.Trim()),
+            note = AuditTextRedactor.Redact(request.Note.Trim()),
             previousStatus = originalStatus,
             reconciledAt = now
         });
@@ -91,7 +106,7 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
         state.Status = destination;
         state.Reason = explanation;
         state.UpdatedAt = now;
-        adminContext.AuditLogs.Add(new AuditLog
+        var audit = new AuditLog
         {
             EventId = Guid.NewGuid(),
             Action = "dml.approval.reconciled",
@@ -107,12 +122,36 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
             ApprovalStatus = destination,
             Detail = explanation,
             CreatedAt = now
-        });
+        };
+        adminContext.AuditLogs.Add(audit);
 
-        // Status is an EF concurrency token. Audit insert and transition are
-        // committed in a single SaveChanges transaction; any stale writer
-        // rolls back both, including the audit insert.
+        // Match AuditService's durable SIEM outbox contract. Both the audit
+        // event and its delivery request must be committed with the approval
+        // transition, not sent directly over the network during the request.
+        var siemUrl = operabilitySettings?.Value.SiemWebhookUrl;
+        if (!string.IsNullOrWhiteSpace(siemUrl))
+        {
+            adminContext.OutboundDeliveries.Add(new OutboundDelivery
+            {
+                Category = "siem",
+                DedupeKey = $"siem:{audit.EventId:N}",
+                TargetUrl = siemUrl,
+                Payload = JsonSerializer.Serialize(audit),
+                Status = "pending",
+                CreatedAt = now,
+                NextAttemptAt = now
+            });
+        }
+
+        // Status is an EF concurrency token. The state change, audit and SIEM
+        // outbox entry are one relational transaction; a stale writer rolls
+        // all three back.
         await adminContext.SaveChangesAsync(cancellationToken);
+        // Notification is an acceleration hint, not a second transaction.
+        // Once SaveChanges succeeded it must not be reported as failed
+        // because a process-local signal is unavailable.
+        try { deliverySignal?.Notify(); }
+        catch (Exception) { /* Durable pending outbox remains available for polling. */ }
         return new DurableDmlReconciliationItem(
             state.RequestId, state.Status, state.UpdatedAt, state.CreatedAt,
             state.DbManagementId, state.DatabaseProvider, state.DatabaseIdentity,
