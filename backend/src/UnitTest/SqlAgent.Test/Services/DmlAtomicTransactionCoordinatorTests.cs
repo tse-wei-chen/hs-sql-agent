@@ -11,8 +11,11 @@ public sealed class DmlAtomicTransactionCoordinatorTests
 {
     private const string ApprovalContextFingerprint = "transaction-approval-context-v1";
 
-    [Fact]
-    public async Task Commit_WhenSecondStatementFails_RollsBackFirstStatement()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Commit_WhenSecondStatementFails_RollsBackFirstStatement(
+        bool cleanupAlsoFails)
     {
         var databasePath = Path.Combine(
             Path.GetTempPath(),
@@ -49,7 +52,10 @@ public sealed class DmlAtomicTransactionCoordinatorTests
                 TestContext.Current.CancellationToken,
                 serverVersionIdentity);
 
-            var coordinator = new DmlAtomicTransactionCoordinator(connectionFactory);
+            var coordinator = new DmlAtomicTransactionCoordinator(
+                cleanupAlsoFails ? new DisposeFailureSqliteConnectionFactory() : connectionFactory);
+            // A failed connection DisposeAsync must not mask the original
+            // duplicate-key SQL exception or turn it into a different result.
             await Assert.ThrowsAsync<SqliteException>(() => coordinator.CommitAsync(
                 connectionString,
                 [first, second],
@@ -143,6 +149,52 @@ public sealed class DmlAtomicTransactionCoordinatorTests
             coordinator.CommitAsync(
                 "Data Source=:memory:", [invalid], [preview],
                 TestContext.Current.CancellationToken, serverVersion));
+    }
+
+    [Fact]
+    public async Task SingleDmlMutationFailure_PreservesPrimarySqlErrorWhenConnectionDisposeFails()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(),
+            $"hs-sql-agent-failed-single-cleanup-{Guid.NewGuid():N}.db");
+        var cs = $"Data Source={databasePath};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            string version;
+            await using (var setup = new SqliteConnection(cs))
+            {
+                await setup.OpenAsync(ct);
+                version = setup.ServerVersion.Trim();
+                await using var command = setup.CreateCommand();
+                command.CommandText =
+                    "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL); " +
+                    "INSERT INTO users (id, name) VALUES (5, 'Original');";
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            var challengeStore = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(5, "Duplicate", "policy-failed-cleanup-v1");
+            var preview = await new DmlCoordinator(new SqliteConnectionFactory(),
+                challengeStore: challengeStore).PreviewAsync(
+                cs, plan, ApprovalContextFingerprint, ct, version);
+
+            var coordinator = new DmlCoordinator(new DisposeFailureSqliteConnectionFactory(),
+                challengeStore: challengeStore);
+            var error = await Assert.ThrowsAsync<SqliteException>(() =>
+                coordinator.CommitAsync(cs, plan, preview.Challenge,
+                    ApprovalContextFingerprint, ct, version));
+            Assert.Equal(19, error.SqliteErrorCode);
+
+            await using var verify = new SqliteConnection(cs);
+            await verify.OpenAsync(ct);
+            await using var query = verify.CreateCommand();
+            query.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(1L, (long)(await query.ExecuteScalarAsync(ct))!);
+        }
+        finally
+        {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
     }
 
     [Theory]

@@ -523,6 +523,24 @@ published as measured percentages or silently set to 100.
       and exactly one durable target row in both code paths. COMMIT
       acknowledgement loss still remains `DmlCommitOutcomeUnknownException`;
       no cleanup exception is allowed to invent a successful COMMIT.
+- [x] Prevent stale reconciliation from overwriting a newer, same-status
+      commit-evidence record. The Admin Store concurrency contract now
+      compares `Status`, `Reason` and `UpdatedAt` atomically; a legacy
+      `OutcomeUnknown` record updated to encode an acknowledged COMMIT
+      cannot be overwritten by an operator using a stale, previously
+      unknown-commit snapshot. Two real SQLite context-interleaving tests
+      cover same-status Reason-only and UpdatedAt-only writes, verifying
+      the losing transaction rolls back both audit and SIEM outbox.
+      These concurrency tokens alter EF predicates, not table schema.
+- [x] Preserve primary SQL/transaction failure classification when
+      provider `DisposeAsync` throws during stack unwinding. Single and
+      atomic DML commit paths carry the original failure via
+      `ExceptionDispatchInfo`, prioritizing confirmed physical COMMIT,
+      then typed COMMIT/ROLLBACK uncertainty, then the actual SQL failure
+      over a secondary cleanup error. Real SQLite cases verify
+      duplicate-key mutation failures are not masked by a connection
+      disposal error, with the batch still rolled back. This is not
+      a substitute for target-enlisted commit evidence or worker fencing.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.

@@ -163,6 +163,58 @@ public sealed class DurableDmlReconciliationServiceTests
         Assert.Equal(0, await db.AuditLogs.CountAsync(ct));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SameStatusConcurrentEvidenceChange_CannotBeOverwrittenByStaleOperator(
+        bool changeLegacyCommitReason)
+    {
+        await using var fixture = await Fixture.CreateAsync("OutcomeUnknown", 60);
+        await using var staleContext = fixture.NewContext();
+        await using var newerContext = fixture.NewContext();
+        var ct = TestContext.Current.CancellationToken;
+        var older = await staleContext.DmlApprovalRequests.SingleAsync(ct);
+        var observation = new DurableDmlReconciliationService(staleContext);
+        var item = Assert.Single(await observation.ListAsync(10, ct));
+        Assert.Equal("PhysicalCommitUnknown", item.CommitEvidence);
+
+        // A different writer changes the evidence but leaves Status exactly
+        // OutcomeUnknown, so Status-only concurrency protection is insufficient.
+        var newer = await newerContext.DmlApprovalRequests.SingleAsync(ct);
+        if (changeLegacyCommitReason)
+        {
+            newer.Reason =
+                "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
+                "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
+        }
+        else
+        {
+            newer.UpdatedAt = newer.UpdatedAt.AddSeconds(10);
+        }
+        await newerContext.SaveChangesAsync(ct);
+
+        var attestation = new DurableDmlReconciliationRequest(
+            item.Status, item.UpdatedAt, "not_committed", "INC-REVIEW",
+            "Old operator snapshot must never overwrite newer evidence.");
+        var siem = Options.Create(new OperabilitySettings
+        {
+            SiemWebhookUrl = "https://siem.example.test/reconcile"
+        });
+        var service = new DurableDmlReconciliationService(staleContext, siem);
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
+            service.ReconcileAsync(item.RequestId, attestation, "stale-operator", ct));
+
+        await using var verify = fixture.NewContext();
+        var persisted = await verify.DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+        Assert.Equal("OutcomeUnknown", persisted.Status);
+        if (changeLegacyCommitReason)
+            Assert.True(DurableDmlApprovalLifecycle.HasConfirmedTargetCommit(persisted));
+        else
+            Assert.Equal(newer.UpdatedAt, persisted.UpdatedAt);
+        Assert.Equal(0, await verify.AuditLogs.CountAsync(ct));
+        Assert.Equal(0, await verify.OutboundDeliveries.CountAsync(ct));
+    }
+
     [Fact]
     public async Task ConcurrentOperator_StaleStatusRejectsAndRollsBackAudit()
     {

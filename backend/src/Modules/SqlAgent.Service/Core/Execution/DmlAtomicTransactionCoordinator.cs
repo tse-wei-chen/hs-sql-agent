@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Data.Common;
+using System.Runtime.ExceptionServices;
 using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -47,6 +48,7 @@ internal sealed class DmlAtomicTransactionCoordinator(
             throw new InvalidOperationException("Atomic DML transaction cannot span providers.");
 
         DmlCommitResult? acknowledgedCommit = null;
+        ExceptionDispatchInfo? primaryFailure = null;
         try
         {
         await using var connection = _connectionFactory.Create(connectionString);
@@ -125,7 +127,17 @@ internal sealed class DmlAtomicTransactionCoordinator(
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
-            DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            try
+            {
+                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            }
+            catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+            {
+                primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                throw;
+            }
+
+            primaryFailure = ExceptionDispatchInfo.Capture(failure);
             throw;
         }
         }
@@ -134,6 +146,14 @@ internal sealed class DmlAtomicTransactionCoordinator(
             // The physical target COMMIT already returned successfully.
             // Cleanup errors must not overwrite that confirmed result.
             return acknowledgedCommit;
+        }
+        catch (Exception cleanupFailure)
+            when (primaryFailure is not null &&
+                  !ReferenceEquals(cleanupFailure, primaryFailure.SourceException))
+        {
+            // Preserve the primary transaction failure across cleanup errors.
+            primaryFailure.Throw();
+            throw;
         }
     }
 

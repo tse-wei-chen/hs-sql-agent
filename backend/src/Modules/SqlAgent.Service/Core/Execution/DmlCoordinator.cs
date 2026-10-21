@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Data.Common;
+using System.Runtime.ExceptionServices;
 using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -124,6 +125,7 @@ public sealed class DmlCoordinator(
         }
 
         DmlCommitResult? acknowledgedCommit = null;
+        ExceptionDispatchInfo? primaryFailure = null;
         try
         {
         await using var connection = _connectionFactory.Create(connectionString);
@@ -214,7 +216,17 @@ public sealed class DmlCoordinator(
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
-            DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            try
+            {
+                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            }
+            catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+            {
+                primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                throw;
+            }
+
+            primaryFailure = ExceptionDispatchInfo.Capture(failure);
             throw;
         }
         }
@@ -224,6 +236,15 @@ public sealed class DmlCoordinator(
             // or connection DisposeAsync failure cannot turn it into a
             // Failed approval or cause an operator to repeat the mutation.
             return acknowledgedCommit;
+        }
+        catch (Exception cleanupFailure)
+            when (primaryFailure is not null &&
+                  !ReferenceEquals(cleanupFailure, primaryFailure.SourceException))
+        {
+            // An unrelated provider DisposeAsync failure cannot hide the
+            // primary SQL error or typed uncertain transaction outcome.
+            primaryFailure.Throw();
+            throw;
         }
     }
 

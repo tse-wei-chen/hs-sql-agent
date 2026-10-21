@@ -13,6 +13,9 @@ public sealed class DmlApprovalRequestStateConfig : IEntityTypeConfiguration<Dml
         builder.Property(x => x.RequestId).HasMaxLength(64);
         builder.Property(x => x.ApprovalFingerprint).IsRequired().HasMaxLength(64);
         builder.Property(x => x.EvidenceFingerprint).IsRequired().HasMaxLength(64);
+        // Reconciliation's observed evidence is a compare-and-swap unit.
+        // Same-status writes to a legacy COMMIT marker must not be overwritten.
+        // Concurrency tokens add WHERE predicates; no migration is required.
         builder.Property(x => x.Status).IsRequired().HasMaxLength(24).IsConcurrencyToken();
         builder.Property(x => x.ProtectedExecutionPayload).IsRequired();
         builder.Property(x => x.RequesterIdentity).IsRequired().HasMaxLength(256);
@@ -22,7 +25,8 @@ public sealed class DmlApprovalRequestStateConfig : IEntityTypeConfiguration<Dml
         builder.Property(x => x.RequiredToolName).IsRequired().HasMaxLength(128);
         builder.Property(x => x.ExternalReference).HasMaxLength(500);
         builder.Property(x => x.ApproverIdentity).HasMaxLength(256);
-        builder.Property(x => x.Reason).HasMaxLength(2000);
+        builder.Property(x => x.Reason).HasMaxLength(2000).IsConcurrencyToken();
+        builder.Property(x => x.UpdatedAt).IsConcurrencyToken();
         builder.HasIndex(x => new { x.Status, x.ExpiresAt });
         builder.HasIndex(x => x.ExternalReference);
     }
