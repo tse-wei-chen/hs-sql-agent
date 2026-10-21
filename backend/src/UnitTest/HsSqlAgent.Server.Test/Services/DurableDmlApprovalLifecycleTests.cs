@@ -73,6 +73,45 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task PreviouslyUnknownCommitOutcome_RemainsTerminalWithoutReExecutingApproval()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == request.RequestId,
+                TestContext.Current.CancellationToken);
+            state.Status = "OutcomeUnknown";
+            state.Reason = "COMMIT acknowledgement lost; physical state requires reconciliation.";
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var retry = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, retry.Status);
+            Assert.Equal("dml.commit_outcome_unknown", retry.ErrorCode);
+            Assert.False(retry.Retryable);
+            Assert.Contains("Do not retry", retry.Message, StringComparison.OrdinalIgnoreCase);
+
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(
+                x => x.RequestId == request.RequestId,
+                TestContext.Current.CancellationToken);
+            Assert.Equal("OutcomeUnknown", state.Status);
+        }
+
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
     public async Task PendingApproval_AccessKeyRevokedBeforeCompletion_BecomesStaleWithoutCommit()
     {
         await using var fixture = await Fixture.CreateAsync();

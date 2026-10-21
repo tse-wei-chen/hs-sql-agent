@@ -107,6 +107,10 @@ public static class WebhookApprovalEndpointRouteBuilderExtensions
             DmlApprovalCompletionStatus.InvalidApproval => Results.BadRequest(result),
             DmlApprovalCompletionStatus.Expired => Results.Json(result, statusCode: StatusCodes.Status410Gone),
             DmlApprovalCompletionStatus.Stale => Results.Conflict(result),
+            // No automatic webhook retry can resolve a lost COMMIT acknowledgement.
+            // The durable approval is terminal; operators must reconcile DB state.
+            DmlApprovalCompletionStatus.OutcomeUnknown =>
+                Results.Json(result, statusCode: StatusCodes.Status409Conflict),
             DmlApprovalCompletionStatus.ConfigurationError or DmlApprovalCompletionStatus.Failed
                 => Results.Json(result, statusCode: StatusCodes.Status500InternalServerError),
             _ => Results.Json(result, statusCode: StatusCodes.Status500InternalServerError)

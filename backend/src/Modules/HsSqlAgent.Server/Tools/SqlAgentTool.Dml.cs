@@ -105,6 +105,27 @@ public partial class SqlAgentTool
 
             approvalWaitDurationMs = execution.ApprovalWaitDurationMs;
             affectedRowCount = execution.AffectedRows;
+            if (!execution.Committed
+                && string.Equals(execution.ErrorCode, "dml.commit_outcome_unknown", StringComparison.Ordinal))
+            {
+                // An approved request may have physically committed despite a
+                // lost acknowledgement. Never present this as a failed write.
+                try
+                {
+                    await WriteDmlAuditAsync(
+                        parsedBatch, "outcome_unknown", "approved", stopwatch,
+                        approvalWaitDurationMs, null, execution.Result,
+                        CancellationToken.None);
+                }
+                catch (Exception)
+                {
+                    // Audit unavailability cannot suppress the unknown-outcome warning.
+                }
+                return McpDmlToolResult.OutcomeUnknown(
+                    providerName, parsedBatch.Count, approvalWaitDurationMs,
+                    execution.ApprovalRequestId, execution.Result);
+            }
+
             if (!execution.Committed)
             {
                 var (auditResult, approvalStatus) = execution.ApprovalDecision switch
@@ -178,6 +199,44 @@ public partial class SqlAgentTool
                 execution.Result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (DmlCommitOutcomeUnknownException ex)
+        {
+            // A lost COMMIT acknowledgement may follow a successful physical
+            // write. Never report "failed" or encourage replay of its approval.
+            // Audit I/O is best-effort here: it must not suppress the warning.
+            try
+            {
+                var descriptor = parsedBatch is null ? null : DescribeBatch(parsedBatch);
+                await _auditService.WriteEventAsync(
+                    "mcp.dml.executed",
+                    descriptor?.Resource ?? "unknown",
+                    "outcome_unknown",
+                    new AuditEventContext
+                    {
+                        ToolName = "execute_dml_sql",
+                        Operation = descriptor?.Operation.ToLowerInvariant(),
+                        DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
+                        AffectedRows = null,
+                        ApprovalStatus = "approved",
+                        ErrorCategory = "DmlCommitOutcomeUnknown",
+                        Definition = parsedBatch is null ? null : DescribeDmlBatch(parsedBatch)
+                    },
+                    ex.Message,
+                    CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // The consumed approval and the uncertain outcome take priority
+                // over a secondary audit write failure.
+            }
+
+            return McpDmlToolResult.OutcomeUnknown(
+                providerName,
+                parsedBatch?.Count ?? 0,
+                approvalWaitDurationMs,
+                null,
+                ex.Message);
+        }
         catch (Exception ex)
         {
             var descriptor = parsedBatch is null ? null : DescribeBatch(parsedBatch);
@@ -229,7 +288,12 @@ public partial class SqlAgentTool
                 DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                 AffectedRows = affectedRows,
                 ApprovalStatus = approvalStatus,
-                ErrorCategory = result == "failed" ? "PolicyOrExecutionDenied" : null,
+                ErrorCategory = result switch
+                {
+                    "outcome_unknown" => "DmlCommitOutcomeUnknown",
+                    "failed" => "PolicyOrExecutionDenied",
+                    _ => null
+                },
                 Definition = DescribeDmlBatch(parsedBatch)
             },
             detail,
@@ -252,6 +316,11 @@ public partial class SqlAgentTool
 
         return error switch
         {
+            DmlCommitOutcomeUnknownException => new McpToolError(
+                "dml.commit_outcome_unknown",
+                error.Message,
+                "Commit",
+                false),
             UnauthorizedAccessException => new McpToolError(
                 "authorization.denied",
                 error.Message,

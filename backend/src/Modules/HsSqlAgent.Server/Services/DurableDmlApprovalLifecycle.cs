@@ -15,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Factories;
+using SqlAgent.Service.Core.Execution;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -54,6 +55,7 @@ internal sealed class DurableDmlApprovalLifecycle(
     private const string Stale = "Stale";
     private const string Expired = "Expired";
     private const string Failed = "Failed";
+    private const string OutcomeUnknown = "OutcomeUnknown";
 
     public async Task PersistPendingAsync(
         DmlApprovalRequest request,
@@ -158,8 +160,16 @@ internal sealed class DurableDmlApprovalLifecycle(
             return new DmlApprovalCompletionResult(
                 string.Equals(state.Status, Executing, StringComparison.Ordinal)
                     ? DmlApprovalCompletionStatus.AlreadyProcessing
-                    : DmlApprovalCompletionStatus.AlreadyCompleted,
-                $"DML approval request is already in terminal or processing state '{state.Status}'.");
+                    : string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                        ? DmlApprovalCompletionStatus.OutcomeUnknown
+                        : DmlApprovalCompletionStatus.AlreadyCompleted,
+                string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                    ? "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
+                    : $"DML approval request is already in terminal or processing state '{state.Status}'.")
+            {
+                ErrorCode = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                    ? "dml.commit_outcome_unknown" : null
+            };
         }
 
         if (DateTime.UtcNow >= state.ExpiresAt)
@@ -215,6 +225,41 @@ internal sealed class DurableDmlApprovalLifecycle(
                 execution.AffectedRows,
                 cancellationToken);
             return execution;
+        }
+        catch (DmlCommitOutcomeUnknownException ex)
+        {
+            // This is NOT a definitive failure. COMMIT may have succeeded.
+            // Persist a separate terminal state, and never reopen Pending.
+            // Failure to persist still leaves Executing (also non-retryable).
+            state.Status = OutcomeUnknown;
+            state.Reason = ex.Message;
+            state.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await context.SaveChangesAsync(cleanup.Token);
+            }
+            catch (Exception)
+            {
+                // The ambiguous physical commit must not be masked by audit DB I/O.
+            }
+
+            try
+            {
+                using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await AuditCompletionAsync(state, "outcome_unknown", "outcome_unknown",
+                    ex.Message, null, auditTimeout.Token);
+            }
+            catch (Exception)
+            {
+                // The completion response is more important than a secondary audit failure.
+            }
+
+            return new DmlApprovalCompletionResult(
+                DmlApprovalCompletionStatus.OutcomeUnknown, ex.Message)
+            {
+                ErrorCode = "dml.commit_outcome_unknown"
+            };
         }
         catch (DmlApprovalStaleException ex)
         {

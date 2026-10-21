@@ -56,11 +56,11 @@ public sealed record McpQueryToolResult(
 /// Structured output for the built-in execute_dml_sql MCP tool.
 /// </summary>
 public sealed record McpDmlToolResult(
-    [property: Description("Machine-readable DML state: committed, pending, rejected, or failed.")]
+    [property: Description("Machine-readable DML state: committed, pending, rejected, failed, or outcome_unknown.")]
     string Status,
     [property: Description("Resolved target database provider, or null when configuration could not be resolved.")]
     string? Provider,
-    [property: Description("Whether the transaction committed database changes.")]
+    [property: Description("Whether a successful commit was confirmed; false does not prove rollback when Status is outcome_unknown.")]
     bool Committed,
     [property: Description("Number of DML statements in the parsed atomic batch. Zero when parsing did not complete.")]
     int StatementCount,
@@ -78,9 +78,38 @@ public sealed record McpDmlToolResult(
     IReadOnlyList<Dictionary<string, object?>> ReturnedRows,
     [property: Description("Human-readable outcome detail retained for text-content compatibility.")]
     string Message,
-    [property: Description("Machine-readable error details only when Status is failed; otherwise null.")]
+    [property: Description("Machine-readable error details when Status is failed or outcome_unknown; otherwise null.")]
     McpToolError? Error)
 {
+    /// <summary>
+    /// Null when the database may already have committed but no acknowledgement
+    /// was received. Consumers must never interpret this as a safe retry.
+    /// </summary>
+    public bool? CommitConfirmed { get; init; } = false;
+
+    public static McpDmlToolResult OutcomeUnknown(
+        string? provider,
+        int statementCount,
+        long approvalWaitDurationMs,
+        string? approvalRequestId,
+        string message) =>
+        new(
+            "outcome_unknown",
+            provider,
+            false,
+            Math.Max(0, statementCount),
+            null, // A preview count is not a confirmed mutation count.
+            Math.Max(0, approvalWaitDurationMs),
+            "approved",
+            approvalRequestId,
+            null,
+            [],
+            message,
+            new McpToolError("dml.commit_outcome_unknown", message, "Commit", false))
+        {
+            CommitConfirmed = null
+        };
+
     public static McpDmlToolResult CommittedResult(
         string provider,
         int statementCount,
@@ -101,7 +130,10 @@ public sealed record McpDmlToolResult(
             null,
             MaterializeRows(returnedRows),
             message,
-            null);
+            null)
+        {
+            CommitConfirmed = true
+        };
 
     public static McpDmlToolResult Pending(
         string provider,

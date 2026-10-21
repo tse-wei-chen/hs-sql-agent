@@ -27,3 +27,27 @@ export function buildAuditExecutionSummary(
 
   return summary;
 }
+
+/**
+ * A missing COMMIT acknowledgement is not proof of rollback. Audit results
+ * use a distinct terminal state so operators don't blindly retry the SQL.
+ */
+export function isAuditCommitOutcomeUnknown(item: {
+  result?: string | null;
+  errorCategory?: string | null;
+}): boolean {
+  return (
+    item.result?.toLowerCase() === "outcome_unknown" ||
+    item.errorCategory?.toLowerCase() === "dmlcommitoutcomeunknown" ||
+    item.errorCategory?.toLowerCase() === "dmlcommitoutcomeunknownexception"
+  );
+}
+
+export function auditOutcomeLabel(item: {
+  result?: string | null;
+  errorCategory?: string | null;
+}): string {
+  return isAuditCommitOutcomeUnknown(item)
+    ? "Commit outcome unknown"
+    : item.result || "—";
+}

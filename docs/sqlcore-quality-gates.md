@@ -371,6 +371,38 @@ published as measured percentages or silently set to 100.
       consumption*, not a distributed atomic commit or a guarantee that
       external consumers can always know the database's final outcome.
 
+## Commit outcome uncertainty propagated to MCP, HTTP, webhook and Audit UI
+
+- [x] Preserve distinct **outcome_unknown** semantics beyond the transaction
+      coordinator. MCP `execute_dml_sql` returns `status: "outcome_unknown"`,
+      `error.code: "dml.commit_outcome_unknown"`, `error.stage: "Commit"`,
+      `error.retryable: false`, `commitConfirmed: null`, and no speculative
+      affected-row count or RETURNING rows. The legacy `committed: false`
+      means **not confirmed**, not proof of rollback, under this explicit
+      status. Immediate approval flows preserve the actual approval request
+      ID and wait duration for investigation.
+- [x] HTTP unhandled-commit responses use the same stable machine code and
+      status, `committed: null` and `retryable: false` with HTTP 500, while
+      unrelated exception payloads retain their existing shape.
+- [x] Durable webhook completions store an `OutcomeUnknown` terminal state
+      (no schema migration; `Status` is a bounded string) instead of
+      `Failed`. The API's `DmlApprovalCompletionStatus.OutcomeUnknown`
+      and `errorCode: "dml.commit_outcome_unknown"` are preserved on
+      replayed callbacks. The webhook responds 409 Conflict, not 200
+      success, and duplicate callbacks cannot reopen or re-execute the
+      consumed approval.
+- [x] Record `outcome_unknown` as a separate DML audit result; the existing
+      Admin Audit Logs page highlights these events distinctly and explains
+      why operators must reconcile actual database rows before initiating
+      a new approval. Tests cover structured MCP tri-state JSON, HTTP error
+      JSON, callback status, durable terminal replay and frontend labels.
+      There is **no Admin UI for directly initiating DML commits**; this
+      frontend change is to the actual operator-facing audit interface.
+- [ ] End-to-end fault-injection against each provider's network transport
+      after COMMIT, and a reconciled outcome workflow/ledger, remain outside
+      the current scope. The UI must never claim proof of success/failure
+      from a lost acknowledgement.
+
 ## Proof model
 
 - A policy denying `WHERE 1=1` is a **known-tautology guard**, not evidence that all

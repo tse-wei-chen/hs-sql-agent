@@ -43,6 +43,35 @@ public class SqlAgentToolDmlStructuredResultTests
     }
 
     [Fact]
+    public void OutcomeUnknown_UsesDistinctNonRetryableMcpStatus_AndNoClaimOfRollback()
+    {
+        var result = McpDmlToolResult.OutcomeUnknown(
+            "Postgres",
+            2,
+            37,
+            "approval-123",
+            "COMMIT acknowledgement lost; reconcile database state before new preview.");
+
+        Assert.Equal("outcome_unknown", result.Status);
+        Assert.False(result.Committed); // Legacy bit means unconfirmed, not rolled back.
+        Assert.Null(result.CommitConfirmed);
+        Assert.Null(result.AffectedRows); // The preview count is not a committed count.
+        Assert.Equal("approved", result.ApprovalDecision);
+        Assert.Equal("approval-123", result.ApprovalRequestId);
+        Assert.Empty(result.ReturnedRows);
+        Assert.NotNull(result.Error);
+        Assert.Equal("dml.commit_outcome_unknown", result.Error.Code);
+        Assert.Equal("Commit", result.Error.Stage);
+        Assert.False(result.Error.Retryable);
+
+        var serialized = System.Text.Json.JsonSerializer.Serialize(
+            result, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+        Assert.Contains("\"status\":\"outcome_unknown\"", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"commitConfirmed\":null", serialized, StringComparison.Ordinal);
+        Assert.Contains("\"retryable\":false", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ExecuteDmlSql_InvalidConfiguration_ReturnsStructuredFailureWithoutSecret()
     {
         const string secretConnectionString =

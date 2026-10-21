@@ -1,3 +1,4 @@
+using SqlAgent.Service.Core.Execution;
 using System.Diagnostics;
 using System.Text.Json;
 using Admin.Service.Interfaces;
@@ -90,8 +91,27 @@ internal sealed class TypedDmlApprovalFlow(
                 ErrorCode: "server.busy",
                 ErrorStage: "Execution",
                 Retryable: true);
-        var commit = await runtime.CommitAsync(
-            provider, connectionString, session, currentPolicy, currentAllowedTables, approvalContext, cancellationToken);
+        DmlCommitResult commit;
+        try
+        {
+            commit = await runtime.CommitAsync(
+                provider, connectionString, session, currentPolicy, currentAllowedTables, approvalContext, cancellationToken);
+        }
+        catch (DmlCommitOutcomeUnknownException ex)
+        {
+            // Keep approval correlation for reconciliation. The original
+            // challenge has already been consumed and cannot be replayed.
+            return new TypedDmlExecutionTiming(
+                ex.Message,
+                approvalWaitDurationMs,
+                null,
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: "dml.commit_outcome_unknown",
+                ErrorStage: "Commit",
+                Retryable: false);
+        }
         var result = commit.Committed
             ? $"Success | affectedRows={commit.AffectedRows} | {commit.Message}"
             : commit.Message;

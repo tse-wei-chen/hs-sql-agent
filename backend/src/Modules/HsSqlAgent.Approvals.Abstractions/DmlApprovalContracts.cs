@@ -141,10 +141,21 @@ public enum DmlApprovalCompletionStatus
     AlreadyProcessing,
     InvalidApproval,
     ConfigurationError,
-    Failed
+    Failed,
+    /// <summary>
+    /// COMMIT may have succeeded despite lost provider acknowledgement.
+    /// The one-time approval is terminal and must never be replayed.
+    /// </summary>
+    OutcomeUnknown
 }
 
 public sealed record DmlApprovalCompletionResult(
     DmlApprovalCompletionStatus Status,
     string Message,
-    int? AffectedRows = null);
+    int? AffectedRows = null)
+{
+    /// <summary>Stable code when COMMIT may have succeeded but confirmation was lost.</summary>
+    public string? ErrorCode { get; init; }
+    /// <summary>Retrying the same approval is never allowed for OutcomeUnknown.</summary>
+    public bool Retryable { get; init; } = false;
+}
