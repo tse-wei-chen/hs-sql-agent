@@ -220,9 +220,14 @@ internal static class SqlCoreDepthProbe
             var succeeded = completed && process.ExitCode == 0;
             if (!succeeded) failures++;
             var reported = standardOutput.Result.Trim();
-            var parsedResult = reported.Length > 0
-                ? JsonDocument.Parse(reported)
-                : null;
+            // A crashed worker may emit a partial JSON payload. Treat it as
+            // an observed crash, not an exception that kills the entire sweep.
+            JsonDocument? parsedResult = null;
+            if (reported.Length > 0)
+            {
+                try { parsedResult = JsonDocument.Parse(reported); }
+                catch (JsonException) { /* Preserve raw output below. */ }
+            }
             if (!completed || parsedResult is null) crashesOrTimeouts++;
             // A resource diagnostic is a *successful fail-closed safety
             // decision*, not evidence that SQL execution succeeded.
@@ -245,6 +250,9 @@ internal static class SqlCoreDepthProbe
                 processExitCode = process.ExitCode,
                 wallMilliseconds = Math.Round(wall.Elapsed.TotalMilliseconds, 2),
                 worker = parsedResult?.RootElement.Clone(),
+                malformedWorkerOutput = parsedResult is null && reported.Length > 0
+                    ? reported[..Math.Min(300, reported.Length)]
+                    : null,
                 processError = succeeded ? null : standardError.Result[..Math.Min(300, standardError.Result.Length)]
             });
             }
