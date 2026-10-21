@@ -234,32 +234,38 @@ module internal RewriteSchemaValidation =
                 | LateralDerivedTable _ -> Some current
                 | _ -> current.Parent
             let added = source catalog ctes sourceParent join.Source
-            let unqualified =
+            let mergeKeys =
                 match join with
                 | UsingJoin(_, _, columns) ->
-                    let keys = columns |> NonEmpty.toList |> List.map (keyPart catalog.Dialect)
+                    Some(columns |> NonEmpty.toList |> List.map (keyPart catalog.Dialect))
+                | NaturalJoin _ ->
+                    // NATURAL JOIN is schema-dependent: derive its implicit USING list
+                    // from the complete left row shape, in left-column order.
+                    let right = Set.ofList added.Columns
+                    Some(current.Unqualified |> List.filter right.Contains)
+                | _ -> None
+            let unqualified =
+                match mergeKeys with
+                | None -> current.Unqualified @ added.Columns
+                | Some keys ->
                     for key in keys do
-                        // USING must bind to this joined rowset, never an outer correlation.
+                        // A merged key must belong to the current join inputs, not an
+                        // outer scope. Duplicate left/right keys cannot be proven.
                         resolveColumn { current with Parent = None } None key select.Span
                         if countColumn added key <> 1 then
                             reject "SQL_SCHEMA_COLUMN_NOT_FOUND" select.Span (
-                                "JOIN USING column '" + key + "' is missing on the joined table.")
-                    let isUsing name = List.contains name keys
+                                "JOIN merged column '" + key + "' is missing or ambiguous on the joined table.")
+                    let isMerged name = List.contains name keys
                     keys
-                    @ (current.Unqualified |> List.filter (not << isUsing))
-                    @ (added.Columns |> List.filter (not << isUsing))
-                | _ -> current.Unqualified @ added.Columns
+                    @ (current.Unqualified |> List.filter (not << isMerged))
+                    @ (added.Columns |> List.filter (not << isMerged))
             let combined =
                 { current with
                     Sources = current.Sources @ [ added ]
                     Unqualified = unqualified }
             match join with
             | OnJoin(_, _, predicate) -> expression catalog ctes combined Span.unknown predicate
-            | UsingJoin _ -> ()
-            | NaturalJoin _ ->
-                reject "SQL_SCHEMA_JOIN_UNPROVABLE" select.Span (
-                    "Strict metadata validation does not yet prove NATURAL JOIN coalesced column semantics.")
-            | CrossJoin _ -> ()
+            | UsingJoin _ | NaturalJoin _ | CrossJoin _ -> ()
             current <- combined
 
         let inspect = expression catalog ctes current Span.unknown

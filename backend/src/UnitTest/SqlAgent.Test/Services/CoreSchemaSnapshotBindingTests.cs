@@ -150,6 +150,40 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", missing.Diagnostic?.Code);
     }
 
+    public static IEnumerable<object[]> NativeNaturalProviders()
+        => Providers
+            .Where(provider => provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
+                or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle)
+            .Select(provider => new object[] { provider });
+
+    [Theory]
+    [MemberData(nameof(NativeNaturalProviders))]
+    public void NaturalJoin_ProvesImplicitJoinKeysAndWildcardProjection(SqlAgentToolType dialect)
+    {
+        var context = Context(dialect);
+        var valid = new[]
+        {
+            "SELECT id FROM users u NATURAL JOIN orders o WHERE id = 7",
+            "SELECT u.id, o.id FROM users u NATURAL LEFT JOIN orders o",
+            "SELECT d.id, d.user_id FROM (SELECT * FROM users u NATURAL JOIN orders o) d",
+            "WITH x AS (SELECT * FROM users u NATURAL JOIN orders o) SELECT id FROM x",
+            "SELECT id FROM users u NATURAL JOIN orders o NATURAL JOIN orders o2",
+            // No common columns: NATURAL JOIN behaves as an unconstrained join.
+            "SELECT d.id, d.renamed FROM " +
+            "(SELECT * FROM users u NATURAL JOIN (SELECT name AS renamed FROM users) b) d"
+        };
+        foreach (var sql in valid)
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var ambiguous = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM users u NATURAL JOIN orders o " +
+                "JOIN users extra ON extra.id = u.id",
+                dialect, dialect, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_AMBIGUOUS", ambiguous.Diagnostic?.Code);
+    }
+
     [Fact]
     public void Postgres_CteAndCorrelatedQueries_UseActualScopedColumns()
     {

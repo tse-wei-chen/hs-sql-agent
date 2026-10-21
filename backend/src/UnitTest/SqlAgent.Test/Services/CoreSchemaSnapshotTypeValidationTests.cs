@@ -317,6 +317,42 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         }
     }
 
+    public static IEnumerable<object[]> NativeNaturalProviders()
+        => Enum.GetValues<SqlAgentToolType>()
+            .Where(provider => provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
+                or SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle)
+            .Select(provider => new object[] { provider });
+
+    [Theory]
+    [MemberData(nameof(NativeNaturalProviders))]
+    public void NaturalJoin_MergedKeysCarryProvenTypeFamilies(SqlAgentToolType dialect)
+    {
+        var context = JoinedContext(dialect);
+        var valid = new[]
+        {
+            "SELECT id FROM users u NATURAL JOIN orders o WHERE id = 7",
+            "SELECT d.id FROM (SELECT * FROM users u NATURAL JOIN orders o) d WHERE d.id = 7",
+            "WITH x AS (SELECT * FROM users u NATURAL JOIN orders o) SELECT id FROM x WHERE id = 7"
+        };
+        foreach (var sql in valid)
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var incompatible = new[]
+        {
+            "SELECT id FROM users u NATURAL JOIN orders o WHERE id = 'bad'",
+            "SELECT d.id FROM (SELECT * FROM users u NATURAL JOIN orders o) d WHERE d.id = 'bad'",
+            "WITH x AS (SELECT * FROM users u NATURAL JOIN orders o) SELECT id FROM x WHERE id = 'bad'"
+        };
+        foreach (var sql in incompatible)
+        {
+            var error = Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileQuery(
+                    sql, dialect, dialect, context, new SqlExecutionPlanPolicy()));
+            Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+        }
+    }
+
     [Fact]
     public void PostgreSql_CorrelatedSubqueryAndScalarProjection_CarryColumnTypeProofs()
     {

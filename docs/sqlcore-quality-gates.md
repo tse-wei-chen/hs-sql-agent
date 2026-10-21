@@ -43,9 +43,16 @@ published as measured percentages or silently set to 100.
       through merged columns and keep unequal/unknown families unproven.
       Native USING coverage spans PostgreSQL, MySQL, SQLite, Oracle, Firebird;
       SQL Server remains source/target capability-rejected.
+- [x] Derive NATURAL JOIN implicit merged keys from the schema-backed left
+      row shape and new right source, including the empty intersection,
+      nested joins, wildcard expansion and CTE/derived propagation.
+      Keep qualifier-specific physical columns independent and reject
+      ambiguous keys. Source/target capabilities remain unchanged:
+      PostgreSQL, MySQL, SQLite and Oracle use native NATURAL JOIN;
+      SQL Server and Firebird remain fail-closed.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
-      typed CTE/derived projections, recursive CTE, NATURAL/USING coalescing
-      and DML conflict/MERGE key proofs.
+      typed CTE/derived projections, recursive CTE, provider-specific
+      join key coercions and DML conflict/MERGE key proofs.
 - [x] Establish PostgreSQL 16, MySQL 8 and SQLite execution-result parity
       for seven portable SELECT scenarios over identical seeded fixtures.
       All nine source/target combinations are compiled and executed per

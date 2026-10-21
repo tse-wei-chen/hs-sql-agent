@@ -345,29 +345,35 @@ module internal RewriteSchemaTypeValidation =
                 | LateralDerivedTable _ -> Some scope
                 | _ -> scope.Parent
             let added = tableSource catalog ctes sourceParent join.Source
-            let unqualified =
+            let left = scope.Unqualified
+            let right = sourceOutput added
+            let mergeKeys =
                 match join with
                 | UsingJoin(_, _, columns) ->
-                    let keys = columns |> NonEmpty.toList |> List.map (keyPart catalog.Dialect)
-                    let left = scope.Unqualified
-                    let right = sourceOutput added
-                    let isUsing name = List.contains name keys
+                    Some(columns |> NonEmpty.toList |> List.map (keyPart catalog.Dialect))
+                | NaturalJoin _ ->
+                    let rightNames = right |> List.map fst |> Set.ofList
+                    Some(left |> List.map fst |> List.filter rightNames.Contains)
+                | _ -> None
+            let unqualified =
+                match mergeKeys with
+                | None -> left @ right
+                | Some keys ->
+                    let isMerged name = List.contains name keys
                     let merged =
                         keys |> List.map (fun key ->
-                            let kinds =
-                                [ left; right ]
-                                |> List.map (fun fields ->
-                                    fields |> List.filter (fun (name, _) -> name = key))
+                            let leftKind =
+                                left |> List.filter (fun (name, _) -> name = key)
+                            let rightKind =
+                                right |> List.filter (fun (name, _) -> name = key)
                             let proof =
-                                match kinds with
-                                | [ [ (_, leftKind) ]; [ (_, rightKind) ] ] when leftKind = rightKind ->
-                                    leftKind
+                                match leftKind, rightKind with
+                                | [ (_, a) ], [ (_, b) ] when a = b -> a
                                 | _ -> None
                             key, proof)
                     merged
-                    @ (left |> List.filter (fun (name, _) -> not (isUsing name)))
-                    @ (right |> List.filter (fun (name, _) -> not (isUsing name)))
-                | _ -> scope.Unqualified @ sourceOutput added
+                    @ (left |> List.filter (fun (name, _) -> not (isMerged name)))
+                    @ (right |> List.filter (fun (name, _) -> not (isMerged name)))
             let combined =
                 { scope with
                     Sources = scope.Sources @ [ added ]
