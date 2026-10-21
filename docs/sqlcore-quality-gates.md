@@ -443,10 +443,26 @@ published as measured percentages or silently set to 100.
       column) rather than classifying new records by matching English
       `Reason` text. Legacy `OutcomeUnknown` records remain readable,
       retaining the original non-replayable approval and error codes.
-- [ ] Add explicit operator-assisted reconciliation of an `Executing`
-      or `OutcomeUnknown` durable approval. The service must not infer
-      transaction failure from a terminal Admin Store outage and must not
-      reset the old approval to `Pending`.
+- [x] Add operator-assisted reconciliation for consumed uncertain approvals
+      through the `/api/runtime/dml-approvals/reconciliation` Admin API.
+      Only the human-authorized `/runtime/security.edit` permission may
+      invoke it; this permission is not grantable to Management API keys.
+      A bounded read-only inventory hides encrypted execution payloads
+      and approval fingerprints. A resolution requires the inspected
+      Status/UpdatedAt, an operator, an evidence reference, a written note
+      and an explicit attested disposition (committed / not_committed /
+      indeterminate). `Executing` items have a 30-minute minimum age
+      before manual resolution, not proof that no worker is running.
+      The resulting Reconciled* states are permanently non-replayable.
+      Status transition and an operator-attributed AuditLog record are
+      saved atomically in the Admin Store and protected by the status
+      concurrency token. No target database connection or mutation is
+      performed. An attestation is **not** cryptographic proof of
+      transaction outcome or a distributed atomic commit; operators
+      must independently investigate physical effects first.
+- [ ] Prove active-worker quiescence for very long-running `Executing`
+      approvals and add an external evidence verification workflow; the
+      initial 30-minute age check is not a complete fencing mechanism.
 
 ## Proof model
 
