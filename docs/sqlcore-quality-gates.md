@@ -50,6 +50,17 @@ published as measured percentages or silently set to 100.
       ambiguous keys. Source/target capabilities remain unchanged:
       PostgreSQL, MySQL, SQLite and Oracle use native NATURAL JOIN;
       SQL Server and Firebird remain fail-closed.
+- [x] Enforce a fail-closed **commit-time freshness boundary** for any compiled
+      DML command that carries `sqlcore.schema_snapshot` assurance: single
+      and atomic-batch commit verify the live schema digest through an explicit
+      host verifier on the same database connection and transaction **before
+      each mutation**. No verifier, missing digest, or a changed digest rejects
+      the commit and rolls back; ordinary commands without a schema proof keep
+      their existing runtime behavior. This is a hook, **not automatic DB schema
+      discovery**: hosts must supply a trusted verifier capable of recreating
+      the same snapshot canonicalization and version. The default server DML
+      runtime currently compiles without a snapshot, so this does not claim to
+      solve production-wide schema drift without that integration.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

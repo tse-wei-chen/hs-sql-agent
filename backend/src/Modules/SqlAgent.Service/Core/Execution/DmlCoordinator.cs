@@ -15,10 +15,12 @@ public sealed class DmlCoordinator(
     TimeProvider? timeProvider = null,
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
-    IDmlPreviewTransactionFactory? previewTransactionFactory = null) : IDmlCoordinator
+    IDmlPreviewTransactionFactory? previewTransactionFactory = null,
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+    private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
@@ -130,6 +132,11 @@ public sealed class DmlCoordinator(
 
         try
         {
+            // A compile-time snapshot digest alone does not attest to the live database.
+            // Verify inside the same transaction before either INSERT or row-set DML.
+            await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                connection, transaction, plan.MutationCommand, _schemaFreshnessVerifier, cancellationToken);
+
             if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             {
                 return await CommitInsertValuesAsync(

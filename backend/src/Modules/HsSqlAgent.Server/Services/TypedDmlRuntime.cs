@@ -16,7 +16,8 @@ public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlPreviewTransactionFactory? previewTransactionFactory = null,
-    ISqlCompileEvidenceObserver? compileEvidenceObserver = null)
+    ISqlCompileEvidenceObserver? compileEvidenceObserver = null,
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null)
 {
     private const int MaxStatementsPerTransaction = 16;
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
@@ -27,6 +28,7 @@ public sealed class TypedDmlRuntime(
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
     private readonly IDmlPreviewTransactionFactory? _previewTransactionFactory = previewTransactionFactory;
     private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
+    private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
 
     public async Task<ParsedStatement> ParseDmlWithVerifiedRuntimeProfileAsync(
         ISqlProvider provider,
@@ -130,7 +132,8 @@ public sealed class TypedDmlRuntime(
             provider.Connections,
             _timeProvider,
             _challengeStore,
-            previewTransactionFactory: ResolvePreviewTransactions(provider));
+            previewTransactionFactory: ResolvePreviewTransactions(provider),
+            schemaFreshnessVerifier: _schemaFreshnessVerifier);
         var preview = await coordinator.PreviewAsync(
             connectionString,
             plan,
@@ -274,7 +277,8 @@ public sealed class TypedDmlRuntime(
             provider.Connections,
             _timeProvider,
             _challengeStore,
-            previewTransactionFactory: ResolvePreviewTransactions(provider));
+            previewTransactionFactory: ResolvePreviewTransactions(provider),
+            schemaFreshnessVerifier: _schemaFreshnessVerifier);
         return await coordinator.CommitAsync(
             connectionString,
             session.Plan,
@@ -338,7 +342,9 @@ public sealed class TypedDmlRuntime(
             throw new InvalidOperationException(
                 "DML transaction approval challenge is unknown, modified, expired, or has already been consumed.");
 
-        var coordinator = new DmlAtomicTransactionCoordinator(provider.Connections);
+        var coordinator = new DmlAtomicTransactionCoordinator(
+            provider.Connections,
+            schemaFreshnessVerifier: _schemaFreshnessVerifier);
         return await coordinator.CommitAsync(
             connectionString,
             session.Statements.Select(x => x.Plan).ToArray(),

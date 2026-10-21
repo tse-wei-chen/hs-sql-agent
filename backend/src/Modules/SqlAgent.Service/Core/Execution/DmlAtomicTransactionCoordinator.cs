@@ -13,9 +13,11 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 internal sealed class DmlAtomicTransactionCoordinator(
     IDbConnectionFactory connectionFactory,
-    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null)
+    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null)
 {
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+    private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
     private readonly IDmlTransactionIsolationPolicy _transactionIsolationPolicy =
         transactionIsolationPolicy ?? new StrictDmlTransactionIsolationPolicy();
 
@@ -55,6 +57,11 @@ internal sealed class DmlAtomicTransactionCoordinator(
             {
                 var plan = plans[index];
                 var approved = approvedPreviews[index];
+
+                // Revalidate each proof after earlier statements in the same atomic
+                // transaction. A changed or unreadable schema aborts the whole batch.
+                await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                    connection, transaction, plan.MutationCommand, _schemaFreshnessVerifier, cancellationToken);
 
                 if (approved.AffectedRows < 0)
                     throw new InvalidOperationException("Approved DML affected row count cannot be negative.");
