@@ -418,7 +418,8 @@ public sealed class TypedDmlRuntime(
             material.Append('|').Append(i)
                 .Append(':').Append(preview.AffectedRows)
                 .Append(':').Append(preview.Challenge.RowSetFingerprint ?? "-")
-                .Append(':').Append(statements[i].Plan.PlanFingerprint);
+                .Append(':').Append(statements[i].Plan.PlanFingerprint)
+                .Append(':').Append(preview.Challenge.ApprovalPlanBinding ?? "missing-plan-binding");
         }
         return ComputeHash(material.ToString());
     }

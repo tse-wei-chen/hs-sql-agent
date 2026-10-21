@@ -50,7 +50,15 @@ public sealed record DmlApprovalChallenge(
     string ApprovalContextFingerprint,
     DateTimeOffset IssuedAt,
     DateTimeOffset ExpiresAt,
-    string Nonce);
+    string Nonce)
+{
+    /// <summary>
+    /// Canonical binding of the complete approved plan, including match SQL,
+    /// row identity and preview payload. Legacy challenges lacking this field
+    /// are no longer executable and must be previewed again.
+    /// </summary>
+    public string? ApprovalPlanBinding { get; init; }
+}
 
 public sealed record DmlCommitResult(
     bool Committed,

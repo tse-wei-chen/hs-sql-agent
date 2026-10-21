@@ -75,6 +75,7 @@ public sealed class DmlAtomicTransactionCoordinatorTests
     [InlineData("row-count")]
     [InlineData("table")]
     [InlineData("policy")]
+    [InlineData("plan-binding")]
     public async Task Commit_RejectsUnboundChildApprovalBeforeOpeningDatabase(string mutation)
     {
         var factory = new SqliteConnectionFactory();
@@ -97,6 +98,10 @@ public sealed class DmlAtomicTransactionCoordinatorTests
             "policy" => secondPreview with
             {
                 Challenge = secondPreview.Challenge with { PolicyVersion = "another-policy" }
+            },
+            "plan-binding" => secondPreview with
+            {
+                Challenge = secondPreview.Challenge with { ApprovalPlanBinding = null }
             },
             _ => throw new ArgumentOutOfRangeException(nameof(mutation))
         };

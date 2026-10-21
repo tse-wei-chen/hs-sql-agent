@@ -180,6 +180,25 @@ published as measured percentages or silently set to 100.
       edited child approval objects fail **before opening a commit connection**.
       Added server-side strict-mode downgrade tests and atomic negative
       challenge/plan mutation matrices.
+- [x] Bind **every approved DML plan's execution-relevant shape** to its
+      one-time challenge, separately from SqlCore's stable mutation-command
+      fingerprint. The versioned `dml-approval-plan-binding-v1` SHA-256
+      includes physical target, operation, approval mode, policy, row limit,
+      approval TTL, Snapshot digest, canonical Match Query command/parameters,
+      row-identity assurance and ordered columns, and ordered INSERT preview
+      values with deterministic dictionary-key ordering. Single and atomic
+      Commit both recompute and require this binding before consuming a
+      challenge or connecting to the database. Atomic transaction evidence
+      also binds the child's full-plan fingerprint, so a tampered child cannot
+      be substituted under a valid batch approval.
+      This preserves the existing `DmlFingerprintService.ComputePlanFingerprint`
+      contract for the compiled mutation while preventing match-query or
+      approval-metadata swaps that leave that older fingerprint unchanged.
+      **Backward compatibility:** approvals issued before the extra binding
+      was introduced must be re-previewed; no legacy challenge is accepted
+      for execution. Added negative tests for changed match SQL/row identities,
+      target table, max-row cap, TTL, INSERT displayed values and missing
+      binding (including atomic child approvals).
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

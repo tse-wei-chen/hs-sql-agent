@@ -292,7 +292,10 @@ public sealed class DmlCoordinator(
             approvalContextFingerprint,
             now,
             now.Add(ttl),
-            Guid.NewGuid().ToString("N"));
+            Guid.NewGuid().ToString("N"))
+        {
+            ApprovalPlanBinding = DmlApprovalPlanBinding.Compute(plan)
+        };
     }
 
     private void ValidateChallenge(
@@ -312,6 +315,11 @@ public sealed class DmlCoordinator(
             throw new InvalidOperationException("DML policy changed after approval.");
         if (!string.Equals(plan.PlanFingerprint, challenge.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("DML plan changed after approval.");
+        if (string.IsNullOrWhiteSpace(challenge.ApprovalPlanBinding)
+            || !string.Equals(challenge.ApprovalPlanBinding,
+                DmlApprovalPlanBinding.Compute(plan), StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "DML approval plan binding changed after preview; request a new approval.");
         if (!string.Equals(
                 challenge.ApprovalContextFingerprint,
                 approvalContextFingerprint,

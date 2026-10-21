@@ -147,6 +147,9 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (preview.Operation != plan.Operation
             || !string.Equals(preview.TableName, plan.TableName, StringComparison.Ordinal)
             || !string.Equals(challenge.PlanFingerprint, plan.PlanFingerprint, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(challenge.ApprovalPlanBinding)
+            || !string.Equals(challenge.ApprovalPlanBinding,
+                DmlApprovalPlanBinding.Compute(plan), StringComparison.Ordinal)
             || !string.Equals(challenge.PolicyVersion, plan.PolicyVersion, StringComparison.Ordinal)
             || challenge.AffectedRows != preview.AffectedRows
             || challenge.AffectedRows < 0
