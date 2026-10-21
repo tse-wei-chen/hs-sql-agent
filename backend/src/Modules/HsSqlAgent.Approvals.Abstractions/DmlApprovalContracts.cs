@@ -143,8 +143,10 @@ public enum DmlApprovalCompletionStatus
     ConfigurationError,
     Failed,
     /// <summary>
-    /// COMMIT may have succeeded despite lost provider acknowledgement.
-    /// The one-time approval is terminal and must never be replayed.
+    /// The approval must not be replayed: either target COMMIT confirmation
+    /// was lost, or target COMMIT succeeded but the independent durable
+    /// approval-state write could not be confirmed. ErrorCode distinguishes
+    /// these two cases so clients never infer an ordinary failed write.
     /// </summary>
     OutcomeUnknown
 }
@@ -154,7 +156,11 @@ public sealed record DmlApprovalCompletionResult(
     string Message,
     int? AffectedRows = null)
 {
-    /// <summary>Stable code when COMMIT may have succeeded but confirmation was lost.</summary>
+    /// <summary>
+    /// Stable error classification, including dml.commit_outcome_unknown
+    /// and dml.approval_state_unknown; the latter means the target commit
+    /// succeeded but Admin Store terminal persistence was not confirmed.
+    /// </summary>
     public string? ErrorCode { get; init; }
     /// <summary>Retrying the same approval is never allowed for OutcomeUnknown.</summary>
     public bool Retryable { get; init; } = false;
