@@ -1,12 +1,28 @@
 using System.Data.Common;
 using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.SqlParsing;
 
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
+/// Optional host capability for capturing a trusted current schema snapshot before
+/// strict-schema DML compilation. Null means metadata completeness is unprovable.
+/// </summary>
+public interface IDmlSchemaSnapshotSource
+{
+    Task<SqlSchemaSnapshot?> CaptureAsync(
+        DbConnection connection,
+        SqlAgentToolType targetProvider,
+        ParsedStatement parsedMutation,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Optional trusted host capability: reproduce the compiler's immutable schema snapshot digest
-/// using live metadata on the given open connection and active transaction. The host must use
-/// the same snapshot scope, declared version and canonicalization as SqlCore compilation.
+/// using live metadata on the given open connection and active transaction. The host must
+/// capture the same snapshot scope/version and return its SqlSchemaSnapshot.Sha256.
+/// Never return the approved digest without an independent live metadata read.
 /// Returning null means live schema assurance cannot be established (fail closed).
 /// </summary>
 public interface IDmlSchemaSnapshotFreshnessVerifier

@@ -56,11 +56,16 @@ published as measured percentages or silently set to 100.
       host verifier on the same database connection and transaction **before
       each mutation**. No verifier, missing digest, or a changed digest rejects
       the commit and rolls back; ordinary commands without a schema proof keep
-      their existing runtime behavior. This is a hook, **not automatic DB schema
-      discovery**: hosts must supply a trusted verifier capable of recreating
-      the same snapshot canonicalization and version. The default server DML
-      runtime currently compiles without a snapshot, so this does not claim to
-      solve production-wide schema drift without that integration.
+      their existing runtime behavior. The host may register
+      `IDmlSchemaSnapshotSource` and `IDmlSchemaSnapshotFreshnessVerifier` in
+      DI: the first captures a snapshot during preview compilation, and the
+      second obtains fresh metadata inside the commit transaction. Both must
+      be provided for strict snapshot execution. `SqlSchemaSnapshot.Sha256`
+      shares the exact canonical digest algorithm with the F# compiler, so
+      host implementations must hash freshly captured snapshots rather than
+      copy an expected digest. This is **not automatic database schema
+      discovery**; the default runtime without both registrations remains
+      snapshot-free and does not claim production-wide schema freshness.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

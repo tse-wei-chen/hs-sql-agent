@@ -528,6 +528,8 @@ open System
 open System.Collections.Generic
 open System.Collections.Immutable
 open System.Data.Common
+open System.Security.Cryptography
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 open HsSqlAgent.SqlCore.Enums
@@ -700,6 +702,30 @@ type SqlSchemaSnapshot(provider: SqlAgentToolType, version: string, tables: IEnu
     member _.Provider = provider
     member _.Version = version
     member _.Tables : IReadOnlyList<SqlSchemaTable> = copies
+
+    /// Exact immutable catalog proof identity, shared by compilation and runtime hosts.
+    member _.Sha256 =
+        let builder = StringBuilder()
+        let append (text: string) =
+            builder.Append(text.Length).Append(':').Append(text).Append(';') |> ignore
+        append "sqlcore-schema-v1"
+        append (string provider)
+        append version
+        copies
+        |> Seq.sortWith (fun a b -> StringComparer.Ordinal.Compare(a.Name, b.Name))
+        |> Seq.iter (fun table ->
+            append table.Name
+            append (string table.Columns.Count)
+            table.TypedColumns
+            |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left.Name, right.Name))
+            |> Seq.iter (fun column ->
+                append column.Name
+                append (string (int column.Kind))))
+        builder.ToString()
+        |> Encoding.UTF8.GetBytes
+        |> SHA256.HashData
+        |> Convert.ToHexString
+        |> fun digest -> digest.ToLowerInvariant()
 
 [<Sealed>]
 type SqlPlanValidationContext private (

@@ -648,33 +648,11 @@ module internal RewriteFacadeAdapter =
             schemaSnapshot
 
 
-    // Hash actual immutable schema metadata, not only its host-provided version.
-    // Distinct schema proofs must never share a DML authorization/cache plan identity.
+    // Consume the same canonical digest host verifiers obtain from the snapshot.
     let private schemaDigest (snapshot: SqlSchemaSnapshot | null) =
         match snapshot with
         | null -> None
-        | value ->
-            let builder = StringBuilder()
-            let append (text: string) =
-                builder.Append(text.Length).Append(':').Append(text).Append(';') |> ignore
-            append "sqlcore-schema-v1"
-            append (string value.Provider)
-            append value.Version
-            value.Tables
-            |> Seq.sortWith (fun a b -> StringComparer.Ordinal.Compare(a.Name, b.Name))
-            |> Seq.iter (fun table ->
-                append table.Name
-                append (string table.Columns.Count)
-                table.TypedColumns
-                |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left.Name, right.Name))
-                |> Seq.iter (fun column ->
-                    append column.Name
-                    append (string (int column.Kind))) )
-            builder.ToString()
-            |> Encoding.UTF8.GetBytes
-            |> SHA256.HashData
-            |> Convert.ToHexString
-            |> fun digest -> Some(digest.ToLowerInvariant())
+        | value -> Some value.Sha256
 
     let private fingerprintPolicyVersion policyVersion schema =
         match schemaDigest schema with

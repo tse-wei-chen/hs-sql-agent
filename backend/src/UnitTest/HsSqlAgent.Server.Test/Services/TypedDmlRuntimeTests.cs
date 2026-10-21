@@ -67,6 +67,25 @@ public class TypedDmlRuntimeTests
     }
 
     [Fact]
+    public async Task PreviewAsync_SnapshotSourceWithoutCommitVerifierFailsBeforeDatabaseAccess()
+    {
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        var source = new Mock<IDmlSchemaSnapshotSource>(MockBehavior.Strict);
+        var runtime = new TypedDmlRuntime(schemaSnapshotSource: source.Object);
+        var mutation = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (id, name) VALUES (1, 'Alice')",
+            SqlAgentToolType.Postgres);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.PreviewAsync(
+            provider.Object, "connection", mutation, new SecurityPolicyModel(), null,
+            DefaultApprovalContext, TestContext.Current.CancellationToken));
+
+        Assert.Contains("live schema freshness verifier", error.Message, StringComparison.OrdinalIgnoreCase);
+        source.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task PreviewAsync_InsertSelectFailsClosedBeforeProviderAccess()
     {
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);

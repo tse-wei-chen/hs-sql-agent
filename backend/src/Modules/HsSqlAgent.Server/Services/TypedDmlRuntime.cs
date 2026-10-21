@@ -17,7 +17,8 @@ public sealed class TypedDmlRuntime(
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlPreviewTransactionFactory? previewTransactionFactory = null,
     ISqlCompileEvidenceObserver? compileEvidenceObserver = null,
-    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null)
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
+    IDmlSchemaSnapshotSource? schemaSnapshotSource = null)
 {
     private const int MaxStatementsPerTransaction = 16;
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
@@ -29,6 +30,7 @@ public sealed class TypedDmlRuntime(
     private readonly IDmlPreviewTransactionFactory? _previewTransactionFactory = previewTransactionFactory;
     private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
     private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
+    private readonly IDmlSchemaSnapshotSource? _schemaSnapshotSource = schemaSnapshotSource;
 
     public async Task<ParsedStatement> ParseDmlWithVerifiedRuntimeProfileAsync(
         ISqlProvider provider,
@@ -89,6 +91,9 @@ public sealed class TypedDmlRuntime(
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
         var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
+        if (_schemaSnapshotSource is not null && _schemaFreshnessVerifier is null)
+            throw new InvalidOperationException(
+                "Strict DML schema snapshot compilation requires a live schema freshness verifier; preview rejected.");
 
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
@@ -108,6 +113,17 @@ public sealed class TypedDmlRuntime(
 
             try
             {
+                if (_schemaSnapshotSource is not null)
+                {
+                    var snapshot = await _schemaSnapshotSource.CaptureAsync(
+                        verificationConnection, provider.Type, parsedMutation, cancellationToken)
+                        ?? throw new InvalidOperationException(
+                            "Live DML schema snapshot could not be captured; preview rejected.");
+                    if (snapshot.Provider != parsedMutation.SourceDialect)
+                        throw new InvalidOperationException(
+                            "Captured DML schema snapshot dialect does not match the parsed SQL source; preview rejected.");
+                    validationContext = validationContext.WithSchemaSnapshot(snapshot);
+                }
                 plan = await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
                     verificationConnection,
                     connectionString,

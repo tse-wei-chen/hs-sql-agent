@@ -85,7 +85,9 @@ public static class HsSqlAgentRuntimeServiceExtensions
         services.AddScoped<ITypedQueryRuntime, TypedQueryRuntime>();
         services.AddSingleton(provider => new TypedDmlRuntime(
             challengeStore: provider.GetRequiredService<IDmlApprovalChallengeStore>(),
-            compileEvidenceObserver: provider.GetRequiredService<ISqlCompileEvidenceObserver>()));
+            compileEvidenceObserver: provider.GetRequiredService<ISqlCompileEvidenceObserver>(),
+            schemaFreshnessVerifier: provider.GetService<IDmlSchemaSnapshotFreshnessVerifier>(),
+            schemaSnapshotSource: provider.GetService<IDmlSchemaSnapshotSource>()));
         services.AddScoped<DurableDmlApprovalLifecycle>();
         services.AddScoped<IDmlApprovalCompletionSink>(provider =>
             provider.GetRequiredService<DurableDmlApprovalLifecycle>());

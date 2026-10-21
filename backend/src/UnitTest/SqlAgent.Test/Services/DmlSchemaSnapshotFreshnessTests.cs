@@ -16,6 +16,21 @@ public sealed class DmlSchemaSnapshotFreshnessTests
     private const string PolicyVersion = "schema-freshness-policy-v1";
 
     [Fact]
+    public void SnapshotSha256_UsesTheExactDigestEmittedByTheCompiler()
+    {
+        var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.Sqlite, "live-schema-v1",
+            [new SqlSchemaTable("users", ["id", "name"])]);
+        var reordered = new SqlSchemaSnapshot(SqlAgentToolType.Sqlite, "live-schema-v1",
+            [new SqlSchemaTable("users", ["name", "id"])]);
+        var changed = new SqlSchemaSnapshot(SqlAgentToolType.Sqlite, "live-schema-v2",
+            [new SqlSchemaTable("users", ["id", "name"])]);
+
+        Assert.Equal(Digest(CreatePlan(1, "Alice")), snapshot.Sha256);
+        Assert.Equal(snapshot.Sha256, reordered.Sha256);
+        Assert.NotEqual(snapshot.Sha256, changed.Sha256);
+    }
+
+    [Fact]
     public async Task InsertApproval_WithSnapshot_RejectsMissingVerifierBeforeMutation()
     {
         await WithDatabaseAsync(async (connectionString, serverVersion) =>
