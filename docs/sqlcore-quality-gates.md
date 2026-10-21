@@ -468,7 +468,10 @@ published as measured percentages or silently set to 100.
       concurrency. The ordinary audit redactor is applied to free-form
       operator evidence before storing the attestation or SIEM payload.
       Notification failure after successful persistence does not reset
-      the approval. No target database connection or mutation is performed.
+      the approval. The ordinary AuditService outbox writer also isolates
+      delivery-signal failure after acknowledged SaveChanges, preventing
+      phantom retry/fallback of a successfully persisted audit event.
+      No target database connection or mutation is performed.
       An attestation is **not** cryptographic proof of transaction outcome
       or a distributed atomic commit; operators must independently
       investigate physical effects first.
