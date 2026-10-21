@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.SqlCore.SqlParsing;
 using SqlAgent.Service.Core.Execution;
 using Xunit;
@@ -154,10 +155,21 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         const string policyVersion = "native-dml-execution-proof-v1";
         const string approvalContext = "native-dml-execution-approval-v1";
         var freshness = new NativeDmlSchemaSnapshotService();
+        ISqlProvider nativeProvider = provider switch
+        {
+            SqlAgentToolType.Postgres => new HsSqlAgent.Provider.PostgreSql.PostgresProvider(),
+            SqlAgentToolType.MySQL => new HsSqlAgent.Provider.MySql.MySqlProvider(),
+            SqlAgentToolType.Sqlite => new HsSqlAgent.Provider.Sqlite.SqliteProvider(),
+            SqlAgentToolType.MsSqlServer => new HsSqlAgent.Provider.SqlServer.MsSqlServerProvider(),
+            SqlAgentToolType.Oracle => new HsSqlAgent.Provider.Oracle.OracleProvider(),
+            SqlAgentToolType.Firebird => new HsSqlAgent.Provider.Firebird.FirebirdProvider(),
+            _ => throw new ArgumentOutOfRangeException(nameof(provider))
+        };
         var connectionString = Fixture.ConnectionString;
         await using var connection = ProviderStrategy.CreateConnection(connectionString);
         await connection.OpenAsync(token);
-        var serverVersion = RuntimeServerProfileVerifier.Capture(provider, connection).ServerVersionIdentity;
+        var profile = RuntimeServerProfileVerifier.Capture(provider, connection);
+        var serverVersion = profile.ServerVersionIdentity;
 
         async Task ExecuteAsync(string sql)
         {
@@ -179,34 +191,21 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 $"INSERT INTO {tableName} (ID, NAME) VALUES ({id}, 'Alice')", provider);
             var snapshot = await freshness.CaptureAsync(connection, provider, parsed, token);
             Assert.NotNull(snapshot);
-            var compiled = CoreDmlCompiler.CreateDefault().Compile(
-                parsed, provider, new SqlPlanValidationContext(policyVersion).WithSchemaSnapshot(snapshot));
-            var rows = ImmutableArray.Create(ImmutableDictionary.CreateRange<string, object?>(
-                StringComparer.OrdinalIgnoreCase,
-                [
-                    new KeyValuePair<string, object?>("ID", id),
-                    new KeyValuePair<string, object?>("NAME", "Alice")
-                ]));
-            return new ValidatedDmlPlan(
-                DmlOperation.Insert, snapshot.Tables[0].Name, compiled,
-                MatchQueryCommand: null,
-                RowIdentityColumns: ImmutableArray<string>.Empty,
-                RowIdentityAssurance: DmlRowIdentityAssurance.CountOnly,
-                PlanFingerprint: DmlFingerprintService.ComputePlanFingerprint(compiled, policyVersion),
-                PolicyVersion: policyVersion,
-                ApprovalTtl: TimeSpan.FromMinutes(5),
-                MaxAffectedRows: 1,
-                ApprovalMode: DmlApprovalMode.InsertValues,
-                InsertRows: rows,
-                SchemaSnapshot: snapshot);
+            var plan = await new DmlPlanFactory(nativeProvider.Metadata)
+                .CreateWithMetadataConnectionAsync(
+                    connection, connectionString, parsed, provider,
+                    new SqlPlanValidationContext(policyVersion).WithSchemaSnapshot(snapshot),
+                    maxAffectedRows: 1, cancellationToken: token, targetProfile: profile.TargetProfile);
+            Assert.Equal(snapshot.Sha256, plan.SchemaSnapshot?.Sha256);
+            Assert.Equal(DmlApprovalMode.InsertValues, plan.ApprovalMode);
+            return plan;
         }
 
         await ExecuteAsync($"CREATE TABLE {tableName} (ID INTEGER PRIMARY KEY, NAME VARCHAR(80))");
         try
         {
             var coordinator = new DmlCoordinator(
-                new ProviderFixtureConnectionFactory(value => ProviderStrategy.CreateConnection(value)),
-                schemaFreshnessVerifier: freshness);
+                nativeProvider.Connections, schemaFreshnessVerifier: freshness);
 
             var approved = await PlanAsync(1);
             var preview = await coordinator.PreviewAsync(
@@ -233,11 +232,6 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         {
             await ExecuteAsync($"DROP TABLE {tableName}");
         }
-    }
-
-    private sealed class ProviderFixtureConnectionFactory(Func<string, DbConnection> create) : IDbConnectionFactory
-    {
-        public DbConnection Create(string connectionString) => create(connectionString);
     }
 
     [Fact]
