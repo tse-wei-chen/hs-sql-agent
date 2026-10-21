@@ -85,16 +85,20 @@ public sealed class NativeDmlSchemaSnapshotService :
         if (expectedSnapshot.Provider != provider || expectedSnapshot.Tables.Count != 1)
             return null;
 
-        // Canonical native snapshots always contain one fully resolved schema.table.
-        // Reject schema-qualified names with additional dots until they have a
-        // lossless identifier representation instead of guessing their meaning.
+        // Firebird's 'Default' is a catalog-only pseudo-schema, not part
+        // of SQL identifier syntax. Other providers require schema.table.
+        // Reject dotted physical names that cannot be represented losslessly.
         var parts = expectedSnapshot.Tables[0].Name.Split('.');
-        if (parts.Length != 2 || parts.Any(string.IsNullOrWhiteSpace))
+        var firebird = provider == SqlAgentToolType.Firebird;
+        if (parts.Any(string.IsNullOrWhiteSpace)
+            || (firebird ? parts.Length != 1 : parts.Length != 2))
             return null;
+        var schema = firebird ? "Default" : parts[0];
+        var table = firebird ? parts[0] : parts[1];
 
         var readers = ForProvider(provider);
         var matches = await readers.Commit.GetDmlPlanningMetadataInTransactionAsync(
-            connection, transaction, parts[0], parts[1], includeColumns: true,
+            connection, transaction, schema, table, includeColumns: true,
             cancellationToken: cancellationToken);
         return BuildSnapshot(provider, matches)?.Sha256;
     }
@@ -146,7 +150,14 @@ public sealed class NativeDmlSchemaSnapshotService :
         }
 
         var version = "native-dml-schema-v1:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
-        var table = new SqlSchemaTable(physical.Schema + "." + physical.Table, columnNames);
+        // Firebird has no schema-qualified table syntax. The fixed 'Default'
+        // catalog identity remains bound in Version, while the compiler name
+        // must match the actual unqualified relation it will render.
+        var tableName = provider == SqlAgentToolType.Firebird
+            && string.Equals(physical.Schema, "Default", StringComparison.OrdinalIgnoreCase)
+                ? physical.Table
+                : physical.Schema + "." + physical.Table;
+        var table = new SqlSchemaTable(tableName, columnNames);
         return new SqlSchemaSnapshot(provider, version, [table]);
     }
 }

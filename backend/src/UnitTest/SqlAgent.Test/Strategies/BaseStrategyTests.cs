@@ -198,6 +198,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                     maxAffectedRows: 1, cancellationToken: token, targetProfile: profile.TargetProfile);
             Assert.Equal(snapshot.Sha256, plan.SchemaSnapshot?.Sha256);
             Assert.Equal(DmlApprovalMode.InsertValues, plan.ApprovalMode);
+            if (provider == SqlAgentToolType.Firebird)
+            {
+                // 'Default' is a catalog label, never a Firebird SQL qualifier.
+                Assert.Equal(tableName, snapshot.Tables[0].Name);
+                Assert.DoesNotContain("Default", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+            }
             return plan;
         }
 

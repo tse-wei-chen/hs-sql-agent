@@ -80,6 +80,12 @@ published as measured percentages or silently set to 100.
       It re-reads matching metadata through the transaction-bound reader before
       mutation. Host-supplied source/verifier remains supported, and no automatic
       opt-in is imposed on existing deployments.
+- [x] Restore Firebird native DML target semantics exposed by the six-provider
+      end-to-end approval test. Its `Default` catalog schema is **not** a SQL
+      identifier namespace: DML planning renders the unqualified relation name,
+      while the native Snapshot still binds `Default` into its metadata digest
+      and uses it when reading transaction-bound catalog rows. The real-provider
+      approval gate asserts the emitted SQL contains no `Default.` qualifier.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

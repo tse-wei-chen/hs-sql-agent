@@ -154,7 +154,7 @@ public sealed class DmlPlanFactory(
                     cancellationToken);
         }
         var resolvedTarget = new NamedTableSource(
-            MetadataIdentifier(identity.Schema, identity.Table),
+            ExecutionTargetIdentifier(targetProvider, identity.Schema, identity.Table),
             target.Alias,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
@@ -307,7 +307,7 @@ public sealed class DmlPlanFactory(
                     cancellationToken);
         }
         var resolvedTarget = new NamedTableSource(
-            MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
+            ExecutionTargetIdentifier(targetProvider, targetResolution.Schema, targetResolution.Table),
             insert.Target.Alias,
             insert.Target.Span);
         var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
@@ -682,6 +682,16 @@ public sealed class DmlPlanFactory(
                     $"Statement '{statement.GetType().Name}' is not a supported DML mutation.");
         }
     }
+
+    // Firebird has no SQL schema namespace. 'Default' is a metadata-only
+    // pseudo-schema, not an executable SQL qualifier. Retain that identity
+    // for audit/authorization but render only the physical relation name.
+    private static SqlIdentifier ExecutionTargetIdentifier(
+        SqlAgentToolType provider, string schema, string table) =>
+        provider == SqlAgentToolType.Firebird
+            && string.Equals(schema, "Default", StringComparison.OrdinalIgnoreCase)
+                ? MetadataIdentifier(table)
+                : MetadataIdentifier(schema, table);
 
     private static SqlIdentifier MetadataIdentifier(params string[] parts) =>
         new(
