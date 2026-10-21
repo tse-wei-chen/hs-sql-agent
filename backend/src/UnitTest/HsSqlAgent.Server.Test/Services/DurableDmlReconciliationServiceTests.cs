@@ -87,6 +87,55 @@ public sealed class DurableDmlReconciliationServiceTests
     }
 
     [Fact]
+    public async Task SqliteInventory_UtcTimestampJsonRoundTrip_AllowsExpectedStateCheck()
+    {
+        await using var fixture = await Fixture.CreateAsync("OutcomeUnknown", minutesOld: 60);
+        await using var context = fixture.NewContext();
+        var ct = TestContext.Current.CancellationToken;
+
+        // SQLite does not preserve DateTime.Kind on database round trips.
+        // Without explicit UTC normalization the API serializes an ambiguous
+        // timestamp, causing timezone-dependent optimistic check failures.
+        var raw = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+        Assert.Equal(DateTimeKind.Unspecified, raw.UpdatedAt.Kind);
+        var service = new DurableDmlReconciliationService(context);
+        var item = Assert.Single(await service.ListAsync(10, ct));
+        Assert.Equal(DateTimeKind.Utc, item.UpdatedAt.Kind);
+        Assert.Equal(DateTimeKind.Utc, item.CreatedAt.Kind);
+
+        var json = System.Text.Json.JsonSerializer.Serialize(item);
+        Assert.Contains("Z", json, StringComparison.Ordinal);
+        var fromWire = System.Text.Json.JsonSerializer.Deserialize<DurableDmlReconciliationItem>(json);
+        Assert.NotNull(fromWire);
+
+        var result = await service.ReconcileAsync(fromWire.RequestId,
+            new(fromWire.Status, fromWire.UpdatedAt, "indeterminate", "INC-UTC",
+                "Physical COMMIT remains unknown after review."),
+            "operator-utc", ct);
+        Assert.NotNull(result);
+        Assert.Equal("AttestedIndeterminate", result.Status);
+        Assert.Equal(DateTimeKind.Utc, result.UpdatedAt.Kind);
+    }
+
+    [Fact]
+    public async Task Reconciliation_RejectsAmbiguousLocalTimestampInsteadOfGuessingTimezone()
+    {
+        await using var fixture = await Fixture.CreateAsync("OutcomeUnknown", minutesOld: 60);
+        await using var context = fixture.NewContext();
+        var ct = TestContext.Current.CancellationToken;
+        var service = new DurableDmlReconciliationService(context);
+        var item = Assert.Single(await service.ListAsync(10, ct));
+        var noTimezone = DateTime.SpecifyKind(item.UpdatedAt, DateTimeKind.Unspecified);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ReconcileAsync(item.RequestId,
+            new(item.Status, noTimezone, "committed", "INC-UTC",
+                "Timestamp arrived without any timezone designator."),
+            "operator-utc", ct));
+        Assert.Equal("OutcomeUnknown", (await context.DmlApprovalRequests.AsNoTracking().SingleAsync(ct)).Status);
+        Assert.Equal(0, await context.AuditLogs.CountAsync(ct));
+    }
+
+    [Fact]
     public async Task Executing_RemainsReadOnlyEvenWhenOldWithoutWorkerFencing()
     {
         await using var fixture = await Fixture.CreateAsync("Executing", minutesOld: 120);

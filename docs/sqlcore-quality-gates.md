@@ -463,6 +463,12 @@ published as measured percentages or silently set to 100.
       classification is performed server-side without exposing protected
       SQL, approval fingerprints or the internal Reason text; it is
       **not** a physical transaction-fencing or independent proof mechanism.
+      Inventory `CreatedAt` and `UpdatedAt` values are emitted with an
+      explicit UTC designator even when SQLite restores their
+      `DateTime.Kind` as Unspecified; resolution requires an ISO timestamp
+      carrying UTC or an explicit timezone offset and normalizes it to UTC
+      before validating the observed state. Ambiguous timezone-free
+      timestamps fail closed rather than guessing the operator's locale.
       The resulting AttestedCommitted / AttestedNotCommitted /
       AttestedIndeterminate statuses are permanently non-replayable;
       the prefix makes clear these are human attestations, not independent

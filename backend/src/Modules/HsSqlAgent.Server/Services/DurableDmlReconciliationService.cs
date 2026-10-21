@@ -68,6 +68,9 @@ public sealed class DurableDmlReconciliationService(
             throw new ArgumentException("An evidence reference (up to 256 characters) and a note (up to 700 characters) are required.");
         if (request.ExpectedUpdatedAt == default)
             throw new ArgumentException("ExpectedUpdatedAt is required.");
+        if (request.ExpectedUpdatedAt.Kind == DateTimeKind.Unspecified)
+            throw new ArgumentException(
+                "ExpectedUpdatedAt must carry an explicit UTC marker or offset, not a timezone-ambiguous local timestamp.");
         if (request.ExpectedStatus is not (OutcomeUnknown or ApprovalStateUnknown))
             throw new ArgumentException("Only OutcomeUnknown or ApprovalStateUnknown approvals may be resolved. Executing requires independently proven worker quiescence.");
 
@@ -83,7 +86,8 @@ public sealed class DurableDmlReconciliationService(
         var state = await adminContext.DmlApprovalRequests
             .SingleOrDefaultAsync(x => x.RequestId == requestId, cancellationToken);
         if (state is null) return null;
-        if (state.Status != request.ExpectedStatus || state.UpdatedAt != request.ExpectedUpdatedAt)
+        var expectedUpdatedAtUtc = request.ExpectedUpdatedAt.ToUniversalTime();
+        if (state.Status != request.ExpectedStatus || state.UpdatedAt != expectedUpdatedAtUtc)
             throw new InvalidOperationException("Approval state changed since inspection; reload before reconciling.");
         // Age does not fence a live worker. Never override Executing while the
         // original SQL transaction might still be in flight.
@@ -190,10 +194,17 @@ public sealed class DurableDmlReconciliationService(
                 ? knownCommit ? ["committed"] : ["committed", "not_committed", "indeterminate"]
                 : [];
         return new DurableDmlReconciliationItem(
-            requestId, status, updatedAt, createdAt, dbManagementId,
-            databaseProvider, databaseIdentity, statementCount,
+            requestId, status, AsUtc(updatedAt), AsUtc(createdAt),
+            dbManagementId, databaseProvider, databaseIdentity, statementCount,
             evidence, resolutions);
     }
+
+    // Approval timestamps have always been written as UTC. SQLite can read
+    // them back with DateTimeKind.Unspecified, which would produce a JSON
+    // timestamp without 'Z'. Preserve the stored ticks and restore the UTC
+    // contract for API round trips; never reinterpret ticks in local time.
+    private static DateTime AsUtc(DateTime timestamp) =>
+        DateTime.SpecifyKind(timestamp, DateTimeKind.Utc);
 }
 
 public sealed record DurableDmlReconciliationItem(
