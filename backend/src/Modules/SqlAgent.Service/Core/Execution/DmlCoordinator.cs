@@ -123,6 +123,9 @@ public sealed class DmlCoordinator(
                 "DML approval challenge is unknown, modified, expired, or has already been consumed.");
         }
 
+        DmlCommitResult? acknowledgedCommit = null;
+        try
+        {
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
         RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
@@ -140,12 +143,15 @@ public sealed class DmlCoordinator(
 
             if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             {
-                return await CommitInsertValuesAsync(
+                var insertResult = await CommitInsertValuesAsync(
                     connection,
                     transaction,
                     plan,
                     approvedChallenge,
                     cancellationToken);
+                if (insertResult.Committed)
+                    acknowledgedCommit = insertResult;
+                return insertResult;
             }
 
             var matchCommand = RequireMatchCommand(plan);
@@ -196,19 +202,28 @@ public sealed class DmlCoordinator(
             }
 
             await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
-            return new DmlCommitResult(
+            acknowledgedCommit = new DmlCommitResult(
                 true,
                 execution.AffectedRows,
                 "DML operation committed after approval and row-set revalidation.")
             {
                 ReturnedRows = execution.ReturnedRows
             };
+            return acknowledgedCommit;
         }
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
             DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
             throw;
+        }
+        }
+        catch (Exception) when (acknowledgedCommit is not null)
+        {
+            // Acknowledged target COMMIT is irreversible: a later transaction
+            // or connection DisposeAsync failure cannot turn it into a
+            // Failed approval or cause an operator to repeat the mutation.
+            return acknowledgedCommit;
         }
     }
 

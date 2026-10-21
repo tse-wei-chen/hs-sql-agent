@@ -46,6 +46,9 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (plans.Any(x => x.MutationCommand.TargetProvider != provider))
             throw new InvalidOperationException("Atomic DML transaction cannot span providers.");
 
+        DmlCommitResult? acknowledgedCommit = null;
+        try
+        {
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
         RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
@@ -110,19 +113,27 @@ internal sealed class DmlAtomicTransactionCoordinator(
             }
 
             await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
-            return new DmlCommitResult(
+            acknowledgedCommit = new DmlCommitResult(
                 true,
                 totalAffected,
                 "DML transaction committed atomically after per-statement approval revalidation.")
             {
                 ReturnedRows = returnedRows.ToImmutable()
             };
+            return acknowledgedCommit;
         }
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
             DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
             throw;
+        }
+        }
+        catch (Exception) when (acknowledgedCommit is not null)
+        {
+            // The physical target COMMIT already returned successfully.
+            // Cleanup errors must not overwrite that confirmed result.
+            return acknowledgedCommit;
         }
     }
 

@@ -513,6 +513,16 @@ published as measured percentages or silently set to 100.
       even when secondary rollback cleanup also fails. The scope of this
       gate is process/provider rollback acknowledgement, **not** proof of
       the physical outcome in a disconnected database.
+- [x] Preserve acknowledged target COMMIT results even if a provider's
+      transaction or connection `DisposeAsync` later fails. Both single
+      and atomic DML coordinators capture a confirmed result before
+      exiting the provider cleanup scope and do not convert secondary
+      cleanup exceptions into a failed mutation. Real SQLite INSERT
+      tests inject a connection disposal failure *after* the underlying
+      connection has been disposed and assert a successful commit result
+      and exactly one durable target row in both code paths. COMMIT
+      acknowledgement loss still remains `DmlCommitOutcomeUnknownException`;
+      no cleanup exception is allowed to invent a successful COMMIT.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.

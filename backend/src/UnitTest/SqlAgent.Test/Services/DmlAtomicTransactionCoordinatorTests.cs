@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Data;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Core.Execution;
@@ -144,6 +145,59 @@ public sealed class DmlAtomicTransactionCoordinatorTests
                 TestContext.Current.CancellationToken, serverVersion));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfirmedTargetCommit_SurvivesConnectionDisposeFailure(
+        bool atomicBatch)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"hs-sql-agent-commit-cleanup-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            string serverVersion;
+            await using (var setup = new SqliteConnection(connectionString))
+            {
+                await setup.OpenAsync(ct);
+                serverVersion = setup.ServerVersion.Trim();
+                await using var command = setup.CreateCommand();
+                command.CommandText = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)";
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            var challengeStore = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(17L, "Confirmed", "policy-cleanup-v1");
+            var preview = await new DmlCoordinator(new SqliteConnectionFactory(),
+                challengeStore: challengeStore).PreviewAsync(
+                connectionString, plan, ApprovalContextFingerprint, ct, serverVersion);
+
+            // This connection is a real SQLite database; only its DisposeAsync
+            // drops the acknowledgement AFTER inner DisposeAsync succeeds.
+            var faultFactory = new DisposeFailureSqliteConnectionFactory();
+            DmlCommitResult committed = atomicBatch
+                ? await new DmlAtomicTransactionCoordinator(faultFactory).CommitAsync(
+                    connectionString, [plan], [preview], ct, serverVersion)
+                : await new DmlCoordinator(faultFactory, challengeStore: challengeStore)
+                    .CommitAsync(connectionString, plan, preview.Challenge,
+                        ApprovalContextFingerprint, ct, serverVersion);
+
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+
+            await using var verify = new SqliteConnection(connectionString);
+            await verify.OpenAsync(ct);
+            await using var query = verify.CreateCommand();
+            query.CommandText = "SELECT COUNT(*) FROM users WHERE id = 17";
+            Assert.Equal(1L, (long)(await query.ExecuteScalarAsync(ct))!);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private static ValidatedDmlPlan CreateInsertPlan(long id, string name, string policyVersion)
     {
         var parsed = CoreSqlTextParser.ParseDml(
@@ -179,5 +233,48 @@ public sealed class DmlAtomicTransactionCoordinatorTests
     private sealed class SqliteConnectionFactory : IDbConnectionFactory
     {
         public DbConnection Create(string connectionString) => new SqliteConnection(connectionString);
+    }
+
+    private sealed class DisposeFailureSqliteConnectionFactory : IDbConnectionFactory
+    {
+        public DbConnection Create(string connectionString) =>
+            new DisposeFailureSqliteConnection(new SqliteConnection(connectionString));
+    }
+
+    private sealed class DisposeFailureSqliteConnection(SqliteConnection inner) : DbConnection
+    {
+        public override string ConnectionString
+        {
+            get => inner.ConnectionString;
+            set => inner.ConnectionString = value;
+        }
+
+        public override string Database => inner.Database;
+        public override string DataSource => inner.DataSource;
+        public override string ServerVersion => inner.ServerVersion;
+        public override ConnectionState State => inner.State;
+
+        public override void ChangeDatabase(string databaseName) =>
+            inner.ChangeDatabase(databaseName);
+
+        public override void Close() => inner.Close();
+
+        public override void Open() => inner.Open();
+
+        public override Task OpenAsync(CancellationToken cancellationToken) =>
+            inner.OpenAsync(cancellationToken);
+
+        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
+            inner.BeginTransaction(isolationLevel);
+
+        // The underlying command and transaction remain enlisted in the
+        // same real SQLite connection. Only disposal is fault-injected.
+        protected override DbCommand CreateDbCommand() => inner.CreateCommand();
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
+            throw new IOException("Simulated connection cleanup failed after target COMMIT.");
+        }
     }
 }
