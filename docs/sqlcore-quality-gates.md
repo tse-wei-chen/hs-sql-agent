@@ -326,8 +326,14 @@ published as measured percentages or silently set to 100.
 - [x] Prove mismatched child payloads or a pre-existing aggregate key leave
       all children intact; verify an expired child is not promotable and
       real Redis TTL deletes its key.
-- [x] Inject a **lost client acknowledgement after actual Redis Lua execution**,
-      confirming that neither retry nor independent store consumption
+- [x] Race a single child approval consume against aggregate promotion
+      across independent stores for ten rounds. Assert exactly one winner:
+      when single consume wins, no aggregate exists and the other child
+      remains; when aggregate promotion wins, both children disappear and
+      the aggregate is one-time. This guards against double authorization.
+- [x] Inject a **lost client acknowledgement after actual Redis Lua execution**
+      for both aggregate promotion and single-challenge consumption.
+      Confirm that neither retry nor independent store consumption
       resurrects child approvals. The aggregate remains one-time. An
       ambiguous network failure is **not** treated as proof of failure:
       the server may already have promoted the challenge, so callers

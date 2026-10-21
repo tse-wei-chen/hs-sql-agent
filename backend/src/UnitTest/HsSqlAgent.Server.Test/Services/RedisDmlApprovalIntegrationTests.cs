@@ -68,8 +68,8 @@ public sealed class RedisDmlApprovalIntegrationTests
 
             signal.SetResult();
             var outcomes = await Task.WhenAll(attempts);
-            var winnerIndex = Assert.Single(Enumerable.Range(0, outcomes.Length)
-                .Where(i => outcomes[i]));
+            var winnerIndex = Assert.Single(Enumerable.Range(0, outcomes.Length),
+                i => outcomes[i]);
             var winner = aggregates[winnerIndex];
 
             Assert.False(await db.KeyExistsAsync(Key(options, children[0].Nonce)));
@@ -82,7 +82,7 @@ public sealed class RedisDmlApprovalIntegrationTests
             var consume = await Task.WhenAll(
                 first.TryConsumeAsync(winner, TestContext.Current.CancellationToken).AsTask(),
                 second.TryConsumeAsync(winner, TestContext.Current.CancellationToken).AsTask());
-            Assert.Single(consume.Where(success => success));
+            Assert.Single(consume, success => success);
             Assert.False(await first.TryConsumeAsync(winner,
                 TestContext.Current.CancellationToken));
         }
@@ -112,14 +112,14 @@ public sealed class RedisDmlApprovalIntegrationTests
             Assert.False(await store.TryPromoteAsync(
                 [children[0], forged], aggregate, TestContext.Current.CancellationToken));
             Assert.All(children, child =>
-                Assert.Equal(true, db.KeyExists(Key(options, child.Nonce))));
+                Assert.True(db.KeyExists(Key(options, child.Nonce))));
             Assert.False(await db.KeyExistsAsync(Key(options, aggregate.Nonce)));
 
             await store.RegisterAsync(aggregate, TestContext.Current.CancellationToken);
             Assert.False(await store.TryPromoteAsync(children, aggregate,
                 TestContext.Current.CancellationToken));
             Assert.All(children, child =>
-                Assert.Equal(true, db.KeyExists(Key(options, child.Nonce))));
+                Assert.True(db.KeyExists(Key(options, child.Nonce))));
 
             Assert.True(await store.TryConsumeAsync(aggregate,
                 TestContext.Current.CancellationToken));
@@ -131,6 +131,118 @@ public sealed class RedisDmlApprovalIntegrationTests
         finally
         {
             await db.KeyDeleteAsync(keys);
+        }
+    }
+
+    [Fact]
+    public async Task RacingSingleChildConsumeVsAggregatePromotion_NeverDoubleAuthorizes()
+    {
+        var connection = ConnectionString();
+        var options = Options(connection);
+        await using var inspector = await ConnectionMultiplexer.ConnectAsync(connection);
+        await using var first = new RedisDmlApprovalChallengeStore(options);
+        await using var second = new RedisDmlApprovalChallengeStore(options);
+        var db = inspector.GetDatabase();
+
+        // If the single child consume wins, the batch must be rejected.
+        // If batch promotion wins, the child must not be individually spent.
+        for (var round = 0; round < 10; round++)
+        {
+            var children = new[]
+            {
+                Challenge($"race-{round}-a"),
+                Challenge($"race-{round}-b")
+            };
+            var aggregate = Challenge($"race-{round}-aggregate");
+            var keys = children.Append(aggregate).Select(x => Key(options, x.Nonce)).ToArray();
+
+            try
+            {
+                foreach (var child in children)
+                    await first.RegisterAsync(child, TestContext.Current.CancellationToken);
+
+                var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var consume = Task.Run(async () =>
+                {
+                    await signal.Task;
+                    return await first.TryConsumeAsync(children[0],
+                        TestContext.Current.CancellationToken);
+                });
+                var promote = Task.Run(async () =>
+                {
+                    await signal.Task;
+                    return await second.TryPromoteAsync(children, aggregate,
+                        TestContext.Current.CancellationToken);
+                });
+                signal.SetResult();
+                await Task.WhenAll(consume, promote);
+
+                Assert.NotEqual(consume.Result, promote.Result);
+                if (consume.Result)
+                {
+                    Assert.False(await db.KeyExistsAsync(Key(options, children[0].Nonce)));
+                    Assert.True(await db.KeyExistsAsync(Key(options, children[1].Nonce)));
+                    Assert.False(await db.KeyExistsAsync(Key(options, aggregate.Nonce)));
+                    Assert.True(await second.TryConsumeAsync(children[1],
+                        TestContext.Current.CancellationToken));
+                }
+                else
+                {
+                    Assert.False(await db.KeyExistsAsync(Key(options, children[0].Nonce)));
+                    Assert.False(await db.KeyExistsAsync(Key(options, children[1].Nonce)));
+                    Assert.True(await db.KeyExistsAsync(Key(options, aggregate.Nonce)));
+                    Assert.False(await first.TryConsumeAsync(children[0],
+                        TestContext.Current.CancellationToken));
+                    Assert.True(await second.TryConsumeAsync(aggregate,
+                        TestContext.Current.CancellationToken));
+                }
+            }
+            finally
+            {
+                await db.KeyDeleteAsync(keys);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task LostSingleConsumeAcknowledgement_DoesNotPermitSecondCommit()
+    {
+        var connection = ConnectionString();
+        var options = Options(connection);
+        await using var inspector = await ConnectionMultiplexer.ConnectAsync(connection);
+        await using var normal = new RedisDmlApprovalChallengeStore(options);
+        var db = inspector.GetDatabase();
+        var challenge = Challenge("consume-ack-lost");
+        var key = Key(options, challenge.Nonce);
+        try
+        {
+            await normal.RegisterAsync(challenge, TestContext.Current.CancellationToken);
+            var proxy = new Mock<IDatabase>();
+            proxy.Setup(x => x.ScriptEvaluateAsync(
+                    It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                    It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+                .Returns(async (string script, RedisKey[] redisKeys,
+                    RedisValue[] args, CommandFlags flags) =>
+                {
+                    var result = await db.ScriptEvaluateAsync(script, redisKeys, args, flags);
+                    Assert.False(result.IsNull);
+                    throw new IOException("Simulated lost Redis single-consume acknowledgement.");
+                });
+
+            await using (var uncertain = new RedisDmlApprovalChallengeStore(options, proxy.Object))
+            {
+                await Assert.ThrowsAsync<IOException>(async () =>
+                    await uncertain.TryConsumeAsync(challenge,
+                        TestContext.Current.CancellationToken));
+            }
+
+            Assert.False(await db.KeyExistsAsync(key));
+            Assert.False(await normal.TryConsumeAsync(challenge,
+                TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            await db.KeyDeleteAsync(key);
         }
     }
 
