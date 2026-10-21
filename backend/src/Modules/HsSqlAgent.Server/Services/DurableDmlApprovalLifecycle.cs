@@ -342,9 +342,14 @@ internal sealed class DurableDmlApprovalLifecycle(
     /// Never allow reconciliation to contradict this confirmed COMMIT.
     /// </summary>
     internal static bool HasConfirmedTargetCommit(DmlApprovalRequestState state) =>
-        string.Equals(state.Status, ApprovalStateUnknown, StringComparison.Ordinal)
-        || (string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
-            && state.Reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true);
+        HasConfirmedTargetCommit(state.Status, state.Reason);
+
+    // Reconciliation inventory projects only these two status/evidence fields
+    // rather than loading the encrypted SQL resume payload for every row.
+    internal static bool HasConfirmedTargetCommit(string status, string? reason) =>
+        string.Equals(status, ApprovalStateUnknown, StringComparison.Ordinal)
+        || (string.Equals(status, OutcomeUnknown, StringComparison.Ordinal)
+            && reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true);
 
     private async Task<DmlApprovalCompletionResult> HandleConfirmedCommitStateFailureAsync(
         IAdminContext context,

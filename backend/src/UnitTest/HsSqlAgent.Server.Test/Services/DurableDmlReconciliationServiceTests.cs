@@ -30,12 +30,19 @@ public sealed class DurableDmlReconciliationServiceTests
 
         Assert.Equal("request-1", pending.RequestId);
         Assert.Equal(initialStatus, pending.Status);
+        Assert.Equal(initialStatus == "ApprovalStateUnknown"
+            ? "TargetCommitAcknowledged" : "PhysicalCommitUnknown", pending.CommitEvidence);
+        Assert.Contains(resolution, pending.AllowedResolutions);
+        if (initialStatus == "ApprovalStateUnknown")
+            Assert.Equal(["committed"], pending.AllowedResolutions);
         var settled = await service.ReconcileAsync("request-1",
             new(initialStatus, pending.UpdatedAt, resolution, "CASE-12345",
                 "Operator checked target database state against the approval window."),
             "admin-operator", ct);
         Assert.NotNull(settled);
         Assert.Equal(expectedTerminalStatus, settled.Status);
+        Assert.Equal("TerminalAttestation", settled.CommitEvidence);
+        Assert.Empty(settled.AllowedResolutions);
 
         var updated = await db.DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
         Assert.Equal(expectedTerminalStatus, updated.Status);
@@ -69,6 +76,8 @@ public sealed class DurableDmlReconciliationServiceTests
         var list = await service.ListAsync(10, TestContext.Current.CancellationToken);
         var item = Assert.Single(list);
         Assert.Equal("request-1", item.RequestId);
+        Assert.Equal("PhysicalCommitUnknown", item.CommitEvidence);
+        Assert.Equal(["committed", "not_committed", "indeterminate"], item.AllowedResolutions);
         var serialized = System.Text.Json.JsonSerializer.Serialize(list);
         Assert.DoesNotContain("secret sql text", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("protected resume", serialized, StringComparison.Ordinal);
@@ -85,6 +94,8 @@ public sealed class DurableDmlReconciliationServiceTests
         var service = new DurableDmlReconciliationService(db);
         var pending = Assert.Single(await service.ListAsync(10, TestContext.Current.CancellationToken));
         var ct = TestContext.Current.CancellationToken;
+        Assert.Equal("WorkerFencingRequired", pending.CommitEvidence);
+        Assert.Empty(pending.AllowedResolutions);
 
         await Assert.ThrowsAsync<ArgumentException>(() => service.ReconcileAsync(
             pending.RequestId,
@@ -164,6 +175,8 @@ public sealed class DurableDmlReconciliationServiceTests
 
         var service = new DurableDmlReconciliationService(db);
         var item = Assert.Single(await service.ListAsync(10, ct));
+        Assert.Equal("TargetCommitAcknowledged", item.CommitEvidence);
+        Assert.Equal(["committed"], item.AllowedResolutions);
         foreach (var resolution in new[] { "not_committed", "indeterminate" })
         {
             var failure = await Assert.ThrowsAsync<InvalidOperationException>(() =>

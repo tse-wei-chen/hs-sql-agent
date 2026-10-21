@@ -454,7 +454,15 @@ published as measured percentages or silently set to 100.
       indeterminate). `Executing` items are visible for investigation but
       **cannot be resolved**: their age is not evidence that an in-flight
       worker has stopped. Only terminal `OutcomeUnknown` and
-      `ApprovalStateUnknown` are currently eligible.
+      `ApprovalStateUnknown` are currently eligible. The bounded
+      inventory returns explicit `CommitEvidence` and
+      `AllowedResolutions` fields for each request. Confirmed target
+      COMMIT (including old `OutcomeUnknown` reason encoding) allows only
+      `committed`, physical commit uncertainty offers three operator
+      attestations, and `Executing` offers no settlement action. The
+      classification is performed server-side without exposing protected
+      SQL, approval fingerprints or the internal Reason text; it is
+      **not** a physical transaction-fencing or independent proof mechanism.
       The resulting AttestedCommitted / AttestedNotCommitted /
       AttestedIndeterminate statuses are permanently non-replayable;
       the prefix makes clear these are human attestations, not independent

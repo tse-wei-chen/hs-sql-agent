@@ -29,16 +29,27 @@ public sealed class DurableDmlReconciliationService(
         if (limit is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(limit), "Limit must be between 1 and 100.");
 
-        // Do not expose ProtectedExecutionPayload, SQL text, connection secrets or fingerprints.
-        return await adminContext.DmlApprovalRequests.AsNoTracking()
+        // Project only the bounded operational fields and the legacy reason
+        // needed for commit-evidence classification. Never load or return the
+        // encrypted SQL resume payload, approval token, or fingerprints.
+        var states = await adminContext.DmlApprovalRequests.AsNoTracking()
             .Where(x => x.Status == Executing || x.Status == OutcomeUnknown
                         || x.Status == ApprovalStateUnknown)
             .OrderByDescending(x => x.UpdatedAt)
+            .ThenBy(x => x.RequestId)
             .Take(limit)
-            .Select(x => new DurableDmlReconciliationItem(
-                x.RequestId, x.Status, x.UpdatedAt, x.CreatedAt, x.DbManagementId,
-                x.DatabaseProvider, x.DatabaseIdentity, x.StatementCount))
+            .Select(x => new
+            {
+                x.RequestId, x.Status, x.Reason, x.UpdatedAt, x.CreatedAt,
+                x.DbManagementId, x.DatabaseProvider, x.DatabaseIdentity,
+                x.StatementCount
+            })
             .ToListAsync(cancellationToken);
+
+        return states.Select(x => CreateItem(
+            x.RequestId, x.Status, x.Reason, x.UpdatedAt, x.CreatedAt,
+            x.DbManagementId, x.DatabaseProvider, x.DatabaseIdentity,
+            x.StatementCount)).ToArray();
     }
 
     public async Task<DurableDmlReconciliationItem?> ReconcileAsync(
@@ -152,10 +163,36 @@ public sealed class DurableDmlReconciliationService(
         // because a process-local signal is unavailable.
         try { deliverySignal?.Notify(); }
         catch (Exception) { /* Durable pending outbox remains available for polling. */ }
+        return CreateItem(
+            state.RequestId, state.Status, state.Reason, state.UpdatedAt,
+            state.CreatedAt, state.DbManagementId, state.DatabaseProvider,
+            state.DatabaseIdentity, state.StatementCount);
+    }
+
+    private static DurableDmlReconciliationItem CreateItem(
+        string requestId, string status, string? reason,
+        DateTime updatedAt, DateTime createdAt, int dbManagementId,
+        string databaseProvider, string databaseIdentity, int statementCount)
+    {
+        // This metadata describes what the server can actually prove, not
+        // what an operator might conclude after investigating target effects.
+        // Reconciled terminal states are permanently consumed and expose no
+        // additional actions. Keep the decision policy here and reuse it
+        // for both inventory and mutation responses.
+        var knownCommit = DurableDmlApprovalLifecycle.HasConfirmedTargetCommit(status, reason);
+        var evidence = knownCommit ? "TargetCommitAcknowledged"
+            : status == Executing ? "WorkerFencingRequired"
+            : status == OutcomeUnknown ? "PhysicalCommitUnknown"
+            : "TerminalAttestation";
+        string[] resolutions = status == Executing
+            ? []
+            : status is OutcomeUnknown or ApprovalStateUnknown
+                ? knownCommit ? ["committed"] : ["committed", "not_committed", "indeterminate"]
+                : [];
         return new DurableDmlReconciliationItem(
-            state.RequestId, state.Status, state.UpdatedAt, state.CreatedAt,
-            state.DbManagementId, state.DatabaseProvider, state.DatabaseIdentity,
-            state.StatementCount);
+            requestId, status, updatedAt, createdAt, dbManagementId,
+            databaseProvider, databaseIdentity, statementCount,
+            evidence, resolutions);
     }
 }
 
@@ -167,7 +204,9 @@ public sealed record DurableDmlReconciliationItem(
     int DbManagementId,
     string DatabaseProvider,
     string DatabaseIdentity,
-    int StatementCount);
+    int StatementCount,
+    string CommitEvidence,
+    IReadOnlyList<string> AllowedResolutions);
 
 public sealed record DurableDmlReconciliationRequest(
     string ExpectedStatus,
