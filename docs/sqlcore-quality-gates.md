@@ -403,6 +403,24 @@ published as measured percentages or silently set to 100.
       the current scope. The UI must never claim proof of success/failure
       from a lost acknowledgement.
 
+## Durable DML approval audit failure isolation
+
+- [x] The durable webhook approval completion persists its terminal `Executed`
+      state **before** writing the audit event. If audit storage is
+      unavailable after the target database has already committed, the
+      completion still returns `Executed` and the persisted approval remains
+      terminal. Audit I/O uses a separate bounded 10-second token; an audit
+      exception must not enter the generic failure handler and rewrite an
+      actually committed operation to `Failed`.
+- [x] Real SQLite durable approval integration test injects an
+      `IAuditService.WriteEventAsync` failure after the approved target INSERT.
+      It verifies the row exists, terminal state is `Executed`, the completion
+      reports success, and restarting the service cannot replay the approval.
+- [ ] The admin-store terminal `SaveChangesAsync` after a confirmed target
+      COMMIT is still a separate persistence boundary. A failure to save that
+      state cannot undo the target commit; operational reconciliation and
+      stronger recovery evidence remain separate work.
+
 ## Proof model
 
 - A policy denying `WHERE 1=1` is a **known-tautology guard**, not evidence that all

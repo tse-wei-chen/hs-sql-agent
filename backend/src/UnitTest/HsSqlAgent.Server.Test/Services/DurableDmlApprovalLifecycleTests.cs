@@ -73,6 +73,44 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task AuditFailureAfterSuccessfulDatabaseCommit_DoesNotRewriteExecutedAsFailed()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var services = fixture.CreateRestartedServices(failAudit: true))
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var completion = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+
+            Assert.Equal(DmlApprovalCompletionStatus.Executed, completion.Status);
+            Assert.Equal(1, completion.AffectedRows);
+
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var persisted = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(
+                x => x.RequestId == request.RequestId, TestContext.Current.CancellationToken);
+            Assert.Equal("Executed", persisted.Status);
+        }
+
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+
+        await using (var services = fixture.CreateRestartedServices())
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var replay = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
+        }
+
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
     public async Task PreviouslyUnknownCommitOutcome_RemainsTerminalWithoutReExecutingApproval()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -327,9 +365,10 @@ public sealed class DurableDmlApprovalLifecycleTests
                 connectionStringFactory);
         }
 
-        public ServiceProvider CreateRestartedServices() => BuildServices(AdminDatabasePath);
+        public ServiceProvider CreateRestartedServices(bool failAudit = false) =>
+            BuildServices(AdminDatabasePath, failAudit);
 
-        private static ServiceProvider BuildServices(string adminDatabasePath)
+        private static ServiceProvider BuildServices(string adminDatabasePath, bool failAudit = false)
         {
             var adminConnectionString = new SqliteConnectionStringBuilder
             {
@@ -338,6 +377,16 @@ public sealed class DurableDmlApprovalLifecycleTests
             var serviceCollection = new ServiceCollection();
             serviceCollection.AddDbContext<AdminContext>(options => options.UseSqlite(adminConnectionString));
             serviceCollection.AddScoped<IAdminContext>(sp => sp.GetRequiredService<AdminContext>());
+            if (failAudit)
+            {
+                var audit = new Mock<IAuditService>(MockBehavior.Strict);
+                audit.Setup(x => x.WriteEventAsync(
+                        It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                        It.IsAny<AuditEventContext>(), It.IsAny<string>(),
+                        It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new IOException("Audit database is unavailable after target COMMIT."));
+                serviceCollection.AddSingleton(audit.Object);
+            }
             serviceCollection.AddSingleton<ICryptoService, CryptoService>();
             serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
             return serviceCollection.BuildServiceProvider();

@@ -217,13 +217,25 @@ internal sealed class DurableDmlApprovalLifecycle(
             state.UpdatedAt = DateTime.UtcNow;
             await context.SaveChangesAsync(cancellationToken);
 
-            await AuditCompletionAsync(
-                state,
-                execution.Status == DmlApprovalCompletionStatus.Executed ? "success" : "failed",
-                execution.Status == DmlApprovalCompletionStatus.Executed ? "approved" : terminalStatus.ToLowerInvariant(),
-                execution.Message,
-                execution.AffectedRows,
-                cancellationToken);
+            // The target DB has already committed for Executed. Audit I/O is
+            // secondary and must never rewrite a committed approval as Failed.
+            // The terminal state was persisted before attempting this audit.
+            try
+            {
+                using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await AuditCompletionAsync(
+                    state,
+                    execution.Status == DmlApprovalCompletionStatus.Executed ? "success" : "failed",
+                    execution.Status == DmlApprovalCompletionStatus.Executed ? "approved" : terminalStatus.ToLowerInvariant(),
+                    execution.Message,
+                    execution.AffectedRows,
+                    auditTimeout.Token);
+            }
+            catch (Exception)
+            {
+                // Preserve the persisted terminal result; audit transport
+                // failures cannot undo an already committed target transaction.
+            }
             return execution;
         }
         catch (DmlCommitOutcomeUnknownException ex)
