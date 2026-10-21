@@ -176,9 +176,11 @@ public sealed class RedisDmlApprovalIntegrationTests
                 });
                 signal.SetResult();
                 await Task.WhenAll(consume, promote);
+                var childConsumed = await consume;
+                var aggregatePromoted = await promote;
 
-                Assert.NotEqual(consume.Result, promote.Result);
-                if (consume.Result)
+                Assert.NotEqual(childConsumed, aggregatePromoted);
+                if (childConsumed)
                 {
                     Assert.False(await db.KeyExistsAsync(Key(options, children[0].Nonce)));
                     Assert.True(await db.KeyExistsAsync(Key(options, children[1].Nonce)));
