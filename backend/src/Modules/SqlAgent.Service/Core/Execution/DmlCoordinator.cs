@@ -195,7 +195,7 @@ public sealed class DmlCoordinator(
                     $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
             }
 
-            await transaction.CommitAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
             return new DmlCommitResult(
                 true,
                 execution.AffectedRows,
@@ -204,9 +204,9 @@ public sealed class DmlCoordinator(
                 ReturnedRows = execution.ReturnedRows
             };
         }
-        catch
+        catch (Exception failure)
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
             throw;
         }
     }
@@ -264,7 +264,7 @@ public sealed class DmlCoordinator(
                 $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
         }
 
-        await transaction.CommitAsync(cancellationToken);
+        await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
         return new DmlCommitResult(
             true,
             execution.AffectedRows,

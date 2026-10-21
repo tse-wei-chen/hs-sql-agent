@@ -341,6 +341,31 @@ published as measured percentages or silently set to 100.
       This is single-server Redis 7 concurrency evidence, not a claim of
       Redis Cluster failover or cross-region exactly-once execution.
 
+## DML commit acknowledgement and replay boundary
+
+- [x] Treat an exception from the database's actual `COMMIT` call as
+      **outcome unknown**, never as proof of rollback. Single-statement
+      UPDATE/DELETE and INSERT VALUES as well as atomic batches now throw
+      `DmlCommitOutcomeUnknownException` with the original provider exception
+      as `InnerException`. The approval has already been consumed and must
+      **not** be replayed; operators must inspect the actual database state
+      before issuing a new Preview.
+- [x] Rollback cleanup no longer inherits the possibly-cancelled user
+      request token. It gets its own bounded 10-second cancellation window,
+      and a rollback error is retained under
+      `Exception.Data["HsSqlAgent.DmlRollbackFailure"]` instead of masking
+      the primary DML/COMMIT error. This preserves real provider diagnostics
+      if cancellation, connection failure, or a completed/uncertain
+      transaction makes rollback fail.
+- [x] Add fault-injection unit tests for lost commit acknowledgements,
+      cancelled request cleanup, failed rollback diagnostic preservation,
+      and clean commit. Real SQLite DML tests also prove a constraint error
+      rolls back without allowing the consumed approval to execute again.
+      **Boundary:** Redis challenge consumption and external SQL commit are
+      separate systems. These changes preserve at-most-once *approval
+      consumption*, not a distributed atomic commit or a guarantee that
+      external consumers can always know the database's final outcome.
+
 ## Proof model
 
 - A policy denying `WHERE 1=1` is a **known-tautology guard**, not evidence that all

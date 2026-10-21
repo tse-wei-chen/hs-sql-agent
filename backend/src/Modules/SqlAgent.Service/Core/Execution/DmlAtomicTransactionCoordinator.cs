@@ -109,7 +109,7 @@ internal sealed class DmlAtomicTransactionCoordinator(
                 returnedRows.AddRange(execution.ReturnedRows);
             }
 
-            await transaction.CommitAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
             return new DmlCommitResult(
                 true,
                 totalAffected,
@@ -118,9 +118,9 @@ internal sealed class DmlAtomicTransactionCoordinator(
                 ReturnedRows = returnedRows.ToImmutable()
             };
         }
-        catch
+        catch (Exception failure)
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
             throw;
         }
     }
