@@ -69,7 +69,12 @@ public sealed class NativeDmlSchemaSnapshotService :
         var matches = await readers.Preview.GetDmlPlanningMetadataAsync(
             connection, schema, table, includeColumns: true,
             cancellationToken: cancellationToken);
-        return BuildSnapshot(targetProvider, matches);
+        var snapshot = BuildSnapshot(targetProvider, matches);
+        if (snapshot is null || targetProvider != SqlAgentToolType.Sqlite)
+            return snapshot;
+
+        return await WithSqliteDdlProofAsync(
+            connection, transaction: null, snapshot, matches[0].Table, cancellationToken);
     }
 
     public async Task<string?> ReadCurrentSchemaDigestAsync(
@@ -128,7 +133,15 @@ public sealed class NativeDmlSchemaSnapshotService :
         var matches = await readers.Commit.GetDmlPlanningMetadataInTransactionAsync(
             connection, transaction, schema, table, includeColumns: true,
             cancellationToken: cancellationToken);
-        return BuildSnapshot(provider, matches)?.Sha256;
+        var snapshot = BuildSnapshot(provider, matches);
+        if (snapshot is null)
+            return null;
+
+        if (provider == SqlAgentToolType.Sqlite)
+            snapshot = await WithSqliteDdlProofAsync(
+                connection, transaction, snapshot, matches[0].Table, cancellationToken);
+
+        return snapshot?.Sha256;
     }
 
     private static async Task PinPostgresSchemaAsync(
@@ -189,6 +202,85 @@ public sealed class NativeDmlSchemaSnapshotService :
         command.CommandText =
             $"SELECT TOP (1) 1 FROM {Quote(schema)}.{Quote(table)} WITH (TABLOCK, HOLDLOCK)";
         await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Bind SQLite's own table/index/trigger DDL to the portable catalog proof.
+    /// pragma_table_info deliberately omits generated/hidden columns and the
+    /// former name/type/PK digest misses CHECK, DEFAULT, NOT NULL, indexes,
+    /// expression indexes and DML trigger changes. sqlite_schema.sql stores
+    /// the complete definitions; include every object owned by this main table.
+    /// Both preview and commit must use the same scope and canonicalization.
+    /// </summary>
+    private static async Task<SqlSchemaSnapshot?> WithSqliteDdlProofAsync(
+        DbConnection connection,
+        DbTransaction? transaction,
+        SqlSchemaSnapshot baseSnapshot,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT type, name, sql
+            FROM main.sqlite_schema
+            WHERE tbl_name = $table COLLATE NOCASE
+              AND type IN ('table', 'index', 'trigger')
+            ORDER BY type COLLATE BINARY, name COLLATE BINARY
+            """;
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "$table";
+        parameter.Value = table;
+        command.Parameters.Add(parameter);
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        static void Append(IncrementalHash digest, string text)
+        {
+            var encoded = Encoding.UTF8.GetBytes(text);
+            digest.AppendData(BitConverter.GetBytes(encoded.Length));
+            digest.AppendData(encoded);
+        }
+
+        Append(hash, "native-sqlite-ddl-v2");
+        Append(hash, baseSnapshot.Version);
+        var tableDefinitions = 0;
+        var objectCount = 0;
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var kind = reader.GetString(0);
+            var name = reader.GetString(1);
+            string? ddl = reader.IsDBNull(2) ? null : reader.GetString(2);
+            if (kind == "table")
+            {
+                if (!string.Equals(name, table, StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(ddl))
+                    return null;
+                tableDefinitions++;
+            }
+            else if (kind == "trigger" && string.IsNullOrWhiteSpace(ddl))
+            {
+                // Cannot prove a trigger whose source definition is missing.
+                return null;
+            }
+
+            Append(hash, kind);
+            Append(hash, name);
+            // SQLite autoindexes legitimately have NULL SQL; their defining
+            // UNIQUE/PRIMARY KEY clauses are included in the table SQL.
+            Append(hash, ddl is null ? "null" : "sql");
+            if (ddl is not null)
+                Append(hash, ddl);
+            objectCount++;
+        }
+
+        if (tableDefinitions != 1 || objectCount == 0)
+            return null;
+        Append(hash, objectCount.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var version = "native-dml-schema-v2:" +
+            Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        return new SqlSchemaSnapshot(
+            SqlAgentToolType.Sqlite, version, baseSnapshot.Tables);
     }
 
     private static Readers ForProvider(SqlAgentToolType provider) =>

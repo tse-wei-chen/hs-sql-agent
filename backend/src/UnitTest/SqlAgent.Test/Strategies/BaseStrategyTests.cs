@@ -84,7 +84,10 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.NotNull(snapshot);
         Assert.Equal(provider, snapshot.Provider);
         Assert.Single(snapshot.Tables);
-        Assert.StartsWith("native-dml-schema-v1:", snapshot.Version, StringComparison.Ordinal);
+        Assert.StartsWith(
+            provider == SqlAgentToolType.Sqlite
+                ? "native-dml-schema-v2:" : "native-dml-schema-v1:",
+            snapshot.Version, StringComparison.Ordinal);
 
         await using var transaction = await connection.BeginTransactionAsync(token);
         var actual = await freshness.ReadCurrentSchemaDigestAsync(

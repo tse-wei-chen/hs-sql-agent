@@ -117,6 +117,20 @@ published as measured percentages or silently set to 100.
       its compiled mutation command has lost snapshot compile evidence, or
       lacks the corresponding assurance. Single and batch SQLite approval
       regression tests prove no mutation escapes verification.
+- [x] Strengthen **SQLite native schema freshness** to bind the target
+      table's canonical `main.sqlite_schema` table/index/trigger DDL source
+      into a scoped `native-dml-schema-v2` digest, in addition to the prior
+      physical column/PK inventory. Both preview and commit inspect the same
+      object set on their respective connection/transaction; missing or
+      unreadable table/trigger definition fails closed. This detects SQLite
+      `DEFAULT`, `CHECK`, `NOT NULL`, generated-column, explicit index
+      and trigger changes even when visible column names/types/PK do not move.
+      DDL for unrelated tables is excluded to prevent false invalidations.
+      SQLite-only v2 is intentional; the other five providers remain on v1.
+      Tests cover rebuilt equal-visible-column tables, index and trigger
+      changes causing a real approved INSERT to be rejected, and isolation
+      from unrelated DDL. This does **not** claim coverage of every SQLite
+      external FK, view, session setting, or cross-table trigger dependency.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

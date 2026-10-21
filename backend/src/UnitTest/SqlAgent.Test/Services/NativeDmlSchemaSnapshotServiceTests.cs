@@ -22,7 +22,7 @@ public sealed class NativeDmlSchemaSnapshotServiceTests
             var native = new NativeDmlSchemaSnapshotService();
             var plan = await CreatePlanAsync(native, connectionString, 1);
             Assert.Equal("main.users", Assert.Single(plan.SchemaSnapshot!.Tables).Name);
-            Assert.StartsWith("native-dml-schema-v1:", plan.SchemaSnapshot.Version);
+            Assert.StartsWith("native-dml-schema-v2:", plan.SchemaSnapshot.Version);
 
             var coordinator = new DmlCoordinator(
                 new SqliteConnectionFactory(), schemaFreshnessVerifier: native);
@@ -119,6 +119,97 @@ public sealed class NativeDmlSchemaSnapshotServiceTests
                 first.Tables[0].Columns.ToArray(),
                 changed.Tables[0].Columns.ToArray());
         });
+    }
+
+    [Theory]
+    [InlineData("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")]
+    [InlineData("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL DEFAULT 'anonymous')")]
+    [InlineData("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL CHECK (length(name) > 0))")]
+    [InlineData("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, display TEXT GENERATED ALWAYS AS (upper(name)) VIRTUAL)")]
+    public async Task NativeSqlite_TableConstraintsAndGeneratedColumnsChangeProofWithSameVisibleColumns(
+        string replacement)
+    {
+        await WithDatabaseAsync(async (connectionString, _) =>
+        {
+            var native = new NativeDmlSchemaSnapshotService();
+            var before = await CaptureAsync(native, connectionString);
+            await ExecuteDdlAsync(connectionString, "DROP TABLE users; " + replacement);
+            var after = await CaptureAsync(native, connectionString);
+
+            Assert.Equal(before.Tables[0].Columns.ToArray(), after.Tables[0].Columns.ToArray());
+            Assert.NotEqual(before.Version, after.Version);
+            Assert.NotEqual(before.Sha256, after.Sha256);
+        });
+    }
+
+    [Fact]
+    public async Task NativeSqlite_IndexAndTriggerDefinitionChangesRejectAnApprovedInsert()
+    {
+        await WithDatabaseAsync(async (connectionString, serverVersion) =>
+        {
+            var native = new NativeDmlSchemaSnapshotService();
+            var indexPlan = await CreatePlanAsync(native, connectionString, 1);
+            var coordinator = new DmlCoordinator(
+                new SqliteConnectionFactory(), schemaFreshnessVerifier: native);
+            var indexPreview = await coordinator.PreviewAsync(
+                connectionString, indexPlan, Approval,
+                TestContext.Current.CancellationToken, serverVersion);
+
+            await ExecuteDdlAsync(connectionString,
+                "CREATE UNIQUE INDEX ix_users_name ON users(name)");
+            Assert.NotEqual(indexPlan.SchemaSnapshot!.Sha256,
+                (await CaptureAsync(native, connectionString)).Sha256);
+            var indexError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.CommitAsync(connectionString, indexPlan,
+                    indexPreview.Challenge, Approval,
+                    TestContext.Current.CancellationToken, serverVersion));
+            Assert.Contains("stale", indexError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0L, await CountRowsAsync(connectionString));
+
+            await ExecuteDdlAsync(connectionString, "DROP INDEX ix_users_name");
+            var triggerPlan = await CreatePlanAsync(native, connectionString, 2);
+            var triggerPreview = await coordinator.PreviewAsync(
+                connectionString, triggerPlan, Approval,
+                TestContext.Current.CancellationToken, serverVersion);
+            await ExecuteDdlAsync(connectionString, """
+                CREATE TRIGGER users_name_upper AFTER INSERT ON users
+                BEGIN UPDATE users SET name = upper(name) WHERE id = NEW.id; END
+                """);
+            Assert.NotEqual(triggerPlan.SchemaSnapshot!.Sha256,
+                (await CaptureAsync(native, connectionString)).Sha256);
+            var triggerError = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.CommitAsync(connectionString, triggerPlan,
+                    triggerPreview.Challenge, Approval,
+                    TestContext.Current.CancellationToken, serverVersion));
+            Assert.Contains("stale", triggerError.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0L, await CountRowsAsync(connectionString));
+        });
+    }
+
+    [Fact]
+    public async Task NativeSqlite_UnrelatedTableDdlDoesNotInvalidateTargetProof()
+    {
+        await WithDatabaseAsync(async (connectionString, _) =>
+        {
+            var native = new NativeDmlSchemaSnapshotService();
+            var before = await CaptureAsync(native, connectionString);
+            await ExecuteDdlAsync(connectionString, """
+                CREATE TABLE unrelated (id INTEGER PRIMARY KEY, value TEXT);
+                CREATE INDEX ix_unrelated_value ON unrelated(value);
+                """);
+            var after = await CaptureAsync(native, connectionString);
+            Assert.Equal(before.Sha256, after.Sha256);
+            Assert.Equal(before.Version, after.Version);
+        });
+    }
+
+    private static async Task ExecuteDdlAsync(string connectionString, string ddl)
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = ddl;
+        await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
     private static async Task<SqlSchemaSnapshot> CaptureAsync(
