@@ -37,6 +37,12 @@ published as measured percentages or silently set to 100.
 - [x] Propagate proven column type families through ordinary CTE and derived
       projections, sequential CTE references, computed aliases, wildcard ordering,
       scalar subqueries, and IN subqueries; keep conflicts unproven rather than guessing.
+- [x] Preserve JOIN ... USING coalesced unqualified column resolution and
+      ordered wildcard projections in strict schema mode, without hiding
+      independent qualified columns. Propagate matching known type families
+      through merged columns and keep unequal/unknown families unproven.
+      Native USING coverage spans PostgreSQL, MySQL, SQLite, Oracle, Firebird;
+      SQL Server remains source/target capability-rejected.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, NATURAL/USING coalescing
       and DML conflict/MERGE key proofs.

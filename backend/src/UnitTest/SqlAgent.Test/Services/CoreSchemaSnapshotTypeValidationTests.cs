@@ -260,6 +260,63 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         }
     }
 
+    public static IEnumerable<object[]> NativeUsingProviders()
+        => Enum.GetValues<SqlAgentToolType>()
+            .Where(provider => provider != SqlAgentToolType.MsSqlServer)
+            .Select(provider => new object[] { provider });
+
+    private static SqlPlanValidationContext JoinedContext(SqlAgentToolType dialect)
+    {
+        var upper = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
+        string Name(string value) => upper ? value.ToUpperInvariant() : value;
+        SqlSchemaTable Table(string name, params (string Column, SqlSchemaValueKind Kind)[] columns)
+            => SqlSchemaTable.WithTypes(Name(name), columns
+                .Select(column => new SqlSchemaColumn(Name(column.Column), column.Kind))
+                .ToArray());
+
+        return new SqlPlanValidationContext("typed-using-v1").WithSchemaSnapshot(
+            new SqlSchemaSnapshot(dialect, "typed-using-v1", new[]
+            {
+                Table("users", ("id", SqlSchemaValueKind.Numeric),
+                    ("name", SqlSchemaValueKind.Text)),
+                Table("orders", ("id", SqlSchemaValueKind.Numeric),
+                    ("user_id", SqlSchemaValueKind.Numeric))
+            }));
+    }
+
+    [Theory]
+    [MemberData(nameof(NativeUsingProviders))]
+    public void JoinUsing_PropagatesCoalescedWildcardAndQualifiedTypeProofs(SqlAgentToolType dialect)
+    {
+        var context = JoinedContext(dialect);
+        var valid = new[]
+        {
+            "SELECT id FROM users u JOIN orders o USING (id) WHERE id = 7",
+            "SELECT d.id FROM (SELECT * FROM users u JOIN orders o USING (id)) d WHERE d.id = 7",
+            "WITH x AS (SELECT * FROM users u JOIN orders o USING (id)) SELECT id FROM x WHERE id = 7"
+        };
+        foreach (var sql in valid)
+            Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = new[]
+        {
+            "SELECT id FROM users u JOIN orders o USING (id) WHERE id = 'bad'",
+            "SELECT u.id FROM users u JOIN orders o USING (id) WHERE u.id = 'bad'",
+            "SELECT o.id FROM users u JOIN orders o USING (id) WHERE o.id = 'bad'",
+            "SELECT d.id FROM (SELECT * FROM users u JOIN orders o USING (id)) d WHERE d.id = 'bad'",
+            "WITH x AS (SELECT * FROM users u JOIN orders o USING (id)) SELECT id FROM x WHERE id = 'bad'"
+        };
+        foreach (var sql in invalid)
+        {
+            var error = Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileQuery(
+                    sql, dialect, dialect, context, new SqlExecutionPlanPolicy()));
+            Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+            Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
+        }
+    }
+
     [Fact]
     public void PostgreSql_CorrelatedSubqueryAndScalarProjection_CarryColumnTypeProofs()
     {

@@ -13,7 +13,16 @@ module internal RewriteSchemaValidation =
 
     type private Catalog = { Dialect: SqlAgentToolType; Tables: Map<string, string list> }
     type private Source = { Qualifiers: string list; Columns: string list }
-    type private Scope = { Parent: Scope option; Sources: Source list }
+    // Unqualified row shape follows JOIN USING coalescing; qualified sources stay separate.
+    type private Scope =
+        { Parent: Scope option
+          Sources: Source list
+          Unqualified: string list }
+
+    let private makeScope parent sources =
+        { Parent = parent
+          Sources = sources
+          Unqualified = sources |> List.collect (fun source -> source.Columns) }
 
     let private reject code span message : 'T =
         let diagnosticSpan =
@@ -88,7 +97,10 @@ module internal RewriteSchemaValidation =
             match qualifier with
             | None -> scope.Sources
             | Some name -> scope.Sources |> List.filter (fun item -> List.contains name item.Qualifiers)
-        let hits = matchingSources |> List.sumBy (fun item -> countColumn item key)
+        let hits =
+            match qualifier with
+            | None -> scope.Unqualified |> List.filter ((=) key) |> List.length
+            | Some _ -> matchingSources |> List.sumBy (fun item -> countColumn item key)
         if hits > 1 then
             reject "SQL_SCHEMA_COLUMN_AMBIGUOUS" span (
                 "Column '" + key + "' is ambiguous across the current schema scope.")
@@ -213,9 +225,8 @@ module internal RewriteSchemaValidation =
 
         let first =
             match select.From with
-            | None -> { Parent = parent; Sources = [] }
-            | Some item ->
-                { Parent = parent; Sources = [ source catalog ctes parent item ] }
+            | None -> makeScope parent []
+            | Some item -> makeScope parent [ source catalog ctes parent item ]
         let mutable current = first
         for join in select.Joins do
             let sourceParent =
@@ -223,16 +234,28 @@ module internal RewriteSchemaValidation =
                 | LateralDerivedTable _ -> Some current
                 | _ -> current.Parent
             let added = source catalog ctes sourceParent join.Source
-            let combined = { current with Sources = current.Sources @ [ added ] }
+            let unqualified =
+                match join with
+                | UsingJoin(_, _, columns) ->
+                    let keys = columns |> NonEmpty.toList |> List.map (keyPart catalog.Dialect)
+                    for key in keys do
+                        // USING must bind to this joined rowset, never an outer correlation.
+                        resolveColumn { current with Parent = None } None key select.Span
+                        if countColumn added key <> 1 then
+                            reject "SQL_SCHEMA_COLUMN_NOT_FOUND" select.Span (
+                                "JOIN USING column '" + key + "' is missing on the joined table.")
+                    let isUsing name = List.contains name keys
+                    keys
+                    @ (current.Unqualified |> List.filter (not << isUsing))
+                    @ (added.Columns |> List.filter (not << isUsing))
+                | _ -> current.Unqualified @ added.Columns
+            let combined =
+                { current with
+                    Sources = current.Sources @ [ added ]
+                    Unqualified = unqualified }
             match join with
             | OnJoin(_, _, predicate) -> expression catalog ctes combined Span.unknown predicate
-            | UsingJoin(_, _, columns) ->
-                columns |> NonEmpty.iter (fun item ->
-                    let key = keyPart catalog.Dialect item
-                    resolveColumn current None key select.Span
-                    if countColumn added key <> 1 then
-                        reject "SQL_SCHEMA_COLUMN_NOT_FOUND" select.Span (
-                            "JOIN USING column '" + key + "' is missing on the joined table."))
+            | UsingJoin _ -> ()
             | NaturalJoin _ ->
                 reject "SQL_SCHEMA_JOIN_UNPROVABLE" select.Span (
                     "Strict metadata validation does not yet prove NATURAL JOIN coalesced column semantics.")
@@ -254,8 +277,7 @@ module internal RewriteSchemaValidation =
                 | Some alias, _ -> [ keyPart catalog.Dialect alias ]
                 | None, Column name | None, BoundColumn(name, _) ->
                     [ Identifier.parts name |> List.last |> keyPart catalog.Dialect ]
-                | None, Wildcard None ->
-                    current.Sources |> List.collect (fun item -> item.Columns)
+                | None, Wildcard None -> current.Unqualified
                 | None, Wildcard(Some qualifier) ->
                     (qualifiedSource current (keyIdentifier catalog.Dialect qualifier) select.Span).Columns
                 | _ -> [ String.Empty ])
@@ -273,7 +295,7 @@ module internal RewriteSchemaValidation =
         output
 
     let private returning catalog target (items: ReturningItem list) =
-        let scope = { Parent = None; Sources = [ target ] }
+        let scope = makeScope None [ target ]
         items |> List.iter (function
             | ReturningColumn(name, _) -> column catalog scope Span.unknown name
             | ReturningWildcard _ -> ()
@@ -282,7 +304,7 @@ module internal RewriteSchemaValidation =
 
     let private document catalog (doc: Document) =
         let emptyCtes = Map.empty<string, string list>
-        let emptyScope = { Parent = None; Sources = [] }
+        let emptyScope = makeScope None []
         match doc.Statement with
         | QueryStatement query ->
             queryColumns catalog emptyCtes None query |> ignore
@@ -309,8 +331,8 @@ module internal RewriteSchemaValidation =
         | UpdateStatement update ->
             let target = namedSource catalog.Dialect update.Target update.TargetAlias (physicalTable catalog update.Target)
             let otherSources = update.From |> List.map (source catalog emptyCtes None)
-            let current = { Parent = None; Sources = target :: otherSources }
-            let targetScope = { Parent = None; Sources = [ target ] }
+            let current = makeScope None (target :: otherSources)
+            let targetScope = makeScope None [ target ]
             update.Assignments |> List.iter (fun assignment ->
                 column catalog targetScope doc.Span assignment.Target
                 expression catalog emptyCtes current Span.unknown assignment.Value)
@@ -319,7 +341,7 @@ module internal RewriteSchemaValidation =
         | DeleteStatement delete ->
             let target = namedSource catalog.Dialect delete.Target delete.TargetAlias (physicalTable catalog delete.Target)
             let others = delete.Using |> List.map (source catalog emptyCtes None)
-            let current = { Parent = None; Sources = target :: others }
+            let current = makeScope None (target :: others)
             delete.Where |> Option.iter (expression catalog emptyCtes current Span.unknown)
             returning catalog target delete.Returning
         | MergeStatement _ ->

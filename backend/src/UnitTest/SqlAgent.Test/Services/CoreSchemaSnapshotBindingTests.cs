@@ -112,6 +112,44 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", insert.Diagnostic?.Code);
     }
 
+    public static IEnumerable<object[]> NativeUsingProviders()
+        => Providers
+            .Where(provider => provider != SqlAgentToolType.MsSqlServer)
+            .Select(provider => new object[] { provider });
+
+    [Theory]
+    [MemberData(nameof(NativeUsingProviders))]
+    public void JoinUsing_CoalescesOnlyUnqualifiedColumnNames(SqlAgentToolType dialect)
+    {
+        var context = Context(dialect);
+        var valid = new[]
+        {
+            "SELECT id FROM users u JOIN orders o USING (id) WHERE id = 7",
+            "SELECT u.id, o.id FROM users u JOIN orders o USING (id)",
+            "SELECT d.id, d.user_id FROM (SELECT * FROM users u JOIN orders o USING (id)) d",
+            "SELECT id FROM users u JOIN orders o USING (id) JOIN orders o2 USING (id)"
+        };
+        foreach (var sql in valid)
+        {
+            var command = SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, context, new SqlExecutionPlanPolicy());
+            Assert.NotEmpty(command.Sql);
+        }
+
+        var ambiguous = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM users u JOIN orders o USING (id) " +
+                "JOIN users another ON another.id = u.id",
+                dialect, dialect, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_AMBIGUOUS", ambiguous.Diagnostic?.Code);
+
+        var missing = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM users u JOIN orders o USING (name)",
+                dialect, dialect, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", missing.Diagnostic?.Code);
+    }
+
     [Fact]
     public void Postgres_CteAndCorrelatedQueries_UseActualScopedColumns()
     {

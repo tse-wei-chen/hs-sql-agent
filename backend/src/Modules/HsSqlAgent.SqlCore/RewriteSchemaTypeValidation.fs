@@ -19,7 +19,8 @@ module internal RewriteSchemaTypeValidation =
 
     type private Scope =
         { Parent: Scope option
-          Sources: Source list }
+          Sources: Source list
+          Unqualified: (string * SqlSchemaValueKind option) list }
 
     type private Catalog =
         { Dialect: SqlAgentToolType
@@ -109,6 +110,16 @@ module internal RewriteSchemaTypeValidation =
         | SqlSchemaValueKind.Unknown -> None
         | value -> Some value
 
+    let private sourceOutput (source: Source) =
+        source.Columns
+        |> List.map (fun name ->
+            name, (Map.tryFind name source.Kinds |> Option.bind typeKnown))
+
+    let private makeScope parent sources =
+        { Parent = parent
+          Sources = sources
+          Unqualified = sources |> List.collect sourceOutput }
+
     let rec private kindInScope scope qualifier column =
         let sources =
             match qualifier with
@@ -117,10 +128,17 @@ module internal RewriteSchemaTypeValidation =
                 scope.Sources
                 |> List.filter (fun source -> List.contains value source.Qualifiers)
         let hits =
-            sources
-            |> List.choose (fun source -> Map.tryFind column source.Kinds)
+            match qualifier with
+            | None ->
+                scope.Unqualified
+                |> List.choose (fun (name, kind) ->
+                    if name = column then Some kind else None)
+            | Some _ ->
+                sources
+                |> List.choose (fun source ->
+                    Map.tryFind column source.Kinds |> Option.map typeKnown)
         match hits with
-        | [ found ] -> typeKnown found
+        | [ found ] -> found
         | [] ->
             match scope.Parent with
             | Some parent when qualifier.IsNone || sources.IsEmpty ->
@@ -317,11 +335,9 @@ module internal RewriteSchemaTypeValidation =
             ctes <- Map.add (keyPart catalog.Dialect cte.Name) typed ctes
 
         let initial =
-            { Parent = parent
-              Sources =
-                match query.Head.From with
-                | None -> []
-                | Some table -> [ tableSource catalog ctes parent table ] }
+            match query.Head.From with
+            | None -> makeScope parent []
+            | Some table -> makeScope parent [ tableSource catalog ctes parent table ]
         let mutable scope = initial
         for join in query.Head.Joins do
             let sourceParent =
@@ -329,7 +345,33 @@ module internal RewriteSchemaTypeValidation =
                 | LateralDerivedTable _ -> Some scope
                 | _ -> scope.Parent
             let added = tableSource catalog ctes sourceParent join.Source
-            let combined = { scope with Sources = scope.Sources @ [ added ] }
+            let unqualified =
+                match join with
+                | UsingJoin(_, _, columns) ->
+                    let keys = columns |> NonEmpty.toList |> List.map (keyPart catalog.Dialect)
+                    let left = scope.Unqualified
+                    let right = sourceOutput added
+                    let isUsing name = List.contains name keys
+                    let merged =
+                        keys |> List.map (fun key ->
+                            let kinds =
+                                [ left; right ]
+                                |> List.map (fun fields ->
+                                    fields |> List.filter (fun (name, _) -> name = key))
+                            let proof =
+                                match kinds with
+                                | [ [ (_, leftKind) ]; [ (_, rightKind) ] ] when leftKind = rightKind ->
+                                    leftKind
+                                | _ -> None
+                            key, proof)
+                    merged
+                    @ (left |> List.filter (fun (name, _) -> not (isUsing name)))
+                    @ (right |> List.filter (fun (name, _) -> not (isUsing name)))
+                | _ -> scope.Unqualified @ sourceOutput added
+            let combined =
+                { scope with
+                    Sources = scope.Sources @ [ added ]
+                    Unqualified = unqualified }
             match join with
             | OnJoin(_, _, predicate) ->
                 expression catalog ctes combined Span.unknown predicate |> ignore
@@ -357,10 +399,7 @@ module internal RewriteSchemaTypeValidation =
                     [ Some(Identifier.parts identifier |> List.last |> keyPart catalog.Dialect),
                       evaluate item.Expression ]
                 | None, Wildcard None ->
-                    scope.Sources
-                    |> List.collect (fun source ->
-                        source.Columns |> List.map (fun name ->
-                            Some name, (Map.tryFind name source.Kinds |> Option.bind typeKnown)))
+                    scope.Unqualified |> List.map (fun (name, kind) -> Some name, kind)
                 | None, Wildcard(Some identifier) ->
                     let qualifier = keyIdentifier catalog.Dialect identifier
                     scope.Sources
@@ -381,7 +420,7 @@ module internal RewriteSchemaTypeValidation =
             projection
 
     let private document catalog (document: Document) =
-        let root = { Parent = None; Sources = [] }
+        let root = makeScope None []
         let ctes = Map.empty<string, (string * SqlSchemaValueKind option) list>
         let inspect scope value = expression catalog ctes scope Span.unknown value |> ignore
         match document.Statement with
@@ -412,12 +451,12 @@ module internal RewriteSchemaTypeValidation =
                         compatible document.Span targetKind projectedKind "INSERT SELECT assignment")
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item ->
-                inspect { root with Sources = [ target ] } item.Expression)
+                inspect (makeScope None [ target ]) item.Expression)
         | UpdateStatement update ->
             let target = namedSource catalog update.Target update.TargetAlias
             let others = update.From |> List.map (tableSource catalog ctes None)
-            let scope = { root with Sources = target :: others }
-            let targetScope = { root with Sources = [ target ] }
+            let scope = makeScope None (target :: others)
+            let targetScope = makeScope None [ target ]
             update.Assignments |> List.iter (fun item ->
                 compatible document.Span
                     (columnKind catalog targetScope item.Target)
@@ -428,10 +467,9 @@ module internal RewriteSchemaTypeValidation =
         | DeleteStatement delete ->
             let target = namedSource catalog delete.Target delete.TargetAlias
             let scope =
-                { root with
-                    Sources = target :: (delete.Using |> List.map (tableSource catalog ctes None)) }
+                makeScope None (target :: (delete.Using |> List.map (tableSource catalog ctes None)))
             delete.Where |> Option.iter (inspect scope)
-            delete.Returning |> List.iter (fun item -> inspect { root with Sources = [ target ] } item.Expression)
+            delete.Returning |> List.iter (fun item -> inspect (makeScope None [ target ]) item.Expression)
         | MergeStatement _ -> () // Name binding already rejects MERGE in strict snapshot mode.
 
     let verify dialect snapshot (bound: BoundSql) =
