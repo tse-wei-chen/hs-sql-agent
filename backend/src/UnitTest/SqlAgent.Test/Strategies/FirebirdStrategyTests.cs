@@ -1,4 +1,7 @@
 using System.Text.Json;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
+using SqlAgent.Service.Core.Execution;
 using DotNet.Testcontainers.Builders;
 using FirebirdSql.Data.FirebirdClient;
 using Testcontainers.FirebirdSql;
@@ -116,6 +119,76 @@ public class FirebirdStrategyTests(FirebirdFixture fixture) : BaseStrategyTests<
     private const string PropUid = "uid";
     private const string PropOrderCount = "order_count";
     private const string PropUserType = "user_type";
+
+    [Fact]
+    public async Task NativeSchemaDefinitionProof_FirebirdCheckAndTriggerActivationInvalidateSnapshot()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var table = "HSPROOF_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var check = "CK_" + table;
+        var trigger = "TR_" + table;
+        // Avoid Firebird pooled attachments holding DDL metadata locks in tests.
+        var connectionString = new FbConnectionStringBuilder(Fixture.ConnectionString)
+            { Pooling = false }.ConnectionString;
+        var native = new NativeDmlSchemaSnapshotService();
+        await using var db = new FbConnection(connectionString);
+        await db.OpenAsync(token);
+
+        async Task ExecuteAsync(string sql)
+        {
+            await using var command = db.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        async Task<HsSqlAgent.SqlCore.Core.Pipeline.SqlSchemaSnapshot> CaptureAsync()
+        {
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {table} (ID, NAME) VALUES (1, 'Alice')",
+                SqlAgentToolType.Firebird);
+            return await native.CaptureAsync(db, SqlAgentToolType.Firebird, parsed, token)
+                ?? throw new InvalidOperationException("Firebird native definition proof was incomplete.");
+        }
+
+        await ExecuteAsync($"CREATE TABLE {table} (ID INTEGER PRIMARY KEY, NAME VARCHAR(80))");
+        try
+        {
+            var before = await CaptureAsync();
+            Assert.StartsWith("native-dml-schema-v2:", before.Version);
+
+            await ExecuteAsync($"ALTER TABLE {table} ADD CONSTRAINT {check} CHECK (NAME <> 'blocked')");
+            var constrained = await CaptureAsync();
+            Assert.Equal(before.Tables[0].Columns.ToArray(), constrained.Tables[0].Columns.ToArray());
+            Assert.NotEqual(before.Sha256, constrained.Sha256);
+
+            await using (var transaction = await db.BeginTransactionAsync(token))
+            {
+                var actual = await native.ReadCurrentSchemaDigestAsync(
+                    db, transaction, SqlAgentToolType.Firebird, before, token);
+                Assert.NotEqual(before.Sha256, actual);
+                await transaction.RollbackAsync(token);
+            }
+
+            await ExecuteAsync(
+                $"CREATE TRIGGER {trigger} FOR {table} ACTIVE BEFORE INSERT POSITION 0 " +
+                "AS BEGIN NEW.NAME = UPPER(NEW.NAME); END");
+            var active = await CaptureAsync();
+            Assert.NotEqual(constrained.Sha256, active.Sha256);
+
+            await ExecuteAsync($"ALTER TRIGGER {trigger} INACTIVE");
+            var inactive = await CaptureAsync();
+            Assert.NotEqual(active.Sha256, inactive.Sha256);
+        }
+        finally
+        {
+            await db.CloseAsync();
+            await using var cleanup = new FbConnection(connectionString);
+            await cleanup.OpenAsync(token);
+            await using var command = cleanup.CreateCommand();
+            command.CommandText = $"DROP TABLE {table}";
+            await command.ExecuteNonQueryAsync(token);
+        }
+    }
 
     [Fact]
     public override async Task ExecuteQueryAsync_ShouldReturnDbError_WhenTableNotFound()

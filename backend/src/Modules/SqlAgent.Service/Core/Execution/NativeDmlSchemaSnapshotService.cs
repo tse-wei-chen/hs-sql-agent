@@ -70,11 +70,16 @@ public sealed class NativeDmlSchemaSnapshotService :
             connection, schema, table, includeColumns: true,
             cancellationToken: cancellationToken);
         var snapshot = BuildSnapshot(targetProvider, matches);
-        if (snapshot is null || targetProvider != SqlAgentToolType.Sqlite)
-            return snapshot;
-
-        return await WithSqliteDdlProofAsync(
-            connection, transaction: null, snapshot, matches[0].Table, cancellationToken);
+        if (snapshot is null)
+            return null;
+        if (targetProvider == SqlAgentToolType.Sqlite)
+            return await WithSqliteDdlProofAsync(
+                connection, transaction: null, snapshot, matches[0].Table, cancellationToken);
+        if (targetProvider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+            return await NativeDmlSchemaDefinitionProof.ExtendAsync(
+                connection, transaction: null, snapshot, matches[0].Schema,
+                matches[0].Table, cancellationToken);
+        return snapshot;
     }
 
     public async Task<string?> ReadCurrentSchemaDigestAsync(
@@ -140,6 +145,10 @@ public sealed class NativeDmlSchemaSnapshotService :
         if (provider == SqlAgentToolType.Sqlite)
             snapshot = await WithSqliteDdlProofAsync(
                 connection, transaction, snapshot, matches[0].Table, cancellationToken);
+        else if (provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+            snapshot = await NativeDmlSchemaDefinitionProof.ExtendAsync(
+                connection, transaction, snapshot, matches[0].Schema,
+                matches[0].Table, cancellationToken);
 
         return snapshot?.Sha256;
     }

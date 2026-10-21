@@ -131,6 +131,30 @@ published as measured percentages or silently set to 100.
       changes causing a real approved INSERT to be rejected, and isolation
       from unrelated DDL. This does **not** claim coverage of every SQLite
       external FK, view, session setting, or cross-table trigger dependency.
+- [x] Extend Oracle 21c and Firebird native Snapshot to **v2** with
+      provider-specific, scoped, transaction-enlisted definition inventory.
+      Oracle reads `ALL_TAB_COLS` (including hidden/virtual/identity and
+      nullability metadata), `ALL_CONSTRAINTS` / `ALL_CONS_COLUMNS`
+      (status, check expression where available, FK delete rules, key members),
+      and `ALL_TRIGGERS` / `ALL_SOURCE` (trigger activation and body text).
+      Firebird reads `RDB$RELATION_FIELDS` / `RDB$FIELDS` (default/computed
+      BLOB TEXT, nullability, identity), `RDB$RELATION_CONSTRAINTS` /
+      `RDB$REF_CONSTRAINTS` (constraint and FK actions), and
+      `RDB$TRIGGERS` (user-trigger source/status/sequence). Any absent
+      required trigger source, unrecognizable catalog value, or Oracle
+      potentially truncated 4000-character CHECK condition returns no proof.
+      Two real-provider positive/negative DDL fixtures compare the exact
+      scoped Snapshot after CHECK and trigger changes. **Boundary:** Oracle
+      21c `DATA_DEFAULT` is `LONG`; its full expression text cannot yet
+      be safely attested here, and default lengths do not prove equal-length
+      default replacements. Firebird system-generated constraint trigger
+      bodies and external dependencies are not all attested; do not claim
+      full semantic schema coverage. Other providers retain existing versions.
+- [x] Verify SQLite active commit transaction locks out a concurrent ALTER
+      on a separate connection, releases that lock on rollback, and then
+      invalidates the held `native-dml-schema-v2` digest. The test uses an
+      isolated file database and bounded busy timeout, not fixture-level
+      silent skips.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

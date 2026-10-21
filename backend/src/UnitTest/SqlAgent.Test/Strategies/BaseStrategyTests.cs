@@ -85,7 +85,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Assert.Equal(provider, snapshot.Provider);
         Assert.Single(snapshot.Tables);
         Assert.StartsWith(
-            provider == SqlAgentToolType.Sqlite
+            provider is SqlAgentToolType.Sqlite or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
                 ? "native-dml-schema-v2:" : "native-dml-schema-v1:",
             snapshot.Version, StringComparison.Ordinal);
 

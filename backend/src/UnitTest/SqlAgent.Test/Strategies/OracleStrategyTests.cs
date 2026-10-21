@@ -1,4 +1,7 @@
 using System.Text.Json;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
+using SqlAgent.Service.Core.Execution;
 using Testcontainers.Oracle;
 using Xunit;
 
@@ -105,6 +108,71 @@ public class OracleStrategyTests(OracleFixture fixture) : BaseStrategyTests<Orac
 
     protected override string TableNotFoundErrorCode => "ORA-00942";
     protected override string ColumnNotFoundErrorCode => "ORA-00904";
+
+    [Fact]
+    public async Task NativeSchemaDefinitionProof_OracleCheckAndTriggerBodyChangesInvalidateSnapshot()
+    {
+        var token = TestContext.Current.CancellationToken;
+        var table = "HSPROOF_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var check = "CK_" + table;
+        var trigger = "TR_" + table;
+        var owner = TestSchemaName;
+        var native = new NativeDmlSchemaSnapshotService();
+        await using var db = new Oracle.ManagedDataAccess.Client.OracleConnection(Fixture.ConnectionString);
+        await db.OpenAsync(token);
+
+        async Task ExecuteAsync(string sql)
+        {
+            await using var command = db.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        async Task<HsSqlAgent.SqlCore.Core.Pipeline.SqlSchemaSnapshot> CaptureAsync()
+        {
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {owner}.{table} (ID, NAME) VALUES (1, 'Alice')",
+                SqlAgentToolType.Oracle);
+            return await native.CaptureAsync(db, SqlAgentToolType.Oracle, parsed, token)
+                ?? throw new InvalidOperationException("Oracle native definition proof was incomplete.");
+        }
+
+        await ExecuteAsync($"CREATE TABLE {table} (ID NUMBER PRIMARY KEY, NAME VARCHAR2(80))");
+        try
+        {
+            var before = await CaptureAsync();
+            Assert.StartsWith("native-dml-schema-v2:", before.Version);
+
+            await ExecuteAsync($"ALTER TABLE {table} ADD CONSTRAINT {check} CHECK (NAME <> 'blocked')");
+            var constrained = await CaptureAsync();
+            Assert.Equal(before.Tables[0].Columns.ToArray(), constrained.Tables[0].Columns.ToArray());
+            Assert.NotEqual(before.Sha256, constrained.Sha256);
+
+            await using (var transaction = await db.BeginTransactionAsync(token))
+            {
+                var actual = await native.ReadCurrentSchemaDigestAsync(
+                    db, transaction, SqlAgentToolType.Oracle, before, token);
+                Assert.NotEqual(before.Sha256, actual);
+                await transaction.RollbackAsync(token);
+            }
+
+            await ExecuteAsync(
+                $"CREATE OR REPLACE TRIGGER {trigger} BEFORE INSERT ON {table} " +
+                "FOR EACH ROW BEGIN :NEW.NAME := UPPER(:NEW.NAME); END;");
+            var upperTrigger = await CaptureAsync();
+            Assert.NotEqual(constrained.Sha256, upperTrigger.Sha256);
+
+            await ExecuteAsync(
+                $"CREATE OR REPLACE TRIGGER {trigger} BEFORE INSERT ON {table} " +
+                "FOR EACH ROW BEGIN :NEW.NAME := LOWER(:NEW.NAME); END;");
+            var lowerTrigger = await CaptureAsync();
+            Assert.NotEqual(upperTrigger.Sha256, lowerTrigger.Sha256);
+        }
+        finally
+        {
+            await ExecuteAsync($"DROP TABLE {table} CASCADE CONSTRAINTS PURGE");
+        }
+    }
 
     [Fact]
     public override async Task GetColumnsAsync_ShouldReturnColumnTypes()

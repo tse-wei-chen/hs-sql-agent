@@ -212,6 +212,41 @@ public sealed class NativeDmlSchemaSnapshotServiceTests
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task NativeSqlite_CommitTransactionPreventsConcurrentSchemaDdlUntilRollback()
+    {
+        await WithDatabaseAsync(async (connectionString, _) =>
+        {
+            var token = TestContext.Current.CancellationToken;
+            var native = new NativeDmlSchemaSnapshotService();
+            var snapshot = await CaptureAsync(native, connectionString);
+
+            await using var guarded = new SqliteConnection(connectionString);
+            await guarded.OpenAsync(token);
+            await using (var transaction = await guarded.BeginTransactionAsync(token))
+            {
+                Assert.Equal(snapshot.Sha256,
+                    await native.ReadCurrentSchemaDigestAsync(
+                        guarded, transaction, SqlAgentToolType.Sqlite, snapshot, token));
+
+                await using var competing = new SqliteConnection(connectionString);
+                await competing.OpenAsync(token);
+                await using var alter = competing.CreateCommand();
+                alter.CommandTimeout = 1;
+                alter.CommandText = "ALTER TABLE users ADD COLUMN new_constraint TEXT";
+                var error = await Assert.ThrowsAsync<SqliteException>(() =>
+                    alter.ExecuteNonQueryAsync(token));
+                Assert.Contains(error.SqliteErrorCode, new[] { 5, 6 });
+                await transaction.RollbackAsync(token);
+            }
+
+            await ExecuteDdlAsync(connectionString,
+                "ALTER TABLE users ADD COLUMN new_constraint TEXT");
+            var after = await CaptureAsync(native, connectionString);
+            Assert.NotEqual(snapshot.Sha256, after.Sha256);
+        });
+    }
+
     private static async Task<SqlSchemaSnapshot> CaptureAsync(
         NativeDmlSchemaSnapshotService native, string connectionString)
     {
