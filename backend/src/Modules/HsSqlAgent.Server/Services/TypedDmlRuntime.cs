@@ -267,6 +267,13 @@ public sealed class TypedDmlRuntime(
         ArgumentNullException.ThrowIfNull(currentPolicy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        // Strict mode must also be enforced at commit. An approval session
+        // created before this host enabled native schema capture (or supplied
+        // from another runtime) must never silently run as legacy DML.
+        if (_schemaSnapshotSource is not null && session.Plan.SchemaSnapshot is null)
+            throw new InvalidOperationException(
+                "Strict DML schema freshness requires a schema-attested approval; request a new preview.");
+
         var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
         if (!string.Equals(currentPolicyVersion, session.Plan.PolicyVersion, StringComparison.Ordinal))
             throw new InvalidOperationException(
@@ -318,6 +325,14 @@ public sealed class TypedDmlRuntime(
         ArgumentNullException.ThrowIfNull(currentPolicy);
         if (session.Statements.IsDefaultOrEmpty)
             throw new InvalidOperationException("DML transaction approval session is empty.");
+
+        // Mixed proof/legacy batches cannot downgrade the newly enabled
+        // snapshot policy. Validate every statement before consuming the
+        // aggregate approval or opening a database transaction.
+        if (_schemaSnapshotSource is not null
+            && session.Statements.Any(x => x.Plan.SchemaSnapshot is null))
+            throw new InvalidOperationException(
+                "Strict DML schema freshness requires every transaction statement to carry a schema-attested approval; request a new preview.");
 
         var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
         if (!string.Equals(currentPolicyVersion, session.Challenge.PolicyVersion, StringComparison.Ordinal))

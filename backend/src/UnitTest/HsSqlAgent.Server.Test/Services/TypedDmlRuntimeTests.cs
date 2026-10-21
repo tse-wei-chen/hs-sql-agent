@@ -250,6 +250,55 @@ public class TypedDmlRuntimeTests
     }
 
     [Fact]
+    public async Task CommitAsync_StrictSchemaModeRejectsLegacyApprovalBeforeProviderAccess()
+    {
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 25 };
+        var legacySession = BuildSession(
+            TypedDmlRuntime.ComputePolicyVersion(policy, null));
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        var source = new Mock<IDmlSchemaSnapshotSource>(MockBehavior.Strict);
+        var verifier = new Mock<IDmlSchemaSnapshotFreshnessVerifier>(MockBehavior.Strict);
+        var runtime = new TypedDmlRuntime(
+            schemaSnapshotSource: source.Object,
+            schemaFreshnessVerifier: verifier.Object);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.CommitAsync(
+                provider.Object, "connection", legacySession, policy,
+                null, DefaultApprovalContext, TestContext.Current.CancellationToken));
+
+        Assert.Contains("schema-attested approval", error.Message, StringComparison.OrdinalIgnoreCase);
+        provider.VerifyNoOtherCalls();
+        source.VerifyNoOtherCalls();
+        verifier.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CommitTransactionAsync_StrictSchemaModeRejectsLegacyStatementBeforeProviderAccess()
+    {
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 25 };
+        var legacy = BuildSession(TypedDmlRuntime.ComputePolicyVersion(policy, null));
+        var aggregate = new TypedDmlTransactionApprovalSession(
+            ImmutableArray.Create(legacy), legacy.Preview.Challenge);
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        var source = new Mock<IDmlSchemaSnapshotSource>(MockBehavior.Strict);
+        var verifier = new Mock<IDmlSchemaSnapshotFreshnessVerifier>(MockBehavior.Strict);
+        var runtime = new TypedDmlRuntime(
+            schemaSnapshotSource: source.Object,
+            schemaFreshnessVerifier: verifier.Object);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.CommitTransactionAsync(
+                provider.Object, "connection", aggregate, policy,
+                null, DefaultApprovalContext, TestContext.Current.CancellationToken));
+
+        Assert.Contains("schema-attested approval", error.Message, StringComparison.OrdinalIgnoreCase);
+        provider.VerifyNoOtherCalls();
+        source.VerifyNoOtherCalls();
+        verifier.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public void CommitApi_DoesNotExposeSecurityContextFreeOverload()
     {
         var overloads = typeof(TypedDmlRuntime)

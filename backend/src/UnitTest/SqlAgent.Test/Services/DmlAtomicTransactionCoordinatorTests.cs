@@ -70,6 +70,75 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Theory]
+    [InlineData("swapped")]
+    [InlineData("row-count")]
+    [InlineData("table")]
+    [InlineData("policy")]
+    public async Task Commit_RejectsUnboundChildApprovalBeforeOpeningDatabase(string mutation)
+    {
+        var factory = new SqliteConnectionFactory();
+        var previewCoordinator = new DmlCoordinator(factory);
+        var first = CreateInsertPlan(1, "Alice", "policy-bound-v1");
+        var second = CreateInsertPlan(2, "Bob", "policy-bound-v1");
+        const string serverVersion = "3.46.0";
+        var firstPreview = await previewCoordinator.PreviewAsync(
+            "Data Source=:memory:", first, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, serverVersion);
+        var secondPreview = await previewCoordinator.PreviewAsync(
+            "Data Source=:memory:", second, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, serverVersion);
+
+        var mismatch = mutation switch
+        {
+            "swapped" => secondPreview with { Challenge = firstPreview.Challenge },
+            "row-count" => secondPreview with { AffectedRows = 2 },
+            "table" => secondPreview with { TableName = "other_table" },
+            "policy" => secondPreview with
+            {
+                Challenge = secondPreview.Challenge with { PolicyVersion = "another-policy" }
+            },
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+
+        var coordinator = new DmlAtomicTransactionCoordinator(factory);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.CommitAsync(
+                "Data Source=:memory:", [first, second], [firstPreview, mismatch],
+                TestContext.Current.CancellationToken, serverVersion));
+
+        Assert.Contains("preview and approval challenge do not match", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("operation")]
+    [InlineData("max-rows")]
+    [InlineData("approval-mode")]
+    public async Task Commit_RejectsPlansNotAdmissibleForSingleDmlBeforeDatabaseAccess(string mutation)
+    {
+        var factory = new SqliteConnectionFactory();
+        var original = CreateInsertPlan(1, "Alice", "policy-validation-v1");
+        const string serverVersion = "3.46.0";
+        var preview = await new DmlCoordinator(factory).PreviewAsync(
+            "Data Source=:memory:", original, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, serverVersion);
+
+        var invalid = mutation switch
+        {
+            "operation" => original with { Operation = DmlOperation.Delete },
+            "max-rows" => original with { MaxAffectedRows = -1 },
+            "approval-mode" => original with { ApprovalMode = DmlApprovalMode.RowSetMutation },
+            _ => throw new ArgumentOutOfRangeException(nameof(mutation))
+        };
+
+        var coordinator = new DmlAtomicTransactionCoordinator(factory);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.CommitAsync(
+                "Data Source=:memory:", [invalid], [preview],
+                TestContext.Current.CancellationToken, serverVersion));
+    }
+
     private static ValidatedDmlPlan CreateInsertPlan(long id, string name, string policyVersion)
     {
         var parsed = CoreSqlTextParser.ParseDml(

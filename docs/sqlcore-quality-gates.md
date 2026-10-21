@@ -164,6 +164,22 @@ published as measured percentages or silently set to 100.
       invalidates the held `native-dml-schema-v2` digest. The test uses an
       isolated file database and bounded busy timeout, not fixture-level
       silent skips.
+- [x] Harden the **approval-to-commit security boundary** against schema
+      proof downgrades and child-challenge substitution. When a host has an
+      `IDmlSchemaSnapshotSource` configured, both single and atomic typed
+      runtime commits now reject legacy/no-Snapshot sessions **before** any
+      challenge is consumed or database connection opened. Reusing a preview
+      from before Strict mode was enabled requires a fresh schema-attested
+      preview; opt-out legacy hosts remain supported.
+- [x] Remove the atomic coordinator's divergent, less strict copy of
+      `ValidatePlan`: it now calls the same validator as single DML
+      (operation/command kind, maximum rows, approval mode and match-query
+      provider requirements). It additionally binds each child preview to
+      its plan's operation, table, policy version, exact plan fingerprint,
+      affected-row count, challenge nonce and INSERT payload. Swapped or
+      edited child approval objects fail **before opening a commit connection**.
+      Added server-side strict-mode downgrade tests and atomic negative
+      challenge/plan mutation matrices.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

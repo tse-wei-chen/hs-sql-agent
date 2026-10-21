@@ -340,7 +340,8 @@ public sealed class DmlCoordinator(
         }
     }
 
-    private static void ValidatePlan(ValidatedDmlPlan plan)
+    // Single and atomic DML must share the exact same fail-closed plan rules.
+    internal static void ValidatePlan(ValidatedDmlPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.TableName);

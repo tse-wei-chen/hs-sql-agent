@@ -35,8 +35,12 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (plans.Count == 0 || plans.Count != approvedPreviews.Count)
             throw new InvalidOperationException("Atomic DML transaction requires matching non-empty plan and preview sets.");
 
-        foreach (var plan in plans)
-            ValidatePlan(plan);
+        // Shared plan rules, plus child approval binding, before touching the DB.
+        for (var index = 0; index < plans.Count; index++)
+        {
+            DmlCoordinator.ValidatePlan(plans[index]);
+            ValidateChildPreview(plans[index], approvedPreviews[index]);
+        }
 
         var provider = plans[0].MutationCommand.TargetProvider;
         if (plans.Any(x => x.MutationCommand.TargetProvider != provider))
@@ -134,32 +138,33 @@ internal sealed class DmlAtomicTransactionCoordinator(
             $"DML transaction cancelled at statement {zeroBasedIndex + 1}: {reason}. Entire transaction rolled back.");
     }
 
-    private static void ValidatePlan(ValidatedDmlPlan plan)
+    private static void ValidateChildPreview(ValidatedDmlPlan plan, DmlPreview preview)
     {
-        ArgumentNullException.ThrowIfNull(plan);
-        ArgumentException.ThrowIfNullOrWhiteSpace(plan.TableName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(plan.PolicyVersion);
-        if (plan.MutationCommand.Kind is not (
-            SqlStatementKind.Insert or SqlStatementKind.Update or SqlStatementKind.Delete))
-            throw new InvalidOperationException($"Invalid DML mutation command kind {plan.MutationCommand.Kind}.");
+        ArgumentNullException.ThrowIfNull(preview);
+        var challenge = preview.Challenge
+            ?? throw new InvalidOperationException("Atomic DML statement preview has no approval challenge.");
 
-        var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(
-            plan.MutationCommand,
-            plan.PolicyVersion);
-        if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
-            throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
+        if (preview.Operation != plan.Operation
+            || !string.Equals(preview.TableName, plan.TableName, StringComparison.Ordinal)
+            || !string.Equals(challenge.PlanFingerprint, plan.PlanFingerprint, StringComparison.Ordinal)
+            || !string.Equals(challenge.PolicyVersion, plan.PolicyVersion, StringComparison.Ordinal)
+            || challenge.AffectedRows != preview.AffectedRows
+            || challenge.AffectedRows < 0
+            || string.IsNullOrWhiteSpace(challenge.Nonce))
+            throw new InvalidOperationException(
+                "Atomic DML statement preview and approval challenge do not match its compiled plan.");
 
-        if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
-        {
-            if (plan.InsertRows.IsDefaultOrEmpty)
-                throw new InvalidOperationException("INSERT VALUES approval requires immutable preview rows.");
-            return;
-        }
+        if (plan.ApprovalMode == DmlApprovalMode.InsertValues
+            && (challenge.RowSetFingerprint is not null
+                || challenge.AffectedRows != plan.InsertRows.Length))
+            throw new InvalidOperationException(
+                "Atomic INSERT statement approval does not match the immutable approved payload.");
 
-        if (plan.MatchQueryCommand is null || plan.MatchQueryCommand.Kind != SqlStatementKind.Select)
-            throw new InvalidOperationException("Row-set DML approval requires a SELECT match command.");
-        if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict && plan.RowIdentityColumns.IsDefaultOrEmpty)
-            throw new InvalidOperationException("Strict DML approval requires row identity columns.");
+        if (plan.ApprovalMode != DmlApprovalMode.InsertValues
+            && plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict
+            && string.IsNullOrWhiteSpace(challenge.RowSetFingerprint))
+            throw new InvalidOperationException(
+                "Atomic row-set DML approval requires a valid row identity fingerprint.");
     }
 
     private static string? ComputeRowSetFingerprint(
