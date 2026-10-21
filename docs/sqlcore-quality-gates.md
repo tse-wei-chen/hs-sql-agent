@@ -311,6 +311,30 @@ published as measured percentages or silently set to 100.
 - [ ] Distinguish compile-time SQL-policy proofs from server-time transaction,
       row-preview/approval, authorization and runtime resource enforcement.
 
+## Real Redis approval concurrency gate
+
+- [x] Add a dedicated `redis-approval-integration` GitHub Actions job
+      with **real Redis 7**, distinct from the existing Mock-based Redis
+      contract tests. `server-test` continues to run ordinary unit tests
+      without requiring a local Redis service; the dedicated job explicitly
+      provides and requires the Redis connection.
+- [x] Execute concurrent `TryPromoteAsync` calls from independent store
+      instances with 12 competing aggregate challenges for the same pair
+      of children. Verify exactly one aggregate wins, all child keys are
+      removed, losing aggregates never materialize, and two simultaneous
+      consumers cannot both consume the winner.
+- [x] Prove mismatched child payloads or a pre-existing aggregate key leave
+      all children intact; verify an expired child is not promotable and
+      real Redis TTL deletes its key.
+- [x] Inject a **lost client acknowledgement after actual Redis Lua execution**,
+      confirming that neither retry nor independent store consumption
+      resurrects child approvals. The aggregate remains one-time. An
+      ambiguous network failure is **not** treated as proof of failure:
+      the server may already have promoted the challenge, so callers
+      fail closed, rely on aggregate TTL, and request a fresh preview.
+      This is single-server Redis 7 concurrency evidence, not a claim of
+      Redis Cluster failover or cross-region exactly-once execution.
+
 ## Proof model
 
 - A policy denying `WHERE 1=1` is a **known-tautology guard**, not evidence that all
