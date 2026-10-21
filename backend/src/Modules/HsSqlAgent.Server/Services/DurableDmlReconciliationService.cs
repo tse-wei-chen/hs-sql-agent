@@ -15,7 +15,6 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
     private const string Executing = "Executing";
     private const string OutcomeUnknown = "OutcomeUnknown";
     private const string ApprovalStateUnknown = "ApprovalStateUnknown";
-    private static readonly TimeSpan MinimumExecutingAge = TimeSpan.FromMinutes(30);
 
     public async Task<IReadOnlyList<DurableDmlReconciliationItem>> ListAsync(
         int limit, CancellationToken cancellationToken)
@@ -51,8 +50,8 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
             throw new ArgumentException("An evidence reference (up to 256 characters) and a note (up to 700 characters) are required.");
         if (request.ExpectedUpdatedAt == default)
             throw new ArgumentException("ExpectedUpdatedAt is required.");
-        if (request.ExpectedStatus is not (Executing or OutcomeUnknown or ApprovalStateUnknown))
-            throw new ArgumentException("ExpectedStatus must be Executing, OutcomeUnknown or ApprovalStateUnknown.");
+        if (request.ExpectedStatus is not (OutcomeUnknown or ApprovalStateUnknown))
+            throw new ArgumentException("Only OutcomeUnknown or ApprovalStateUnknown approvals may be resolved. Executing requires independently proven worker quiescence.");
 
         // These are *operator-attested* terminal dispositions; none can be replayed.
         var destination = request.Resolution switch
@@ -68,10 +67,10 @@ public sealed class DurableDmlReconciliationService(AdminContext adminContext)
         if (state is null) return null;
         if (state.Status != request.ExpectedStatus || state.UpdatedAt != request.ExpectedUpdatedAt)
             throw new InvalidOperationException("Approval state changed since inspection; reload before reconciling.");
-        if (state.Status == Executing && DateTime.UtcNow - state.UpdatedAt < MinimumExecutingAge)
-            throw new InvalidOperationException("An Executing approval cannot be reconciled during its initial 30-minute activity window.");
-        if (state.Status is not (Executing or OutcomeUnknown or ApprovalStateUnknown))
-            throw new InvalidOperationException("Only uncertain, consumed approvals can be reconciled.");
+        // Age does not fence a live worker. Never override Executing while the
+        // original SQL transaction might still be in flight.
+        if (state.Status is not (OutcomeUnknown or ApprovalStateUnknown))
+            throw new InvalidOperationException("Only terminal uncertain approvals can be reconciled; Executing requires a separate worker-fencing proof.");
 
         var originalStatus = state.Status;
         var now = DateTime.UtcNow;

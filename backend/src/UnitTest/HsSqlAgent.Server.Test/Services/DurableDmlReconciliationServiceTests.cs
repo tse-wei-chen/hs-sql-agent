@@ -14,7 +14,6 @@ public sealed class DurableDmlReconciliationServiceTests
     [Theory]
     [InlineData("OutcomeUnknown", "committed", "ReconciledCommitted")]
     [InlineData("ApprovalStateUnknown", "not_committed", "ReconciledNotCommitted")]
-    [InlineData("Executing", "indeterminate", "ReconciledIndeterminate")]
     public async Task OperatorAttestation_IsPersistedWithAuditAndCannotBeReissued(
         string initialStatus, string resolution, string expectedTerminalStatus)
     {
@@ -74,15 +73,15 @@ public sealed class DurableDmlReconciliationServiceTests
     }
 
     [Fact]
-    public async Task Executing_RequiresOlderInspectionAndExpectedState()
+    public async Task Executing_RemainsReadOnlyEvenWhenOldWithoutWorkerFencing()
     {
-        await using var fixture = await Fixture.CreateAsync("Executing", minutesOld: 2);
+        await using var fixture = await Fixture.CreateAsync("Executing", minutesOld: 120);
         await using var db = fixture.NewContext();
         var service = new DurableDmlReconciliationService(db);
         var pending = Assert.Single(await service.ListAsync(10, TestContext.Current.CancellationToken));
         var ct = TestContext.Current.CancellationToken;
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ReconcileAsync(
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ReconcileAsync(
             pending.RequestId,
             new(pending.Status, pending.UpdatedAt, "committed", "CASE-123", "Verified log evidence"),
             "operator", ct));
