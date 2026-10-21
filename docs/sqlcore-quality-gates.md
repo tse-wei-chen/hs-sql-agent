@@ -359,8 +359,13 @@ published as measured percentages or silently set to 100.
       transaction makes rollback fail.
 - [x] Add fault-injection unit tests for lost commit acknowledgements,
       cancelled request cleanup, failed rollback diagnostic preservation,
-      and clean commit. Real SQLite DML tests also prove a constraint error
-      rolls back without allowing the consumed approval to execute again.
+      and clean commit. A test transaction decorator also calls a **real
+      SQLite COMMIT**, then injects an acknowledgement loss: the row is
+      physically committed, the coordinator's shared helper reports
+      `DmlCommitOutcomeUnknownException`, and unsuccessful follow-up
+      rollback does not replace the primary error. Separate real SQLite
+      DML tests prove a constraint error rolls back without allowing the
+      consumed approval to execute again.
       **Boundary:** Redis challenge consumption and external SQL commit are
       separate systems. These changes preserve at-most-once *approval
       consumption*, not a distributed atomic commit or a guarantee that

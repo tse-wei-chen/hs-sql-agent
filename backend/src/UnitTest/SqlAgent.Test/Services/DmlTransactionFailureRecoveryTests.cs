@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using Microsoft.Data.Sqlite;
 using SqlAgent.Service.Core.Execution;
 using Xunit;
 
@@ -74,6 +75,64 @@ public sealed class DmlTransactionFailureRecoveryTests
         Assert.Same(rollback,
             primary.Data[DmlTransactionFailureRecovery.RollbackFailureDataKey]);
         Assert.Equal(1, transaction.RollbackAttempts);
+    }
+
+    [Fact]
+    public async Task RealSqliteCommitSucceedsButAcknowledgementLost_RemainsUnknownAndDoesNotUndoWrite()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var create = connection.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE approvals (id INTEGER PRIMARY KEY)";
+            await create.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using var committedTransaction = await connection.BeginTransactionAsync(
+            TestContext.Current.CancellationToken);
+        await using (var insert = connection.CreateCommand())
+        {
+            insert.Transaction = (SqliteTransaction)committedTransaction;
+            insert.CommandText = "INSERT INTO approvals (id) VALUES (1)";
+            await insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        // This decorator forwards COMMIT to a real SQLite transaction and
+        // injects a lost provider acknowledgement only AFTER it succeeds.
+        var uncertain = new CommitThenDropAcknowledgementTransaction(committedTransaction);
+        var error = await Assert.ThrowsAsync<DmlCommitOutcomeUnknownException>(() =>
+            DmlTransactionFailureRecovery.CommitAsync(
+                uncertain, TestContext.Current.CancellationToken));
+
+        Assert.IsType<IOException>(error.InnerException);
+        await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(uncertain, error);
+        // SQLite already committed, so rollback is no longer possible.
+        Assert.NotNull(error.Data[DmlTransactionFailureRecovery.RollbackFailureDataKey]);
+
+        await using var verify = connection.CreateCommand();
+        verify.CommandText = "SELECT COUNT(*) FROM approvals";
+        Assert.Equal(1L,
+            (long)(await verify.ExecuteScalarAsync(TestContext.Current.CancellationToken))!);
+        Assert.Contains("outcome is unknown", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class CommitThenDropAcknowledgementTransaction(DbTransaction inner)
+        : DbTransaction
+    {
+        public override IsolationLevel IsolationLevel => inner.IsolationLevel;
+        protected override DbConnection DbConnection => inner.Connection!;
+
+        public override void Commit() => throw new NotSupportedException();
+        public override void Rollback() => throw new NotSupportedException();
+
+        public override async Task CommitAsync(CancellationToken cancellationToken = default)
+        {
+            await inner.CommitAsync(cancellationToken);
+            throw new IOException("SQLite committed, but network acknowledgement was lost.");
+        }
+
+        public override Task RollbackAsync(CancellationToken cancellationToken = default) =>
+            inner.RollbackAsync(cancellationToken);
     }
 
     private sealed class FailingTransaction(
