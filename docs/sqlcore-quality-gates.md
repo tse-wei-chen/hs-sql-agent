@@ -429,6 +429,15 @@ published as measured percentages or silently set to 100.
       Store status needs reconciliation. Tests inject both a failed terminal
       save and a failed fallback save after a real approved SQLite INSERT,
       checking physical rows, persisted status, error code and restart replay.
+      Another fault-injection test lets Admin Store `Executed` **actually commit**
+      but loses the SaveChanges acknowledgement afterward. Whether the
+      conservative fallback retains `Executed` or records `OutcomeUnknown`,
+      the approval remains one-time and the target row is not executed twice.
+      `dml.approval_state_unknown` is distinct from
+      `dml.commit_outcome_unknown`: the former means the *target COMMIT was
+      acknowledged* but Admin Store terminal persistence was not.
+      An `Executing` status after failed fallback persistence is an
+      operator-reconciliation state, not permission to repeat the write.
 - [ ] Add explicit operator-assisted reconciliation of an `Executing`
       or `OutcomeUnknown` durable approval. The service must not infer
       transaction failure from a terminal Admin Store outage and must not
