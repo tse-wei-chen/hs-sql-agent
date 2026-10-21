@@ -172,6 +172,56 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task AdminTerminalSaveAcknowledgedByDatabaseButResponseLost_RemainsNonReplayable()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+
+        await using (var services = fixture.CreateRestartedServices(
+            failTerminalSave: true,
+            failTerminalSaveAfterSuccess: true))
+        await using (var scope = services.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+
+            // A missing Admin Store acknowledgement does not change the known
+            // outcome of the separate target SQL transaction.
+            Assert.Equal(DmlApprovalCompletionStatus.OutcomeUnknown, result.Status);
+            Assert.Equal("dml.approval_state_unknown", result.ErrorCode);
+            Assert.False(result.Retryable);
+            Assert.Contains("COMMIT succeeded", result.Message, StringComparison.Ordinal);
+        }
+
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var stored = await context.DmlApprovalRequests.AsNoTracking().SingleAsync(
+                x => x.RequestId == request.RequestId, TestContext.Current.CancellationToken);
+            // The first terminal write completed. The fallback might have
+            // conservatively replaced it with OutcomeUnknown; neither permits
+            // a second execution.
+            Assert.Contains(stored.Status, new[] { "Executed", "OutcomeUnknown" });
+
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var repeat = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+            Assert.Contains(repeat.Status, new[]
+            {
+                DmlApprovalCompletionStatus.AlreadyCompleted,
+                DmlApprovalCompletionStatus.OutcomeUnknown
+            });
+        }
+
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
     public async Task PreviouslyUnknownCommitOutcome_RemainsTerminalWithoutReExecutingApproval()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -334,7 +384,9 @@ public sealed class DurableDmlApprovalLifecycleTests
     /// Inject Admin Store persistence failures only after the target DB has
     /// finished committing. The first Executing claim must always persist.
     /// </summary>
-    private sealed class TerminalApprovalSaveFailureInterceptor(bool failUnknownSave)
+    private sealed class TerminalApprovalSaveFailureInterceptor(
+        bool failUnknownSave,
+        bool failTerminalSaveAfterSuccess)
         : SaveChangesInterceptor
     {
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
@@ -348,11 +400,29 @@ public sealed class DurableDmlApprovalLifecycleTests
                 .Select(x => x.Entity.Status)
                 .ToArray() ?? [];
 
-            if (statuses.Contains("Executed", StringComparer.Ordinal)
+            if ((!failTerminalSaveAfterSuccess
+                    && statuses.Contains("Executed", StringComparer.Ordinal))
                 || (failUnknownSave && statuses.Contains("OutcomeUnknown", StringComparer.Ordinal)))
                 throw new IOException("Injected Admin Store terminal SaveChanges failure.");
 
             return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+
+        public override ValueTask<int> SavedChangesAsync(
+            SaveChangesCompletedEventData eventData,
+            int result,
+            CancellationToken cancellationToken = default)
+        {
+            if (failTerminalSaveAfterSuccess
+                && eventData.Context?.ChangeTracker
+                    .Entries<DmlApprovalRequestState>()
+                    .Any(x => x.Entity.Status == "Executed") == true)
+            {
+                // EF has persisted the status; simulate losing its reply.
+                throw new IOException("Injected lost Admin Store SaveChanges acknowledgement.");
+            }
+
+            return base.SavedChangesAsync(eventData, result, cancellationToken);
         }
     }
 
@@ -455,14 +525,18 @@ public sealed class DurableDmlApprovalLifecycleTests
         public ServiceProvider CreateRestartedServices(
             bool failAudit = false,
             bool failTerminalSave = false,
-            bool failUnknownSave = false) =>
-            BuildServices(AdminDatabasePath, failAudit, failTerminalSave, failUnknownSave);
+            bool failUnknownSave = false,
+            bool failTerminalSaveAfterSuccess = false) =>
+            BuildServices(
+                AdminDatabasePath, failAudit, failTerminalSave,
+                failUnknownSave, failTerminalSaveAfterSuccess);
 
         private static ServiceProvider BuildServices(
             string adminDatabasePath,
             bool failAudit = false,
             bool failTerminalSave = false,
-            bool failUnknownSave = false)
+            bool failUnknownSave = false,
+            bool failTerminalSaveAfterSuccess = false)
         {
             var adminConnectionString = new SqliteConnectionStringBuilder
             {
@@ -470,7 +544,8 @@ public sealed class DurableDmlApprovalLifecycleTests
             }.ToString();
             var serviceCollection = new ServiceCollection();
             var terminalFailure = failTerminalSave
-                ? new TerminalApprovalSaveFailureInterceptor(failUnknownSave)
+                ? new TerminalApprovalSaveFailureInterceptor(
+                    failUnknownSave, failTerminalSaveAfterSuccess)
                 : null;
             serviceCollection.AddDbContext<AdminContext>(options =>
             {
