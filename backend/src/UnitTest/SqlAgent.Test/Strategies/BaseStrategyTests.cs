@@ -165,7 +165,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             SqlAgentToolType.Firebird => new HsSqlAgent.Provider.Firebird.FirebirdProvider(),
             _ => throw new ArgumentOutOfRangeException(nameof(provider))
         };
-        var connectionString = Fixture.ConnectionString;
+        // Firebird pools retain physical attachments and can hold metadata-use
+        // locks after a DbConnection is returned to the pool. Disable pooling
+        // only for this DDL-heavy integration test, never in production.
+        var connectionString = provider == SqlAgentToolType.Firebird
+            ? new FirebirdSql.Data.FirebirdClient.FbConnectionStringBuilder(Fixture.ConnectionString)
+                { Pooling = false }.ConnectionString
+            : Fixture.ConnectionString;
         await using var connection = ProviderStrategy.CreateConnection(connectionString);
         await connection.OpenAsync(token);
         var profile = RuntimeServerProfileVerifier.Capture(provider, connection);
