@@ -185,6 +185,28 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             return Convert.ToInt64(await command.ExecuteScalarAsync(token));
         }
 
+        // Firebird (and other providers) may retain schema metadata locks while
+        // a connection is open. Use a fresh connection for post-preview DDL
+        // and verification, rather than trying to migrate a table still used
+        // by the catalog-capturing connection.
+        async Task ExecuteFreshAsync(string sql)
+        {
+            await using var ddlConnection = nativeProvider.Connections.Create(connectionString);
+            await ddlConnection.OpenAsync(token);
+            await using var command = ddlConnection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        async Task<long> CountFreshRowsAsync()
+        {
+            await using var readConnection = nativeProvider.Connections.Create(connectionString);
+            await readConnection.OpenAsync(token);
+            await using var command = readConnection.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {tableName}";
+            return Convert.ToInt64(await command.ExecuteScalarAsync(token));
+        }
+
         async Task<ValidatedDmlPlan> PlanAsync(long id)
         {
             var parsed = CoreSqlTextParser.ParseDml(
@@ -226,17 +248,20 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             var stalePreview = await coordinator.PreviewAsync(
                 connectionString, stale, approvalContext, token, serverVersion);
 
-            await ExecuteAsync($"ALTER TABLE {tableName} ADD EXTRA_COL INTEGER");
+            // Release schema/catalog handles before running a separate DDL session.
+            await connection.CloseAsync();
+            await ExecuteFreshAsync($"ALTER TABLE {tableName} ADD EXTRA_COL INTEGER");
 
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 coordinator.CommitAsync(
                     connectionString, stale, stalePreview.Challenge, approvalContext, token, serverVersion));
             Assert.Contains("stale", error.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Equal(1L, await CountRowsAsync());
+            Assert.Equal(1L, await CountFreshRowsAsync());
         }
         finally
         {
-            await ExecuteAsync($"DROP TABLE {tableName}");
+            await connection.CloseAsync();
+            await ExecuteFreshAsync($"DROP TABLE {tableName}");
         }
     }
 
