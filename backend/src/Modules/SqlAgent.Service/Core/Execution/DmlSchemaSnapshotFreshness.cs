@@ -51,13 +51,25 @@ internal static class DmlSchemaSnapshotFreshness
     {
         var evidence = command.CompileEvidence;
         if (evidence is null)
+        {
+            // A plan carrying a schema proof cannot silently downgrade to the
+            // legacy no-snapshot mode when its compile evidence is missing.
+            if (expectedSnapshot is not null)
+                throw new InvalidOperationException(
+                    "DML schema snapshot has no matching compile evidence; commit rejected.");
             return;
+        }
 
         var assurances = evidence.Assurances
             .Where(item => string.Equals(item.Kind, "sqlcore.schema_snapshot", StringComparison.Ordinal))
             .ToArray();
         if (assurances.Length == 0)
+        {
+            if (expectedSnapshot is not null)
+                throw new InvalidOperationException(
+                    "DML schema snapshot has no matching assurance evidence; commit rejected.");
             return;
+        }
         if (assurances.Length != 1)
             throw new InvalidOperationException("DML schema assurance is duplicated; commit rejected.");
 

@@ -86,6 +86,19 @@ published as measured percentages or silently set to 100.
       while the native Snapshot still binds `Default` into its metadata digest
       and uses it when reading transaction-bound catalog rows. The real-provider
       approval gate asserts the emitted SQL contains no `Default.` qualifier.
+- [x] PostgreSQL native commit now obtains an **ACCESS SHARE** lock on the
+      schema-qualified, safely quoted physical target **before** reading the
+      transactional catalog. The lock lasts until commit/rollback and blocks
+      ALTER/DROP's ACCESS EXCLUSIVE lock, closing this provider's final
+      schema-read-to-DML-write DDL window. A real PostgreSQL concurrency test
+      asserts ALTER times out while the guarded transaction is held, succeeds
+      after rollback, and changes the schema digest. This specific lock
+      guarantee is **not** attributed to MySQL, SQLite, SQL Server, Oracle,
+      or Firebird without comparable proofs.
+- [x] Fail closed if an approved DML plan contains a Schema Snapshot but
+      its compiled mutation command has lost snapshot compile evidence, or
+      lacks the corresponding assurance. Single and batch SQLite approval
+      regression tests prove no mutation escapes verification.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

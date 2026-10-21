@@ -19,6 +19,9 @@ public interface IDmlTransactionIsolationPolicy
 /// snapshot transaction without deployment-specific configuration use Serializable instead.
 /// Commit is always Serializable so row-set revalidation and the mutation execute inside one
 /// transaction with the strongest portable isolation available from DbConnection.
+/// IMPORTANT: Serializable alone does not prove DDL/schema stability for every provider.
+/// PostgreSQL native snapshot verification additionally pins its physical table with
+/// a transaction-held ACCESS SHARE lock; other provider DDL-race guarantees remain unproven.
 /// </summary>
 public sealed class StrictDmlTransactionIsolationPolicy : IDmlTransactionIsolationPolicy
 {

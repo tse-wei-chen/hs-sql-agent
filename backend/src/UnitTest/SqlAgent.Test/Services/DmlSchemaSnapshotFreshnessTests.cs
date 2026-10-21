@@ -31,6 +31,75 @@ public sealed class DmlSchemaSnapshotFreshnessTests
     }
 
     [Fact]
+    public async Task InsertApproval_SnapshotWithoutCompileEvidence_FailsClosedBeforeMutation()
+    {
+        await WithDatabaseAsync(async (connectionString, serverVersion) =>
+        {
+            var source = CreatePlan(1, "Alice");
+            var compiled = source.MutationCommand;
+            var unproven = new CompiledSqlCommand(
+                compiled.Sql, compiled.Parameters, compiled.Kind,
+                compiled.PlanFingerprint, compiled.TargetProvider);
+            var plan = source with
+            {
+                MutationCommand = unproven,
+                PlanFingerprint = DmlFingerprintService.ComputePlanFingerprint(unproven, PolicyVersion)
+            };
+            var verifier = new ChangingVerifier { CurrentDigest = Digest(source) };
+            var coordinator = new DmlCoordinator(
+                new SqliteConnectionFactory(), schemaFreshnessVerifier: verifier);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, ApprovalContext,
+                TestContext.Current.CancellationToken, serverVersion);
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.CommitAsync(
+                    connectionString, plan, preview.Challenge, ApprovalContext,
+                    TestContext.Current.CancellationToken, serverVersion));
+
+            Assert.Contains("compile evidence", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, verifier.ReadCount);
+            Assert.Equal(0L, await CountRowsAsync(connectionString));
+        });
+    }
+
+    [Fact]
+    public async Task AtomicApproval_SnapshotWithoutCompileEvidence_RollsBackAllMutations()
+    {
+        await WithDatabaseAsync(async (connectionString, serverVersion) =>
+        {
+            var first = CreatePlan(1, "Alice");
+            var secondSource = CreatePlan(2, "Bob");
+            var compiled = secondSource.MutationCommand;
+            var unproven = new CompiledSqlCommand(
+                compiled.Sql, compiled.Parameters, compiled.Kind,
+                compiled.PlanFingerprint, compiled.TargetProvider);
+            var second = secondSource with
+            {
+                MutationCommand = unproven,
+                PlanFingerprint = DmlFingerprintService.ComputePlanFingerprint(unproven, PolicyVersion)
+            };
+            var previewCoordinator = new DmlCoordinator(new SqliteConnectionFactory());
+            var a = await previewCoordinator.PreviewAsync(
+                connectionString, first, ApprovalContext,
+                TestContext.Current.CancellationToken, serverVersion);
+            var b = await previewCoordinator.PreviewAsync(
+                connectionString, second, ApprovalContext,
+                TestContext.Current.CancellationToken, serverVersion);
+            var verifier = new ChangingVerifier { CurrentDigest = Digest(first) };
+            var coordinator = new DmlAtomicTransactionCoordinator(
+                new SqliteConnectionFactory(), schemaFreshnessVerifier: verifier);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.CommitAsync(
+                    connectionString, [first, second], [a, b],
+                    TestContext.Current.CancellationToken, serverVersion));
+            Assert.Contains("compile evidence", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1, verifier.ReadCount);
+            Assert.Equal(0L, await CountRowsAsync(connectionString));
+        });
+    }
+
+    [Fact]
     public async Task InsertApproval_WithSnapshot_RejectsMissingVerifierBeforeMutation()
     {
         await WithDatabaseAsync(async (connectionString, serverVersion) =>

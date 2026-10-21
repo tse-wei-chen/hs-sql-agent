@@ -1,4 +1,7 @@
 using System.Text.Json;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
+using SqlAgent.Service.Core.Execution;
 using Testcontainers.PostgreSql;
 using Xunit;
 

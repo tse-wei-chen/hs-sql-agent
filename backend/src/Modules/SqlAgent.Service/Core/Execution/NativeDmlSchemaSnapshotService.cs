@@ -96,11 +96,39 @@ public sealed class NativeDmlSchemaSnapshotService :
         var schema = firebird ? "Default" : parts[0];
         var table = firebird ? parts[0] : parts[1];
 
+        // PostgreSQL catalog reads alone do not pin the physical table schema
+        // across the revalidation-to-write gap. ACCESS SHARE is compatible with
+        // concurrent DML, but conflicts with ALTER/DROP's ACCESS EXCLUSIVE until
+        // this SAME transaction commits or rolls back. Lock before checking the
+        // catalog so the checked shape cannot be swapped underneath the write.
+        if (provider == SqlAgentToolType.Postgres)
+            await PinPostgresSchemaAsync(
+                connection, transaction, schema, table, cancellationToken);
+
         var readers = ForProvider(provider);
         var matches = await readers.Commit.GetDmlPlanningMetadataInTransactionAsync(
             connection, transaction, schema, table, includeColumns: true,
             cancellationToken: cancellationToken);
         return BuildSnapshot(provider, matches)?.Sha256;
+    }
+
+    private static async Task PinPostgresSchemaAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string schema,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        // Each identifier is a *single catalog-returned name*, never SQL text.
+        // Dot/empty names are already rejected by BuildSnapshot and the caller.
+        static string Quote(string identifier) =>
+            "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            $"LOCK TABLE {Quote(schema)}.{Quote(table)} IN ACCESS SHARE MODE";
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static Readers ForProvider(SqlAgentToolType provider) =>
