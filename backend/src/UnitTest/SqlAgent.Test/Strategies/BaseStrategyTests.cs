@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.SqlParsing;
+using SqlAgent.Service.Core.Execution;
 using Xunit;
 
 namespace SqlAgent.Test.Strategies;
@@ -60,6 +62,84 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     // strangler step. No shared test invokes the legacy DML compatibility surface.
     protected abstract DmlDefinition CreateInsertDml();
 
+
+    [Fact]
+    public virtual async Task NativeDmlSchemaFreshness_RealProviderRecheckUsesCurrentTransaction()
+    {
+        // The same fixture runs this test on ALL SIX engines. This checks real
+        // provider catalog SQL, not merely whether the interface can be cast.
+        var provider = Strategy.DbType;
+        var token = TestContext.Current.CancellationToken;
+        var sql = $"INSERT INTO {TestTableName} ({TestUserIdColumn}, {TestUserNameColumn}) " +
+                  "VALUES (987654321, 'schema-probe')";
+        var parsed = CoreSqlTextParser.ParseDml(sql, provider);
+        var freshness = new NativeDmlSchemaSnapshotService();
+
+        await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(token);
+        var snapshot = await freshness.CaptureAsync(connection, provider, parsed, token);
+        Assert.NotNull(snapshot);
+        Assert.Equal(provider, snapshot.Provider);
+        Assert.Single(snapshot.Tables);
+        Assert.StartsWith("native-dml-schema-v1:", snapshot.Version, StringComparison.Ordinal);
+
+        await using var transaction = await connection.BeginTransactionAsync(token);
+        var actual = await freshness.ReadCurrentSchemaDigestAsync(
+            connection, transaction, provider, snapshot, token);
+        Assert.Equal(snapshot.Sha256, actual);
+
+        // Each provider must reject a transaction belonging to another connection.
+        await using var other = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await other.OpenAsync(token);
+        var wrongTransaction = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            freshness.ReadCurrentSchemaDigestAsync(
+                other, transaction, provider, snapshot, token));
+        Assert.Contains("transaction", wrongTransaction.Message, StringComparison.OrdinalIgnoreCase);
+        await transaction.RollbackAsync(token);
+    }
+
+    [Fact]
+    public virtual async Task NativeDmlSchemaFreshness_RealProviderDdlChangeInvalidatesProof()
+    {
+        // Keep DDL entirely on a per-test table so existing shared fixture data
+        // cannot be changed, even when this test runs in parallel with others.
+        var provider = Strategy.DbType;
+        var token = TestContext.Current.CancellationToken;
+        var tableName = "HSFRESH_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var parsed = CoreSqlTextParser.ParseDml(
+            $"INSERT INTO {tableName} (ID, NAME) VALUES (1, 'snapshot')", provider);
+        var freshness = new NativeDmlSchemaSnapshotService();
+        await using var connection = ProviderStrategy.CreateConnection(Fixture.ConnectionString);
+        await connection.OpenAsync(token);
+
+        async Task ExecuteAsync(string sql)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        await ExecuteAsync($"CREATE TABLE {tableName} (ID INTEGER PRIMARY KEY, NAME VARCHAR(80))");
+        try
+        {
+            var original = await freshness.CaptureAsync(connection, provider, parsed, token);
+            Assert.NotNull(original);
+
+            // Complete any auto-commit DDL before beginning the metadata-read transaction.
+            await ExecuteAsync($"ALTER TABLE {tableName} ADD EXTRA_COL INTEGER");
+            await using var transaction = await connection.BeginTransactionAsync(token);
+            var changed = await freshness.ReadCurrentSchemaDigestAsync(
+                connection, transaction, provider, original, token);
+
+            Assert.NotNull(changed);
+            Assert.NotEqual(original.Sha256, changed);
+            await transaction.RollbackAsync(token);
+        }
+        finally
+        {
+            await ExecuteAsync($"DROP TABLE {tableName}");
+        }
+    }
 
     [Fact]
     public virtual async Task SqlCore_NativeTypedSchemaQuery_ExecutesAgainstProviderDatabase()

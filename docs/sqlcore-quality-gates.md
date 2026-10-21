@@ -105,6 +105,13 @@ published as measured percentages or silently set to 100.
       PostgreSQL, MySQL, SQLite, SQL Server, Oracle and Firebird fixtures:
       144 cross-dialect executions, deterministic row-order/value assertions.
       Not a claim of complete six-provider semantic equivalence.
+- [x] Exercise native DML Schema Snapshot Freshness against all six existing
+      real-provider strategy fixtures, not only mocked metadata and SQLite:
+      each provider must capture a live catalog, attest its digest using the
+      exact open transaction, reject a transaction from another connection,
+      and detect an added column on an isolated physical table. This is
+      **12 real-provider tests** reusing pinned provider fixtures; it does not
+      prove each DB prevents concurrent DDL after the freshness read.
 - [ ] Extend real-provider differential execution beyond the narrow six-provider
       intersection: provider versions/session settings, parameter binding,
       DML capability intersections and affected-row behavior.
