@@ -199,6 +199,25 @@ published as measured percentages or silently set to 100.
       for execution. Added negative tests for changed match SQL/row identities,
       target table, max-row cap, TTL, INSERT displayed values and missing
       binding (including atomic child approvals).
+- [x] Replace the **non-atomic batch-approval promotion** sequence
+      (`TryConsumeAsync` on each child, then `RegisterAsync` aggregate)
+      with `IDmlApprovalChallengeStore.TryPromoteAsync`. The in-memory store
+      serializes register/consume/promote using one critical section; the Redis
+      store performs compare-all-child-payloads, NX aggregate registration with
+      TTL, and child deletes in **one Lua script**. Any expired, missing,
+      modified, duplicated or already consumed child, or existing aggregate
+      nonce, aborts without partial mutation. A fixed hash tag ensures all
+      keys touched by the Redis script share a Redis Cluster slot; this changes
+      the Redis approval key namespace, so existing ephemeral challenge
+      tokens must be re-previewed after upgrade.
+      Existing third-party challenge stores remain binary/source-compatible
+      through a default fail-closed method, but **must implement atomic
+      promotion to support batch previews**. Cancellation-aware best-effort
+      cleanup uses an independent token and does not mask the original error;
+      if Redis remains unavailable, child TTL bounds retention.
+      Added in-memory promotion/race/cancellation cases, Redis Lua/cluster-slot
+      contract tests, and server failure-injection checks for partial preview
+      registration and failed promotion without leaked executable approvals.
 - [ ] Expand provider-exact type coercions, function overloads, nullability,
       typed CTE/derived projections, recursive CTE, provider-specific
       join key coercions and DML conflict/MERGE key proofs.

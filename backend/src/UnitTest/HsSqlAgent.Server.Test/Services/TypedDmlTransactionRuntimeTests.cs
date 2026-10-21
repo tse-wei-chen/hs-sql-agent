@@ -84,6 +84,63 @@ public sealed class TypedDmlTransactionRuntimeTests
         metadata.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreviewTransactionAsync_PartialStoreFailureRevokesAllChildApprovals(bool failDuringRegistration)
+    {
+        var (provider, _, _) = CreateProvider();
+        var batch = CoreDmlBatchTextParser.ParseDmlBatch(
+            "INSERT INTO public.users (id, name) VALUES (1, 'Alice');" +
+            "INSERT INTO public.users (id, name) VALUES (2, 'Bob')",
+            SqlAgentToolType.Postgres);
+        var store = new FailingBatchPromotionStore(failDuringRegistration);
+        var runtime = new TypedDmlRuntime(challengeStore: store);
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 5 };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.PreviewTransactionAsync(
+                provider.Object, "connection", batch, policy,
+                allowedTables: null, ApprovalContext,
+                TestContext.Current.CancellationToken));
+
+        Assert.NotEmpty(store.Registered);
+        Assert.All(store.Registered, child =>
+            Assert.False(store.Inner.TryConsumeAsync(child).Result));
+        Assert.Equal(failDuringRegistration ? 0 : 1, store.AggregateRegistrations);
+    }
+
+    private sealed class FailingBatchPromotionStore(bool failDuringRegistration) : IDmlApprovalChallengeStore
+    {
+        public readonly InMemoryDmlApprovalChallengeStore Inner = new();
+        public readonly List<DmlApprovalChallenge> Registered = [];
+        public int AggregateRegistrations { get; private set; }
+
+        public async ValueTask RegisterAsync(
+            DmlApprovalChallenge challenge,
+            CancellationToken cancellationToken = default)
+        {
+            if (failDuringRegistration && Registered.Count == 1)
+                throw new InvalidOperationException("Injected second-child registration failure.");
+            await Inner.RegisterAsync(challenge, cancellationToken);
+            Registered.Add(challenge);
+        }
+
+        public ValueTask<bool> TryConsumeAsync(
+            DmlApprovalChallenge challenge,
+            CancellationToken cancellationToken = default) =>
+            Inner.TryConsumeAsync(challenge, cancellationToken);
+
+        public ValueTask<bool> TryPromoteAsync(
+            IReadOnlyList<DmlApprovalChallenge> children,
+            DmlApprovalChallenge aggregate,
+            CancellationToken cancellationToken = default)
+        {
+            AggregateRegistrations++;
+            return ValueTask.FromResult(false);
+        }
+    }
+
     private static (
         Mock<ISqlProvider> Provider,
         Mock<IProviderMetadataReader> Metadata,

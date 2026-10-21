@@ -194,21 +194,21 @@ public sealed class TypedDmlRuntime(
         }
         catch
         {
-            await ConsumeChildChallengesAsync(builder, cancellationToken);
+            await CleanupChildChallengesBestEffortAsync(builder);
             throw;
         }
 
+        try
+        {
         var statements = builder.ToImmutable();
         var totalLong = statements.Sum(x => (long)x.Preview.AffectedRows);
         if (totalLong > int.MaxValue)
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new UnauthorizedAccessException("DML transaction affected row count exceeds the supported integer range.");
         }
         var total = (int)totalLong;
         if (policy.DmlMaxAffectedRows > 0 && total > policy.DmlMaxAffectedRows)
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new UnauthorizedAccessException(
                 $"Security policy denied DML transaction: affectedRows={total} exceeds maximum {policy.DmlMaxAffectedRows}.");
         }
@@ -216,7 +216,6 @@ public sealed class TypedDmlRuntime(
         var policyVersion = statements[0].Plan.PolicyVersion;
         if (statements.Any(x => !string.Equals(x.Plan.PolicyVersion, policyVersion, StringComparison.Ordinal)))
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new InvalidOperationException("DML transaction statements were compiled under different security policy versions.");
         }
 
@@ -224,7 +223,6 @@ public sealed class TypedDmlRuntime(
         if (string.IsNullOrWhiteSpace(serverVersion)
             || statements.Any(x => !string.Equals(x.VerifiedServerVersionIdentity, serverVersion, StringComparison.Ordinal)))
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new InvalidOperationException("DML transaction statements were previewed against different runtime server versions.");
         }
 
@@ -235,11 +233,9 @@ public sealed class TypedDmlRuntime(
         var expiresAt = statements.Min(x => x.Preview.Challenge.ExpiresAt);
         if (expiresAt <= now)
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new InvalidOperationException("DML transaction approval expired during preview.");
         }
 
-        await ConsumeChildChallengesRequiredAsync(statements, cancellationToken);
         var challenge = new DmlApprovalChallenge(
             planFingerprint,
             evidenceFingerprint,
@@ -249,8 +245,24 @@ public sealed class TypedDmlRuntime(
             now,
             expiresAt,
             Guid.NewGuid().ToString("N"));
-        await _challengeStore.RegisterAsync(challenge, cancellationToken);
+        // Redis and in-memory stores atomically swap all child approvals for
+        // this aggregate. A failed promotion must never expose a usable batch
+        // or partially consume its child challenges.
+        if (!await _challengeStore.TryPromoteAsync(
+                statements.Select(x => x.Preview.Challenge).ToArray(),
+                challenge,
+                cancellationToken))
+            throw new InvalidOperationException(
+                "DML transaction approval promotion failed: a child was changed, consumed or expired, or the aggregate nonce was already registered.");
         return new TypedDmlTransactionApprovalSession(statements, challenge);
+        }
+        catch
+        {
+            // Cleanup must not inherit the caller's cancelled token. These
+            // child approvals were never returned as a usable batch.
+            await CleanupChildChallengesBestEffortAsync(builder);
+            throw;
+        }
     }
 
     public async Task<DmlCommitResult> CommitAsync(
@@ -384,21 +396,24 @@ public sealed class TypedDmlRuntime(
             serverVersion);
     }
 
-    private async Task ConsumeChildChallengesRequiredAsync(
-        IEnumerable<TypedDmlApprovalSession> statements,
-        CancellationToken cancellationToken)
+    private async Task CleanupChildChallengesBestEffortAsync(
+        IEnumerable<TypedDmlApprovalSession> statements)
     {
+        // Cancellation and store timeouts must not mask the original preview
+        // error. If Redis is unavailable, remaining child keys still expire
+        // by TTL and no aggregate approval is ever exposed to the caller.
         foreach (var statement in statements)
-            if (!await _challengeStore.TryConsumeAsync(statement.Preview.Challenge, cancellationToken))
-                throw new InvalidOperationException("Unable to consolidate one-time DML statement challenges into transaction approval.");
-    }
-
-    private async Task ConsumeChildChallengesAsync(
-        IEnumerable<TypedDmlApprovalSession> statements,
-        CancellationToken cancellationToken)
-    {
-        foreach (var statement in statements)
-            await _challengeStore.TryConsumeAsync(statement.Preview.Challenge, cancellationToken);
+        {
+            try
+            {
+                await _challengeStore.TryConsumeAsync(
+                    statement.Preview.Challenge, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // Best effort only; the promotion itself remains atomic.
+            }
+        }
     }
 
     private static string ComputeTransactionPlanFingerprint(IReadOnlyList<TypedDmlApprovalSession> statements)
