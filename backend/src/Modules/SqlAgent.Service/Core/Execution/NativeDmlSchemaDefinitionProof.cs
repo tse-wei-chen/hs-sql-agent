@@ -42,7 +42,7 @@ internal static class NativeDmlSchemaDefinitionProof
                        c.HIDDEN_COLUMN, c.VIRTUAL_COLUMN, c.IDENTITY_COLUMN,
                        c.DEFAULT_ON_NULL, c.DEFAULT_LENGTH, c.COLLATION
                 FROM ALL_TAB_COLS c
-                WHERE c.OWNER = :owner AND c.TABLE_NAME = :table
+                WHERE c.OWNER = :owner AND c.TABLE_NAME = :physicalTable
                 ORDER BY c.INTERNAL_COLUMN_ID, c.COLUMN_NAME
                 """,
                 """
@@ -54,7 +54,7 @@ internal static class NativeDmlSchemaDefinitionProof
                 LEFT JOIN ALL_CONS_COLUMNS cc
                   ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME
                  AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
-                WHERE c.OWNER = :owner AND c.TABLE_NAME = :table
+                WHERE c.OWNER = :owner AND c.TABLE_NAME = :physicalTable
                 ORDER BY c.CONSTRAINT_NAME, cc.POSITION
                 """,
                 """
@@ -65,7 +65,7 @@ internal static class NativeDmlSchemaDefinitionProof
                 LEFT JOIN ALL_SOURCE s
                   ON s.OWNER = t.OWNER AND s.NAME = t.TRIGGER_NAME
                  AND s.TYPE = 'TRIGGER'
-                WHERE t.TABLE_OWNER = :owner AND t.TABLE_NAME = :table
+                WHERE t.TABLE_OWNER = :owner AND t.TABLE_NAME = :physicalTable
                 ORDER BY t.TRIGGER_NAME, s.LINE
                 """
             ];
@@ -119,7 +119,7 @@ internal static class NativeDmlSchemaDefinitionProof
             if (provider == SqlAgentToolType.Oracle)
             {
                 Add(command, "owner", schema);
-                Add(command, "table", table);
+                Add(command, "physicalTable", table);
             }
             else
             {
