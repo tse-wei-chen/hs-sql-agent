@@ -58,8 +58,16 @@ feature addition as another major release.
 ## CI and release vetoes
 
 1. Run a **public-contract freeze test** on stable interface shapes so a new
-   abstract member or removed overload blocks CI. NuGet ABI/package smoke
-   remains a separate required gate.
+   abstract member or removed overload blocks CI. At v3.0.0, source-level
+   freeze and a packed external consumer are available. From **v3.0.1 onward**,
+   the package smoke runs `.github/scripts/verify-v3-package-abi.sh` and
+   uses the official .NET APICompat tool to compare **every packaged first-party
+   HsSqlAgent assembly** against its real published 3.0.0 NuGet baseline.
+   It fails on signature/parameter incompatibilities and missing baseline
+   packages; it never silently skips an unavailable baseline. The 3.0.0
+   initial release itself cannot have a pre-existing 3.0.0 package to
+   compare against, so full binary freeze activates with subsequent 3.x
+   builds. This does not replace behavior or security-contract testing.
 2. Run round-trip and unsupported-version tests for every persisted protocol,
    including a real Pending→restart→complete path and independent witness
    inspection.
