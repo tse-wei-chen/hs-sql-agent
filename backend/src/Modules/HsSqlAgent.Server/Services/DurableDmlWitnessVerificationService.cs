@@ -138,6 +138,22 @@ public sealed class DurableDmlWitnessVerificationService(
             status = ReadUnavailable;
         }
 
+        // The DB configuration is a separate mutable Admin Store row. A
+        // matching approval snapshot alone does not prove that the target
+        // connection remains bound to the same configured database. Detect
+        // a concurrent retarget after the independent witness read.
+        var latestDb = await adminContext.DbManagement.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == state.DbManagementId, cancellationToken);
+        if (latestDb is null
+            || latestDb.SqlProvider != db.SqlProvider
+            || latestDb.Database != db.Database
+            || latestDb.Host != db.Host
+            || latestDb.Port != db.Port
+            || latestDb.Username != db.Username
+            || latestDb.PasswordHash != db.PasswordHash
+            || latestDb.ExtraSettings != db.ExtraSettings)
+            return Result(TargetChanged);
+
         // Ensure an operator is not shown a positive result paired with a
         // different Admin Store approval snapshot that changed during I/O.
         var latest = await adminContext.DmlApprovalRequests.AsNoTracking()

@@ -482,6 +482,53 @@ public sealed class DurableDmlApprovalLifecycleTests
         Assert.False(result.MatchingCommitWitness);
     }
 
+    [Theory]
+    [InlineData("database")]
+    [InlineData("provider")]
+    [InlineData("host")]
+    [InlineData("port")]
+    [InlineData("username")]
+    [InlineData("password")]
+    [InlineData("extra-settings")]
+    public async Task IndependentWitnessInspection_RejectsTargetConfigurationChangedDuringProbe(
+        string changedField)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+        var state = await context.DmlApprovalRequests.SingleAsync(ct);
+        state.Status = "OutcomeUnknown";
+        await context.SaveChangesAsync(ct);
+        context.ChangeTracker.Clear();
+
+        var fake = new CallbackWitness(async () =>
+        {
+            await using var services = fixture.CreateRestartedServices();
+            await using var concurrentScope = services.CreateAsyncScope();
+            var concurrent = concurrentScope.ServiceProvider.GetRequiredService<AdminContext>();
+            var db = await concurrent.DbManagement.SingleAsync(ct);
+            switch (changedField)
+            {
+                case "database": db.Database = "retargeted.db"; break;
+                case "provider": db.SqlProvider = "Postgres"; break;
+                case "host": db.Host = "retargeted-host"; break;
+                case "port": db.Port = "5432"; break;
+                case "username": db.Username = "retargeted-user"; break;
+                case "password": db.PasswordHash = "retargeted-ciphertext"; break;
+                case "extra-settings": db.ExtraSettings = "retargeted=1"; break;
+            }
+            await concurrent.SaveChangesAsync(ct);
+            return null;
+        });
+        var inspection = fixture.CreateWitnessInspection(scope.ServiceProvider, fake);
+        var result = await inspection.InspectAsync(approval.RequestId, ct);
+        Assert.NotNull(result);
+        Assert.Equal("TargetConfigurationChanged", result.WitnessStatus);
+        Assert.False(result.MatchingCommitWitness);
+    }
+
     private sealed class CallbackWitness(Func<Task<string?>> callback) : IDmlTargetCommitWitness
     {
         public Task WriteAsync(System.Data.Common.DbConnection connection,
