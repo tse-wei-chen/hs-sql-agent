@@ -58,6 +58,10 @@ public sealed class PostgresLegacyDmlCutoverVerifierIntegrationTests
         await ExecuteAsync(admin,
             $"REVOKE TRUNCATE ON {target.SchemaName}.application_data FROM {target.LegacyRole}", ct);
 
+        var liveCredential = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            verifier.VerifyAsync(admin, target.LegacyRole, ct));
+        Assert.Contains("loginEnabled=True", liveCredential.Message);
+        await ExecuteAsync(admin, $"ALTER ROLE {target.LegacyRole} NOLOGIN", ct);
         var cleared = await verifier.VerifyAsync(admin, target.LegacyRole, ct);
         Assert.Equal(target.LegacyRole, cleared.LegacyRole);
         Assert.True(cleared.CheckedRelations >= 1);
@@ -84,9 +88,35 @@ public sealed class PostgresLegacyDmlCutoverVerifierIntegrationTests
         Assert.Contains("writableRelations=", failure.Message);
 
         await ExecuteAsync(admin,
-            $"REVOKE UPDATE ON {target.SchemaName}.application_data FROM {target.ParentRole}", ct);
+            $"REVOKE UPDATE ON {target.SchemaName}.application_data FROM {target.ParentRole}; " +
+            $"ALTER ROLE {target.LegacyRole} NOLOGIN", ct);
         var cleared = await verifier.VerifyAsync(admin, target.LegacyRole, ct);
         Assert.True(cleared.CheckedRelations >= 1);
+    }
+
+    [Fact]
+    public async Task CallableSecurityDefinerRoutine_BlocksCutoverUntilRevoked()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var target = await Target.CreateAsync(ct);
+        await using var admin = await target.OpenAdminAsync(ct);
+        var verifier = new PostgresLegacyDmlCutoverVerifier();
+
+        // PostgreSQL functions grant PUBLIC EXECUTE by default. A routine
+        // executed with the owner's elevated rights is an independent path.
+        await ExecuteAsync(admin,
+            $"CREATE FUNCTION {target.SchemaName}.legacy_routine() RETURNS integer " +
+            "LANGUAGE sql SECURITY DEFINER AS $ SELECT 1 $; " +
+            $"ALTER ROLE {target.LegacyRole} NOLOGIN", ct);
+        var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            verifier.VerifyAsync(admin, target.LegacyRole, ct));
+        Assert.Contains("callableDefinerRoutines=", blocked.Message);
+        Assert.DoesNotContain("callableDefinerRoutines=0", blocked.Message);
+
+        await ExecuteAsync(admin,
+            $"REVOKE EXECUTE ON FUNCTION {target.SchemaName}.legacy_routine() FROM PUBLIC", ct);
+        var cleared = await verifier.VerifyAsync(admin, target.LegacyRole, ct);
+        Assert.Equal(target.LegacyRole, cleared.LegacyRole);
     }
 
     [Fact]

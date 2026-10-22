@@ -59,8 +59,9 @@ checks effective INSERT/UPDATE/DELETE/TRUNCATE permissions (including
 column-specific INSERT/UPDATE grants) on all non-system tables,
 partitioned/foreign tables and views in the **current database**,
 and counts surviving sessions for the retired login. It requires superuser or
-`pg_read_all_stats` monitoring authority and rejects unknown roles, empty
-inventories, elevated role membership, writable tables and live sessions.
+`pg_read_all_stats` monitoring authority and rejects **LOGIN-enabled roles**,
+unknown identities, elevated membership, remaining table privileges,
+callable non-system `SECURITY DEFINER` functions and live sessions.
 
 ```csharp
 using SqlAgent.Service.Core.Execution;
@@ -72,9 +73,8 @@ var snapshot = await new PostgresLegacyDmlCutoverVerifier()
 
 This is **read-only point-in-time evidence**, not automatic credential
 revocation or a guarantee of fleet-wide quiescence. It cannot verify old
-binaries on other hosts, another writer/database, stored procedures or
-SECURITY DEFINER routines, future grants or deployment credentials external
-to PostgreSQL. The other five database engines need separate cutover proof.
+binaries on other hosts, another writer/database, unscanned external procedural access,
+future grants or deployment credentials external to PostgreSQL. The other five database engines need separate cutover proof.
 
 **Runtime enforcement:** When `target-fence-v1` is requested, the
 single-statement and atomic-batch coordinators both run the physical

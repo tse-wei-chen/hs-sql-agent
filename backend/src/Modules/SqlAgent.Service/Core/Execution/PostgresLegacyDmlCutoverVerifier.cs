@@ -9,8 +9,8 @@ namespace SqlAgent.Service.Core.Execution;
 /// successful admission by a new identity says nothing about old credentials.
 ///
 /// The result is a point-in-time database-local table DML/session check, not
-/// evidence about externally reachable writer nodes, SECURITY DEFINER
-/// routines, other databases or revoked access after the snapshot.
+/// evidence about externally reachable writer nodes, other databases
+/// or changes after the snapshot.
 /// </summary>
 public sealed class PostgresLegacyDmlCutoverVerifier
 {
@@ -18,7 +18,8 @@ public sealed class PostgresLegacyDmlCutoverVerifier
     /// Reject unless the exact named legacy role has no effective
     /// INSERT/UPDATE/DELETE/TRUNCATE permissions (including column-level
     /// grants) on any non-system table/view/foreign
-    /// table and no surviving PostgreSQL sessions in this database cluster.
+    /// table, no callable non-system SECURITY DEFINER routine, a disabled
+    /// login flag, and no surviving sessions in this database cluster.
     /// Requires a privileged monitoring connection, not the old worker login.
     /// This verifier does not revoke rights or terminate processes.
     /// </summary>
@@ -55,13 +56,20 @@ public sealed class PostgresLegacyDmlCutoverVerifier
         await using var command = openAdministrativeConnection.CreateCommand();
         command.CommandText = """
             WITH RECURSIVE legacy AS (
-                SELECT oid, rolname FROM pg_catalog.pg_roles
+                SELECT oid, rolname, rolcanlogin FROM pg_catalog.pg_roles
                 WHERE rolname = @legacy_role
             ), reachable_roles AS (
                 SELECT oid FROM legacy
                 UNION
                 SELECT m.roleid FROM pg_catalog.pg_auth_members AS m
                 JOIN reachable_roles AS r ON m.member = r.oid
+            ), privileged_routines AS (
+                SELECT p.oid
+                FROM pg_catalog.pg_proc AS p
+                JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+                WHERE p.prosecdef
+                  AND n.nspname <> 'information_schema'
+                  AND n.nspname !~ '^pg_'
             ), targets AS (
                 SELECT c.oid
                 FROM pg_catalog.pg_class AS c
@@ -72,6 +80,7 @@ public sealed class PostgresLegacyDmlCutoverVerifier
             )
             SELECT
                 (SELECT COUNT(*) FROM legacy) AS role_count,
+                COALESCE((SELECT rolcanlogin FROM legacy), TRUE) AS login_enabled,
                 COALESCE((SELECT BOOL_OR(r.rolsuper OR r.rolcreaterole
                     OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls)
                     FROM pg_catalog.pg_roles AS r
@@ -89,7 +98,13 @@ public sealed class PostgresLegacyDmlCutoverVerifier
                            OR pg_catalog.has_any_column_privilege(r.oid, t.oid, 'INSERT')
                            OR pg_catalog.has_any_column_privilege(r.oid, t.oid, 'UPDATE')
                     )
-                ) AS writable_relations
+                ) AS writable_relations,
+                (SELECT COUNT(*) FROM privileged_routines AS p
+                    WHERE EXISTS (
+                        SELECT 1 FROM reachable_roles AS r
+                        WHERE pg_catalog.has_function_privilege(r.oid, p.oid, 'EXECUTE')
+                    )
+                ) AS callable_definer_routines
             """;
         var roleParameter = command.CreateParameter();
         roleParameter.ParameterName = "legacy_role";
@@ -102,10 +117,12 @@ public sealed class PostgresLegacyDmlCutoverVerifier
             throw new InvalidOperationException("Legacy DML cutover query returned no results.");
 
         var roleCount = reader.GetInt64(0);
-        var elevated = reader.GetBoolean(1);
-        var sessions = reader.GetInt64(2);
-        var checkedRelations = reader.GetInt64(3);
-        var writableRelations = reader.GetInt64(4);
+        var loginEnabled = reader.GetBoolean(1);
+        var elevated = reader.GetBoolean(2);
+        var sessions = reader.GetInt64(3);
+        var checkedRelations = reader.GetInt64(4);
+        var writableRelations = reader.GetInt64(5);
+        var callableDefinerRoutines = reader.GetInt64(6);
 
         // An unknown old principal or empty catalog is an incomplete inventory,
         // not evidence that an old worker has lost its rights.
@@ -113,13 +130,16 @@ public sealed class PostgresLegacyDmlCutoverVerifier
             throw new InvalidOperationException(
                 "Legacy DML cutover has an incomplete role or application-table inventory. " +
                 "Verify the authoritative database and exact old worker identity.");
-        if (elevated || sessions != 0 || writableRelations != 0)
+        if (loginEnabled || elevated || sessions != 0 ||
+            writableRelations != 0 || callableDefinerRoutines != 0)
             throw new InvalidOperationException(
-                "Legacy DML cutover is blocked: elevatedRole=" + elevated +
+                "Legacy DML cutover is blocked: loginEnabled=" + loginEnabled +
+                ", elevatedRole=" + elevated +
                 ", activeSessions=" + sessions +
                 ", writableRelations=" + writableRelations +
-                ". Revoke effective application-table privileges and terminate old sessions; " +
-                "do not infer quiescence from the new worker's fence readiness.");
+                ", callableDefinerRoutines=" + callableDefinerRoutines +
+                ". Disable old LOGIN, revoke all indirect write paths, " +
+                "and drain old sessions; new-worker readiness cannot replace this proof.");
 
         return new PostgresLegacyDmlCutoverEvidence(
             legacyRole, checkedRelations, DateTimeOffset.UtcNow);
@@ -127,8 +147,8 @@ public sealed class PostgresLegacyDmlCutoverVerifier
 }
 
 /// <summary>
-/// Point-in-time table-grant/session evidence for one PostgreSQL role.
-/// Does not assert fleet-wide isolation or inspect SECURITY DEFINER routines.
+/// Point-in-time grant/routine/session evidence for one PostgreSQL role.
+/// Does not assert fleet-wide isolation or cover external identities.
 /// </summary>
 public sealed record PostgresLegacyDmlCutoverEvidence(
     string LegacyRole, long CheckedRelations, DateTimeOffset CheckedAtUtc);
