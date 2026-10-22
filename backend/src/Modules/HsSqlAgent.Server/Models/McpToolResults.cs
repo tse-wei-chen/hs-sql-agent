@@ -82,10 +82,21 @@ public sealed record McpDmlToolResult(
     McpToolError? Error)
 {
     /// <summary>
-    /// Null when the database may already have committed but no acknowledgement
-    /// was received. Consumers must never interpret this as a safe retry.
+    /// Null when a target COMMIT reply was lost or ROLLBACK could not be
+    /// confirmed. Consumers must never interpret this as a safe retry.
     /// </summary>
     public bool? CommitConfirmed { get; init; } = false;
+
+    // Keep the original five-argument CLR signature for existing consumers.
+    // Adding a defaulted sixth parameter alone changes the binary method signature.
+    public static McpDmlToolResult OutcomeUnknown(
+        string? provider,
+        int statementCount,
+        long approvalWaitDurationMs,
+        string? approvalRequestId,
+        string message) =>
+        OutcomeUnknown(provider, statementCount, approvalWaitDurationMs,
+            approvalRequestId, message, "dml.commit_outcome_unknown");
 
     public static McpDmlToolResult OutcomeUnknown(
         string? provider,
@@ -93,7 +104,7 @@ public sealed record McpDmlToolResult(
         long approvalWaitDurationMs,
         string? approvalRequestId,
         string message,
-        string errorCode = "dml.commit_outcome_unknown") =>
+        string errorCode) =>
         new(
             "outcome_unknown",
             provider,

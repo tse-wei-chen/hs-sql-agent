@@ -72,6 +72,17 @@ public class SqlAgentToolDmlStructuredResultTests
     }
 
     [Fact]
+    public void OutcomeUnknown_OriginalFiveArgumentClrSignatureStillExists()
+    {
+        var method = typeof(McpDmlToolResult).GetMethod(
+            nameof(McpDmlToolResult.OutcomeUnknown),
+            [typeof(string), typeof(int), typeof(long), typeof(string), typeof(string)]);
+        Assert.NotNull(method);
+        Assert.True(method.IsPublic);
+        Assert.True(method.IsStatic);
+    }
+
+    [Fact]
     public void RollbackOutcomeUnknown_IsNonRetryableAndNotReportedAsFailure()
     {
         var result = McpDmlToolResult.OutcomeUnknown(
