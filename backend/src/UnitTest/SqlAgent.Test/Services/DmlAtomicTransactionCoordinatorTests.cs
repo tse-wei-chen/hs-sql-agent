@@ -585,6 +585,89 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "missing-witness")]
+    [InlineData(true, "missing-witness")]
+    [InlineData(false, "missing-fence-key")]
+    [InlineData(true, "missing-fence-key")]
+    [InlineData(false, "missing-witness-key")]
+    [InlineData(true, "missing-witness-key")]
+    public async Task FencedCommit_RejectsPhysicallyInvalidTargetBeforeApplicationMutation(
+        bool batch, string invalidSchema)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"hs-sql-agent-preflight-gate-{Guid.NewGuid():N}.db");
+        var cs = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            var serverVersion = await ProvisionFencedSqliteAsync(cs, ct);
+            var factory = new SqliteConnectionFactory();
+            var store = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(901L, "Readiness gated",
+                "policy-fence-runtime-readiness-v1");
+            var preview = await new DmlCoordinator(factory, challengeStore: store)
+                .PreviewAsync(cs, plan, ApprovalContextFingerprint, ct, serverVersion);
+            await using (var setup = new SqliteConnection(cs))
+            {
+                await setup.OpenAsync(ct);
+                await using var command = setup.CreateCommand();
+                command.CommandText = invalidSchema switch
+                {
+                    "missing-witness" => "DROP TABLE HS_SQL_AGENT_DML_WITNESS",
+                    "missing-fence-key" =>
+                        "DROP TABLE HS_SQL_AGENT_DML_FENCE;" +
+                        "CREATE TABLE HS_SQL_AGENT_DML_FENCE (" +
+                        "REQUEST_ID VARCHAR(64) NOT NULL, EVIDENCE_FINGERPRINT CHAR(64) NOT NULL, " +
+                        "ENTRY_KIND VARCHAR(16) NOT NULL)",
+                    "missing-witness-key" =>
+                        "DROP TABLE HS_SQL_AGENT_DML_WITNESS;" +
+                        "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                        "REQUEST_ID VARCHAR(64) NOT NULL, EVIDENCE_FINGERPRINT CHAR(64) NOT NULL)",
+                    _ => throw new ArgumentOutOfRangeException(nameof(invalidSchema))
+                };
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "runtime-gate-" + Guid.NewGuid().ToString("N"), new string('A', 64));
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+            var exception = await Record.ExceptionAsync(async () =>
+            {
+                if (batch)
+                    await new DmlAtomicTransactionCoordinator(
+                        factory, targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(cs, [plan], [preview], ct, serverVersion,
+                            evidence, requireExecutionFence: true);
+                else
+                    await new DmlCoordinator(factory, challengeStore: store,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(cs, plan, preview.Challenge, ApprovalContextFingerprint,
+                            ct, serverVersion, evidence, requireExecutionFence: true);
+            });
+            Assert.NotNull(exception);
+            if (invalidSchema != "missing-witness")
+                Assert.Contains("unique key", exception.Message, StringComparison.OrdinalIgnoreCase);
+
+            await using var verify = new SqliteConnection(cs);
+            await verify.OpenAsync(ct);
+            await using var query = verify.CreateCommand();
+            query.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(0L, Convert.ToInt64(await query.ExecuteScalarAsync(ct)));
+            query.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+            Assert.Equal(0L, Convert.ToInt64(await query.ExecuteScalarAsync(ct)));
+            var recorded = await fence.ReadAsync(
+                verify, SqlAgentToolType.Sqlite, evidence.RequestId, ct);
+            Assert.Null(recorded);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task RequestedFenceWithoutWriter_RejectsBeforeAnyTargetConnection()
     {

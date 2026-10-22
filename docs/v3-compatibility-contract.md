@@ -22,7 +22,7 @@ feature addition as another major release.
 | Distributed Redis approval store | `{dml-approval}:` hash slot and versioned `hs-sql-agent.dml-challenge` envelope, `SchemaVersion=1` | Canonical bytes for Lua compare-and-promote; future protocols require a new version plus rollout/upcast policy. Unknown versions always fail closed |
 | Admin Store persisted schema | EF Core SQLite and PostgreSQL migrations with preserved data | Add migrations to both providers; avoid dropping or coercing security evidence. Preserve previously consumed requests and audit history |
 | Native SQL providers | Six dialects and positive/negative source/target capability tests | Add grammar with fail-closed capability checks; no silent SQL lowering or unsupported engine fallback |
-| Target Fence / worker enrollment | Opt-in `target-fence-v1` bound to protected resume payload | Gate rollout on all eligible workers being upgraded; do not infer quiescence from heartbeat, timeout or missing witness. `Executing` remains unresolvable without physical fencing proof |
+| Target Fence / worker enrollment | Opt-in `target-fence-v1` bound to protected resume payload | Before **every enrolled single/batch target COMMIT**, the actual open DML connection must pass a rollback-only built-in Fence/Witness proof, including physical uniqueness. This has a real cost of two extra serializable rollback transactions per fenced commit; no global cached success can silently justify a different target or later permissions. Gate rollout on all eligible old workers losing write access; do not infer quiescence from heartbeat, timeout or missing witness. `Executing` remains unresolvable without physical fencing proof |
 
 ## Versioned storage migration
 

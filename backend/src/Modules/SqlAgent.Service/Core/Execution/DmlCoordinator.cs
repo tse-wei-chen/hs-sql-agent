@@ -151,6 +151,23 @@ public sealed class DmlCoordinator(
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
         RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
+        if (requireExecutionFence)
+        {
+            // An opt-in target fence must prove its actual schema, unique
+            // keys, witness and transactional rollback on the same physical
+            // DML identity before starting the approved mutation. A manually
+            // run, possibly stale deployment probe is not sufficient.
+            if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
+                || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
+                throw new InvalidOperationException(
+                    "Production target-fenced DML requires the built-in verified relational " +
+                    "fence and witness implementations; custom components need a separate " +
+                    "audited readiness capability.");
+
+            await new DmlTargetFenceReadinessProbe().VerifyAsync(
+                connection, plan.MutationCommand.TargetProvider, cancellationToken);
+        }
+
         await using var transaction = await connection.BeginTransactionAsync(
             _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
             cancellationToken);
