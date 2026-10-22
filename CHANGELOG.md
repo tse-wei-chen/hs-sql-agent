@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.0] - Unreleased (PR #299)
+
+This is a **major-version release candidate**, not an already published tag. All first-party NuGet
+packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration guide](docs/v3-migration.md).
+
+### Breaking changes and required migration
+
+- Third-party `IDmlApprovalChallengeStore` implementations must now implement atomic
+  `TryPromoteAsync`; this is intentionally source-breaking. A single-statement MCP DML
+  operation also uses the aggregate challenge pipeline.
+- Redis approval keys now use a `{dml-approval}:` hash-slot segment. Legacy v2
+  keys are not consumed by v3; **drain old workers and outstanding approvals before cutover**.
+  Real-Redis integration tests prevent accidental changes to this contract.
+- Approval challenges without the new plan binding are rejected. Re-preview and
+  obtain new human approval; do not replay consumed approvals.
+- Under selective UPDATE/DELETE policy, demonstrably always-true predicates,
+  including `WHERE 1=1`, are denied unless full-table authority is explicit.
+- Compiler input/token resource ceilings reject previously accepted oversized SQL.
+
+### SQL compiler, DML integrity and reliability
+
+- Add opt-in schema-aware name/type proofing and six-provider native DML schema
+  attestation with commit-time freshness checks on the same database transaction.
+- Bind approved SQL plan shape, per-statement row-set evidence and authorization
+  into immutable one-time approval challenges, with atomic multi-statement DML.
+- Preserve distinct uncertain COMMIT versus ROLLBACK outcomes throughout durable
+  completion and synchronous MCP structured responses. Both are non-retryable.
+- Add experimental, opt-in target-enlisted COMMIT witnesses and execution fencing;
+  this is not a claim of fleet-wide safe revocation or automatic `Executing` reconciliation.
+- Expand positive/negative grammar regressions, real-provider transaction tests,
+  Redis integration and fail-closed recovery test coverage.
+
+### Release gates
+
+- Verify full CI and package smoke with the unified `3.0.0` version.
+- Finish the v2-to-v3 drain / no-mixed-worker migration verification.
+- Document experimental fence limits and avoid claiming six-provider production
+  fence parity until remaining live-provider and fleet-enforcement gates pass.
+- Docker Compose still pins the last published 2.x image in this **unreleased**
+  branch; retag release assets and deployment examples only when the v3 image
+  has actually been published.
+
 ## [2.0.6] - Unreleased (proposed)
 
 ### Programmatic administration
