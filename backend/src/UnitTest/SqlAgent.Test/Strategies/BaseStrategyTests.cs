@@ -112,6 +112,28 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         });
     }
 
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_MissingWitnessTableCannotPassReadiness()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+
+            var error = await Record.ExceptionAsync(() =>
+                new DmlTargetFenceReadinessProbe().VerifyAsync(connection, provider, token));
+            Assert.NotNull(error);
+            Assert.IsNotType<OperationCanceledException>(error);
+
+            // Even though the fence INSERT ran first, a real failed witness
+            // statement must not leave an admitted row or application DML.
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(connection, table, token));
+        }, provisionWitness: false);
+    }
+
     private sealed class ReadinessRejectedWitness : IDmlTargetCommitWitness
     {
         public Task WriteAsync(
@@ -295,7 +317,8 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     }
 
     private async Task WithTargetFenceTablesAsync(
-        Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion)
+        Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion,
+        bool provisionWitness = true)
     {
         var provider = Strategy.DbType;
         var token = TestContext.Current.CancellationToken;
@@ -325,14 +348,19 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         await ExecuteTargetFenceSqlAsync(ddl, fenceSchema, token);
         try
         {
-            await ExecuteTargetFenceSqlAsync(ddl, witnessSchema, token);
+            if (provisionWitness)
+                await ExecuteTargetFenceSqlAsync(ddl, witnessSchema, token);
             try
             {
                 await ExecuteTargetFenceSqlAsync(ddl, probeSchema, token);
                 try { await assertion(connectionString, probe, provider, token); }
                 finally { await ExecuteTargetFenceSqlAsync(ddl, $"DROP TABLE {probe}", token); }
             }
-            finally { await ExecuteTargetFenceSqlAsync(ddl, "DROP TABLE HS_SQL_AGENT_DML_WITNESS", token); }
+            finally
+            {
+                if (provisionWitness)
+                    await ExecuteTargetFenceSqlAsync(ddl, "DROP TABLE HS_SQL_AGENT_DML_WITNESS", token);
+            }
         }
         finally { await ExecuteTargetFenceSqlAsync(ddl, "DROP TABLE HS_SQL_AGENT_DML_FENCE", token); }
     }
