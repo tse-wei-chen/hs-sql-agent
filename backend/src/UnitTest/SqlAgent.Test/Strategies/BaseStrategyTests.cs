@@ -173,6 +173,71 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         });
     }
 
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_IndependentRevokerCannotAcknowledgeAnInFlightWorker()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "fence-racing-" + Guid.NewGuid().ToString("N"), new string('D', 64));
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+
+            await using var worker = ProviderStrategy.CreateConnection(connectionString);
+            await worker.OpenAsync(token);
+            await using var transaction = await worker.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, token);
+            await fence.AdmitAsync(worker, transaction, provider, evidence, token);
+            await ExecuteTargetFenceSqlAsync(worker,
+                $"INSERT INTO {table} (ID) VALUES (1)", token, transaction);
+            await witness.WriteAsync(worker, transaction, provider, evidence, token);
+
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(20));
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var revoke = Task.Run(async () =>
+            {
+                await using var revoker = ProviderStrategy.CreateConnection(connectionString);
+                await revoker.OpenAsync(deadline.Token);
+                started.TrySetResult();
+                await fence.RevokeAsync(revoker, provider, evidence, deadline.Token);
+            }, token);
+
+            try
+            {
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+                // Providers may block on an uncommitted unique key or reject
+                // concurrent admission immediately. Neither can confirm Revoked.
+                await Task.Delay(200, token);
+                Assert.False(revoke.IsCompletedSuccessfully,
+                    "An independent revoker acknowledged while admission was still uncommitted.");
+
+                await transaction.CommitAsync(token);
+                var failure = await Record.ExceptionAsync(async () =>
+                    await revoke.WaitAsync(TimeSpan.FromSeconds(12), token));
+                Assert.NotNull(failure);
+                Assert.IsNotType<TimeoutException>(failure);
+                Assert.IsNotType<OperationCanceledException>(failure);
+
+                await using var inspector = ProviderStrategy.CreateConnection(connectionString);
+                await inspector.OpenAsync(token);
+                Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind,
+                    (await fence.ReadAsync(inspector, provider, evidence.RequestId, token))?.EntryKind);
+                Assert.Equal(evidence.EvidenceFingerprint,
+                    await witness.ReadFingerprintAsync(inspector, provider, evidence.RequestId, token));
+                Assert.Equal(1L, await CountTargetFenceRowsAsync(inspector, table, token));
+            }
+            finally
+            {
+                deadline.Cancel();
+                // Do not leave a revoker task holding a database connection
+                // when the fixture's dedicated table teardown begins.
+                try { await revoke.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { /* Any failure is already asserted above. */ }
+            }
+        });
+    }
+
     private async Task WithTargetFenceTablesAsync(
         Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion)
     {
