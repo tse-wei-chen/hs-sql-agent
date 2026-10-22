@@ -231,6 +231,36 @@ jobs:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
 
+  sqlagent-fence-sqlserver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Strong_Password_123!"
+          MSSQL_PID: "Developer"
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify actual SQL Server admission, COMMIT witness and revocation races
+        # Dedicated service job to keep the regular SQL test shards lightweight.
+        # Missing/unready SQL Server is a hard failure in CI, never a skip.
+        run: >
+          dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
   sqlagent-package-smoke:
     runs-on: ubuntu-latest
     permissions:
