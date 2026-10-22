@@ -75,6 +75,41 @@ public sealed class DurableDmlApprovalLifecycleTests
         Assert.Equal(1L, await fixture.CountTargetRowsAsync());
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public async Task PendingApproval_UnknownAdminStoreAdmissionProtocol_DoesNotExecute(int version)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var record = await db.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == request.RequestId, ct);
+            record.AdmissionProtocolVersion = version;
+            await db.SaveChangesAsync(ct);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint), ct);
+
+            Assert.Equal(DmlApprovalCompletionStatus.ConfigurationError, result.Status);
+            Assert.Equal("dml.admission_protocol_incompatible", result.ErrorCode);
+            var record = await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(
+                    x => x.RequestId == request.RequestId, ct);
+            Assert.Equal("Pending", record.Status);
+            Assert.Equal(version, record.AdmissionProtocolVersion);
+        }
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
     [Fact]
     public async Task NewPendingApproval_WritesVersionedProtectedExecutionPayload()
     {

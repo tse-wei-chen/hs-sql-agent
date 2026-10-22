@@ -221,6 +221,18 @@ internal sealed class DurableDmlApprovalLifecycle(
             return new DmlApprovalCompletionResult(DmlApprovalCompletionStatus.Rejected, reason);
         }
 
+        // Never interpret a future or absent Admin Store admission protocol
+        // as v3 consent. An upgraded reader may support it later, but this
+        // worker must not transition the Pending row into Executing.
+        if (state.AdmissionProtocolVersion != AdminStoreAdmissionProtocolVersion)
+            return new DmlApprovalCompletionResult(
+                DmlApprovalCompletionStatus.ConfigurationError,
+                "Durable DML approval admission protocol is incompatible with this worker. " +
+                "Do not execute or replay this approval; use a compatible worker or re-preview.")
+            {
+                ErrorCode = "dml.admission_protocol_incompatible"
+            };
+
         state.Status = Executing;
         state.ApproverIdentity = completion.ApproverIdentity;
         state.ExternalReference = completion.ExternalReference ?? state.ExternalReference;
