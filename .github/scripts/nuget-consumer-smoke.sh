@@ -228,6 +228,15 @@ hs.AddHsSqlAgentAdminStore(options =>
 hs.AddHsSqlAgentHostAuthorization("Host.SqlAgentAdmin");
 hs.AddHsSqlAgentAdminApi();
 
+// A separately installed integration package may begin its own builder;
+// capabilities remain one registration per IServiceCollection.
+var descriptorsBeforeSecondModule = modularBuilder.Services.Count;
+modularBuilder.Services.AddHsSqlAgentCore().AddHsSqlAgentRuntime()
+    .AddHsSqlAgentAdminApi();
+if (modularBuilder.Services.Count != descriptorsBeforeSecondModule)
+    throw new InvalidOperationException(
+        "Second modular NuGet integration duplicated HsSqlAgent registrations.");
+
 await using var modularApp = modularBuilder.Build();
 modularApp.UseAuthentication();
 modularApp.UseAuthorization();
