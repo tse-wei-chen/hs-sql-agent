@@ -78,9 +78,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             await connection.OpenAsync(token);
             var probe = new DmlTargetFenceReadinessProbe();
 
-            await probe.VerifyAsync(connection, provider,
-                new RelationalDmlTargetExecutionFence(),
-                new RelationalDmlTargetCommitWitness(), token);
+            await probe.VerifyAsync(connection, provider, token);
 
             await using var count = connection.CreateCommand();
             count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
@@ -101,7 +99,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             var probe = new DmlTargetFenceReadinessProbe();
 
             await Assert.ThrowsAsync<IOException>(() =>
-                probe.VerifyAsync(connection, provider,
+                probe.VerifyWithDependenciesAsync(connection, provider,
                     new RelationalDmlTargetExecutionFence(),
                     new ReadinessRejectedWitness(), token));
 

@@ -42,6 +42,10 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
   this is not a claim of fleet-wide safe revocation or automatic `Executing` reconciliation.
 - Expand positive/negative grammar regressions, real-provider transaction tests,
   Redis integration and fail-closed recovery test coverage.
+- Provide a public rollback-only target-fence readiness probe with real
+  six-provider transaction tests, including a fail-closed witness-error
+  rollback path. Document provider-specific legacy credential cutover
+  requirements; this does not automatically prove old-worker quiescence.
 - Verify the target-enlisted fence's revocation/admission competition,
   COMMIT-witness atomicity and rollback behavior in actual PostgreSQL, MySQL,
   SQLite, SQL Server, Oracle and Firebird integration fixtures. Reject legacy

@@ -150,6 +150,11 @@ or prove that an earlier worker has stopped.
 
 ## Opt-in and rollout
 
+For a coordinated, provider-specific cutover and the rollback-only connection
+readiness check, see [v3 Target Fence credential cutover](v3-target-fence-cutover.md).
+
+
+
 Call `builder.AddHsSqlAgentTargetExecutionFence()` on an
 `HsSqlAgentRegistrationBuilder` on every server instance handling durable
 approvals. This also opts into the required target COMMIT witness.

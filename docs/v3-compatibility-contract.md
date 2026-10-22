@@ -94,6 +94,11 @@ feature addition as another major release.
    maintain explicit target environment limitations.
 6. Confirm the v2→v3 upgrade procedure with a rolling-deployment **rejection**
    exercise and a coordinated-drain success path before production release.
+   Use the [target-fence cutover evidence checklist](v3-target-fence-cutover.md)
+   to verify old principal DML denial, existing-session quiescence, and
+   rollback-only new-identity readiness for every target/provider. The
+   application cannot introspect arbitrary external credentials, and SQLite
+   requires OS/process-based file isolation instead of DB user roles.
 7. Publish the versioned doc-site migration page, tagged images, package
    metadata, and upgrade notes only for artifacts which actually exist.
 

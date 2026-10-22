@@ -15,12 +15,28 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 public sealed class DmlTargetFenceReadinessProbe
 {
-    public async Task VerifyAsync(
+    /// <summary>
+    /// Verify only the built-in, audited relational implementations. It is
+    /// unsafe to accept a caller-supplied no-op fence or witness as proof.
+    /// </summary>
+    public Task VerifyAsync(
+        DbConnection openConnection,
+        SqlAgentToolType provider,
+        CancellationToken cancellationToken = default) =>
+        VerifyWithDependenciesAsync(
+            openConnection, provider,
+            new RelationalDmlTargetExecutionFence(),
+            new RelationalDmlTargetCommitWitness(), cancellationToken);
+
+    // Test seam for forced witness errors. It is not part of the public
+    // operator readiness contract and cannot be used by external consumers
+    // to substitute a no-op proof.
+    internal async Task VerifyWithDependenciesAsync(
         DbConnection openConnection,
         SqlAgentToolType provider,
         IDmlTargetExecutionFence fence,
         IDmlTargetCommitWitness witness,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(openConnection);
         ArgumentNullException.ThrowIfNull(fence);
