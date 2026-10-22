@@ -363,11 +363,23 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             var snapshot = revalidateSchema
                 ? await freshness.CaptureAsync(connection, provider, parsed, token)
                 : null;
-            var compiled = revalidateSchema
-                ? CoreDmlCompiler.CreateDefault().Compile(
-                    parsed, provider,
+            var nativeProvider = provider switch
+            {
+                SqlAgentToolType.Postgres => (ISqlProvider)new HsSqlAgent.Provider.PostgreSql.PostgresProvider(),
+                SqlAgentToolType.MySQL => new HsSqlAgent.Provider.MySql.MySqlProvider(),
+                SqlAgentToolType.Sqlite => new HsSqlAgent.Provider.Sqlite.SqliteProvider(),
+                SqlAgentToolType.MsSqlServer => new HsSqlAgent.Provider.SqlServer.MsSqlServerProvider(),
+                SqlAgentToolType.Oracle => new HsSqlAgent.Provider.Oracle.OracleProvider(),
+                SqlAgentToolType.Firebird => new HsSqlAgent.Provider.Firebird.FirebirdProvider(),
+                _ => throw new ArgumentOutOfRangeException(nameof(provider))
+            };
+            var profile = RuntimeServerProfileVerifier.Capture(provider, connection);
+            var plan = revalidateSchema
+                ? await new DmlPlanFactory(nativeProvider.Metadata).CreateWithMetadataConnectionAsync(
+                    connection, connectionString, parsed, provider,
                     new SqlPlanValidationContext("physical-fence-transaction-continuity")
-                        .WithSchemaSnapshot(snapshot!))
+                        .WithSchemaSnapshot(snapshot!),
+                    maxAffectedRows: 1, cancellationToken: token, targetProfile: profile.TargetProfile)
                 : null;
 
             var evidence = new DmlTargetCommitWitnessEvidence(
@@ -378,7 +390,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 await fence.AdmitAsync(connection, tx, provider, evidence, token);
                 if (revalidateSchema)
                     await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                        connection, tx, compiled!, snapshot!, freshness, token);
+                        connection, tx, plan!.MutationCommand, snapshot!, freshness, token);
 
                 if (useDapperMutation)
                     await Dapper.SqlMapper.ExecuteAsync(connection,
