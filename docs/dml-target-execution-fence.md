@@ -113,8 +113,14 @@ production-style unique fence and witness tables. Tests cover revocation-first,
 admission-first, rollback, missing-witness rollback, and an independently
 connected revoker contending with an uncommitted admitted worker. A revoker
 must never acknowledge success while a competing worker holds uncommitted
-admission. These are **kernel-level physical database tests**, not a claim
-of fleet-wide fencing or automatic `Executing` reconciliation.
+admission. Beyond the ADO fence kernel, real PostgreSQL/MySQL CI also
+executes **compiled DML through both `DmlCoordinator` and
+`DmlAtomicTransactionCoordinator`**: a committed revocation rejects
+single-statement and batch execution before any application row changes,
+while a successful target COMMIT records the application mutation,
+`Admitted` fence row and matching witness in one transaction. These are
+physical database and coordinator-path proofs, **not** a claim of
+fleet-wide fencing or automatic `Executing` reconciliation.
 
 SQL Server, Oracle and Firebird live concurrency interoperability is **not
 yet demonstrated**. PostgreSQL/MySQL coverage also does not prove that every
@@ -157,7 +163,9 @@ COMMIT witness coexistence, single-statement and atomic-batch execution,
 restarted durable approvals, and missing component fail-closed behavior.
 PostgreSQL/MySQL CI tests additionally exercise real server-side unique-key
 conflicts, committed/rolled-back witness atomicity, revocation and a concurrent
-uncommitted admission.
+uncommitted admission, plus both *compiled* single-DML and atomic batch
+coordinators against real target databases (positive COMMIT with admission
+and witness, and pre-revoked approvals with zero mutations).
 The unique-key protocol is not the same as a verified fleet-wide fencing
 deployment. A positive `Revoked` entry can become strong negative-outcome
 evidence **only** when the approval has the versioned protocol, target HMAC

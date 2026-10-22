@@ -600,7 +600,11 @@ published as measured percentages or silently set to 100.
       revocation and COMMIT-witness writes; independent target connections;
       revocation-first, worker-first, rolled-back admission, absent witness
       rollback and concurrent revoker vs uncommitted admitted worker.
-      The CI job requires `TEST_POSTGRES_CONNECTION` and
+      An additional 2-provider × 2-execution-path × 2-outcome integration
+      matrix exercises the actual compiled single-DML/atomic-batch coordinators:
+      a committed revocation must block all application SQL; a committed
+      mutation must persist both fence admission and target witness with
+      its application row. The CI job requires `TEST_POSTGRES_CONNECTION` and
       `TEST_MYSQL_CONNECTION`; it fails rather than silently skipping
       when those values are missing. Still open: real SQL Server, Oracle
       and Firebird concurrency semantics, fleet-version validation,
