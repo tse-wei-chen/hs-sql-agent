@@ -152,6 +152,69 @@ public sealed class DurableDmlApprovalLifecycleTests
         await ddl.ExecuteNonQueryAsync(ct);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WitnessEnrolledApproval_RestartCannotDowngradeRequiredTargetCommitWitness(
+        bool witnessAvailableAfterRestart)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var witness = new RelationalDmlTargetCommitWitness();
+        // Persist the witness requirement at approval creation, not by
+        // consulting whatever plugins happen to be loaded after a restart.
+        var approval = await PersistPendingInsertAsync(fixture,
+            new TypedDmlRuntime(targetCommitWitness: witness));
+
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using var ddl = target.CreateCommand();
+            ddl.CommandText = "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL)";
+            await ddl.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var resumedRuntime = new TypedDmlRuntime(
+                targetCommitWitness: witnessAvailableAfterRestart ? witness : null);
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, resumedRuntime);
+            var completion = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint), ct);
+            Assert.Equal(witnessAvailableAfterRestart
+                ? DmlApprovalCompletionStatus.Executed
+                : DmlApprovalCompletionStatus.Failed, completion.Status);
+            Assert.False(completion.Retryable);
+
+            var state = await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+            Assert.Equal(witnessAvailableAfterRestart ? "Executed" : "Failed", state.Status);
+            if (!witnessAvailableAfterRestart)
+                Assert.Contains("witness", completion.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        await using var verify = new SqliteConnection(fixture.TargetConnectionString);
+        await verify.OpenAsync(ct);
+        var observed = await witness.ReadFingerprintAsync(
+            verify, SqlAgentToolType.Sqlite, approval.RequestId, ct);
+        Assert.Equal(witnessAvailableAfterRestart ? 1L : 0L,
+            await fixture.CountTargetRowsAsync());
+        if (witnessAvailableAfterRestart)
+            Assert.NotNull(observed);
+        else
+            Assert.Null(observed);
+
+        await using var replayServices = fixture.CreateRestartedServices();
+        await using var replayScope = replayServices.CreateAsyncScope();
+        var replayLifecycle = fixture.CreateLifecycle(replayScope.ServiceProvider,
+            new TypedDmlRuntime(targetCommitWitness: witness));
+        var replay = await replayLifecycle.CompleteAsync(
+            DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint), ct);
+        Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
+    }
+
     [Fact]
     public async Task DurableApproval_WithTargetEnlistedWitness_BindsCommitToPersistedEvidence()
     {

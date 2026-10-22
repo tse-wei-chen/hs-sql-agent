@@ -102,6 +102,18 @@ Unrelated calls that do not supply a durable witness intent retain their
 existing behavior. The default installation does **not** enable this
 feature or require a witness table.
 
+**Durable restart contract:** When a Pending approval is created while the
+commit witness is enabled, the encrypted resume payload records
+`RequiresCommitWitness = true`. Its later completion MUST have an enlisted
+witness writer even after a service restart or a deployment configuration
+change. Disabling the writer cannot silently downgrade that already-issued
+approval to a witness-free COMMIT; the consumed approval fails closed without
+executing any target mutation. Historical payloads issued before this
+requirement deserialize with `false` for backward compatibility; enabling
+the witness later may provide additional evidence but does not retroactively
+turn a legacy approval into a proof-bound one.
+
+
 For independent investigation, `IDmlTargetCommitWitness.ReadFingerprintAsync`
 can inspect a request ID on a separately opened, correctly authenticated
 target connection. A reader must compare the result with the Admin Store

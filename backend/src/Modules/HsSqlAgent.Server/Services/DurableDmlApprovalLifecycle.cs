@@ -107,7 +107,8 @@ internal sealed class DurableDmlApprovalLifecycle(
             resumeContext.CustomToolId,
             resumeContext.CustomToolRevisionId,
             ComputeConnectionFingerprint(connectionString, secret),
-            runtime.HasTargetExecutionFence ? TargetFenceProtocol : null);
+            runtime.HasTargetExecutionFence ? TargetFenceProtocol : null,
+            RequiresCommitWitness: runtime.HasTargetCommitWitness);
         var protectedPayload = crypto.EncryptText(JsonSerializer.Serialize(payload), secret)
                                ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
 
@@ -454,6 +455,10 @@ internal sealed class DurableDmlApprovalLifecycle(
                           ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
         var payload = JsonSerializer.Deserialize<ProtectedResumePayload>(payloadJson)
                       ?? throw new InvalidOperationException("Durable DML approval payload is invalid.");
+        if (payload.RequiresCommitWitness && !runtime.HasTargetCommitWitness)
+            throw new InvalidOperationException(
+                "The durable approval requires a target-enlisted COMMIT witness, but this runtime has no witness writer. " +
+                "Do not downgrade this approval to a witness-free execution.");
         if (payload.FenceProtocol is not null &&
             (payload.FenceProtocol != TargetFenceProtocol
              || !runtime.HasTargetExecutionFence || !runtime.HasTargetCommitWitness))
@@ -691,7 +696,11 @@ internal sealed class DurableDmlApprovalLifecycle(
         int? CustomToolId,
         int? CustomToolRevisionId,
         string ConnectionFingerprint,
-        string? FenceProtocol = null);
+        string? FenceProtocol = null,
+        // Old pre-witness payloads deserialize with false. Once the
+        // approval was created with an enrolled witness, restart/config
+        // changes cannot silently make the final COMMIT witness-free.
+        bool RequiresCommitWitness = false);
 
     private sealed record CurrentExecution(
         SqlAgentToolType ProviderType,

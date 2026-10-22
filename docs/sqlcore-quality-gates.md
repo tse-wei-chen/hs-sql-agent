@@ -594,6 +594,14 @@ published as measured percentages or silently set to 100.
       **Still open:** fleet-version enforcement, supervised revocation API,
       six-provider real unique-index/transaction semantics and admission
       race fault injection before `Executing` can be resolved.
+- [x] Seal the **commit-witness requirement** independently of the versioned
+      target admission fence into every newly issued durable approval when
+      witness opt-in is active. A restart with the witness writer removed
+      now fails closed before any target SQL, rather than silently
+      committing without evidence. Older protected resume payloads retain
+      compatible deserialization. Add a real SQLite restart matrix for
+      witness-present and witness-removed completions, consumed approval
+      non-replayability, and target witness row atomicity.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.
