@@ -734,7 +734,7 @@ public sealed class DmlAtomicTransactionCoordinatorTests
                 "intransaction-" + Guid.NewGuid().ToString("N"), new string('D', 64));
             await using var connection = new SqliteConnection(cs);
             await connection.OpenAsync(ct);
-            await using var tx = await connection.BeginTransactionAsync(ct);
+            await using var tx = (SqliteTransaction)await connection.BeginTransactionAsync(ct);
             await new RelationalDmlTargetExecutionFence().AdmitAsync(
                 connection, tx, SqlAgentToolType.Sqlite, admission, ct);
             if (deleteAdmission)
