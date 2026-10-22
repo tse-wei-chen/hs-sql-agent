@@ -1,8 +1,11 @@
 using Admin.Service.Data;
+using Admin.Service.Data.Entites;
 using Auth.Service.Data;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.PostgreSql;
 using Xunit;
@@ -48,7 +51,40 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
         var cancellationToken = TestContext.Current.CancellationToken;
 
         await authContext.Database.MigrateAsync(cancellationToken);
+        // Upgrade a real v2 schema containing consumed DML evidence, not
+        // only a fresh empty database. The migration must not erase consent
+        // or turn an OutcomeUnknown state back into executable Pending.
+        await adminContext.GetService<IMigrator>().MigrateAsync(
+            "20260905130459_AddDurableDmlApprovalsPostgres", cancellationToken);
+        var consumed = new DmlApprovalRequestState
+        {
+            RequestId = "postgres-v2-upgrade",
+            ApprovalFingerprint = new string('A', 64),
+            EvidenceFingerprint = new string('B', 64),
+            Status = "OutcomeUnknown",
+            ProtectedExecutionPayload = "opaque-encrypted-v2-resume-record",
+            RequesterIdentity = "operator:test",
+            TargetIdentity = "db-management:1",
+            DatabaseProvider = "Postgres",
+            DatabaseIdentity = "test",
+            AccessKeyId = 1,
+            DbManagementId = 1,
+            RequiredToolName = "execute_dml_sql",
+            StatementCount = 1,
+            TotalAffectedRows = 1,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-2),
+            UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
+            ExpiresAt = DateTime.UtcNow.AddMinutes(3)
+        };
+        adminContext.DmlApprovalRequests.Add(consumed);
+        await adminContext.SaveChangesAsync(cancellationToken);
+
         await adminContext.Database.MigrateAsync(cancellationToken);
+        var preserved = await adminContext.DmlApprovalRequests.AsNoTracking()
+            .SingleAsync(x => x.RequestId == consumed.RequestId, cancellationToken);
+        Assert.Equal("OutcomeUnknown", preserved.Status);
+        Assert.Equal(consumed.EvidenceFingerprint, preserved.EvidenceFingerprint);
+        Assert.Equal(consumed.ProtectedExecutionPayload, preserved.ProtectedExecutionPayload);
 
         Assert.NotEmpty(await authContext.Database.GetAppliedMigrationsAsync(cancellationToken));
         Assert.NotEmpty(await adminContext.Database.GetAppliedMigrationsAsync(cancellationToken));

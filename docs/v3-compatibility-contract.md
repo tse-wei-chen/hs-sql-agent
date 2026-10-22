@@ -44,9 +44,12 @@ feature addition as another major release.
   producing new versions. In multi-node deployments, prove all eligible
   processes understand the new format before enabling writes. Unknown schemas
   must never be accepted with defaulted security booleans.
-- **DB migrations:** all first-party schema migrations must have both
+- **DB migrations:** first-party schema migrations must have both
   SQLite and PostgreSQL implementations, startup readiness diagnostics, and
-  upgrade tests from a previously released database snapshot. Do not
+  upgrade tests from a previously released database snapshot. This branch
+  exercises the v2 durable-approval schema → latest migration path against
+  both real providers, asserting that consumed approvals and protected
+  evidence remain intact. Do not
   assume EF migration success proves third-party CLR or Redis compatibility.
 - **Uncertain physical writes:** neither missing Admin records nor absent
   Redis keys/witnesses prove rollback. Preserve evidence and require
