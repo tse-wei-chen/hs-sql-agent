@@ -38,6 +38,7 @@
     <ProjectReference Include="..\..\Modules\HsSqlAgent.Hosting\HsSqlAgent.Hosting.csproj" />
     <ProjectReference Include="..\..\Modules\HsSqlAgent.SqlCore\HsSqlAgent.SqlCore.fsproj" />
     <ProjectReference Include="..\..\Modules\HsSqlAgent.SqliteMigrations\HsSqlAgent.SqliteMigrations.csproj" />
+    <ProjectReference Include="..\..\Modules\HsSqlAgent.PostgresMigrations\HsSqlAgent.PostgresMigrations.csproj" />
   </ItemGroup>
 
 </Project>

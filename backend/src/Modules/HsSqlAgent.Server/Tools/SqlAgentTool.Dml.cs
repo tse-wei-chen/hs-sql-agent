@@ -184,7 +184,7 @@ public partial class SqlAgentTool
             // An audit write, request cancellation, or audit-store outage cannot
             // reclassify it as failed: the consumed approval must not be retried.
             return await CompleteConfirmedDmlAsync(
-                providerName, parsedBatch.Count, execution,
+                providerName!, parsedBatch.Count, execution,
                 () => WriteDmlAuditAsync(
                     parsedBatch,
                     "success",
@@ -272,11 +272,12 @@ public partial class SqlAgentTool
     // target DB. A confirmed physical COMMIT is authoritative; audit is
     // secondary telemetry and must never manufacture a retryable failure.
     internal static async Task<McpDmlToolResult> CompleteConfirmedDmlAsync(
-        string? provider,
+        string provider,
         int statementCount,
         TypedDmlExecutionTiming execution,
         Func<Task> writeAudit)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(provider);
         ArgumentNullException.ThrowIfNull(writeAudit);
         if (!execution.Committed)
             throw new ArgumentException(
