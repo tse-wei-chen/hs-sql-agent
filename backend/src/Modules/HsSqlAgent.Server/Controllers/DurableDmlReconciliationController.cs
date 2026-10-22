@@ -15,7 +15,8 @@ namespace HsSqlAgent.Server.Controllers;
 [ApiController]
 [Route("api/runtime/dml-approvals/reconciliation")]
 public sealed class DurableDmlReconciliationController(
-    DurableDmlReconciliationService reconciliation) : ControllerBase
+    DurableDmlReconciliationService reconciliation,
+    DurableDmlWitnessVerificationService witnessInspection) : ControllerBase
 {
     [HttpGet]
     [HasPermission("/runtime/security", "edit")]
@@ -26,6 +27,29 @@ public sealed class DurableDmlReconciliationController(
             return BadRequest(new { error = "Limit must be between 1 and 100." });
         Response.Headers.CacheControl = "no-store";
         return Ok(await reconciliation.ListAsync(limit, cancellationToken));
+    }
+
+    [HttpGet("{requestId}/witness")]
+    [HasPermission("/runtime/security", "edit")]
+    [ProducesResponseType(typeof(DmlTargetCommitWitnessInspection), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> InspectWitness(
+        string requestId, CancellationToken cancellationToken)
+    {
+        // Witness lookup is read-only but can reach a target DB using privileged
+        // server credentials. Restrict to a human Security editor as well as
+        // the permission attribute (management keys are not grantable).
+        if (User.FindFirst("hsa_actor_type")?.Value == "management-api-key")
+            return Forbid();
+        try
+        {
+            Response.Headers.CacheControl = "no-store";
+            var result = await witnessInspection.InspectAsync(requestId, cancellationToken);
+            return result is null ? NotFound() : Ok(result);
+        }
+        catch (ArgumentException ex) { return BadRequest(new { error = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { error = ex.Message }); }
     }
 
     [HttpPost("{requestId}/resolve")]

@@ -16,6 +16,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Moq;
 using SqlAgent.Service.Factories;
 using SqlAgent.Service.Core.Execution;
@@ -121,6 +122,179 @@ public sealed class DurableDmlApprovalLifecycleTests
             Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
         }
         Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task IndependentWitnessInspection_OnlyConfirmsMatchingTargetAndBlocksContraryAttestation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using var ddl = target.CreateCommand();
+            ddl.CommandText = "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL)";
+            await ddl.ExecuteNonQueryAsync(ct);
+        }
+
+        var witness = new RelationalDmlTargetCommitWitness();
+        await using var restarted = fixture.CreateRestartedServices();
+        await using var scope = restarted.CreateAsyncScope();
+        var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider,
+            new TypedDmlRuntime(targetCommitWitness: witness));
+        var committed = await lifecycle.CompleteAsync(
+            DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint), ct);
+        Assert.Equal(DmlApprovalCompletionStatus.Executed, committed.Status);
+
+        var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+        var state = await context.DmlApprovalRequests.SingleAsync(ct);
+        state.Status = "OutcomeUnknown";
+        state.Reason = "Target COMMIT response to the control plane is not known.";
+        state.UpdatedAt = DateTime.UtcNow;
+        await context.SaveChangesAsync(ct);
+        context.ChangeTracker.Clear();
+
+        var inspection = fixture.CreateWitnessInspection(scope.ServiceProvider, witness);
+        var result = await inspection.InspectAsync(approval.RequestId, ct);
+        Assert.NotNull(result);
+        Assert.Equal("OutcomeUnknown", result.ApprovalStatus);
+        Assert.Equal("CommittedWitnessMatch", result.WitnessStatus);
+        Assert.True(result.MatchingCommitWitness);
+        var responseJson = System.Text.Json.JsonSerializer.Serialize(result);
+        Assert.DoesNotContain("INSERT INTO items", responseJson, StringComparison.Ordinal);
+        Assert.DoesNotContain(state.EvidenceFingerprint, responseJson, StringComparison.Ordinal);
+
+        var pending = Assert.Single(await new DurableDmlReconciliationService(context).ListAsync(10, ct));
+        var reconcile = new DurableDmlReconciliationService(context,
+            witnessVerification: inspection);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            reconcile.ReconcileAsync(approval.RequestId,
+                new(pending.Status, pending.UpdatedAt, "not_committed", "CASE-1",
+                    "An operator contradicts a matching commit witness."),
+                "operator", ct));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            reconcile.ReconcileAsync(approval.RequestId,
+                new(pending.Status, pending.UpdatedAt, "indeterminate", "CASE-1",
+                    "An operator ignores a matching commit witness."),
+                "operator", ct));
+        Assert.Equal(0, await context.AuditLogs.CountAsync(ct));
+        Assert.Equal(0, await context.OutboundDeliveries.CountAsync(ct));
+        Assert.Equal("OutcomeUnknown",
+            (await context.DmlApprovalRequests.AsNoTracking().SingleAsync(ct)).Status);
+
+        var attested = await reconcile.ReconcileAsync(approval.RequestId,
+            new(pending.Status, pending.UpdatedAt, "committed", "CASE-1",
+                "Independently inspected target witness fingerprint."),
+            "operator", ct);
+        Assert.NotNull(attested);
+        Assert.Equal("AttestedCommitted", attested.Status);
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task IndependentWitnessInspection_MissingRowDoesNotFenceExecuting()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using var ddl = target.CreateCommand();
+            ddl.CommandText = "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL)";
+            await ddl.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+        var state = await context.DmlApprovalRequests.SingleAsync(ct);
+        state.Status = "Executing";
+        await context.SaveChangesAsync(ct);
+        context.ChangeTracker.Clear();
+
+        var inspection = fixture.CreateWitnessInspection(
+            scope.ServiceProvider, new RelationalDmlTargetCommitWitness());
+        var result = await inspection.InspectAsync(approval.RequestId, ct);
+        Assert.NotNull(result);
+        Assert.Equal("NotObserved", result.WitnessStatus);
+        Assert.False(result.MatchingCommitWitness);
+        Assert.Contains("never proves non-commit", result.Limitation, StringComparison.Ordinal);
+        var recon = new DurableDmlReconciliationService(context, witnessVerification: inspection);
+        var item = Assert.Single(await recon.ListAsync(10, ct));
+        Assert.Empty(item.AllowedResolutions);
+        await Assert.ThrowsAsync<ArgumentException>(() => recon.ReconcileAsync(
+            approval.RequestId, new(item.Status, item.UpdatedAt, "not_committed",
+                "CASE-2", "No witness was observed."), "operator", ct));
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+
+        var disabled = fixture.CreateWitnessInspection(scope.ServiceProvider, null);
+        Assert.Equal("WitnessNotConfigured",
+            (await disabled.InspectAsync(approval.RequestId, ct))?.WitnessStatus);
+    }
+
+    [Theory]
+    [InlineData("changed-target", "TargetConfigurationChanged")]
+    [InlineData("mismatch", "EvidenceMismatch")]
+    [InlineData("unavailable", "ReadUnavailable")]
+    public async Task IndependentWitnessInspection_RejectsDriftForgeryAndReadFailures(
+        string scenario, string expectedStatus)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using var ddl = target.CreateCommand();
+            ddl.CommandText = "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL)";
+            await ddl.ExecuteNonQueryAsync(ct);
+        }
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+        var state = await context.DmlApprovalRequests.SingleAsync(ct);
+        state.Status = "OutcomeUnknown";
+        await context.SaveChangesAsync(ct);
+        context.ChangeTracker.Clear();
+
+        if (scenario == "changed-target")
+        {
+            var config = await context.DbManagement.SingleAsync(ct);
+            config.Database = "some-other-target.db";
+            await context.SaveChangesAsync(ct);
+        }
+        else if (scenario == "mismatch")
+        {
+            await using var target = new SqliteConnection(fixture.TargetConnectionString);
+            await target.OpenAsync(ct);
+            await using var stmt = target.CreateCommand();
+            stmt.CommandText = "INSERT INTO HS_SQL_AGENT_DML_WITNESS " +
+                "(REQUEST_ID, EVIDENCE_FINGERPRINT) VALUES (@id, @digest)";
+            stmt.Parameters.AddWithValue("@id", approval.RequestId);
+            stmt.Parameters.AddWithValue("@digest", new string('F', 64));
+            await stmt.ExecuteNonQueryAsync(ct);
+        }
+        else
+        {
+            await using var target = new SqliteConnection(fixture.TargetConnectionString);
+            await target.OpenAsync(ct);
+            await using var stmt = target.CreateCommand();
+            stmt.CommandText = "DROP TABLE HS_SQL_AGENT_DML_WITNESS";
+            await stmt.ExecuteNonQueryAsync(ct);
+        }
+
+        var inspection = fixture.CreateWitnessInspection(
+            scope.ServiceProvider, new RelationalDmlTargetCommitWitness());
+        var result = await inspection.InspectAsync(approval.RequestId, ct);
+        Assert.NotNull(result);
+        Assert.Equal(expectedStatus, result.WitnessStatus);
+        Assert.False(result.MatchingCommitWitness);
+        Assert.DoesNotContain("some-other-target.db", result.Limitation, StringComparison.Ordinal);
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
     [Fact]
@@ -745,6 +919,16 @@ public sealed class DurableDmlApprovalLifecycleTests
             serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
             return serviceCollection.BuildServiceProvider();
         }
+
+        public DurableDmlWitnessVerificationService CreateWitnessInspection(
+            IServiceProvider scopedServices, IDmlTargetCommitWitness? witness) =>
+            new(
+                scopedServices.GetRequiredService<AdminContext>(),
+                scopedServices.GetRequiredService<ICryptoService>(),
+                scopedServices.GetRequiredService<IOptions<McpKeySettings>>(),
+                ProviderFactory.Object,
+                ConnectionStringFactory.Object,
+                witness);
 
         public DurableDmlApprovalLifecycle CreateLifecycle(
             IServiceProvider scopedServices,

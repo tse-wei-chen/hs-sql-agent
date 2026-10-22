@@ -15,6 +15,22 @@ export interface DmlReconciliationItem {
   allowedResolutions: DmlReconciliationResolution[];
 }
 
+export interface DmlTargetCommitWitnessInspection {
+  requestId: string;
+  approvalStatus: string;
+  inspectedAt: string;
+  witnessStatus: string;
+  matchingCommitWitness: boolean;
+  limitation: string;
+}
+
+export const inspectDmlTargetWitness = async (
+  requestId: string,
+): Promise<DmlTargetCommitWitnessInspection> =>
+  (await xiorInstanceToken.get<DmlTargetCommitWitnessInspection>(
+    `/runtime/dml-approvals/reconciliation/${encodeURIComponent(requestId)}/witness`,
+  )).data;
+
 export interface DmlReconciliationRequest {
   expectedStatus: string;
   expectedUpdatedAt: string;

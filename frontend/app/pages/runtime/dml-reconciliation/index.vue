@@ -4,6 +4,8 @@ import { toast } from "vue-sonner";
 import {
   listDmlReconciliation,
   resolveDmlReconciliation,
+  inspectDmlTargetWitness,
+  type DmlTargetCommitWitnessInspection,
   type DmlReconciliationItem,
   type DmlReconciliationResolution,
 } from "@/api/dml-reconciliation";
@@ -11,6 +13,7 @@ import {
   buildDmlReconciliationRequest,
   canSubmitDmlReconciliation,
   dmlCommitEvidenceDescription,
+  dmlWitnessStatusDescription,
   permittedDmlResolutions,
   type DmlReconciliationForm,
 } from "@/lib/dmlReconciliation";
@@ -30,6 +33,25 @@ const selected = ref<DmlReconciliationItem | null>(null);
 const loading = ref(false);
 const busy = ref(false);
 const loadError = ref("");
+const witnessBusy = ref("");
+const witnessResults = ref<Record<string, DmlTargetCommitWitnessInspection>>({});
+const witnessErrors = ref<Record<string, string>>({});
+
+const inspectWitness = async (item: DmlReconciliationItem) => {
+  if (witnessBusy.value || loading.value || busy.value) return;
+  witnessBusy.value = item.requestId;
+  delete witnessResults.value[item.requestId];
+  delete witnessErrors.value[item.requestId];
+  try {
+    // Independent target read; this NEVER settles an Executing approval.
+    witnessResults.value[item.requestId] = await inspectDmlTargetWitness(item.requestId);
+  } catch {
+    witnessErrors.value[item.requestId] = "Witness inspection failed. No transaction outcome can be inferred.";
+  } finally {
+    witnessBusy.value = "";
+  }
+};
+
 const form = reactive<DmlReconciliationForm>({
   resolution: "",
   evidenceReference: "",
@@ -65,6 +87,8 @@ const resetForm = () => {
 const load = async () => {
   loading.value = true;
   loadError.value = "";
+  witnessResults.value = {};
+  witnessErrors.value = {};
   selected.value = null;
   resetForm();
   try {
@@ -154,14 +178,37 @@ onMounted(load);
               <p class="text-xs text-muted-foreground">Last updated: {{ formatTime(item.updatedAt) }}</p>
               <p class="text-sm">{{ dmlCommitEvidenceDescription(item.commitEvidence) }}</p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              :disabled="loading || busy || permittedDmlResolutions(item).length === 0"
-              @click="select(item)"
-            >
-              {{ permittedDmlResolutions(item).length ? "Review evidence" : "Investigation only" }}
-            </Button>
+            <div class="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="loading || busy || !!witnessBusy"
+                @click="inspectWitness(item)"
+              >
+                {{ witnessBusy === item.requestId ? "Inspecting..." : "Inspect target witness" }}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                :disabled="loading || busy || permittedDmlResolutions(item).length === 0"
+                @click="select(item)"
+              >
+                {{ permittedDmlResolutions(item).length ? "Review evidence" : "Investigation only" }}
+              </Button>
+            </div>
+          </div>
+          <p v-if="witnessErrors[item.requestId]" role="alert" class="mt-3 text-sm text-destructive">
+            {{ witnessErrors[item.requestId] }}
+          </p>
+          <div v-if="witnessResults[item.requestId]" class="mt-3 space-y-1 border-t pt-3 text-sm">
+            <p class="font-medium">
+              Target witness: {{ witnessResults[item.requestId].witnessStatus }}
+            </p>
+            <p>{{ dmlWitnessStatusDescription(witnessResults[item.requestId].witnessStatus) }}</p>
+            <p class="text-xs text-muted-foreground">
+              Checked {{ formatTime(witnessResults[item.requestId].inspectedAt) }}.
+              A negative result cannot prove the original worker stopped.
+            </p>
           </div>
         </div>
       </CardContent>

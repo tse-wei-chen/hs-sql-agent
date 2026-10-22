@@ -560,6 +560,22 @@ published as measured percentages or silently set to 100.
       Other five providers' live DDL/ADO transport interoperability and
       independent multi-worker safety require additional integration evidence;
       do not infer worker quiescence from a missing witness.
+- [x] Add a read-only, permission-gated target witness inspection endpoint
+      and Admin Console investigation action. The service first validates
+      the persisted encrypted approval's HMAC-bound original target
+      connection identity, database ID, provider and name; only then may
+      it open a target connection for a bounded independent witness read.
+      Results distinguish `CommittedWitnessMatch`, `NotObserved`,
+      `EvidenceMismatch`, `TargetConfigurationChanged`,
+      `WitnessNotConfigured`, `ReadUnavailable` and `ApprovalChanged`.
+      API responses contain no SQL, connection string, credential or
+      evidence hash. `NotObserved` cannot settle `Executing` or authorize
+      a retry. A matching positive witness prevents contradictory human
+      `not_committed` and `indeterminate` attestations server-side.
+      Add real SQLite restart, configuration-drift, forged-witness, missing
+      witness and read-failure tests and verify the GET route is restricted
+      to human `/runtime/security.edit`. This still is **not** worker
+      fencing or six-provider live witness parity.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.

@@ -17,7 +17,8 @@ namespace HsSqlAgent.Server.Services;
 public sealed class DurableDmlReconciliationService(
     AdminContext adminContext,
     IOptions<OperabilitySettings>? operabilitySettings = null,
-    IOutboundDeliverySignal? deliverySignal = null)
+    IOutboundDeliverySignal? deliverySignal = null,
+    DurableDmlWitnessVerificationService? witnessVerification = null)
 {
     private const string Executing = "Executing";
     private const string OutcomeUnknown = "OutcomeUnknown";
@@ -103,6 +104,21 @@ public sealed class DurableDmlReconciliationService(
             && request.Resolution != "committed")
             throw new InvalidOperationException(
                 "The target database COMMIT is already confirmed. This approval cannot be attested as not committed or indeterminate.");
+
+        // An independently matching target-enlisted witness is another
+        // affirmative COMMIT fact. Never allow an operator's contrary
+        // attestation, even when the Admin Store itself says OutcomeUnknown.
+        // A missing/unreadable witness is NOT evidence of noncommit.
+        if (request.Resolution != "committed" && witnessVerification is not null)
+        {
+            var inspected = await witnessVerification.InspectAsync(requestId, cancellationToken);
+            if (inspected?.MatchingCommitWitness == true)
+                throw new InvalidOperationException(
+                    "An independently matching target COMMIT witness exists. This approval cannot be attested as not committed or indeterminate.");
+            if (inspected?.WitnessStatus == "ApprovalChanged")
+                throw new InvalidOperationException(
+                    "Approval state changed during witness inspection. Reload before reconciling.");
+        }
 
         var originalStatus = state.Status;
         var now = DateTime.UtcNow;

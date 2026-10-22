@@ -4,6 +4,7 @@ import {
   buildDmlReconciliationRequest,
   canSubmitDmlReconciliation,
   dmlCommitEvidenceDescription,
+  dmlWitnessStatusDescription,
   hasExplicitTimezone,
   permittedDmlResolutions,
   type DmlReconciliationForm,
@@ -95,6 +96,15 @@ describe("durable DML reconciliation operator guardrails", () => {
     )).toBe(false);
     expect(() => buildDmlReconciliationRequest(base,
       { ...form, confirmation: "wrong" })).toThrow("explicit confirmation");
+  });
+
+  it("exposes only the positive witness as committed and never treats absence as rollback proof", () => {
+    expect(dmlWitnessStatusDescription("CommittedWitnessMatch")).toContain("positive COMMIT evidence");
+    expect(dmlWitnessStatusDescription("NotObserved")).toContain("does NOT establish rollback");
+    expect(dmlWitnessStatusDescription("TargetConfigurationChanged")).toContain("no target probe");
+    expect(dmlWitnessStatusDescription("EvidenceMismatch")).toContain("does not match");
+    expect(dmlWitnessStatusDescription("ReadUnavailable")).toContain("unknown");
+    expect(dmlWitnessStatusDescription("UNKNOWN")).toContain("No physical transaction conclusion");
   });
 
   it("never enables an action absent from the server allowlist", () => {

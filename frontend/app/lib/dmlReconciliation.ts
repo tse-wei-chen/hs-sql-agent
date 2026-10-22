@@ -72,6 +72,27 @@ export function buildDmlReconciliationRequest(
   };
 }
 
+export function dmlWitnessStatusDescription(status: string): string {
+  switch (status) {
+    case "CommittedWitnessMatch":
+      return "Matching committed witness observed in the bound target database. This is positive COMMIT evidence, not worker fencing.";
+    case "NotObserved":
+      return "No committed witness observed. This does NOT establish rollback, non-commit or worker quiescence.";
+    case "EvidenceMismatch":
+      return "The target witness does not match persisted approval evidence. Investigate possible table tampering or identity mismatch.";
+    case "TargetConfigurationChanged":
+      return "The current target configuration no longer matches the original encrypted approval binding; no target probe was performed.";
+    case "WitnessNotConfigured":
+      return "Target witness verification is not enabled for this host.";
+    case "ReadUnavailable":
+      return "Target witness could not be read. Its physical transaction outcome remains unknown.";
+    case "ApprovalChanged":
+      return "The approval changed during inspection. Refresh before acting.";
+    default:
+      return "Unrecognized witness evidence. No physical transaction conclusion can be drawn.";
+  }
+}
+
 export function dmlCommitEvidenceDescription(evidence: string): string {
   switch (evidence) {
     case "TargetCommitAcknowledged":

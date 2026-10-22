@@ -110,6 +110,41 @@ or untrusted witness cannot justify declaring `not_committed` or permitting
 a retry. The operator-only reconciliation API deliberately does **not**
 automatically promote `Executing` from this read.
 
+### Read-only operator inspection
+
+A human with `/runtime/security.edit` may inspect one uncertain approval via
+`GET /api/runtime/dml-approvals/reconciliation/{requestId}/witness`, or click
+**Inspect target witness** on the Admin Console reconciliation page.
+Management API keys cannot grant this permission.
+
+Before opening a target DB connection, the server checks the approval's
+database ID/provider/name and recomputes its original *HMAC-bound connection
+fingerprint* from the encrypted persisted resume payload. Changed or
+undecryptable connection configuration prevents a probe. The response returns
+only a categorical result, request ID, approval status, inspection time and
+safety warning; never SQL, target connection strings or evidence fingerprints.
+
+- `CommittedWitnessMatch`: matching witness observed in the originally bound
+  target. Positive target-commit evidence; the original worker may nevertheless
+  still need fencing before any state transition from `Executing`.
+- `NotObserved`: no witness row observed. **Not** proof of noncommit or
+  future worker quiescence.
+- `EvidenceMismatch`: a witness row was found but its evidence fingerprint
+  conflicts with the persisted approval. Treat as potentially tampered.
+- `TargetConfigurationChanged`: the target identity/connection no longer
+  matches the approved target; no probe is attempted.
+- `WitnessNotConfigured`, `ReadUnavailable`, `ApprovalChanged`: no usable
+  physical result, respectively because the feature is off, a probe failed,
+  or the Admin Store snapshot changed during I/O.
+
+Inspection never runs a DML mutation, writes an Admin Store status, reissues
+approvals, or unlocks reconciliation of `Executing`. For eligible terminal
+uncertain states, the backend independently re-checks this witness when an
+operator attempts to attest `not_committed` or `indeterminate` and rejects
+either outcome if a matching committed witness exists. A negative or
+unverifiable witness remains just one input for the operator's independent
+investigation, never an automatic disposition.
+
 ## Validation and remaining limitations
 
 Real SQLite tests verify all-or-nothing target DML and witness insertion for

@@ -353,7 +353,8 @@ public sealed class DurableDmlReconciliationServiceTests
     {
         var list = typeof(DurableDmlReconciliationController).GetMethod("List")!;
         var resolve = typeof(DurableDmlReconciliationController).GetMethod("Resolve")!;
-        foreach (var method in new[] { list, resolve })
+        var witness = typeof(DurableDmlReconciliationController).GetMethod("InspectWitness")!;
+        foreach (var method in new[] { list, resolve, witness })
         {
             var permission = Assert.Single(method.GetCustomAttributes(typeof(HasPermissionAttribute), true));
             Assert.Equal("/runtime/security.edit", ((HasPermissionAttribute)permission).Permission);
