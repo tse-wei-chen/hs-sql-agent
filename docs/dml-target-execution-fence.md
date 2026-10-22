@@ -168,10 +168,15 @@ before any application SQL. When an Oracle native schema snapshot is present, th
 finish all transaction-bound metadata verification **before** enrolling the
 target admission. Oracle dictionary revalidation after an uncommitted
 admission has been observed to invalidate that admission in real provider
-tests. For an Oracle fenced batch, every approved immutable statement's
-schema is verified together before admission, while row-set/affected-row
-proofs remain statement-by-statement after earlier mutations. Other five
-providers retain their existing per-statement schema revalidation. This
+tests. For **all Oracle atomic DML batches** (fenced or unfenced), every
+approved immutable statement's native schema is verified together
+**before any business mutation**, avoiding Oracle catalog reads between
+uncommitted DML statements. A fenced batch then enrolls admission;
+per-statement row-set and affected-row rechecks remain mandatory after
+earlier mutations. Other five providers retain their existing per-step
+schema revalidation. Oracle operators must verify DDL coordination for
+the gap between metadata attestation and DML acquisition; independent
+physical fencing/readiness does not replace schema authority. This
 ordering never permits application SQL before the target admission. They reject a missing Witness, missing enforced
 unique keys or nontransactional storage. This requires two extra
 SERIALIZABLE rollback transactions per fenced commit. Unfenced DML remains

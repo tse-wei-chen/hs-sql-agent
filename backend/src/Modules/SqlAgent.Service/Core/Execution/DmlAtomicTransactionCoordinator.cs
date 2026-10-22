@@ -89,13 +89,16 @@ internal sealed class DmlAtomicTransactionCoordinator(
         var returnedRows = ImmutableArray.CreateBuilder<IReadOnlyDictionary<string, object?>>();
         try
         {
-            // Oracle dictionary reads during native Schema Freshness may
-            // invalidate an earlier uncommitted admission. For fenced Oracle
-            // batches, prove every immutable plan against the *same* live
-            // transaction before admitting, with no intervening application
-            // mutation. Other dialects retain per-step revalidation.
-            var oraclePrevalidated = requireExecutionFence
-                && provider == SqlAgentToolType.Oracle;
+            // Oracle dictionary reads during native Schema Freshness can
+            // invalidate earlier uncommitted application DML OR admission.
+            // For all Oracle batches, verify the full immutable plan set
+            // before any application mutation or fencing admission.
+            // Other dialects retain per-step schema revalidation.
+            // Oracle native metadata reads can disrupt an earlier
+            // uncommitted transaction even without a target fence. The
+            // atomic-batch contract must never allow a second statement's
+            // schema proof to invalidate the first statement's DML.
+            var oraclePrevalidated = provider == SqlAgentToolType.Oracle;
             if (oraclePrevalidated)
             {
                 foreach (var plan in plans)
