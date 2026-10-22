@@ -341,8 +341,13 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         });
     }
 
-    [Fact]
-    public virtual async Task TargetFence_RealProvider_AdmissionSurvivesReadinessOnSameConnection()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public virtual async Task TargetFence_RealProvider_AdmissionSurvivesReadinessOnSameConnection(
+        bool useDapperMutation, bool revalidateSchema)
     {
         await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
         {
@@ -352,14 +357,37 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             var witness = new RelationalDmlTargetCommitWitness();
             await new DmlTargetFenceReadinessProbe().VerifyAsync(connection, provider, token);
 
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {table} (ID) VALUES (17)", provider);
+            var freshness = new NativeDmlSchemaSnapshotService();
+            var snapshot = revalidateSchema
+                ? await freshness.CaptureAsync(connection, provider, parsed, token)
+                : null;
+            var compiled = revalidateSchema
+                ? CoreDmlCompiler.CreateDefault().Compile(
+                    parsed, provider,
+                    new SqlPlanValidationContext("physical-fence-transaction-continuity")
+                        .WithSchemaSnapshot(snapshot!))
+                : null;
+
             var evidence = new DmlTargetCommitWitnessEvidence(
                 "after-probe-" + Guid.NewGuid().ToString("N"), new string('D', 64));
             await using (var tx = await connection.BeginTransactionAsync(
                 System.Data.IsolationLevel.Serializable, token))
             {
                 await fence.AdmitAsync(connection, tx, provider, evidence, token);
-                await ExecuteTargetFenceSqlAsync(connection,
-                    $"INSERT INTO {table} (ID) VALUES (17)", token, tx);
+                if (revalidateSchema)
+                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                        connection, tx, compiled!, snapshot!, freshness, token);
+
+                if (useDapperMutation)
+                    await Dapper.SqlMapper.ExecuteAsync(connection,
+                        new Dapper.CommandDefinition(
+                            $"INSERT INTO {table} (ID) VALUES (17)",
+                            transaction: tx, cancellationToken: token));
+                else
+                    await ExecuteTargetFenceSqlAsync(connection,
+                        $"INSERT INTO {table} (ID) VALUES (17)", token, tx);
                 await witness.WriteAsync(connection, tx, provider, evidence, token);
                 await tx.CommitAsync(token);
             }
