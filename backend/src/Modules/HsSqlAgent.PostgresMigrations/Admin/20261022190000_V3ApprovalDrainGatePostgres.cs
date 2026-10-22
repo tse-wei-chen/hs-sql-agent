@@ -42,6 +42,11 @@ public sealed class V3ApprovalDrainGatePostgres : Migration
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        // Do not mutate persisted approvals when removing only the marker.
+        // Neither silently drop the history marker while leaving the CHECK,
+        // nor drop the CHECK and accidentally re-admit legacy Pending rows.
+        throw new NotSupportedException(
+            "HsSqlAgent v3 DML approval admission is a one-way security migration. " +
+            "Do not roll this migration back; restore a coordinated backup with " +
+            "all DML workers stopped and reconcile outstanding approvals.");
     }
 }

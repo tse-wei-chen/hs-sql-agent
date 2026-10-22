@@ -14,6 +14,16 @@ namespace HsSqlAgent.Server.Test.Data;
 
 public sealed class SqliteMigrationIntegrationTests
 {
+    [Fact]
+    public void V3ApprovalDrainMigration_RefusesUnsafeDowngrade()
+    {
+        var error = Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = new HsSqlAgent.SqliteMigrations.Admin.V3ApprovalDrainGate().DownOperations;
+        });
+        Assert.Contains("one-way security migration", error.Message, StringComparison.Ordinal);
+    }
+
     private static DmlApprovalRequestState NewConsumedApproval(string id) => new()
     {
         RequestId = id,

@@ -46,6 +46,13 @@ public sealed class V3ApprovalDrainGate : Migration
 
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        // A rollback of an empty protocol marker must never reopen approvals.
+        // Dropping the migration history marker without removing the CHECK
+        // constraint leaves a database that EF calls v2 but still enforces v3.
+        // Actually removing that constraint would reopen legacy approvals.
+        // Stop the downgrade before EF generates any rollback SQL.
+        throw new NotSupportedException(
+            "HsSqlAgent v3 DML approval admission is a one-way security migration. " +
+            "Do not roll this migration back; restore a coordinated backup with " +
+            "all DML workers stopped and reconcile outstanding approvals.");
     }
 }

@@ -2,6 +2,18 @@
 
 This is an in-progress migration guide, not an already published release.
 
+## Downgrade safety
+
+The v3 Admin Store approval admission protocol is a **one-way migration** on
+SQLite and PostgreSQL. Its database CHECK constraint blocks v2 workers from
+creating new Pending/Executing approvals. EF migration downgrade is intentionally
+rejected: silently removing only the migration history marker would leave the
+actual schema at v3 while EF believes it is v2, whereas removing the CHECK would
+reopen unsafe legacy approvals. Rolling back deployed v3 code requires an
+operator-managed restore from a compatible backup, with DML workers stopped and
+unresolved approvals reconciled first. Do not use `dotnet ef database update`
+to reverse the v3 drain gate.
+
 ## Breaking changes
 
 - **Custom approval stores:** `IDmlApprovalChallengeStore.TryPromoteAsync` is required for atomic child-to-aggregate promotion. Both one-statement and multi-statement `execute_dml_sql` use the aggregate path. Custom implementations must implement atomic all-or-nothing promotion; sequential delete/add is not safe.
@@ -19,8 +31,9 @@ This is an in-progress migration guide, not an already published release.
 3. Deploy v3 and rebuild custom approval stores together. Ensure storage and authorization are healthy before resuming DML.
 4. Require fresh approval for challenges incompatible with v3; verify six-provider regression and structured `outcome_unknown` tests.
 5. Only enable opt-in native schema freshness or target execution fencing after provisioning tables/permissions and validating all participating target providers, including [rollback-only v3 target readiness and legacy-credential withdrawal](v3-target-fence-cutover.md). The new commit path also runs this proof on the actual target connection,
-adding two rollback-only SERIALIZABLE transactions to every opted-in fenced
-write. A passing new-identity probe does **not** prove that old binaries
+adding two rollback-only transactions to every opted-in fenced
+write (the Oracle witness unique-key diagnostic alone uses READ COMMITTED;
+all other readiness phases use SERIALIZABLE). A passing new-identity probe does **not** prove that old binaries
 have lost direct target DML authority.
 
 `AddHsSqlAgentNativeDmlSchemaFreshness()` and `AddHsSqlAgentTargetExecutionFence()` remain **opt-in**. All six provider fixtures now exercise real target admission, revocation, transaction rollback and witness effects, including independent revocation competition. This is NOT proof that all production workers enforce the protocol. Fleet enrollment, separately authorized supervised revocation, and safe `Executing` reconciliation are still unfinished; never treat experimental fencing as automatic authorization to reconcile a live worker. See [fence documentation](dml-target-execution-fence.md).

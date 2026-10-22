@@ -32,6 +32,16 @@ public sealed class PostgresMigrationFixture : IAsyncLifetime
 public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture fixture)
     : IClassFixture<PostgresMigrationFixture>
 {
+    [Fact]
+    public void V3ApprovalDrainMigration_RefusesUnsafeDowngrade()
+    {
+        var error = Assert.Throws<NotSupportedException>(() =>
+        {
+            _ = new HsSqlAgent.PostgresMigrations.Admin.V3ApprovalDrainGatePostgres().DownOperations;
+        });
+        Assert.Contains("one-way security migration", error.Message, StringComparison.Ordinal);
+    }
+
     private static DmlApprovalRequestState NewLegacyPendingApproval() => new()
     {
         RequestId = "postgres-v2-late-worker",
