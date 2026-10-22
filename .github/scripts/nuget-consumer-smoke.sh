@@ -81,6 +81,14 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Options;
+using SqlAgent.Service.Core.Execution;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -180,6 +188,107 @@ if (command.Sql.Contains("= 1", StringComparison.Ordinal))
     throw new InvalidOperationException("Packed SqlCore facade inlined a predicate literal that must remain parameterized.");
 
 Console.WriteLine($"Compiled public SqlCore query via packed Hosting dependency: {command.Sql}");
+
+// An external ASP.NET Core project must be able to use the modular v3 package
+// without inheriting the standalone host's identity, MVC or exception policy.
+var modularBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    EnvironmentName = Environments.Development
+});
+modularBuilder.Services.AddAuthentication(authentication =>
+{
+    authentication.DefaultScheme = "Host.Primary";
+    authentication.DefaultAuthenticateScheme = "Host.Primary";
+    authentication.DefaultChallengeScheme = "Host.Challenge";
+});
+var hostPolicy = new AuthorizationPolicyBuilder()
+    .RequireAuthenticatedUser()
+    .RequireClaim("host-admin", "true")
+    .Build();
+modularBuilder.Services.AddAuthorization(options =>
+{
+    options.DefaultPolicy = hostPolicy;
+    options.AddPolicy("Host.SqlAgentAdmin", hostPolicy);
+});
+modularBuilder.Services.AddControllers().AddJsonOptions(options =>
+{
+    // Deliberately unlike HsSqlAgent's own wire serialization.
+    options.JsonSerializerOptions.PropertyNamingPolicy = null;
+    options.JsonSerializerOptions.DictionaryKeyPolicy = null;
+    options.JsonSerializerOptions.PropertyNameCaseInsensitive = false;
+});
+
+var hs = modularBuilder.Services.AddHsSqlAgentCore();
+hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentAdminStore(options =>
+{
+    options.Provider = "Sqlite";
+    options.ConnectionString = "Data Source=modular-host-consumer-smoke.db";
+});
+hs.AddHsSqlAgentHostAuthorization("Host.SqlAgentAdmin");
+hs.AddHsSqlAgentAdminApi();
+
+await using var modularApp = modularBuilder.Build();
+modularApp.UseAuthentication();
+modularApp.UseAuthorization();
+modularApp.UseHsSqlAgentAdminApi();
+modularApp.MapControllers();
+modularApp.MapGet("/host/probe", () => "host-ok");
+
+var authentication = modularApp.Services
+    .GetRequiredService<IOptions<AuthenticationOptions>>().Value;
+if (authentication.DefaultScheme != "Host.Primary"
+    || authentication.DefaultAuthenticateScheme != "Host.Primary"
+    || authentication.DefaultChallengeScheme != "Host.Challenge")
+    throw new InvalidOperationException("Modular NuGet mount replaced the host authentication defaults.");
+
+var authorization = modularApp.Services
+    .GetRequiredService<IOptions<AuthorizationOptions>>().Value;
+if (!ReferenceEquals(hostPolicy, authorization.DefaultPolicy))
+    throw new InvalidOperationException("Modular NuGet mount replaced the host authorization policy.");
+
+var jsonOptions = modularApp.Services.GetRequiredService<IOptions<JsonOptions>>()
+    .Value.JsonSerializerOptions;
+if (jsonOptions.PropertyNamingPolicy is not null
+    || jsonOptions.DictionaryKeyPolicy is not null
+    || jsonOptions.PropertyNameCaseInsensitive)
+    throw new InvalidOperationException("Modular NuGet mount overwrote the host MVC JSON defaults.");
+
+var apiDescriptors = modularApp.Services
+    .GetRequiredService<IActionDescriptorCollectionProvider>()
+    .ActionDescriptors.Items.OfType<ControllerActionDescriptor>();
+if (!apiDescriptors.Any(descriptor =>
+        descriptor.ControllerTypeInfo.AsType().FullName == "HsSqlAgent.Server.Controllers.DbManagementController"))
+    throw new InvalidOperationException("Modular NuGet mount did not publish the HsSqlAgent Admin API.");
+
+var hostRoutes = ((IEndpointRouteBuilder)modularApp).DataSources
+    .SelectMany(source => source.Endpoints)
+    .OfType<RouteEndpoint>();
+if (!hostRoutes.Any(endpoint => endpoint.RoutePattern.RawText == "/host/probe"))
+    throw new InvalidOperationException("Modular NuGet mount lost the host application's own endpoint.");
+
+var customStore = new SmokeCustomChallengeStore();
+_ = customStore.TryPromoteAsync(Array.Empty<DmlApprovalChallenge>(),
+    new DmlApprovalChallenge("plan", null, 0, "policy", "context",
+        DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(1), "aggregate"));
+Console.WriteLine("Packed modular HsSqlAgent.Server host and v3 custom approval store smoke passed.");
+
+sealed class SmokeCustomChallengeStore : IDmlApprovalChallengeStore
+{
+    public ValueTask RegisterAsync(
+        DmlApprovalChallenge challenge, CancellationToken cancellationToken = default) =>
+        ValueTask.CompletedTask;
+
+    public ValueTask<bool> TryConsumeAsync(
+        DmlApprovalChallenge challenge, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(false);
+
+    public ValueTask<bool> TryPromoteAsync(
+        IReadOnlyList<DmlApprovalChallenge> children,
+        DmlApprovalChallenge aggregate,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(false);
+}
 
 sealed class SmokeApprovalProvider : IDmlApprovalProvider
 {

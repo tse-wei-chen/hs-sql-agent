@@ -63,13 +63,20 @@ feature addition as another major release.
 2. Run round-trip and unsupported-version tests for every persisted protocol,
    including a real Pending→restart→complete path and independent witness
    inspection.
-3. Run real Redis Lua compare/promote races and migration isolation tests.
+3. From an **independently generated ASP.NET Core application**, restore
+   the packed `HsSqlAgent.Hosting` / transitive `HsSqlAgent.Server` NuGet
+   graph and run both first-party standard hosting and modular host mounting.
+   Verify host authentication defaults, authorization policy, MVC JSON
+   options, Admin API/controller discovery, host endpoint preservation, and
+   compile-time third-party `IDmlApprovalChallengeStore` implementation.
+   A source-project test is not a substitute for a packaged consumer.
+4. Run real Redis Lua compare/promote races and migration isolation tests.
    No sequential register/consume replacement is allowed.
-4. Run real six-provider grammar, schema, DML and physical fence tests;
+5. Run real six-provider grammar, schema, DML and physical fence tests;
    maintain explicit target environment limitations.
-5. Confirm the v2→v3 upgrade procedure with a rolling-deployment **rejection**
+6. Confirm the v2→v3 upgrade procedure with a rolling-deployment **rejection**
    exercise and a coordinated-drain success path before production release.
-6. Publish the versioned doc-site migration page, tagged images, package
+7. Publish the versioned doc-site migration page, tagged images, package
    metadata, and upgrade notes only for artifacts which actually exist.
 
 **Open before claiming the entire v3 surface is frozen:** comprehensive
