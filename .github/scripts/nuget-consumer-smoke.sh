@@ -70,7 +70,11 @@ dotnet add "$consumer_dir" package HsSqlAgent.Hosting --version "$version" --sou
 cat > "$consumer_dir/Program.cs" <<'EOF'
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Reflection;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Linq;
 using System.Text;
 using HsSqlAgent.Approvals;
@@ -82,12 +86,16 @@ using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using SqlAgent.Service.Core.Execution;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -195,12 +203,17 @@ var modularBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     EnvironmentName = Environments.Development
 });
+// Bind only a loopback ephemeral port; this must never depend on the
+// machine's pre-existing listeners or hard-coded CI port availability.
+modularBuilder.WebHost.UseUrls("http://127.0.0.1:0");
 modularBuilder.Services.AddAuthentication(authentication =>
 {
     authentication.DefaultScheme = "Host.Primary";
     authentication.DefaultAuthenticateScheme = "Host.Primary";
     authentication.DefaultChallengeScheme = "Host.Challenge";
-});
+})
+.AddScheme<AuthenticationSchemeOptions, SmokeHostAuthenticationHandler>("Host.Primary", _ => { })
+.AddScheme<AuthenticationSchemeOptions, SmokeHostAuthenticationHandler>("Host.Challenge", _ => { });
 var hostPolicy = new AuthorizationPolicyBuilder()
     .RequireAuthenticatedUser()
     .RequireClaim("host-admin", "true")
@@ -242,7 +255,7 @@ modularApp.UseAuthentication();
 modularApp.UseAuthorization();
 modularApp.UseHsSqlAgentAdminApi();
 modularApp.MapControllers();
-modularApp.MapGet("/host/probe", () => "host-ok");
+modularApp.MapGet("/host/probe", () => "host-ok").RequireAuthorization();
 
 var authentication = modularApp.Services
     .GetRequiredService<IOptions<AuthenticationOptions>>().Value;
@@ -276,11 +289,77 @@ var hostRoutes = ((IEndpointRouteBuilder)modularApp).DataSources
 if (!hostRoutes.Any(endpoint => endpoint.RoutePattern.RawText == "/host/probe"))
     throw new InvalidOperationException("Modular NuGet mount lost the host application's own endpoint.");
 
+// A descriptor-only smoke misses auth and route-mount failures. Execute real
+// HTTP requests against the packed NuGet consumer with its host-owned schemes.
+await modularApp.StartAsync();
+try
+{
+    var server = modularApp.Services.GetRequiredService<IServer>();
+    var addresses = server.Features.Get<IServerAddressesFeature>()
+        ?? throw new InvalidOperationException("Test host did not expose its bound listener address.");
+    var address = addresses.Addresses.Single(value =>
+        value.StartsWith("http://127.0.0.1:", StringComparison.Ordinal)
+        && !value.EndsWith(":0", StringComparison.Ordinal));
+    using var client = new HttpClient { BaseAddress = new Uri(address) };
+
+    using var unauthenticatedHost = await client.GetAsync("/host/probe");
+    if (unauthenticatedHost.StatusCode != HttpStatusCode.Unauthorized)
+        throw new InvalidOperationException(
+            $"Host policy was bypassed: unauthenticated host endpoint returned {(int)unauthenticatedHost.StatusCode}.");
+
+    using var unauthenticatedAdmin = await client.GetAsync("/api/runtime/dml-approvals/reconciliation");
+    if (unauthenticatedAdmin.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden))
+        throw new InvalidOperationException(
+            $"Modular Admin authorization was bypassed or misconfigured: status {(int)unauthenticatedAdmin.StatusCode}.");
+
+    client.DefaultRequestHeaders.Add("X-Smoke-Host-User", "allow");
+    using var authorizedHost = await client.GetAsync("/host/probe");
+    if (authorizedHost.StatusCode != HttpStatusCode.OK
+        || await authorizedHost.Content.ReadAsStringAsync() != "host-ok")
+        throw new InvalidOperationException("Host-authenticated endpoint is no longer accessible after modular mount.");
+
+    using var authorizedAdmin = await client.GetAsync("/api/runtime/dml-approvals/reconciliation?limit=2");
+    if (authorizedAdmin.StatusCode != HttpStatusCode.OK)
+        throw new InvalidOperationException(
+            $"Host-authorized modular Admin API returned {(int)authorizedAdmin.StatusCode}.");
+    using var payload = JsonDocument.Parse(await authorizedAdmin.Content.ReadAsStringAsync());
+    if (payload.RootElement.ValueKind != JsonValueKind.Array)
+        throw new InvalidOperationException("The mounted Admin API returned an unexpected JSON contract.");
+
+    Console.WriteLine("Packed external ASP.NET Core host HTTP/auth/Admin API integration smoke passed.");
+}
+finally
+{
+    await modularApp.StopAsync();
+}
+
 var customStore = new SmokeCustomChallengeStore();
 _ = customStore.TryPromoteAsync(Array.Empty<DmlApprovalChallenge>(),
     new DmlApprovalChallenge("plan", null, 0, "policy", "context",
         DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(1), "aggregate"));
 Console.WriteLine("Packed modular HsSqlAgent.Server host and v3 custom approval store smoke passed.");
+
+sealed class SmokeHostAuthenticationHandler(
+    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        if (!Request.Headers.TryGetValue("X-Smoke-Host-User", out var marker)
+            || !string.Equals(marker.ToString(), "allow", StringComparison.Ordinal))
+            return Task.FromResult(AuthenticateResult.NoResult());
+
+        var identity = new ClaimsIdentity(
+        [
+            new Claim(ClaimTypes.NameIdentifier, "smoke-host-user"),
+            new Claim("host-admin", "true")
+        ], Scheme.Name);
+        var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
+        return Task.FromResult(AuthenticateResult.Success(ticket));
+    }
+}
 
 sealed class SmokeCustomChallengeStore : IDmlApprovalChallengeStore
 {
