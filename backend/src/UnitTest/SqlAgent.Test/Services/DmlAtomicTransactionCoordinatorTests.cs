@@ -668,6 +668,56 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task PostCommitEvidenceVerification_IsNonReplayableWhenEitherProofIsMissing(
+        bool missingAdmission, bool missingWitness)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"hs-sql-agent-postcommit-evidence-{Guid.NewGuid():N}.db");
+        var cs = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            await ProvisionFencedSqliteAsync(cs, ct);
+            var proof = new DmlTargetCommitWitnessEvidence(
+                "postcommit-" + Guid.NewGuid().ToString("N"), new string('B', 64));
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+            await using var connection = new SqliteConnection(cs);
+            await connection.OpenAsync(ct);
+            await using (var tx = await connection.BeginTransactionAsync(ct))
+            {
+                if (!missingAdmission)
+                    await fence.AdmitAsync(connection, tx, SqlAgentToolType.Sqlite, proof, ct);
+                if (!missingWitness)
+                    await witness.WriteAsync(connection, tx, SqlAgentToolType.Sqlite, proof, ct);
+                await tx.CommitAsync(ct);
+            }
+
+            if (missingAdmission || missingWitness)
+            {
+                var error = await Assert.ThrowsAsync<DmlCommitOutcomeUnknownException>(() =>
+                    DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                        connection, SqlAgentToolType.Sqlite, proof, fence, witness, ct));
+                Assert.Contains("could not both be verified",
+                    error.InnerException?.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                    connection, SqlAgentToolType.Sqlite, proof, fence, witness, ct);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task RequestedFenceWithoutWriter_RejectsBeforeAnyTargetConnection()
     {

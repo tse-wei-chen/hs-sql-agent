@@ -192,7 +192,8 @@ public sealed class DmlCoordinator(
                     plan,
                     approvedChallenge,
                     cancellationToken,
-                    witnessEvidence);
+                    witnessEvidence,
+                    requireExecutionFence);
                 if (insertResult.Committed)
                     acknowledgedCommit = insertResult;
                 return insertResult;
@@ -248,6 +249,10 @@ public sealed class DmlCoordinator(
             await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
                 witnessEvidence, cancellationToken);
             await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+            if (requireExecutionFence)
+                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                    connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
+                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
             acknowledgedCommit = new DmlCommitResult(
                 true,
                 execution.AffectedRows,
@@ -328,7 +333,8 @@ public sealed class DmlCoordinator(
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         CancellationToken cancellationToken,
-        DmlTargetCommitWitnessEvidence? witnessEvidence)
+        DmlTargetCommitWitnessEvidence? witnessEvidence,
+        bool requireExecutionFence)
     {
         var execution = await ExecuteMutationAsync(
             connection,
@@ -349,6 +355,10 @@ public sealed class DmlCoordinator(
         await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
             witnessEvidence, cancellationToken);
         await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+        if (requireExecutionFence)
+            await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
+                _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
         return new DmlCommitResult(
             true,
             execution.AffectedRows,

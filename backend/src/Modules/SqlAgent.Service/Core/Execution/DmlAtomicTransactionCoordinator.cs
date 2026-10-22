@@ -149,6 +149,10 @@ internal sealed class DmlAtomicTransactionCoordinator(
                 await _targetCommitWitness!.WriteAsync(connection, transaction, provider,
                     witnessEvidence, cancellationToken);
             await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+            if (requireExecutionFence)
+                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                    connection, provider, witnessEvidence!,
+                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
             acknowledgedCommit = new DmlCommitResult(
                 true,
                 totalAffected,
