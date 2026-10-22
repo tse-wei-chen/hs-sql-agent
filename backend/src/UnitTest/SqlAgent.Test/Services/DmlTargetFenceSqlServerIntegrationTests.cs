@@ -20,6 +20,109 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
     private static readonly RelationalDmlTargetCommitWitness Witness = new();
 
     [Fact]
+    public async Task LegacyWorkerCutover_RequiresRealGrantRemovalAndSessionDrain()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var target = await Target.CreateAsync(ct);
+        var login = "hsa_old_" + Guid.NewGuid().ToString("N")[..15];
+        const string password = "LegacyTestOnly#1234!";
+        var verifier = new SqlServerLegacyDmlCutoverVerifier();
+        var rootCs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION")!;
+        await using var root = new SqlConnection(rootCs);
+        await root.OpenAsync(ct);
+        await ExecuteAsync(root,
+            $"CREATE LOGIN [{login}] WITH PASSWORD = '{password}', CHECK_POLICY = OFF", ct);
+        try
+        {
+            await using var admin = await target.OpenAsync(ct);
+            await ExecuteAsync(admin,
+                $"CREATE USER [{login}] FOR LOGIN [{login}]; " +
+                $"GRANT SELECT, INSERT, UPDATE, DELETE ON dbo.hs_sql_agent_dml_probe TO [{login}]", ct);
+            try
+            {
+                var grant = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    verifier.VerifyAsync(admin, login, ct));
+                Assert.Contains("effective DML", grant.Message);
+
+                // A db_datawriter role is a second, inherited write path,
+                // even after direct grants are removed.
+                await ExecuteAsync(admin,
+                    $"REVOKE INSERT, UPDATE, DELETE ON dbo.hs_sql_agent_dml_probe FROM [{login}]; " +
+                    $"ALTER ROLE [db_datawriter] ADD MEMBER [{login}]", ct);
+                var inherited = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    verifier.VerifyAsync(admin, login, ct));
+                Assert.Contains("effective DML", inherited.Message);
+                await ExecuteAsync(admin,
+                    $"ALTER ROLE [db_datawriter] DROP MEMBER [{login}]", ct);
+
+                var oldLoginCs = new SqlConnectionStringBuilder(target.ConnectionString)
+                {
+                    UserID = login, Password = password, Pooling = false
+                }.ConnectionString;
+                await using (var oldSession = new SqlConnection(oldLoginCs))
+                {
+                    await oldSession.OpenAsync(ct);
+                    var live = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                        verifier.VerifyAsync(admin, login, ct));
+                    Assert.Contains("activeSessions=", live.Message);
+                }
+
+                var result = await verifier.VerifyAsync(admin, login, ct);
+                Assert.Equal(login, result.LegacyLogin);
+                Assert.True(result.CheckedRelations > 0);
+            }
+            finally
+            {
+                await ExecuteAsync(admin, $"DROP USER IF EXISTS [{login}]", ct);
+            }
+        }
+        finally
+        {
+            await ExecuteAsync(root, $"DROP LOGIN IF EXISTS [{login}]", CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task LegacyWorkerCutover_RejectsUnknownOrUnprivilegedInspector()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var target = await Target.CreateAsync(ct);
+        await using var admin = await target.OpenAsync(ct);
+        var verifier = new SqlServerLegacyDmlCutoverVerifier();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            verifier.VerifyAsync(admin, "missing_legacy_worker", ct));
+
+        // The verifier must never accept an ordinary SQL login's restricted
+        // view of sys.dm_exec_sessions as if it were cluster-wide.
+        var login = "hsa_restricted_" + Guid.NewGuid().ToString("N")[..12];
+        const string password = "LegacyTestOnly#1234!";
+        await using var root = new SqlConnection(
+            Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION")!);
+        await root.OpenAsync(ct);
+        await ExecuteAsync(root,
+            $"CREATE LOGIN [{login}] WITH PASSWORD = '{password}', CHECK_POLICY = OFF", ct);
+        try
+        {
+            await ExecuteAsync(admin, $"CREATE USER [{login}] FOR LOGIN [{login}]", ct);
+            try
+            {
+                var cs = new SqlConnectionStringBuilder(target.ConnectionString)
+                {
+                    UserID = login, Password = password, Pooling = false
+                }.ConnectionString;
+                await using var unprivileged = new SqlConnection(cs);
+                await unprivileged.OpenAsync(ct);
+                var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    verifier.VerifyAsync(unprivileged, login, ct));
+                Assert.Contains("sysadmin-owned", error.Message);
+            }
+            finally { await ExecuteAsync(admin, $"DROP USER IF EXISTS [{login}]", ct); }
+        }
+        finally { await ExecuteAsync(root, $"DROP LOGIN IF EXISTS [{login}]", CancellationToken.None); }
+    }
+
+    [Fact]
     public async Task RevocationFirst_RejectsLateWorkerBeforeMutation()
     {
         var ct = TestContext.Current.CancellationToken;
