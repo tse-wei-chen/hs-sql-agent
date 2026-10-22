@@ -112,7 +112,7 @@ public class HostModeInitializationTests
         var databasePath = Path.Combine(Path.GetTempPath(), $"hs-sql-agent-legacy-{Guid.NewGuid():N}.db");
         try
         {
-            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}"))
+            using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath};Pooling=False"))
             {
                 connection.Open();
                 using var command = connection.CreateCommand();
@@ -149,7 +149,7 @@ public class HostModeInitializationTests
     private static HsSqlAgentServiceOptions CreateOptions(string databasePath) => new()
     {
         AdminDatabaseProvider = "Sqlite",
-        AdminConnectionString = $"Data Source={databasePath}",
+        AdminConnectionString = $"Data Source={databasePath};Pooling=False",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
     };
 
