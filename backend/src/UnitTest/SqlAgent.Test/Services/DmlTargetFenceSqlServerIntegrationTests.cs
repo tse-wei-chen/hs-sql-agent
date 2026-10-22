@@ -67,6 +67,13 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
                     Assert.Contains("activeSessions=", live.Message);
                 }
 
+                var credentialStillValid = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    verifier.VerifyAsync(admin, login, ct));
+                Assert.Contains("still enabled", credentialStillValid.Message);
+
+                // Removing grants and sessions does NOT disable credentials.
+                // SQL Server must itself confirm the retired login is disabled.
+                await ExecuteAsync(root, $"ALTER LOGIN [{login}] DISABLE", ct);
                 var result = await verifier.VerifyAsync(admin, login, ct);
                 Assert.Equal(login, result.LegacyLogin);
                 Assert.True(result.CheckedRelations > 0);
@@ -78,7 +85,7 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
         }
         finally
         {
-            await ExecuteAsync(root, $"DROP LOGIN IF EXISTS [{login}]", CancellationToken.None);
+            await ExecuteAsync(root, $"DROP LOGIN [{login}]", CancellationToken.None);
         }
     }
 
@@ -119,7 +126,7 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
             }
             finally { await ExecuteAsync(admin, $"DROP USER IF EXISTS [{login}]", ct); }
         }
-        finally { await ExecuteAsync(root, $"DROP LOGIN IF EXISTS [{login}]", CancellationToken.None); }
+        finally { await ExecuteAsync(root, $"DROP LOGIN [{login}]", CancellationToken.None); }
     }
 
     [Fact]

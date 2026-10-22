@@ -208,3 +208,6 @@ database transaction implementation, **not** a production authorization
 inventory. Customer-specific privilege withdrawal and old-session termination
 must be recorded as deployment evidence before calling Target Fence
 production-ready for that topology.
+
+
+SQL Server legacy worker cutover requires a disabled retired SQL login. Externally managed Windows/AD identities cannot be attested by the local verifier.

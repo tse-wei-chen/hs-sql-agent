@@ -41,9 +41,10 @@ public sealed class SqlServerLegacyDmlCutoverVerifier
         // never be mistaken for evidence that an old worker cannot connect.
         await using var principal = openAdministrativeConnection.CreateCommand();
         principal.CommandText = """
-            SELECT dp.name, sp.name
+            SELECT dp.name, sp.name, sl.is_disabled
             FROM sys.server_principals AS sp
             JOIN sys.database_principals AS dp ON dp.sid = sp.sid
+            LEFT JOIN sys.sql_logins AS sl ON sl.principal_id = sp.principal_id
             WHERE sp.name = @login AND sp.type IN ('S', 'U')
               AND dp.type IN ('S', 'U')
             """;
@@ -53,12 +54,17 @@ public sealed class SqlServerLegacyDmlCutoverVerifier
         loginParameter.Value = legacyLogin;
         principal.Parameters.Add(loginParameter);
         string mappedUser;
+        bool disabledSqlLogin;
         await using (var reader = await principal.ExecuteReaderAsync(cancellationToken))
         {
             if (!await reader.ReadAsync(cancellationToken))
                 throw new InvalidOperationException(
                     "SQL Server legacy login is missing or not mapped to a known target-database user.");
             mappedUser = reader.GetString(0);
+            // A Windows/AD principal has no local SQL login disable flag.
+            // Without independent domain-level revocation proof it cannot
+            // pass this SQL Server-local cutover verifier.
+            disabledSqlLogin = !reader.IsDBNull(2) && reader.GetBoolean(2);
             if (await reader.ReadAsync(cancellationToken))
                 throw new InvalidOperationException("SQL Server legacy login maps ambiguously to multiple users.");
         }
@@ -168,6 +174,12 @@ public sealed class SqlServerLegacyDmlCutoverVerifier
             throw new InvalidOperationException(
                 $"SQL Server legacy login still has effective DML or ALTER/CONTROL rights " +
                 $"on {writable} target relations. Deny promotion and revoke effective write authority.");
+
+        if (!disabledSqlLogin)
+            throw new InvalidOperationException(
+                "SQL Server legacy login is still enabled or uses an externally managed " +
+                "Windows/AD identity. Disable the retired SQL login and independently " +
+                "verify external identities before certifying a credential cutover.");
 
         return new SqlServerLegacyDmlCutoverEvidence(
             legacyLogin, objectCount, DateTimeOffset.UtcNow);
