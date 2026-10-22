@@ -14,7 +14,10 @@
    built-in probe begins SERIALIZABLE, inserts a unique `Admitted` row in
    `HS_SQL_AGENT_DML_FENCE`, inserts its matching row in
    `HS_SQL_AGENT_DML_WITNESS`, **rolls back**, and reads both tables to
-   confirm neither row persisted. It never executes application SQL,
+   confirm neither row persisted. It also deliberately retries the same
+   request ID inside the two rollback-only transactions and requires the
+   target's **physical UNIQUE/PRIMARY KEY constraints** to reject duplicate
+   Fence and Witness entries independently. It never executes application SQL,
    commits a probe row or changes any Admin Store approval.
    Missing tables, missing privileges, unsupported drivers, failed rollback,
    residual rows and cancellation must cause **readiness failure**, never a
@@ -125,8 +128,9 @@ admission semantics. Never interpret read-replica lag as a missing commit.
 
 ## CI evidence and what it does not prove
 
-The six real provider integration fixtures execute readiness success and
-injected witness-failure rollback paths as well as admitted/witness atomicity
+The six real provider integration fixtures execute readiness success,
+real missing-witness and missing-unique-key failures, plus injected witness
+failure rollback paths as well as admitted/witness atomicity
 and independent revoker races. These are enforceable test results for the
 database transaction implementation, **not** a production authorization
 inventory. Customer-specific privilege withdrawal and old-session termination

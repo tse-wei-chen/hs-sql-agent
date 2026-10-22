@@ -49,6 +49,9 @@ public sealed class DmlTargetFenceReadinessProbe
             "fence-probe-" + Guid.NewGuid().ToString("N"),
             Convert.ToHexString(RandomNumberGenerator.GetBytes(32)));
 
+        // Phase 1: both real writes must enlist in one physical DML
+        // transaction, and the fence REQUEST_ID must be UNIQUE. A table
+        // that merely accepts INSERT/ROLLBACK is NOT a valid fence.
         await using (var transaction = await openConnection.BeginTransactionAsync(
                          IsolationLevel.Serializable, cancellationToken))
         {
@@ -58,20 +61,74 @@ public sealed class DmlTargetFenceReadinessProbe
                     openConnection, transaction, provider, evidence, cancellationToken);
                 await witness.WriteAsync(
                     openConnection, transaction, provider, evidence, cancellationToken);
+
+                var duplicateRejected = false;
+                try
+                {
+                    await fence.AdmitAsync(
+                        openConnection, transaction, provider, evidence, cancellationToken);
+                }
+                catch (DbException)
+                {
+                    duplicateRejected = true;
+                }
+
+                if (!duplicateRejected)
+                    throw new InvalidOperationException(
+                        "Target fence readiness failed: REQUEST_ID admission was not rejected twice. " +
+                        "A database-enforced unique key is required.");
             }
             catch (Exception failure)
             {
-                // Cancellation does not eliminate the need for physical
-                // rollback. Never present an uncertain rollback as success.
                 await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
                     transaction, failure);
                 DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
                 throw;
             }
 
-            // A probe must never COMMIT an admission: it could permanently
-            // poison a real approval namespace. A rollback failure is fatal,
-            // never a successful readiness result.
+            // A duplicate-key error may abort the entire transaction (e.g.
+            // PostgreSQL). Always roll back before starting the second probe.
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await transaction.RollbackAsync(cleanup.Token);
+        }
+
+        // Phase 2: the witness REQUEST_ID must also be UNIQUE. Include the
+        // matching admission to support deployments with a witness→fence
+        // foreign key. Again, no probe transaction is ever committed.
+        await using (var transaction = await openConnection.BeginTransactionAsync(
+                         IsolationLevel.Serializable, cancellationToken))
+        {
+            try
+            {
+                await fence.AdmitAsync(
+                    openConnection, transaction, provider, evidence, cancellationToken);
+                await witness.WriteAsync(
+                    openConnection, transaction, provider, evidence, cancellationToken);
+
+                var duplicateRejected = false;
+                try
+                {
+                    await witness.WriteAsync(
+                        openConnection, transaction, provider, evidence, cancellationToken);
+                }
+                catch (DbException)
+                {
+                    duplicateRejected = true;
+                }
+
+                if (!duplicateRejected)
+                    throw new InvalidOperationException(
+                        "Target fence readiness failed: REQUEST_ID witness was not rejected twice. " +
+                        "A database-enforced unique key is required.");
+            }
+            catch (Exception failure)
+            {
+                await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
+                    transaction, failure);
+                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                throw;
+            }
+
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             await transaction.RollbackAsync(cleanup.Token);
         }

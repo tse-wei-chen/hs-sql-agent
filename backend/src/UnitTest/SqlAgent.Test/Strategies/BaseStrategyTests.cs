@@ -134,6 +134,31 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         }, provisionWitness: false);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public virtual async Task TargetFence_RealProvider_MissingUniqueKeyFailsReadiness(bool fenceKeyMissing)
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+
+            var failure = await Record.ExceptionAsync(() =>
+                new DmlTargetFenceReadinessProbe().VerifyAsync(connection, provider, token));
+            Assert.IsType<InvalidOperationException>(failure);
+            Assert.Contains("unique key", failure.Message, StringComparison.OrdinalIgnoreCase);
+
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_WITNESS";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(connection, table, token));
+        }, enforceFencePrimaryKey: !fenceKeyMissing,
+           enforceWitnessPrimaryKey: fenceKeyMissing);
+    }
+
     private sealed class ReadinessRejectedWitness : IDmlTargetCommitWitness
     {
         public Task WriteAsync(
@@ -318,7 +343,9 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
 
     private async Task WithTargetFenceTablesAsync(
         Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion,
-        bool provisionWitness = true)
+        bool provisionWitness = true,
+        bool enforceFencePrimaryKey = true,
+        bool enforceWitnessPrimaryKey = true)
     {
         var provider = Strategy.DbType;
         var token = TestContext.Current.CancellationToken;
@@ -335,12 +362,14 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var requestType = $"{prefix}(64{charSize})";
         var kindType = $"{prefix}(16{charSize})";
         var fingerprintType = oracle ? "CHAR(64 CHAR)" : "CHAR(64)";
+        var fenceKey = enforceFencePrimaryKey ? " PRIMARY KEY" : string.Empty;
+        var witnessKey = enforceWitnessPrimaryKey ? " PRIMARY KEY" : string.Empty;
         var fenceSchema = $"CREATE TABLE HS_SQL_AGENT_DML_FENCE (" +
-            $"REQUEST_ID {requestType} NOT NULL PRIMARY KEY, " +
+            $"REQUEST_ID {requestType} NOT NULL{fenceKey}, " +
             $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL, " +
             $"ENTRY_KIND {kindType} NOT NULL)" + suffix;
         var witnessSchema = $"CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
-            $"REQUEST_ID {requestType} NOT NULL PRIMARY KEY, " +
+            $"REQUEST_ID {requestType} NOT NULL{witnessKey}, " +
             $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL)" + suffix;
         var probeSchema = $"CREATE TABLE {probe} (ID INTEGER PRIMARY KEY)" + suffix;
         await using var ddl = ProviderStrategy.CreateConnection(connectionString);

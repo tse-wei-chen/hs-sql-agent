@@ -152,6 +152,9 @@ or prove that an earlier worker has stopped.
 
 For a coordinated, provider-specific cutover and the rollback-only connection
 readiness check, see [v3 Target Fence credential cutover](v3-target-fence-cutover.md).
+The probe also requires both target tables to enforce an actual unique
+`REQUEST_ID` key: a schema that allows duplicate admission or witness
+records is not a functioning fence, even if ordinary INSERT succeeds.
 
 
 
