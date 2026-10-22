@@ -106,8 +106,20 @@ out-of-band deletion, UPDATE, triggers, or insertions by unrelated principals.
 Grant least-privilege INSERT/SELECT for the DML runtime and the authorized
 fencing operator. Avoid deploying with mixed or unverified connection
 routing (e.g., read replica lag, untrusted multi-primary replication).
-Live concurrency interoperability across PostgreSQL, MySQL, SQL Server,
-Oracle and Firebird is **not yet demonstrated**.
+PostgreSQL 16 and MySQL 8 now have real CI integration coverage for the
+fixed SQL/ADO parameters and target transaction boundaries. Each test creates
+an isolated PostgreSQL schema or an isolated MySQL InnoDB database with the
+production-style unique fence and witness tables. Tests cover revocation-first,
+admission-first, rollback, missing-witness rollback, and an independently
+connected revoker contending with an uncommitted admitted worker. A revoker
+must never acknowledge success while a competing worker holds uncommitted
+admission. These are **kernel-level physical database tests**, not a claim
+of fleet-wide fencing or automatic `Executing` reconciliation.
+
+SQL Server, Oracle and Firebird live concurrency interoperability is **not
+yet demonstrated**. PostgreSQL/MySQL coverage also does not prove that every
+production deployment uses a single authoritative writer or that all fleet
+members enforce `target-fence-v1`.
 
 ## Opt-in and rollout
 
@@ -143,6 +155,9 @@ table row appears.
 Real SQLite tests cover worker-first, revoker-first, SQL rollback, target
 COMMIT witness coexistence, single-statement and atomic-batch execution,
 restarted durable approvals, and missing component fail-closed behavior.
+PostgreSQL/MySQL CI tests additionally exercise real server-side unique-key
+conflicts, committed/rolled-back witness atomicity, revocation and a concurrent
+uncommitted admission.
 The unique-key protocol is not the same as a verified fleet-wide fencing
 deployment. A positive `Revoked` entry can become strong negative-outcome
 evidence **only** when the approval has the versioned protocol, target HMAC

@@ -594,6 +594,17 @@ published as measured percentages or silently set to 100.
       **Still open:** fleet-version enforcement, supervised revocation API,
       six-provider real unique-index/transaction semantics and admission
       race fault injection before `Executing` can be resolved.
+- [x] Exercise real **PostgreSQL 16 and MySQL 8 target-fence/witness
+      transactions in CI** (separate from the SQLite model): isolated
+      PostgreSQL schemas and MySQL InnoDB databases; direct ADO admission,
+      revocation and COMMIT-witness writes; independent target connections;
+      revocation-first, worker-first, rolled-back admission, absent witness
+      rollback and concurrent revoker vs uncommitted admitted worker.
+      The CI job requires `TEST_POSTGRES_CONNECTION` and
+      `TEST_MYSQL_CONNECTION`; it fails rather than silently skipping
+      when those values are missing. Still open: real SQL Server, Oracle
+      and Firebird concurrency semantics, fleet-version validation,
+      controlled revocation/reconciliation and authoritative topology proof.
 - [x] Seal the **commit-witness requirement** independently of the versioned
       target admission fence into every newly issued durable approval when
       witness opt-in is active. A restart with the witness writer removed
