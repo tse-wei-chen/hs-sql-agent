@@ -47,10 +47,15 @@ feature addition as another major release.
   must never be accepted with defaulted security booleans.
 - **DB migrations:** first-party schema migrations must have both
   SQLite and PostgreSQL implementations, startup readiness diagnostics, and
-  upgrade tests from a previously released database snapshot. This branch
-  exercises the v2 durable-approval schema → latest migration path against
-  both real providers, asserting that consumed approvals and protected
-  evidence remain intact. Do not
+  upgrade tests from a previously released database snapshot. Both Admin
+  Store providers now ship a **v3 admission marker migration** that refuses
+  Pending/Executing durable approvals; a corresponding startup preflight
+  gives a diagnostic before the normal migrator runs. The tests upgrade the
+  v2 durable-approval schema, prove unresolved requests block direct EF
+  migration, and verify consumed evidence survives after explicitly
+  resolving the test fixture. This gate does not prevent an unupgraded
+  worker from operating against the target DB: deployment quiescence remains
+  a separate required proof. Do not
   assume EF migration success proves third-party CLR or Redis compatibility.
 - **Uncertain physical writes:** neither missing Admin records nor absent
   Redis keys/witnesses prove rollback. Preserve evidence and require

@@ -3,6 +3,7 @@ using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -36,6 +37,67 @@ public class HostModeInitializationTests
         finally
         {
             if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public void InitializeHsSqlAgent_V2PendingApprovalBlocksAutomaticV3Migration()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"hs-agent-v3-drain-{Guid.NewGuid():N}.db");
+        try
+        {
+            var services = new ServiceCollection();
+            services.AddLogging();
+            var options = CreateOptions(dbPath);
+            options.JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes";
+            services.AddHsSqlAgent(options);
+            using var provider = services.BuildServiceProvider();
+            using (var scope = provider.CreateScope())
+            {
+                var auth = scope.ServiceProvider.GetRequiredService<Auth.Service.Data.AuthContext>();
+                auth.Database.Migrate();
+                var admin = scope.ServiceProvider.GetRequiredService<AdminContext>();
+                admin.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>()
+                    .Migrate("20260905130453_AddDurableDmlApprovals");
+                admin.DmlApprovalRequests.Add(new Admin.Service.Data.Entites.DmlApprovalRequestState
+                {
+                    RequestId = "v2-upgrade-pending",
+                    ApprovalFingerprint = new string('A', 64),
+                    EvidenceFingerprint = new string('B', 64),
+                    Status = "Pending",
+                    ProtectedExecutionPayload = "opaque-v2",
+                    RequesterIdentity = "operator",
+                    TargetIdentity = "db-management:1",
+                    DatabaseProvider = "Sqlite",
+                    DatabaseIdentity = "test",
+                    AccessKeyId = 1,
+                    DbManagementId = 1,
+                    RequiredToolName = "execute_dml_sql",
+                    StatementCount = 1,
+                    TotalAffectedRows = 1,
+                    CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+                    UpdatedAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(5)
+                });
+                admin.SaveChanges();
+            }
+
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => new ApplicationBuilder(provider).InitializeHsSqlAgent());
+            Assert.Contains("requires draining v2 DML approvals", ex.Message);
+            Assert.Contains("v2-upgrade-pending", ex.Message);
+
+            using var verify = provider.CreateScope();
+            var adminDb = verify.ServiceProvider.GetRequiredService<AdminContext>();
+            Assert.Contains("20261022190000_V3ApprovalDrainGate",
+                adminDb.Database.GetPendingMigrations());
+            Assert.Equal("Pending", adminDb.DmlApprovalRequests.AsNoTracking()
+                .Single(x => x.RequestId == "v2-upgrade-pending").Status);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(dbPath)) File.Delete(dbPath);
         }
     }
 

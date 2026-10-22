@@ -62,6 +62,11 @@ public static class HsSqlAgentApplicationExtensions
                     PrepareSqliteAdminHistoryForHostMode(adminDb);
                 }
 
+                // Fail before EF changes a v2 Admin Store if it still holds
+                // unconsumed or physically ambiguous DML approval requests.
+                // The v3 migration repeats this check in the database itself,
+                // so direct migrators cannot skip the safety barrier.
+                ValidateV3ApprovalDrain(adminDb);
                 adminDb.Database.Migrate();
 
                 var securityPolicy = adminDb.SecurityPolicySettings
@@ -80,6 +85,39 @@ public static class HsSqlAgentApplicationExtensions
         }
 
         return app;
+    }
+
+    private static void ValidateV3ApprovalDrain(Admin.Service.Data.AdminContext adminDb)
+    {
+        // A fresh installation has no durable-approval table yet. Existing
+        // v2 installations do, and must not advance to the v3 admission
+        // contract while an approval is resumable or may still be executing.
+        var applied = adminDb.Database.GetAppliedMigrations().ToHashSet(StringComparer.Ordinal);
+        if (!applied.Contains("20260905130453_AddDurableDmlApprovals") &&
+            !applied.Contains("20260905130459_AddDurableDmlApprovalsPostgres"))
+            return;
+
+        if (applied.Contains("20261022190000_V3ApprovalDrainGate") ||
+            applied.Contains("20261022190000_V3ApprovalDrainGatePostgres"))
+            return;
+
+        var outstanding = adminDb.DmlApprovalRequests.AsNoTracking()
+            .Where(x => x.Status == "Pending" || x.Status == "Executing")
+            .OrderBy(x => x.RequestId)
+            .Select(x => x.RequestId)
+            .Take(3)
+            .ToArray();
+
+        if (outstanding.Length == 0)
+            return;
+
+        throw new InvalidOperationException(
+            "HsSqlAgent v3 upgrade requires draining v2 DML approvals before migrating the Admin Store. " +
+            "Pending/Executing requests still exist (sample request IDs: " +
+            string.Join(", ", outstanding) + "). " +
+            "Stop all v2 DML workers, resolve or securely reject outstanding approvals, " +
+            "and verify physical outcomes before reattempting migration. " +
+            "Do not mark an Executing approval failed without independently proving worker quiescence.");
     }
 
     /// <summary>

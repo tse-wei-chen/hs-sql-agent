@@ -14,7 +14,7 @@ This is an in-progress migration guide, not an already published release.
 
 ## Operational rollout
 
-1. Quiesce new v2 DML previews; classify Pending durable requests and short-lived Redis challenges. Do not mistake missing keys or an absent witness for database rollback.
+1. Quiesce new v2 DML previews; classify Pending durable requests and short-lived Redis challenges. Do not mistake missing keys or an absent witness for database rollback. Both SQLite and PostgreSQL now contain a **v3 migration drain gate**: if any Pending/Executing durable approval exists, the migration fails closed before it can mark the Admin Store v3-ready. The application startup preflight also reports sample blocked request IDs. This does not enforce old-worker shutdown on its own.
 2. Drain **all** old DML-capable workers before enabling v3 pending-approval execution. A mixed fleet is not a valid execution-fence proof. A fence-enabled v3 worker also rejects legacy Pending approvals lacking `target-fence-v1`, even if they originally enrolled a commit witness. Only a fresh fenced preview and new human approval may proceed.
 3. Deploy v3 and rebuild custom approval stores together. Ensure storage and authorization are healthy before resuming DML.
 4. Require fresh approval for challenges incompatible with v3; verify six-provider regression and structured `outcome_unknown` tests.

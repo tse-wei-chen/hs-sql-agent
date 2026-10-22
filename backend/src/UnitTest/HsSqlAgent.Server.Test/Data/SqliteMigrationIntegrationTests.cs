@@ -71,15 +71,42 @@ public sealed class SqliteMigrationIntegrationTests
                 await adminContext.GetService<IMigrator>().MigrateAsync(
                     "20260905130453_AddDurableDmlApprovals", cancellationToken);
                 var consumed = NewConsumedApproval("sqlite-v2-upgrade");
-                adminContext.DmlApprovalRequests.Add(consumed);
+                var pending = NewConsumedApproval("sqlite-v2-pending");
+                pending.Status = "Pending";
+                var executing = NewConsumedApproval("sqlite-v2-executing");
+                executing.Status = "Executing";
+                adminContext.DmlApprovalRequests.AddRange(consumed, pending, executing);
                 await adminContext.SaveChangesAsync(cancellationToken);
 
+                // A v3 upgrade must not silently pass while approvals could
+                // still be consumed or while physical writes are uncertain.
+                var blocked = await Record.ExceptionAsync(
+                    () => adminContext.Database.MigrateAsync(cancellationToken));
+                Assert.NotNull(blocked);
+                Assert.Contains("V3UpgradeRequiresDrainedDmlApprovals",
+                    blocked.ToString(), StringComparison.OrdinalIgnoreCase);
+
+                // Resolving only Pending is insufficient: Executing may still
+                // represent a live worker or an unacknowledged target COMMIT.
+                pending.Status = "Rejected";
+                await adminContext.SaveChangesAsync(cancellationToken);
+                Assert.NotNull(await Record.ExceptionAsync(
+                    () => adminContext.Database.MigrateAsync(cancellationToken)));
+
+                // Test fixture explicitly simulates verified terminal state.
+                // Production must never infer quiescence from expiration.
+                executing.Status = "OutcomeUnknown";
+                await adminContext.SaveChangesAsync(cancellationToken);
                 await adminContext.Database.MigrateAsync(cancellationToken);
                 var preserved = await adminContext.DmlApprovalRequests
                     .AsNoTracking().SingleAsync(x => x.RequestId == consumed.RequestId, cancellationToken);
                 Assert.Equal("OutcomeUnknown", preserved.Status);
                 Assert.Equal(consumed.EvidenceFingerprint, preserved.EvidenceFingerprint);
                 Assert.Equal(consumed.ProtectedExecutionPayload, preserved.ProtectedExecutionPayload);
+                Assert.Equal("Rejected", (await adminContext.DmlApprovalRequests.AsNoTracking()
+                    .SingleAsync(x => x.RequestId == pending.RequestId, cancellationToken)).Status);
+                Assert.Equal("OutcomeUnknown", (await adminContext.DmlApprovalRequests.AsNoTracking()
+                    .SingleAsync(x => x.RequestId == executing.RequestId, cancellationToken)).Status);
 
                 Assert.NotEmpty(await authContext.Database.GetAppliedMigrationsAsync(cancellationToken));
                 Assert.NotEmpty(await adminContext.Database.GetAppliedMigrationsAsync(cancellationToken));
