@@ -494,22 +494,36 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             await using var metadataConnection = nativeProvider.Connections.Create(connectionString);
             await metadataConnection.OpenAsync(token);
             var profile = RuntimeServerProfileVerifier.Capture(provider, metadataConnection);
-            var parsed = CoreSqlTextParser.ParseDml(
-                $"INSERT INTO {table} (ID) VALUES (1)", provider);
-            var snapshot = await freshness.CaptureAsync(
-                metadataConnection, provider, parsed, token);
-            Assert.NotNull(snapshot);
-            var plan = await new DmlPlanFactory(nativeProvider.Metadata)
-                .CreateWithMetadataConnectionAsync(
-                    metadataConnection, connectionString, parsed, provider,
-                    new SqlPlanValidationContext(policy).WithSchemaSnapshot(snapshot),
-                    maxAffectedRows: 1, cancellationToken: token, targetProfile: profile.TargetProfile);
-            Assert.Equal(DmlApprovalMode.InsertValues, plan.ApprovalMode);
+            async Task<ValidatedDmlPlan> CompileInsertAsync(int id)
+            {
+                var parsed = CoreSqlTextParser.ParseDml(
+                    $"INSERT INTO {table} (ID) VALUES ({id})", provider);
+                var snapshot = await freshness.CaptureAsync(
+                    metadataConnection, provider, parsed, token);
+                Assert.NotNull(snapshot);
+                var compiled = await new DmlPlanFactory(nativeProvider.Metadata)
+                    .CreateWithMetadataConnectionAsync(
+                        metadataConnection, connectionString, parsed, provider,
+                        new SqlPlanValidationContext(policy).WithSchemaSnapshot(snapshot),
+                        maxAffectedRows: 1, cancellationToken: token,
+                        targetProfile: profile.TargetProfile);
+                Assert.Equal(DmlApprovalMode.InsertValues, compiled.ApprovalMode);
+                return compiled;
+            }
 
+            var plan = await CompileInsertAsync(1);
+            // A batch must contain *two distinct mutations*: a one-statement
+            // batch cannot prove that later Oracle metadata validation will
+            // not undo an earlier uncommitted application write.
+            var secondPlan = batch ? await CompileInsertAsync(2) : null;
             var previewCoordinator = new DmlCoordinator(nativeProvider.Connections,
                 challengeStore: challengeStore, schemaFreshnessVerifier: freshness);
             var preview = await previewCoordinator.PreviewAsync(
                 connectionString, plan, context, token, profile.ServerVersionIdentity);
+            var secondPreview = secondPlan is null
+                ? null
+                : await previewCoordinator.PreviewAsync(
+                    connectionString, secondPlan, context, token, profile.ServerVersionIdentity);
 
             if (revokedFirst)
             {
@@ -528,7 +542,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                     ? await new DmlAtomicTransactionCoordinator(nativeProvider.Connections,
                         schemaFreshnessVerifier: freshness,
                         targetCommitWitness: witness, targetExecutionFence: fence)
-                        .CommitAsync(connectionString, [plan], [preview], token,
+                        .CommitAsync(connectionString, [plan, secondPlan!], [preview, secondPreview!], token,
                             profile.ServerVersionIdentity, evidence, requireExecutionFence: true)
                     : await new DmlCoordinator(nativeProvider.Connections,
                         challengeStore: challengeStore,
@@ -545,12 +559,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             {
                 var committed = await CommitAsync();
                 Assert.True(committed.Committed);
-                Assert.Equal(1, committed.AffectedRows);
+                Assert.Equal(batch ? 2 : 1, committed.AffectedRows);
             }
 
             await using var inspect = nativeProvider.Connections.Create(connectionString);
             await inspect.OpenAsync(token);
-            Assert.Equal(revokedFirst ? 0L : 1L,
+            Assert.Equal(revokedFirst ? 0L : batch ? 2L : 1L,
                 await CountTargetFenceRowsAsync(inspect, table, token));
             var entry = await fence.ReadAsync(inspect, provider, evidence.RequestId, token);
             if (entry is null)
