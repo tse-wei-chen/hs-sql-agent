@@ -299,7 +299,7 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "INSERT INTO HS_SQL_AGENT_DML_PROBE (ID) VALUES (@id)";
+        command.CommandText = "INSERT INTO hs_sql_agent_dml_probe (ID) VALUES (@id)";
         var parameter = command.CreateParameter();
         parameter.ParameterName = "@id";
         parameter.DbType = DbType.Int32;
@@ -311,7 +311,7 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
     private static async Task<long> CountRowsAsync(DbConnection connection, CancellationToken ct)
     {
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_PROBE";
+        command.CommandText = "SELECT COUNT(*) FROM hs_sql_agent_dml_probe";
         return Convert.ToInt64(await command.ExecuteScalarAsync(ct));
     }
 
@@ -381,7 +381,7 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
                         "REQUEST_ID VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY, " +
                         "EVIDENCE_FINGERPRINT CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL) ENGINE=InnoDB", ct);
                     await ExecuteAsync(db,
-                        "CREATE TABLE HS_SQL_AGENT_DML_PROBE (ID INTEGER PRIMARY KEY) ENGINE=InnoDB", ct);
+                        "CREATE TABLE hs_sql_agent_dml_probe (ID INTEGER PRIMARY KEY) ENGINE=InnoDB", ct);
                 }
                 else
                 {
@@ -395,7 +395,7 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
                         "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
                         "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT CHAR(64) NOT NULL)", ct);
                     await ExecuteAsync(db,
-                        "CREATE TABLE HS_SQL_AGENT_DML_PROBE (ID INTEGER PRIMARY KEY)", ct);
+                        "CREATE TABLE hs_sql_agent_dml_probe (ID INTEGER PRIMARY KEY)", ct);
                 }
                 return target;
             }
