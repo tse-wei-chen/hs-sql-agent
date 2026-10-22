@@ -22,6 +22,9 @@ internal static class RedisDmlApprovalChallengePayloadCodec
             PayloadKind, CurrentSchemaVersion, ChallengeV1.FromDomain(challenge)));
     }
 
+    internal static bool MatchesV1(DmlApprovalChallenge expected, DmlApprovalChallenge supplied) =>
+        ChallengeV1.FromDomain(expected) == ChallengeV1.FromDomain(supplied);
+
     internal static DmlApprovalChallenge Deserialize(string json)
     {
         if (string.IsNullOrWhiteSpace(json))

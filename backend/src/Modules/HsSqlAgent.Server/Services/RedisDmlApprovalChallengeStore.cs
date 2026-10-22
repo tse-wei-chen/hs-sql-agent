@@ -134,7 +134,10 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
                 "Stored DML approval challenge payload is invalid.",
                 exception);
         }
-        return registered == challenge;
+        // Compare the frozen v1 wire semantics, not evolving C# record
+        // equality: adding an unrelated CLR property in v3.x must not
+        // invalidate an already stored one-time challenge.
+        return RedisDmlApprovalChallengePayloadCodec.MatchesV1(registered, challenge);
     }
 
     public async ValueTask<bool> TryPromoteAsync(

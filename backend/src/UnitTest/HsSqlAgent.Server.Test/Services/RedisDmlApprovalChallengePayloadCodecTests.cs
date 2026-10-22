@@ -32,6 +32,17 @@ public sealed class RedisDmlApprovalChallengePayloadCodecTests
         Assert.Equal(challenge, RedisDmlApprovalChallengePayloadCodec.Deserialize(json));
     }
 
+    [Fact]
+    public void CanonicalV1Comparison_DoesNotDependOnReferenceIdentity()
+    {
+        var challenge = Example();
+        var decoded = RedisDmlApprovalChallengePayloadCodec.Deserialize(
+            RedisDmlApprovalChallengePayloadCodec.Serialize(challenge));
+        Assert.True(RedisDmlApprovalChallengePayloadCodec.MatchesV1(challenge, decoded));
+        Assert.False(RedisDmlApprovalChallengePayloadCodec.MatchesV1(
+            challenge, decoded with { AffectedRows = decoded.AffectedRows + 1 }));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(2)]
