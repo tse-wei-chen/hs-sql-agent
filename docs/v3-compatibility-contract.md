@@ -53,9 +53,13 @@ feature addition as another major release.
   gives a diagnostic before the normal migrator runs. The tests upgrade the
   v2 durable-approval schema, prove unresolved requests block direct EF
   migration, and verify consumed evidence survives after explicitly
-  resolving the test fixture. This gate does not prevent an unupgraded
-  worker from operating against the target DB: deployment quiescence remains
-  a separate required proof. Do not
+  resolving the test fixture. The v3 marker also adds a database-enforced
+  `AdmissionProtocolVersion` column (old writes default to 0): any
+  Pending/Executing INSERT or UPDATE without protocol version 1+ is denied.
+  Both providers test that late legacy writes fail, versioned v3 writes
+  succeed and terminal evidence is preserved. This gate does not prevent
+  an unupgraded worker from operating against the target DB: deployment
+  quiescence remains a separate required proof. Do not
   assume EF migration success proves third-party CLR or Redis compatibility.
 - **Uncertain physical writes:** neither missing Admin records nor absent
   Redis keys/witnesses prove rollback. Preserve evidence and require

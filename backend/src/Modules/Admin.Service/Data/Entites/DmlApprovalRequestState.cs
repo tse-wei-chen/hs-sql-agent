@@ -10,6 +10,14 @@ public sealed class DmlApprovalRequestState
     public string ApprovalFingerprint { get; set; } = string.Empty;
     public string EvidenceFingerprint { get; set; } = string.Empty;
     public string Status { get; set; } = "Pending";
+
+    /// <summary>
+    /// Independently versioned Admin Store write-admission contract. An old
+    /// worker omits this column and receives database default 0. The v3
+    /// migration rejects Pending/Executing rows without a v3 admission.
+    /// Future versions may extend the protocol without changing the CLR API.
+    /// </summary>
+    public int AdmissionProtocolVersion { get; set; } = 1;
     public string ProtectedExecutionPayload { get; set; } = string.Empty;
     public string RequesterIdentity { get; set; } = string.Empty;
     public string TargetIdentity { get; set; } = string.Empty;

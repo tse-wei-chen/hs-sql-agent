@@ -17,6 +17,7 @@ public sealed class DmlApprovalRequestStateConfig : IEntityTypeConfiguration<Dml
         // Same-status writes to a legacy COMMIT marker must not be overwritten.
         // Concurrency tokens add WHERE predicates; no migration is required.
         builder.Property(x => x.Status).IsRequired().HasMaxLength(24).IsConcurrencyToken();
+        builder.Property(x => x.AdmissionProtocolVersion).IsRequired();
         builder.Property(x => x.ProtectedExecutionPayload).IsRequired();
         builder.Property(x => x.RequesterIdentity).IsRequired().HasMaxLength(256);
         builder.Property(x => x.TargetIdentity).IsRequired().HasMaxLength(256);

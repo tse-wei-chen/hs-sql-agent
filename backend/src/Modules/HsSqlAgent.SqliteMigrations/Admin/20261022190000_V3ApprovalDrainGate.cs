@@ -28,6 +28,20 @@ public sealed class V3ApprovalDrainGate : Migration
             WHERE "Status" IN ('Pending', 'Executing');
             DROP TABLE "__HsSqlAgentV3DrainGate";
             """);
+
+        // Compatibility boundary: v2 binaries do not set this column.
+        // Their insert defaults to 0 and the database rejects any new
+        // Pending/Executing approval, even after the v3 migration succeeds.
+        // CHECK is enforced on INSERT and UPDATE by SQLite itself.
+        migrationBuilder.Sql("""
+            ALTER TABLE "DmlApprovalRequests"
+            ADD COLUMN "AdmissionProtocolVersion" INTEGER NOT NULL DEFAULT 0
+                CONSTRAINT "V3DurableDmlAdmissionProtocolRequired"
+                CHECK (
+                    "Status" NOT IN ('Pending', 'Executing')
+                    OR "AdmissionProtocolVersion" >= 1
+                );
+            """);
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)

@@ -546,6 +546,9 @@ namespace HsSqlAgent.SqliteMigrations.Admin
                     b.Property<int>("AccessKeyId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("AdmissionProtocolVersion")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("ApprovalFingerprint")
                         .IsRequired()
                         .HasMaxLength(64)

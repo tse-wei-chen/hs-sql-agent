@@ -1,4 +1,5 @@
 using Admin.Service.Data;
+using HsSqlAgent.Server.Test.Data;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
 using Microsoft.AspNetCore.Builder;
@@ -59,7 +60,7 @@ public class HostModeInitializationTests
                 var admin = scope.ServiceProvider.GetRequiredService<AdminContext>();
                 admin.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>()
                     .Migrate("20260905130453_AddDurableDmlApprovals");
-                admin.DmlApprovalRequests.Add(new Admin.Service.Data.Entites.DmlApprovalRequestState
+                var oldApproval = new Admin.Service.Data.Entites.DmlApprovalRequestState
                 {
                     RequestId = "v2-upgrade-pending",
                     ApprovalFingerprint = new string('A', 64),
@@ -78,8 +79,8 @@ public class HostModeInitializationTests
                     CreatedAt = DateTime.UtcNow.AddMinutes(-1),
                     UpdatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddMinutes(5)
-                });
-                admin.SaveChanges();
+                };
+                LegacyDmlApprovalMigrationFixture.Insert(admin, oldApproval);
             }
 
             var ex = Assert.Throws<InvalidOperationException>(
@@ -91,8 +92,12 @@ public class HostModeInitializationTests
             var adminDb = verify.ServiceProvider.GetRequiredService<AdminContext>();
             Assert.Contains("20261022190000_V3ApprovalDrainGate",
                 adminDb.Database.GetPendingMigrations());
-            Assert.Equal("Pending", adminDb.DmlApprovalRequests.AsNoTracking()
-                .Single(x => x.RequestId == "v2-upgrade-pending").Status);
+            var connection = adminDb.Database.GetDbConnection();
+            connection.Open();
+            using var statusCommand = connection.CreateCommand();
+            statusCommand.CommandText =
+                "SELECT \"Status\" FROM \"DmlApprovalRequests\" WHERE \"RequestId\" = 'v2-upgrade-pending'";
+            Assert.Equal("Pending", statusCommand.ExecuteScalar());
         }
         finally
         {

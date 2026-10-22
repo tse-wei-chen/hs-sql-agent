@@ -21,7 +21,11 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
   obtain new human approval; do not replay consumed approvals.
 - Introduce a versioned encrypted durable DML resume payload with an explicit
   legacy v2 decoder. Unknown versions fail closed instead of silently defaulting
-  new approval safety requirements; old records require no database column change.
+  new approval safety requirements; the protected-payload column remains unchanged.
+- Add database-enforced `AdmissionProtocolVersion` to both Admin Store providers
+  so v2 binaries omitting the field (default 0) cannot insert new Pending/
+  Executing approvals after v3 migration. Historical terminal evidence
+  stays intact, and new versioned durable requests explicitly write 1.
 - Under selective UPDATE/DELETE policy, demonstrably always-true predicates,
   including `WHERE 1=1`, are denied unless full-table authority is explicit.
 - Compiler input/token resource ceilings reject previously accepted oversized SQL.

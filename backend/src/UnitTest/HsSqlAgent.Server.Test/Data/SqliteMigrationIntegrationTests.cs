@@ -35,6 +35,13 @@ public sealed class SqliteMigrationIntegrationTests
         ExpiresAt = DateTime.UtcNow.AddMinutes(3)
     };
 
+    private static DmlApprovalRequestState NewLegacyPendingApproval()
+    {
+        var row = NewConsumedApproval("sqlite-v2-late-worker");
+        row.Status = "Pending";
+        return row;
+    }
+
     [Fact]
     public async Task Migrations_ShouldApplyToRealSqliteFile_AndBeIdempotent()
     {
@@ -75,8 +82,9 @@ public sealed class SqliteMigrationIntegrationTests
                 pending.Status = "Pending";
                 var executing = NewConsumedApproval("sqlite-v2-executing");
                 executing.Status = "Executing";
-                adminContext.DmlApprovalRequests.AddRange(consumed, pending, executing);
-                await adminContext.SaveChangesAsync(cancellationToken);
+                await LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, consumed, cancellationToken);
+                await LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, pending, cancellationToken);
+                await LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, executing, cancellationToken);
 
                 // A v3 upgrade must not silently pass while approvals could
                 // still be consumed or while physical writes are uncertain.
@@ -88,15 +96,15 @@ public sealed class SqliteMigrationIntegrationTests
 
                 // Resolving only Pending is insufficient: Executing may still
                 // represent a live worker or an unacknowledged target COMMIT.
-                pending.Status = "Rejected";
-                await adminContext.SaveChangesAsync(cancellationToken);
+                await adminContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"Rejected"} WHERE \"RequestId\" = {pending.RequestId}", cancellationToken);
                 Assert.NotNull(await Record.ExceptionAsync(
                     () => adminContext.Database.MigrateAsync(cancellationToken)));
 
                 // Test fixture explicitly simulates verified terminal state.
                 // Production must never infer quiescence from expiration.
-                executing.Status = "OutcomeUnknown";
-                await adminContext.SaveChangesAsync(cancellationToken);
+                await adminContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"OutcomeUnknown"} WHERE \"RequestId\" = {executing.RequestId}", cancellationToken);
                 await adminContext.Database.MigrateAsync(cancellationToken);
                 var preserved = await adminContext.DmlApprovalRequests
                     .AsNoTracking().SingleAsync(x => x.RequestId == consumed.RequestId, cancellationToken);
@@ -107,6 +115,29 @@ public sealed class SqliteMigrationIntegrationTests
                     .SingleAsync(x => x.RequestId == pending.RequestId, cancellationToken)).Status);
                 Assert.Equal("OutcomeUnknown", (await adminContext.DmlApprovalRequests.AsNoTracking()
                     .SingleAsync(x => x.RequestId == executing.RequestId, cancellationToken)).Status);
+                // Terminal v2 records are preserved with protocol 0; they must not
+                // be promoted to Pending or Executing by legacy v2 SQL after upgrade.
+                Assert.Equal(0, preserved.AdmissionProtocolVersion);
+                var resurrect = await Record.ExceptionAsync(() =>
+                    adminContext.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"Pending"} WHERE \"RequestId\" = {consumed.RequestId}",
+                        cancellationToken));
+                Assert.NotNull(resurrect);
+
+                // A pre-v3 worker omits AdmissionProtocolVersion entirely. Its
+                // Pending write now fails at the database constraint, even when
+                // it ignores every v3 application-level guard.
+                var legacy = NewLegacyPendingApproval();
+                Assert.NotNull(await Record.ExceptionAsync(() =>
+                    LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, legacy, cancellationToken)));
+
+                // New v3 workers explicitly set the accepted protocol in the
+                // same durable row and can continue to create Pending approvals.
+                legacy.AdmissionProtocolVersion = 1;
+                adminContext.DmlApprovalRequests.Add(legacy);
+                await adminContext.SaveChangesAsync(cancellationToken);
+                Assert.Equal(1, (await adminContext.DmlApprovalRequests.AsNoTracking()
+                    .SingleAsync(x => x.RequestId == legacy.RequestId, cancellationToken)).AdmissionProtocolVersion);
 
                 Assert.NotEmpty(await authContext.Database.GetAppliedMigrationsAsync(cancellationToken));
                 Assert.NotEmpty(await adminContext.Database.GetAppliedMigrationsAsync(cancellationToken));

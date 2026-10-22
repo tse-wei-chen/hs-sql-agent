@@ -69,6 +69,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
     private const string ApprovalStateUnknownCode = "dml.approval_state_unknown";
     internal const string TargetFenceProtocol = "target-fence-v1";
+    internal const int AdminStoreAdmissionProtocolVersion = 1;
 
     public async Task PersistPendingAsync(
         DmlApprovalRequest request,
@@ -118,6 +119,7 @@ internal sealed class DurableDmlApprovalLifecycle(
             ApprovalFingerprint = request.ApprovalFingerprint,
             EvidenceFingerprint = evidenceFingerprint,
             Status = Pending,
+            AdmissionProtocolVersion = AdminStoreAdmissionProtocolVersion,
             ProtectedExecutionPayload = protectedPayload,
             RequesterIdentity = request.RequesterIdentity,
             TargetIdentity = request.TargetIdentity,

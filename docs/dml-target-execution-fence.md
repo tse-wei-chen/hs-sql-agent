@@ -142,6 +142,11 @@ These are database-level kernel semantics for the CI versions, not proof of
 correctness on every database deployment, load profile or topology.
 No test can establish that every *production fleet member* enforces
 `target-fence-v1`: all eligible older workers must still be drained.
+The v3 Admin Store independently denies unversioned durable Pending/Executing
+rows using a database CHECK constraint on `AdmissionProtocolVersion`.
+This prevents v2 binaries from issuing new durable approvals *through the
+migrated Admin Store* but cannot revoke their direct target DML credentials
+or prove that an earlier worker has stopped.
 
 ## Opt-in and rollout
 

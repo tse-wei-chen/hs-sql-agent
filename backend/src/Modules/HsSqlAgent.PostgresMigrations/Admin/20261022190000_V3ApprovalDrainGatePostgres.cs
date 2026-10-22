@@ -27,6 +27,17 @@ public sealed class V3ApprovalDrainGatePostgres : Migration
                 END IF;
             END $v3drain$;
             """);
+
+        migrationBuilder.Sql("""
+            ALTER TABLE "DmlApprovalRequests"
+            ADD COLUMN "AdmissionProtocolVersion" integer NOT NULL DEFAULT 0;
+            ALTER TABLE "DmlApprovalRequests"
+            ADD CONSTRAINT "V3DurableDmlAdmissionProtocolRequired"
+                CHECK (
+                    "Status" NOT IN ('Pending', 'Executing')
+                    OR "AdmissionProtocolVersion" >= 1
+                );
+            """);
     }
 
     protected override void Down(MigrationBuilder migrationBuilder)

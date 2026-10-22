@@ -32,6 +32,27 @@ public sealed class PostgresMigrationFixture : IAsyncLifetime
 public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture fixture)
     : IClassFixture<PostgresMigrationFixture>
 {
+    private static DmlApprovalRequestState NewLegacyPendingApproval() => new()
+    {
+        RequestId = "postgres-v2-late-worker",
+        ApprovalFingerprint = new string('A', 64),
+        EvidenceFingerprint = new string('B', 64),
+        Status = "Pending",
+        ProtectedExecutionPayload = "opaque-v2-pending",
+        RequesterIdentity = "operator",
+        TargetIdentity = "db-management:1",
+        DatabaseProvider = "Postgres",
+        DatabaseIdentity = "test",
+        AccessKeyId = 1,
+        DbManagementId = 1,
+        RequiredToolName = "execute_dml_sql",
+        StatementCount = 1,
+        TotalAffectedRows = 1,
+        CreatedAt = DateTime.UtcNow.AddMinutes(-1),
+        UpdatedAt = DateTime.UtcNow,
+        ExpiresAt = DateTime.UtcNow.AddMinutes(3)
+    };
+
     [Fact]
     public async Task Migrations_ShouldApplyToRealPostgres_AndBeIdempotent()
     {
@@ -116,8 +137,9 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
             UpdatedAt = DateTime.UtcNow.AddMinutes(-1),
             ExpiresAt = DateTime.UtcNow.AddMinutes(3)
         };
-        adminContext.DmlApprovalRequests.AddRange(consumed, pending, executing);
-        await adminContext.SaveChangesAsync(cancellationToken);
+        await LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, consumed, cancellationToken);
+        await LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, pending, cancellationToken);
+        await LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, executing, cancellationToken);
 
         // Fail-closed even when migrations are invoked directly without the
         // HsSqlAgent application startup checks.
@@ -127,15 +149,15 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
         Assert.Contains("requires draining Pending/Executing", blocked.ToString(),
             StringComparison.OrdinalIgnoreCase);
 
-        pending.Status = "Rejected";
-        await adminContext.SaveChangesAsync(cancellationToken);
+        await adminContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"Rejected"} WHERE \"RequestId\" = {pending.RequestId}", cancellationToken);
         Assert.NotNull(await Record.ExceptionAsync(
             () => adminContext.Database.MigrateAsync(cancellationToken)));
 
         // Simulates an independently verified terminal reconciliation. A
         // production operator must never blindly relabel an Executing request.
-        executing.Status = "OutcomeUnknown";
-        await adminContext.SaveChangesAsync(cancellationToken);
+        await adminContext.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"OutcomeUnknown"} WHERE \"RequestId\" = {executing.RequestId}", cancellationToken);
         await adminContext.Database.MigrateAsync(cancellationToken);
         var preserved = await adminContext.DmlApprovalRequests.AsNoTracking()
             .SingleAsync(x => x.RequestId == consumed.RequestId, cancellationToken);
@@ -146,6 +168,29 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
             .SingleAsync(x => x.RequestId == pending.RequestId, cancellationToken)).Status);
         Assert.Equal("OutcomeUnknown", (await adminContext.DmlApprovalRequests.AsNoTracking()
             .SingleAsync(x => x.RequestId == executing.RequestId, cancellationToken)).Status);
+        // Terminal v2 records are preserved with protocol 0; they must not
+        // be promoted to Pending or Executing by legacy v2 SQL after upgrade.
+        Assert.Equal(0, preserved.AdmissionProtocolVersion);
+        var resurrect = await Record.ExceptionAsync(() =>
+            adminContext.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"Pending"} WHERE \"RequestId\" = {consumed.RequestId}",
+                cancellationToken));
+        Assert.NotNull(resurrect);
+
+        // A pre-v3 worker omits AdmissionProtocolVersion entirely. Its
+        // Pending write now fails at the database constraint, even when
+        // it ignores every v3 application-level guard.
+        var legacy = NewLegacyPendingApproval();
+        Assert.NotNull(await Record.ExceptionAsync(() =>
+            LegacyDmlApprovalMigrationFixture.InsertAsync(adminContext, legacy, cancellationToken)));
+
+        // New v3 workers explicitly set the accepted protocol in the
+        // same durable row and can continue to create Pending approvals.
+        legacy.AdmissionProtocolVersion = 1;
+        adminContext.DmlApprovalRequests.Add(legacy);
+        await adminContext.SaveChangesAsync(cancellationToken);
+        Assert.Equal(1, (await adminContext.DmlApprovalRequests.AsNoTracking()
+            .SingleAsync(x => x.RequestId == legacy.RequestId, cancellationToken)).AdmissionProtocolVersion);
 
         Assert.NotEmpty(await authContext.Database.GetAppliedMigrationsAsync(cancellationToken));
         Assert.NotEmpty(await adminContext.Database.GetAppliedMigrationsAsync(cancellationToken));
