@@ -60,6 +60,16 @@ public sealed class RelationalDmlTargetExecutionFence : IDmlTargetExecutionFence
         CancellationToken cancellationToken) =>
         InsertAsync(connection, transaction, provider, evidence, AdmissionKind, cancellationToken);
 
+    /// <summary>
+    /// Internal probe-only opposing-kind insert. The real target must reject
+    /// Admitted and Revoked for the SAME request ID, regardless of ENTRY_KIND.
+    /// </summary>
+    internal Task VerifyOpposingKindUniqueAsync(
+        DbConnection connection, DbTransaction transaction,
+        SqlAgentToolType provider, DmlTargetCommitWitnessEvidence evidence,
+        CancellationToken cancellationToken) =>
+        InsertAsync(connection, transaction, provider, evidence, RevocationKind, cancellationToken);
+
     public async Task RevokeAsync(
         DbConnection openConnection,
         SqlAgentToolType provider,

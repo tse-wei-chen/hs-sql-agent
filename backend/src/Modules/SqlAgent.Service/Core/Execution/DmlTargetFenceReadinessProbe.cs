@@ -62,21 +62,23 @@ public sealed class DmlTargetFenceReadinessProbe
                 await witness.WriteAsync(
                     openConnection, transaction, provider, evidence, cancellationToken);
 
+                // Unique(REQUEST_ID, ENTRY_KIND) is unsafe: the two
+                // competing states would not collide. Probe both kinds.
                 var duplicateRejected = false;
                 try
                 {
-                    await fence.AdmitAsync(
+                    await ((RelationalDmlTargetExecutionFence)fence).VerifyOpposingKindUniqueAsync(
                         openConnection, transaction, provider, evidence, cancellationToken);
                 }
-                catch (DbException)
+                catch (DbException ex) when (DmlTargetUniqueKeyErrors.IsUniqueViolation(provider, ex))
                 {
                     duplicateRejected = true;
                 }
 
                 if (!duplicateRejected)
                     throw new InvalidOperationException(
-                        "Target fence readiness failed: REQUEST_ID admission was not rejected twice. " +
-                        "A database-enforced unique key is required.");
+                        "Target fence readiness failed: REQUEST_ID allowed both Admitted and Revoked. " +
+                        "A database-enforced unique key on REQUEST_ID alone is required.");
             }
             catch (Exception failure)
             {
@@ -105,21 +107,25 @@ public sealed class DmlTargetFenceReadinessProbe
                 await witness.WriteAsync(
                     openConnection, transaction, provider, evidence, cancellationToken);
 
+                // Different evidence fingerprint prevents an unrelated
+                // UNIQUE(EVIDENCE_FINGERPRINT) from spoofing request uniqueness.
                 var duplicateRejected = false;
                 try
                 {
                     await witness.WriteAsync(
-                        openConnection, transaction, provider, evidence, cancellationToken);
+                        openConnection, transaction, provider,
+                        evidence with { EvidenceFingerprint = new string('0', 64) },
+                        cancellationToken);
                 }
-                catch (DbException)
+                catch (DbException ex) when (DmlTargetUniqueKeyErrors.IsUniqueViolation(provider, ex))
                 {
                     duplicateRejected = true;
                 }
 
                 if (!duplicateRejected)
                     throw new InvalidOperationException(
-                        "Target fence readiness failed: REQUEST_ID witness was not rejected twice. " +
-                        "A database-enforced unique key is required.");
+                        "Target fence readiness failed: witness REQUEST_ID is not physically unique. " +
+                        "A database-enforced unique key on REQUEST_ID is required.");
             }
             catch (Exception failure)
             {
