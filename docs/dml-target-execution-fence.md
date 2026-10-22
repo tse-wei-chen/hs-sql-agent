@@ -128,10 +128,20 @@ missing-witness rollback, concurrent uncommitted admission and both compiled
 single/batch DML coordinator paths for approved and revoked requests. Every
 case uses independent physical connections and a dedicated isolated target
 database. The first real-service job passed all 9 with zero skips, and the
-dedicated test job remains required for PR CI. Oracle and Firebird live
-concurrency interoperability remains **not yet demonstrated**. PostgreSQL/MySQL coverage also does not prove that every
-production deployment uses a single authoritative writer or that all fleet
-members enforce `target-fence-v1`.
+dedicated test job remains required for PR CI.
+
+The existing six-provider Testcontainers fixtures now also exercise the real
+target database implementation (not a fake connection) for **all six engines**,
+including Oracle XE 21 and Firebird: a committed revocation blocks late
+admission, admission/application SQL/COMMIT witness share one physical COMMIT,
+and a rolled-back worker leaves no admission, witness or application row.
+A separate real-connection competition test starts a revoker while the
+admission remains uncommitted, then verifies that revocation was not
+acknowledged and that the acknowledged worker COMMIT remains authoritative.
+These are database-level kernel semantics for the CI versions, not proof of
+correctness on every database deployment, load profile or topology.
+No test can establish that every *production fleet member* enforces
+`target-fence-v1`: all eligible older workers must still be drained.
 
 ## Opt-in and rollout
 

@@ -33,13 +33,18 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
   this is not a claim of fleet-wide safe revocation or automatic `Executing` reconciliation.
 - Expand positive/negative grammar regressions, real-provider transaction tests,
   Redis integration and fail-closed recovery test coverage.
+- Verify the target-enlisted fence's revocation/admission competition,
+  COMMIT-witness atomicity and rollback behavior in actual PostgreSQL, MySQL,
+  SQLite, SQL Server, Oracle and Firebird integration fixtures. Reject legacy
+  Pending approvals on fence-enabled workers instead of downgrading execution.
 
 ### Release gates
 
 - Verify full CI and package smoke with the unified `3.0.0` version.
 - Finish the v2-to-v3 drain / no-mixed-worker migration verification.
-- Document experimental fence limits and avoid claiming six-provider production
-  fence parity until remaining live-provider and fleet-enforcement gates pass.
+- Document experimental fence limits: passing six-provider database transaction
+  tests is **not** proof of mixed-version fleet enrollment, an independently
+  authorized revocation operator or safe `Executing` reconciliation.
 - Docker Compose still pins the last published 2.x image in this **unreleased**
   branch; retag release assets and deployment examples only when the v3 image
   has actually been published.

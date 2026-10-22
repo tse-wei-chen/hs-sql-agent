@@ -606,9 +606,10 @@ published as measured percentages or silently set to 100.
       mutation must persist both fence admission and target witness with
       its application row. The CI job requires `TEST_POSTGRES_CONNECTION` and
       `TEST_MYSQL_CONNECTION`; it fails rather than silently skipping
-      when those values are missing. Still open: Oracle and Firebird
-      concurrency semantics, fleet-version validation, controlled
-      revocation/reconciliation and authoritative topology proof.
+      when those values are missing. Oracle/Firebird provider-level
+      fencing is now additionally exercised via the six-provider shared
+      real-database fixture; fleet-version validation, controlled
+      revocation/reconciliation and authoritative topology proof remain open.
 - [x] Add a separate mandatory SQL Server 2022 target-fence CI shard:
       nine actual SQL Server cases prove direct admission/revocation
       competition, rollback, missing-witness rollback, and a revoker
@@ -633,6 +634,21 @@ published as measured percentages or silently set to 100.
       `DmlRollbackOutcomeUnknownException`. Fault-injection tests cover
       all three branches. Cleanup exceptions cannot accidentally authorize
       an operator to infer successful revocation or definite failure.
+- [x] Validate provider-native admission, revocation-first denial,
+      mutation/witness COMMIT atomicity and rollback release in all six
+      physical database fixtures. Add a concurrent independent revoker
+      against an uncommitted worker for the same six providers and verify
+      no premature revocation acknowledgement. The same real-driver
+      corpus runs in the existing integration shard with Oracle and Firebird
+      containers, not a mocked provider or optional local-only test.
+      This proves selected database-transaction behavior, **not** fleet
+      enrollment or authoritative worker quiescence.
+- [x] Reject pre-fencing Pending approvals when resumed by a fence-enabled
+      worker, including approvals previously protected only by a COMMIT
+      witness. Require a newly issued versioned preview/approval rather
+      than silently executing without target admission. This does not
+      change the behavior of unupgraded binaries, so mixed fleets are
+      still unsafe.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.
