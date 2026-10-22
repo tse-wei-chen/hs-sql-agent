@@ -138,6 +138,49 @@ public sealed class NativeDmlSchemaSnapshotService :
                 break;
         }
 
+        // ODP.NET native metadata readers have been observed to end the
+        // earlier uncommitted Oracle target transaction. A target-fence
+        // admission and even a ROW SHARE table lock disappeared after those
+        // catalog reads in real Oracle integration tests. Keep the target
+        // transaction/physical DDL lock on this connection, and attest
+        // metadata using a separate *same-settings* Oracle connection.
+        // The lock is held for the full independent metadata verification,
+        // so concurrent ALTER/DROP cannot swap the physical table.
+        if (provider == SqlAgentToolType.Oracle)
+        {
+            if (connection is not ICloneable clonable
+                || clonable.Clone() is not DbConnection metadataConnection
+                || ReferenceEquals(metadataConnection, connection))
+                throw new InvalidOperationException(
+                    "Oracle strict DML schema proof requires a separate cloned metadata " +
+                    "connection; target transaction isolation cannot be established.");
+
+            await using (metadataConnection)
+            {
+                await metadataConnection.OpenAsync(cancellationToken);
+                if (!string.Equals(metadataConnection.DataSource, connection.DataSource,
+                        StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(metadataConnection.Database, connection.Database,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "Oracle strict DML schema metadata connection resolved to a " +
+                        "different target. No DML may run without the same authority.");
+
+                var oracleReaders = ForProvider(provider);
+                var oracleMatches = await oracleReaders.Preview.GetDmlPlanningMetadataAsync(
+                    metadataConnection, schema, table, includeColumns: true,
+                    cancellationToken: cancellationToken);
+                var oracleSnapshot = BuildSnapshot(provider, oracleMatches);
+                if (oracleSnapshot is null)
+                    return null;
+
+                oracleSnapshot = await NativeDmlSchemaDefinitionProof.ExtendAsync(
+                    metadataConnection, transaction: null, oracleSnapshot,
+                    oracleMatches[0].Schema, oracleMatches[0].Table, cancellationToken);
+                return oracleSnapshot?.Sha256;
+            }
+        }
+
         var readers = ForProvider(provider);
         var matches = await readers.Commit.GetDmlPlanningMetadataInTransactionAsync(
             connection, transaction, schema, table, includeColumns: true,

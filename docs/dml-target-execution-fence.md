@@ -174,12 +174,19 @@ approved immutable statement's native schema is verified together
 uncommitted DML statements. A fenced batch then enrolls admission;
 per-statement row-set and affected-row rechecks remain mandatory after
 earlier mutations. Other five providers retain their existing per-step
-schema revalidation. Oracle live metadata attestation now acquires
-`LOCK TABLE owner.table IN ROW SHARE MODE NOWAIT` inside the same
-transaction before reading catalog definitions, so concurrent exclusive
-DDL cannot replace the attested table before the subsequent DML. A
-contended lock fails closed; this lock mode still permits ordinary
-concurrent DML. See [Oracle's locking contract](https://docs.oracle.com/en/database/oracle/oracle-database/19/adfns/sql-processing-for-application-developers.html). This
+schema revalidation. Oracle strict DML proof acquires
+`LOCK TABLE owner.table IN ROW SHARE MODE NOWAIT` on the **actual DML
+transaction**, then reads Oracle catalog definitions through a separately
+cloned, same-authority metadata connection. This split is mandatory:
+live ODP.NET integration showed that catalog reads on the DML connection
+could end its uncommitted admission and release its schema lock.
+An unavailable or mismatched metadata connection fails closed. The Oracle
+proof requires an additional physical connection and may exhaust a
+restricted pool under load; configure concurrency accordingly.
+The row-share lock prevents exclusive DDL until COMMIT or ROLLBACK
+without preventing ordinary concurrent DML. See
+[Oracle's locking contract](https://docs.oracle.com/en/database/oracle/oracle-database/19/adfns/sql-processing-for-application-developers.html)
+and [OracleConnection.Clone](https://docs.oracle.com/en/database/oracle/oracle-database/26/odpnt/ConnectionClone.html). This
 ordering never permits application SQL before the target admission. They reject a missing Witness, missing enforced
 unique keys or nontransactional storage. This requires two extra
 SERIALIZABLE rollback transactions per fenced commit. Unfenced DML remains
