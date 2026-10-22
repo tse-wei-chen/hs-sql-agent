@@ -161,7 +161,13 @@ records is not a functioning fence, even if ordinary INSERT succeeds.
 Call `builder.AddHsSqlAgentTargetExecutionFence()` on an
 `HsSqlAgentRegistrationBuilder` on every server instance handling durable
 approvals. This also opts into the required target COMMIT witness.
-The default runtime remains unchanged.
+The default runtime remains unchanged. For fenced DML only, both
+single-statement and atomic batch coordinators automatically run the
+rollback-only target readiness proof on the **actual opened DML connection**
+before any application SQL. They reject a missing Witness, missing enforced
+unique keys or nontransactional storage. This requires two extra
+SERIALIZABLE rollback transactions per fenced commit. Unfenced DML remains
+on the original execution path.
 
 When this feature is enabled at the time a durable approval is persisted,
 the protected approval payload is stamped `FenceProtocol=target-fence-v1`.

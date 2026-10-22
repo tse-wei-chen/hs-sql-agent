@@ -42,6 +42,17 @@ await new DmlTargetFenceReadinessProbe()
     .VerifyAsync(connection, SqlAgentToolType.Postgres, cancellationToken);
 ```
 
+**Runtime enforcement:** When `target-fence-v1` is requested, the
+single-statement and atomic-batch coordinators both run the physical
+readiness probe on the actual opened target connection, **before** the
+business mutation transaction. Production fenced writes require the built-in
+audited relational Fence and Witness; injected custom no-op implementations
+are not accepted as validated readiness. Each fenced commit therefore costs
+**two additional SERIALIZABLE transactions, both rolled back**, plus
+residual-evidence visibility queries. No cross-connection/global cached
+readiness can justify another write. A failed preflight occurs after approval
+consumption and cannot be used to replay the original approval.
+
 Do not publish a successful result for a different endpoint, read replica,
 privilege scope or connection identity than the actual DML runtime. Verify
 each managed target independently, including all tenant-specific identities.

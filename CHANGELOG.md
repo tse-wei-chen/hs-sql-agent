@@ -48,6 +48,11 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
   with no actual `REQUEST_ID` uniqueness cannot pass readiness. Document
   provider-specific legacy credential cutover requirements; this does
   not automatically prove old-worker quiescence.
+- Integrate the built-in physical probe into **every fenced single/batch
+  target DML submission**, requiring the actual connection to prove schema,
+  uniqueness and rollback before approved mutations. This has two extra
+  rolled-back SERIALIZABLE transactions per opted-in commit, with no
+  cached or self-attested readiness.
 - Verify the target-enlisted fence's revocation/admission competition,
   COMMIT-witness atomicity and rollback behavior in actual PostgreSQL, MySQL,
   SQLite, SQL Server, Oracle and Firebird integration fixtures. Reject legacy
