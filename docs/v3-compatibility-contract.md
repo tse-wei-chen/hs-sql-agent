@@ -100,7 +100,10 @@ feature addition as another major release.
    PostgreSQL additionally has a read-only legacy-role verifier that
    requires NOLOGIN, no transitive table/column DML or TRUNCATE,
    no callable non-system SECURITY DEFINER functions, and no live sessions.
-   The result is a point-in-time PostgreSQL check, not a fleet certificate. The
+   The result is a point-in-time PostgreSQL check, not a fleet certificate.
+   SQL Server separately supports an opt-in, sysadmin-authorized old-login
+   privilege/session verifier using effective per-object impersonation. Its
+   evidence is also a point-in-time check, not a fleet certificate. The
    application cannot introspect arbitrary external credentials, and SQLite
    requires OS/process-based file isolation instead of DB user roles.
 7. Publish the versioned doc-site migration page, tagged images, package

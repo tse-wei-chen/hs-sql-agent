@@ -15,6 +15,16 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
   tests cover grants, revocation, session drain and incomplete evidence.
   This does not attest other SQL providers or production topology.
 
+### SQL Server old-login cutover verifier
+
+- Add an independent read-only SQL Server old-login privilege/session verifier
+  requiring full inspection authority, a mapped database user, effective
+  table/view/column DML checks and session-drain evidence. The SQL Server
+  mandatory real database job verifies direct grants, inherited
+  `db_datawriter` access, grant removal, rejected incomplete inspection and
+  live old login sessions. No automatic privilege revocation is performed,
+  and SQL Server procedural/ownership-chain privileges require separate audit.
+
 ### Breaking changes and required migration
 
 - Third-party `IDmlApprovalChallengeStore` implementations must now implement atomic

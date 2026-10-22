@@ -76,6 +76,33 @@ revocation or a guarantee of fleet-wide quiescence. It cannot verify old
 binaries on other hosts, another writer/database, unscanned external procedural access,
 future grants or deployment credentials external to PostgreSQL. The other five database engines need separate cutover proof.
 
+**SQL Server old-login verification:** The independent
+`SqlServerLegacyDmlCutoverVerifier.VerifyAsync` accepts an open **sysadmin
+verification connection** to the intended target database and a specific old
+SQL Server login. It requires an unambiguous server-login/database-user
+mapping, queries live server sessions, and executes read-only effective rights
+checks using `EXECUTE AS USER` and `HAS_PERMS_BY_NAME` against an object
+inventory collected before impersonation. Ordinary tables, views,
+column-scoped permissions and inherited `db_datawriter` grants are checked.
+Unknown logins, elevated sysadmin membership, surviving sessions, grant
+paths, incomplete or synonym-based inventory fail closed.
+
+```csharp
+using SqlAgent.Service.Core.Execution;
+
+// adminConnection is an open sysadmin connection on the actual target DB.
+var evidence = await new SqlServerLegacyDmlCutoverVerifier()
+    .VerifyAsync(adminConnection, "retired_v2_sql_login", cancellationToken);
+```
+
+This is a point-in-time **read-only permission observation**, not an old
+login revocation action. It does not prove an old host has exited, stored
+procedures / ownership chains have no write effects, schema impersonation is
+impossible, future privileges cannot be regranted, or other databases and
+primaries share the same cutover state. Operators must independently
+validate those paths and all other providers before claiming full fleet
+enrollment.
+
 **Runtime enforcement:** When `target-fence-v1` is requested, the
 single-statement and atomic-batch coordinators both run the physical
 readiness probe on the actual opened target connection, **before** the
