@@ -341,6 +341,108 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         });
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public virtual async Task TargetFence_RealProvider_CompiledSingleAndBatchHonorPhysicalAdmission(
+        bool batch, bool revokedFirst)
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            // Fully compiled and previewed SQL, not a hand-written target SQL
+            // surrogate. This runs for all six fixtures including Oracle and
+            // Firebird, through the public single and internal batch coordinator.
+            ISqlProvider nativeProvider = provider switch
+            {
+                SqlAgentToolType.Postgres => new HsSqlAgent.Provider.PostgreSql.PostgresProvider(),
+                SqlAgentToolType.MySQL => new HsSqlAgent.Provider.MySql.MySqlProvider(),
+                SqlAgentToolType.Sqlite => new HsSqlAgent.Provider.Sqlite.SqliteProvider(),
+                SqlAgentToolType.MsSqlServer => new HsSqlAgent.Provider.SqlServer.MsSqlServerProvider(),
+                SqlAgentToolType.Oracle => new HsSqlAgent.Provider.Oracle.OracleProvider(),
+                SqlAgentToolType.Firebird => new HsSqlAgent.Provider.Firebird.FirebirdProvider(),
+                _ => throw new ArgumentOutOfRangeException(nameof(provider))
+            };
+            const string policy = "real-provider-compiled-fence-v1";
+            const string context = "real-provider-approved-fence-v1";
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+            var freshness = new NativeDmlSchemaSnapshotService();
+            var challengeStore = new InMemoryDmlApprovalChallengeStore();
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "compiled-fenced-" + Guid.NewGuid().ToString("N"), new string('A', 64));
+
+            await using var metadataConnection = nativeProvider.Connections.Create(connectionString);
+            await metadataConnection.OpenAsync(token);
+            var profile = RuntimeServerProfileVerifier.Capture(provider, metadataConnection);
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {table} (ID) VALUES (1)", provider);
+            var snapshot = await freshness.CaptureAsync(
+                metadataConnection, provider, parsed, token);
+            Assert.NotNull(snapshot);
+            var plan = await new DmlPlanFactory(nativeProvider.Metadata)
+                .CreateWithMetadataConnectionAsync(
+                    metadataConnection, connectionString, parsed, provider,
+                    new SqlPlanValidationContext(policy).WithSchemaSnapshot(snapshot),
+                    maxAffectedRows: 1, cancellationToken: token, targetProfile: profile.TargetProfile);
+            Assert.Equal(DmlApprovalMode.InsertValues, plan.ApprovalMode);
+
+            var previewCoordinator = new DmlCoordinator(nativeProvider.Connections,
+                challengeStore: challengeStore, schemaFreshnessVerifier: freshness);
+            var preview = await previewCoordinator.PreviewAsync(
+                connectionString, plan, context, token, profile.ServerVersionIdentity);
+
+            if (revokedFirst)
+            {
+                // Prevent a shared catalog handle (notably Firebird) from
+                // interfering with the independent revocation transaction.
+                await metadataConnection.CloseAsync();
+                await using var revoker = nativeProvider.Connections.Create(connectionString);
+                await revoker.OpenAsync(token);
+                await fence.RevokeAsync(revoker, provider, evidence, token);
+            }
+            else
+                await metadataConnection.CloseAsync();
+
+            async Task<DmlCommitResult> CommitAsync() =>
+                batch
+                    ? await new DmlAtomicTransactionCoordinator(nativeProvider.Connections,
+                        schemaFreshnessVerifier: freshness,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(connectionString, [plan], [preview], token,
+                            profile.ServerVersionIdentity, evidence, requireExecutionFence: true)
+                    : await new DmlCoordinator(nativeProvider.Connections,
+                        challengeStore: challengeStore,
+                        schemaFreshnessVerifier: freshness,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(connectionString, plan, preview.Challenge, context, token,
+                            profile.ServerVersionIdentity, evidence, requireExecutionFence: true);
+
+            if (revokedFirst)
+            {
+                await Assert.ThrowsAnyAsync<DbException>(CommitAsync);
+            }
+            else
+            {
+                var committed = await CommitAsync();
+                Assert.True(committed.Committed);
+                Assert.Equal(1, committed.AffectedRows);
+            }
+
+            await using var inspect = nativeProvider.Connections.Create(connectionString);
+            await inspect.OpenAsync(token);
+            Assert.Equal(revokedFirst ? 0L : 1L,
+                await CountTargetFenceRowsAsync(inspect, table, token));
+            var entry = await fence.ReadAsync(inspect, provider, evidence.RequestId, token);
+            Assert.Equal(revokedFirst
+                ? RelationalDmlTargetExecutionFence.RevocationKind
+                : RelationalDmlTargetExecutionFence.AdmissionKind, entry?.EntryKind);
+            Assert.Equal(revokedFirst ? null : evidence.EvidenceFingerprint,
+                await witness.ReadFingerprintAsync(inspect, provider, evidence.RequestId, token));
+        });
+    }
+
     private async Task WithTargetFenceTablesAsync(
         Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion,
         bool provisionWitness = true,
