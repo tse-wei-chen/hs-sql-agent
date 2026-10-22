@@ -341,6 +341,37 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         });
     }
 
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_AdmissionSurvivesReadinessOnSameConnection()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+            await new DmlTargetFenceReadinessProbe().VerifyAsync(connection, provider, token);
+
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "after-probe-" + Guid.NewGuid().ToString("N"), new string('D', 64));
+            await using (var tx = await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, token))
+            {
+                await fence.AdmitAsync(connection, tx, provider, evidence, token);
+                await ExecuteTargetFenceSqlAsync(connection,
+                    $"INSERT INTO {table} (ID) VALUES (17)", token, tx);
+                await witness.WriteAsync(connection, tx, provider, evidence, token);
+                await tx.CommitAsync(token);
+            }
+
+            var row = await fence.ReadAsync(connection, provider, evidence.RequestId, token);
+            Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind, row?.EntryKind);
+            Assert.Equal(evidence.EvidenceFingerprint,
+                await witness.ReadFingerprintAsync(connection, provider, evidence.RequestId, token));
+            Assert.Equal(1L, await CountTargetFenceRowsAsync(connection, table, token));
+        });
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
