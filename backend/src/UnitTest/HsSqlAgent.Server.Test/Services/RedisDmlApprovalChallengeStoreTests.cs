@@ -1,4 +1,3 @@
-using System.Text.Json;
 using HsSqlAgent.Server.Services;
 using Moq;
 using SqlAgent.Service.Core.Execution;
@@ -41,7 +40,7 @@ public class RedisDmlApprovalChallengeStoreTests
         Assert.Equal("test:dml-approval:{dml-approval}:nonce-register", capturedKey.ToString());
         Assert.Equal(TimeSpan.FromMinutes(5), capturedExpiry);
         Assert.Equal(When.NotExists, capturedWhen);
-        Assert.Equal(challenge, JsonSerializer.Deserialize<DmlApprovalChallenge>(capturedValue.ToString()));
+        Assert.Equal(challenge, RedisDmlApprovalChallengePayloadCodec.Deserialize(capturedValue.ToString()));
     }
 
     [Fact]
@@ -70,7 +69,7 @@ public class RedisDmlApprovalChallengeStoreTests
     {
         var now = DateTimeOffset.UtcNow;
         var challenge = CreateChallenge(now, "consume-once");
-        var payload = JsonSerializer.Serialize(challenge);
+        var payload = RedisDmlApprovalChallengePayloadCodec.Serialize(challenge);
         var scripts = new List<string>();
         var keys = new List<RedisKey[]>();
         var callCount = 0;
@@ -112,7 +111,7 @@ public class RedisDmlApprovalChallengeStoreTests
         database.Setup(x => x.ScriptEvaluateAsync(
                 It.IsAny<string>(), It.IsAny<RedisKey[]>(),
                 It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
-            .ReturnsAsync(RedisResult.Create((RedisValue)JsonSerializer.Serialize(challenge)));
+            .ReturnsAsync(RedisResult.Create((RedisValue)RedisDmlApprovalChallengePayloadCodec.Serialize(challenge)));
         var store = CreateStore(database.Object, issued.AddMinutes(6));
 
         Assert.False(await store.TryConsumeAsync(challenge,
@@ -131,7 +130,7 @@ public class RedisDmlApprovalChallengeStoreTests
                 It.IsAny<RedisKey[]>(),
                 It.IsAny<RedisValue[]>(),
                 It.IsAny<CommandFlags>()))
-            .ReturnsAsync(RedisResult.Create((RedisValue)JsonSerializer.Serialize(registered)));
+            .ReturnsAsync(RedisResult.Create((RedisValue)RedisDmlApprovalChallengePayloadCodec.Serialize(registered)));
         var store = CreateStore(database.Object, now);
 
         var accepted = await store.TryConsumeAsync(
@@ -188,9 +187,9 @@ public class RedisDmlApprovalChallengeStoreTests
         Assert.All(capturedKeys, key => Assert.Contains("{dml-approval}", key.ToString()));
         Assert.Equal("test:dml-approval:{dml-approval}:aggregate", capturedKeys[2].ToString());
         Assert.Equal("2", capturedArgs![0].ToString());
-        Assert.Equal(children[0], JsonSerializer.Deserialize<DmlApprovalChallenge>(capturedArgs[1].ToString()));
-        Assert.Equal(children[1], JsonSerializer.Deserialize<DmlApprovalChallenge>(capturedArgs[2].ToString()));
-        Assert.Equal(aggregate, JsonSerializer.Deserialize<DmlApprovalChallenge>(capturedArgs[3].ToString()));
+        Assert.Equal(children[0], RedisDmlApprovalChallengePayloadCodec.Deserialize(capturedArgs[1].ToString()));
+        Assert.Equal(children[1], RedisDmlApprovalChallengePayloadCodec.Deserialize(capturedArgs[2].ToString()));
+        Assert.Equal(aggregate, RedisDmlApprovalChallengePayloadCodec.Deserialize(capturedArgs[3].ToString()));
         Assert.Equal("300000", capturedArgs[4].ToString());
         database.Verify(x => x.ScriptEvaluateAsync(
             It.IsAny<string>(), It.IsAny<RedisKey[]>(),

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using StackExchange.Redis;
 
 namespace HsSqlAgent.Server.Services;
@@ -86,7 +85,7 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
             throw new InvalidOperationException("Cannot register an expired DML approval challenge.");
 
         var database = await GetDatabaseAsync(cancellationToken);
-        var payload = JsonSerializer.Serialize(challenge);
+        var payload = RedisDmlApprovalChallengePayloadCodec.Serialize(challenge);
         var registered = await database.StringSetAsync(
                 Key(challenge.Nonce),
                 payload,
@@ -126,7 +125,7 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         DmlApprovalChallenge? registered;
         try
         {
-            registered = JsonSerializer.Deserialize<DmlApprovalChallenge>(payload);
+            registered = RedisDmlApprovalChallengePayloadCodec.Deserialize(payload);
         }
         catch (JsonException exception)
         {
@@ -168,8 +167,8 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         var args = new RedisValue[children.Count + 3];
         args[0] = children.Count;
         for (var i = 0; i < children.Count; i++)
-            args[i + 1] = JsonSerializer.Serialize(children[i]);
-        args[children.Count + 1] = JsonSerializer.Serialize(aggregate);
+            args[i + 1] = RedisDmlApprovalChallengePayloadCodec.Serialize(children[i]);
+        args[children.Count + 1] = RedisDmlApprovalChallengePayloadCodec.Serialize(aggregate);
         args[children.Count + 2] = lifetimeMs;
 
         var database = await GetDatabaseAsync(cancellationToken);

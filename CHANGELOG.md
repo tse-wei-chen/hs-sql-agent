@@ -12,8 +12,10 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
 - Third-party `IDmlApprovalChallengeStore` implementations must now implement atomic
   `TryPromoteAsync`; this is intentionally source-breaking. A single-statement MCP DML
   operation also uses the aggregate challenge pipeline.
-- Redis approval keys now use a `{dml-approval}:` hash-slot segment. Legacy v2
-  keys are not consumed by v3; **drain old workers and outstanding approvals before cutover**.
+- Redis approval keys now use a `{dml-approval}:` hash-slot segment, and
+  challenge values use an explicit `SchemaVersion=1` payload envelope.
+  Lua promotion compares these exact versioned bytes. Legacy v2 keys
+  are not consumed by v3; **drain old workers and outstanding approvals before cutover**.
   Real-Redis integration tests prevent accidental changes to this contract.
 - Approval challenges without the new plan binding are rejected. Re-preview and
   obtain new human approval; do not replay consumed approvals.

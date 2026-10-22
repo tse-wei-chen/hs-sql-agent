@@ -80,6 +80,39 @@ public sealed class RedisDmlApprovalIntegrationTests
     }
 
     [Fact]
+    public async Task UnknownV3RedisChallengeSchema_BurnsNonceAndNeverReplays()
+    {
+        var connection = ConnectionString();
+        var options = Options(connection);
+        await using var inspector = await ConnectionMultiplexer.ConnectAsync(connection);
+        await using var store = new RedisDmlApprovalChallengeStore(options);
+        var challenge = Challenge("unknown-wire-version");
+        var key = Key(options, challenge.Nonce);
+        var db = inspector.GetDatabase();
+
+        try
+        {
+            var payload = System.Text.Json.Nodes.JsonNode.Parse(
+                RedisDmlApprovalChallengePayloadCodec.Serialize(challenge))!.AsObject();
+            payload["SchemaVersion"] = RedisDmlApprovalChallengePayloadCodec.CurrentSchemaVersion + 1;
+            Assert.True(await db.StringSetAsync(key, payload.ToJsonString(),
+                TimeSpan.FromMinutes(5), When.NotExists));
+
+            // The atomic GET+DEL is first: an incompatible payload can never
+            // be retried by another worker, regardless of how it arrived here.
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+                await store.TryConsumeAsync(challenge, TestContext.Current.CancellationToken));
+            Assert.False(await db.KeyExistsAsync(key));
+            Assert.False(await store.TryConsumeAsync(
+                challenge, TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            await db.KeyDeleteAsync(key);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentPromotions_AcrossIndependentStores_HaveExactlyOneWinner()
     {
         var connection = ConnectionString();
