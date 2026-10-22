@@ -78,7 +78,12 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             await connection.OpenAsync(token);
             var probe = new DmlTargetFenceReadinessProbe();
 
-            await probe.VerifyAsync(connection, provider, token);
+            // Oracle's SERIALIZABLE first phase and READ COMMITTED witness-key
+            // diagnostic must remain stable across repeated probes on the
+            // SAME physical connection. All probes are rollback-only.
+            var probeRuns = provider == SqlAgentToolType.Oracle ? 3 : 1;
+            for (var attempt = 0; attempt < probeRuns; attempt++)
+                await probe.VerifyAsync(connection, provider, token);
 
             await using var count = connection.CreateCommand();
             count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";

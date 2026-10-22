@@ -97,8 +97,19 @@ public sealed class DmlTargetFenceReadinessProbe
         // Phase 2: the witness REQUEST_ID must also be UNIQUE. Include the
         // matching admission to support deployments with a witness→fence
         // foreign key. Again, no probe transaction is ever committed.
+        //
+        // Oracle may report ORA-08177 for an intentional second INSERT in a
+        // SERIALIZABLE transaction. That is a serialization conflict, NOT
+        // proof of a physical UNIQUE(REQUEST_ID) constraint. Phase 1 already
+        // proved real admission + witness writes and rollback at SERIALIZABLE.
+        // Use READ COMMITTED for only this Oracle uniqueness diagnostic, and
+        // continue requiring the actual ORA-00001 vendor duplicate-key error.
+        // All other providers keep the SERIALIZABLE probe.
+        var witnessUniquenessIsolation = provider == SqlAgentToolType.Oracle
+            ? IsolationLevel.ReadCommitted
+            : IsolationLevel.Serializable;
         await using (var transaction = await openConnection.BeginTransactionAsync(
-                         IsolationLevel.Serializable, cancellationToken))
+                         witnessUniquenessIsolation, cancellationToken))
         {
             try
             {

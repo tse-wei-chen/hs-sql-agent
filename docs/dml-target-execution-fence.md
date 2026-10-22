@@ -10,8 +10,8 @@ process heartbeat or an Admin Store lease is not a target-database fence.
 This **opt-in, versioned** admission protocol adds a second, independently
 provisioned target table: `HS_SQL_AGENT_DML_FENCE`. An enrolled worker inserts
 an `Admitted` row under the approval's unique `REQUEST_ID` **inside the
-same target transaction, before schema revalidation and before any approved
-mutation**. The row participates in the same target COMMIT as the approved SQL
+same target transaction, after transaction-bound schema verification and before
+any approved mutation**. The row participates in the same target COMMIT as the approved SQL
 and the existing `HS_SQL_AGENT_DML_WITNESS` row. If the SQL transaction rolls
 back, both the admission and witness roll back.
 
@@ -192,9 +192,14 @@ without preventing ordinary concurrent DML. See
 [Oracle's locking contract](https://docs.oracle.com/en/database/oracle/oracle-database/19/adfns/sql-processing-for-application-developers.html)
 and [OracleConnection.Clone](https://docs.oracle.com/en/database/oracle/oracle-database/26/odpnt/ConnectionClone.html). This
 ordering never permits application SQL before the target admission. They reject a missing Witness, missing enforced
-unique keys or nontransactional storage. This requires two extra
-SERIALIZABLE rollback transactions per fenced commit. Unfenced DML remains
-on the original execution path.
+unique keys or nontransactional storage. This requires two extra rollback-only transactions per fenced commit:
+phase 1 uses SERIALIZABLE to verify target-enlisted admission, witness and
+rollback; phase 2 verifies that the witness REQUEST_ID is physically UNIQUE.
+Oracle runs only this second, intentionally conflicting duplicate-key probe
+at READ COMMITTED, because its SERIALIZABLE isolation can return ORA-08177
+rather than ORA-00001. A serialization error is never accepted as proof of
+a unique constraint. The other five providers retain SERIALIZABLE for both
+phases. Unfenced DML remains on the original execution path.
 
 When this feature is enabled at the time a durable approval is persisted,
 the protected approval payload is stamped `FenceProtocol=target-fence-v1`.
