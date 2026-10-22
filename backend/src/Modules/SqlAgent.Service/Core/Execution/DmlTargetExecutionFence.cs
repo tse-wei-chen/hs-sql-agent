@@ -121,6 +121,46 @@ public sealed class RelationalDmlTargetExecutionFence : IDmlTargetExecutionFence
         }
     }
 
+    /// <summary>
+    /// Check the *current mutation transaction's* physical admission just
+    /// before application SQL. A schema/capability verifier must never
+    /// silently terminate, replace or roll back the admitted transaction.
+    /// This guard is independent of the post-COMMIT evidence check.
+    /// </summary>
+    internal static async Task EnsureAdmittedInTransactionAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        SqlAgentToolType provider,
+        DmlTargetCommitWitnessEvidence evidence,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        ArgumentNullException.ThrowIfNull(transaction);
+        ArgumentNullException.ThrowIfNull(evidence);
+        ValidateRequestId(evidence.RequestId);
+        if (!ReferenceEquals(transaction.Connection, connection)
+            || connection.State != ConnectionState.Open)
+            throw new InvalidOperationException(
+                "Target execution admission must be read within its exact open DML transaction.");
+
+        var prefix = ParameterPrefix(provider);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT EVIDENCE_FINGERPRINT, ENTRY_KIND FROM {TableName} " +
+                              $"WHERE REQUEST_ID = {prefix}request_id";
+        Bind(command, "request_id", evidence.RequestId, prefix);
+        await using var reader = await command.ExecuteReaderAsync(
+            CommandBehavior.SingleRow, cancellationToken);
+        var present = await reader.ReadAsync(cancellationToken);
+        var fingerprint = present ? reader.GetString(0).TrimEnd() : null;
+        var kind = present ? reader.GetString(1).TrimEnd() : null;
+        if (kind != AdmissionKind ||
+            !string.Equals(fingerprint, evidence.EvidenceFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new DmlCommitOutcomeUnknownException(new InvalidOperationException(
+                "The enlisted target-fence admission vanished or changed before application SQL. " +
+                "The worker must not execute the approved DML or replay the consumed approval."));
+    }
+
     public async Task<DmlTargetExecutionFenceEntry?> ReadAsync(
         DbConnection openConnection,
         SqlAgentToolType provider,

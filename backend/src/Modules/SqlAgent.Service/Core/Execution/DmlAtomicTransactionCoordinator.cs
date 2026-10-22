@@ -104,6 +104,10 @@ internal sealed class DmlAtomicTransactionCoordinator(
                     connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
                     _schemaFreshnessVerifier, cancellationToken);
 
+                if (requireExecutionFence)
+                    await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                        connection, transaction, provider, witnessEvidence!, cancellationToken);
+
                 if (approved.AffectedRows < 0)
                     throw new InvalidOperationException("Approved DML affected row count cannot be negative.");
 

@@ -718,6 +718,54 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TransactionBoundAdmission_RejectedIfLostBeforeApplicationMutation(bool deleteAdmission)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"hs-agent-fence-intransaction-{Guid.NewGuid():N}.db");
+        var cs = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            await ProvisionFencedSqliteAsync(cs, ct);
+            var admission = new DmlTargetCommitWitnessEvidence(
+                "intransaction-" + Guid.NewGuid().ToString("N"), new string('D', 64));
+            await using var connection = new SqliteConnection(cs);
+            await connection.OpenAsync(ct);
+            await using var tx = await connection.BeginTransactionAsync(ct);
+            await new RelationalDmlTargetExecutionFence().AdmitAsync(
+                connection, tx, SqlAgentToolType.Sqlite, admission, ct);
+            if (deleteAdmission)
+            {
+                await using var sabotage = connection.CreateCommand();
+                sabotage.Transaction = tx;
+                sabotage.CommandText =
+                    "DELETE FROM HS_SQL_AGENT_DML_FENCE WHERE REQUEST_ID = $request";
+                sabotage.Parameters.AddWithValue("$request", admission.RequestId);
+                Assert.Equal(1, await sabotage.ExecuteNonQueryAsync(ct));
+                await Assert.ThrowsAsync<DmlCommitOutcomeUnknownException>(() =>
+                    RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                        connection, tx, SqlAgentToolType.Sqlite, admission, ct));
+            }
+            else
+            {
+                await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                    connection, tx, SqlAgentToolType.Sqlite, admission, ct);
+            }
+            await tx.RollbackAsync(ct);
+            await using var query = connection.CreateCommand();
+            query.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(0L, Convert.ToInt64(await query.ExecuteScalarAsync(ct)));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task RequestedFenceWithoutWriter_RejectsBeforeAnyTargetConnection()
     {

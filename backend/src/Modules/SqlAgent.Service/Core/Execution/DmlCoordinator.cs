@@ -184,6 +184,11 @@ public sealed class DmlCoordinator(
                 connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
                 _schemaFreshnessVerifier, cancellationToken);
 
+            if (requireExecutionFence)
+                await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                    connection, transaction, plan.MutationCommand.TargetProvider,
+                    witnessEvidence!, cancellationToken);
+
             if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             {
                 var insertResult = await CommitInsertValuesAsync(
