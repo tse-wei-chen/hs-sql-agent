@@ -7,6 +7,14 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration guide](docs/v3-migration.md).
 
+### PostgreSQL old-worker cutover verification
+
+- Introduce a fail-closed, read-only PostgreSQL old-role verifier that
+  checks effective table DML rights, transitive NOINHERIT/SET ROLE membership,
+  surviving sessions and privileged monitoring authority. Live database
+  tests cover grants, revocation, session drain and incomplete evidence.
+  This does not attest other SQL providers or production topology.
+
 ### Breaking changes and required migration
 
 - Third-party `IDmlApprovalChallengeStore` implementations must now implement atomic

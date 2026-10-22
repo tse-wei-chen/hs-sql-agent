@@ -51,6 +51,30 @@ await new DmlTargetFenceReadinessProbe()
     .VerifyAsync(connection, SqlAgentToolType.Postgres, cancellationToken);
 ```
 
+**PostgreSQL automated old-role check:** The public
+`PostgresLegacyDmlCutoverVerifier.VerifyAsync` accepts an open privileged
+monitoring connection and a named retired v2 role. It reads PostgreSQL's
+catalogs, follows transitive role membership including NOINHERIT/`SET ROLE`,
+checks effective INSERT/UPDATE/DELETE privileges on all non-system
+tables, partitioned/foreign tables and views in the **current database**,
+and counts surviving sessions for the retired login. It requires superuser or
+`pg_read_all_stats` monitoring authority and rejects unknown roles, empty
+inventories, elevated role membership, writable tables and live sessions.
+
+```csharp
+using SqlAgent.Service.Core.Execution;
+
+// adminConnection must be open against the authoritative PostgreSQL writer.
+var snapshot = await new PostgresLegacyDmlCutoverVerifier()
+    .VerifyAsync(adminConnection, "retired_v2_worker", cancellationToken);
+```
+
+This is **read-only point-in-time evidence**, not automatic credential
+revocation or a guarantee of fleet-wide quiescence. It cannot verify old
+binaries on other hosts, another writer/database, stored procedures or
+SECURITY DEFINER routines, future grants or deployment credentials external
+to PostgreSQL. The other five database engines need separate cutover proof.
+
 **Runtime enforcement:** When `target-fence-v1` is requested, the
 single-statement and atomic-batch coordinators both run the physical
 readiness probe on the actual opened target connection, **before** the
