@@ -17,7 +17,16 @@
    confirm neither row persisted. It also deliberately retries the same
    request ID inside the two rollback-only transactions and requires the
    target's **physical UNIQUE/PRIMARY KEY constraints** to reject duplicate
-   Fence and Witness entries independently. It never executes application SQL,
+   Fence and Witness entries independently. Critically, it tests
+   `Admitted` versus `Revoked` using the **same request ID**, so a
+   misleading composite UNIQUE(`REQUEST_ID`, `ENTRY_KIND`) cannot
+   masquerade as a valid fence. Witness uniqueness is tested with the
+   same request ID but a **different fingerprint**, so uniqueness on
+   `EVIDENCE_FINGERPRINT` alone cannot masquerade as request uniqueness.
+   Only the provider's specific unique/primary-key violation diagnostic
+   is accepted; an arbitrary database error (including permission denial
+   or trigger failures) is not evidence of a unique key. It never executes
+   application SQL,
    commits a probe row or changes any Admin Store approval.
    Missing tables, missing privileges, unsupported drivers, failed rollback,
    residual rows and cancellation must cause **readiness failure**, never a

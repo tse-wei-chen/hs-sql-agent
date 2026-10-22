@@ -45,7 +45,9 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
 - Provide a public rollback-only target-fence readiness probe with real
   six-provider transaction tests, including physical absent-witness and
   absent-unique-key failures plus injected witness-error rollback. A table
-  with no actual `REQUEST_ID` uniqueness cannot pass readiness. Document
+  with no actual `REQUEST_ID` uniqueness cannot pass readiness; additionally
+  reject misleading (REQUEST_ID, ENTRY_KIND) and fingerprint-only unique keys
+  and reject generic database errors as uniqueness proof. Document
   provider-specific legacy credential cutover requirements; this does
   not automatically prove old-worker quiescence.
 - Integrate the built-in physical probe into **every fenced single/batch

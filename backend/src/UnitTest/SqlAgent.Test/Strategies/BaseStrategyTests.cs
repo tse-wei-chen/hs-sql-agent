@@ -159,6 +159,35 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
            enforceWitnessPrimaryKey: fenceKeyMissing);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public virtual async Task TargetFence_RealProvider_WrongUniqueColumnCannotPassReadiness(
+        bool compositeFenceKey)
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+
+            var failure = await Record.ExceptionAsync(() =>
+                new DmlTargetFenceReadinessProbe().VerifyAsync(connection, provider, token));
+            Assert.NotNull(failure);
+            Assert.IsType<InvalidOperationException>(failure);
+            Assert.Contains("unique key", failure.Message, StringComparison.OrdinalIgnoreCase);
+
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_WITNESS";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(connection, table, token));
+        }, enforceFencePrimaryKey: !compositeFenceKey,
+           enforceWitnessPrimaryKey: compositeFenceKey,
+           compositeFenceUniqueKey: compositeFenceKey,
+           fingerprintWitnessUniqueKey: !compositeFenceKey);
+    }
+
     private sealed class ReadinessRejectedWitness : IDmlTargetCommitWitness
     {
         public Task WriteAsync(
@@ -595,7 +624,9 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion,
         bool provisionWitness = true,
         bool enforceFencePrimaryKey = true,
-        bool enforceWitnessPrimaryKey = true)
+        bool enforceWitnessPrimaryKey = true,
+        bool compositeFenceUniqueKey = false,
+        bool fingerprintWitnessUniqueKey = false)
     {
         var provider = Strategy.DbType;
         var token = TestContext.Current.CancellationToken;
@@ -614,13 +645,19 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         var fingerprintType = oracle ? "CHAR(64 CHAR)" : "CHAR(64)";
         var fenceKey = enforceFencePrimaryKey ? " PRIMARY KEY" : string.Empty;
         var witnessKey = enforceWitnessPrimaryKey ? " PRIMARY KEY" : string.Empty;
+        var fenceExtra = compositeFenceUniqueKey
+            ? ", CONSTRAINT UK_FENCE_REQUEST_KIND UNIQUE (REQUEST_ID, ENTRY_KIND)"
+            : string.Empty;
+        var witnessExtra = fingerprintWitnessUniqueKey
+            ? ", CONSTRAINT UK_WITNESS_FINGERPRINT UNIQUE (EVIDENCE_FINGERPRINT)"
+            : string.Empty;
         var fenceSchema = $"CREATE TABLE HS_SQL_AGENT_DML_FENCE (" +
             $"REQUEST_ID {requestType} NOT NULL{fenceKey}, " +
             $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL, " +
-            $"ENTRY_KIND {kindType} NOT NULL)" + suffix;
+            $"ENTRY_KIND {kindType} NOT NULL{fenceExtra})" + suffix;
         var witnessSchema = $"CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
             $"REQUEST_ID {requestType} NOT NULL{witnessKey}, " +
-            $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL)" + suffix;
+            $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL{witnessExtra})" + suffix;
         var probeSchema = $"CREATE TABLE {probe} (ID INTEGER PRIMARY KEY)" + suffix;
         await using var ddl = ProviderStrategy.CreateConnection(connectionString);
         await ddl.OpenAsync(token);

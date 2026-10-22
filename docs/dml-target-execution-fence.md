@@ -155,6 +155,10 @@ readiness check, see [v3 Target Fence credential cutover](v3-target-fence-cutove
 The probe also requires both target tables to enforce an actual unique
 `REQUEST_ID` key: a schema that allows duplicate admission or witness
 records is not a functioning fence, even if ordinary INSERT succeeds.
+It verifies opposite `Admitted`/`Revoked` kinds with one request ID
+(to reject unsafe composite keys), distinct fingerprints for the witness
+(to reject unique-on-fingerprint impostors), and the provider-specific
+unique-violation diagnostic rather than treating any `DbException` as proof.
 
 
 
