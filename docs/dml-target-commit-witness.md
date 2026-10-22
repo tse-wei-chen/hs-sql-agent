@@ -170,14 +170,21 @@ fail-closed behavior when the witness table is missing, and end-to-end durable
 approval binding after a service restart.
 
 The insert/read command uses fixed, parameterized SQL with the dialect's ADO.NET
-placeholder convention for all six configured database providers. **Live
-provider-integration evidence for PostgreSQL, MySQL, SQL Server, Oracle and
-Firebird remains a gate**, not a claim of completed verification. In particular,
-the hard-coded table name depends on the target session's resolved schema
-and the table must be protected from out-of-band edits. Other applications or
-administrators who can forge rows can also forge witness evidence. A future
-worker-fencing protocol must prove that no original worker can still COMMIT
-before allowing a negative physical-outcome conclusion.
+placeholder convention for all six configured database providers. Real SQLite,
+PostgreSQL 16, MySQL 8 (InnoDB) and SQL Server 2022 suites exercise witness
+writes and reads using actual target transactions. The PostgreSQL/MySQL and
+SQL Server suites also cover independently connected revocation competition
+and compiled single/batch DML paths. **Oracle and Firebird live target-fence
+and witness concurrency parity remains unverified**, even though their
+parameterized commands and schema definitions exist.
+
+The hard-coded table name depends on the target session's resolved schema;
+protect both witness and fence tables from out-of-band modification.
+Other applications or administrators who can forge rows can also forge
+witness evidence. A target admission fence provides physical exclusion
+only if every eligible worker enforces the protocol on the authoritative
+target and revocation COMMIT is positively acknowledged. Automatic
+reconciliation of `Executing` is still forbidden.
 
 The post-probe Admin Store re-read also compares the approval's protected resume payload, access key ID, provider and database identity, in addition to status, update timestamp, reason, evidence fingerprint and target management ID. Any concurrent mutation of those binding fields invalidates the inspected snapshot as `ApprovalChanged`; it cannot be presented as positive COMMIT evidence for a different approval binding.
 

@@ -122,12 +122,14 @@ while a successful target COMMIT records the application mutation,
 physical database and coordinator-path proofs, **not** a claim of
 fleet-wide fencing or automatic `Executing` reconciliation.
 
-A separate mandatory SQL Server 2022 GitHub Actions job exercises actual SQL Server
-unique-key admission/revocation, rollback, missing-witness rollback, concurrent
-uncommitted admission and both compiled single/batch coordinator paths.
-This job MUST pass before claiming SQL Server parity; having test source code
-alone is not proof. Oracle and Firebird live concurrency interoperability
-remains **not yet demonstrated**. PostgreSQL/MySQL coverage also does not prove that every
+A separate mandatory SQL Server 2022 GitHub Actions job exercises nine
+real database integration cases: revocation-first, worker-first, rollback,
+missing-witness rollback, concurrent uncommitted admission and both compiled
+single/batch DML coordinator paths for approved and revoked requests. Every
+case uses independent physical connections and a dedicated isolated target
+database. The first real-service job passed all 9 with zero skips, and the
+dedicated test job remains required for PR CI. Oracle and Firebird live
+concurrency interoperability remains **not yet demonstrated**. PostgreSQL/MySQL coverage also does not prove that every
 production deployment uses a single authoritative writer or that all fleet
 members enforce `target-fence-v1`.
 

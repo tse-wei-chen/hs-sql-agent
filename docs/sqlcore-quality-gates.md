@@ -606,9 +606,17 @@ published as measured percentages or silently set to 100.
       mutation must persist both fence admission and target witness with
       its application row. The CI job requires `TEST_POSTGRES_CONNECTION` and
       `TEST_MYSQL_CONNECTION`; it fails rather than silently skipping
-      when those values are missing. Still open: real SQL Server, Oracle
-      and Firebird concurrency semantics, fleet-version validation,
-      controlled revocation/reconciliation and authoritative topology proof.
+      when those values are missing. Still open: Oracle and Firebird
+      concurrency semantics, fleet-version validation, controlled
+      revocation/reconciliation and authoritative topology proof.
+- [x] Add a separate mandatory SQL Server 2022 target-fence CI shard:
+      nine actual SQL Server cases prove direct admission/revocation
+      competition, rollback, missing-witness rollback, and a revoker
+      blocked by an uncommitted worker. Both compiled single-statement
+      and atomic-batch coordinators must atomically commit mutation,
+      admission, witness, or reject pre-revoked execution. The first
+      live service run passed 9/9 with zero skips. The SQL Server
+      suite is excluded from other shards without its target service.
 - [x] Seal the **commit-witness requirement** independently of the versioned
       target admission fence into every newly issued durable approval when
       witness opt-in is active. A restart with the witness writer removed
