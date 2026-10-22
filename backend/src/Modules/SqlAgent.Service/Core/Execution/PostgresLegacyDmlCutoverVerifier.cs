@@ -16,7 +16,8 @@ public sealed class PostgresLegacyDmlCutoverVerifier
 {
     /// <summary>
     /// Reject unless the exact named legacy role has no effective
-    /// INSERT/UPDATE/DELETE permissions on any non-system table/view/foreign
+    /// INSERT/UPDATE/DELETE/TRUNCATE permissions (including column-level
+    /// grants) on any non-system table/view/foreign
     /// table and no surviving PostgreSQL sessions in this database cluster.
     /// Requires a privileged monitoring connection, not the old worker login.
     /// This verifier does not revoke rights or terminate processes.
@@ -84,6 +85,9 @@ public sealed class PostgresLegacyDmlCutoverVerifier
                         WHERE pg_catalog.has_table_privilege(r.oid, t.oid, 'INSERT')
                            OR pg_catalog.has_table_privilege(r.oid, t.oid, 'UPDATE')
                            OR pg_catalog.has_table_privilege(r.oid, t.oid, 'DELETE')
+                           OR pg_catalog.has_table_privilege(r.oid, t.oid, 'TRUNCATE')
+                           OR pg_catalog.has_any_column_privilege(r.oid, t.oid, 'INSERT')
+                           OR pg_catalog.has_any_column_privilege(r.oid, t.oid, 'UPDATE')
                     )
                 ) AS writable_relations
             """;

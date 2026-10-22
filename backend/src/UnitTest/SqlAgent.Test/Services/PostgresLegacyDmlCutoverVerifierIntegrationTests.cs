@@ -39,6 +39,25 @@ public sealed class PostgresLegacyDmlCutoverVerifierIntegrationTests
             Assert.Contains("activeSessions=", unsafeSession.Message);
         }
 
+        // Column-specific UPDATE grants must also block the cutover.
+        await ExecuteAsync(admin,
+            $"GRANT UPDATE (id) ON {target.SchemaName}.application_data TO {target.LegacyRole}", ct);
+        var columnGrant = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            verifier.VerifyAsync(admin, target.LegacyRole, ct));
+        Assert.Contains("writableRelations=", columnGrant.Message);
+        await ExecuteAsync(admin,
+            $"REVOKE UPDATE (id) ON {target.SchemaName}.application_data FROM {target.LegacyRole}", ct);
+
+        // PostgreSQL TRUNCATE is destructive, even if a DML compiler would
+        // not accept that statement shape.
+        await ExecuteAsync(admin,
+            $"GRANT TRUNCATE ON {target.SchemaName}.application_data TO {target.LegacyRole}", ct);
+        var truncateGrant = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            verifier.VerifyAsync(admin, target.LegacyRole, ct));
+        Assert.Contains("writableRelations=", truncateGrant.Message);
+        await ExecuteAsync(admin,
+            $"REVOKE TRUNCATE ON {target.SchemaName}.application_data FROM {target.LegacyRole}", ct);
+
         var cleared = await verifier.VerifyAsync(admin, target.LegacyRole, ct);
         Assert.Equal(target.LegacyRole, cleared.LegacyRole);
         Assert.True(cleared.CheckedRelations >= 1);
