@@ -51,6 +51,42 @@ public sealed class GlobalExceptionHandlerTests
     }
 
     [Fact]
+    public async Task RollbackOutcomeUnknown_ReturnsStableNonRetryableHttpContract()
+    {
+        var environment = new Mock<IWebHostEnvironment>();
+        environment.SetupGet(x => x.EnvironmentName).Returns("Production");
+        using var services = new ServiceCollection()
+            .AddSingleton(environment.Object)
+            .BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = services };
+        using var responseStream = new MemoryStream();
+        context.Response.Body = responseStream;
+
+        var unknown = new DmlRollbackOutcomeUnknownException(
+            new IOException("Target DML failed."),
+            new IOException("Rollback acknowledgement was lost."));
+        var handler = new GlobalExceptionHandler(
+            Mock.Of<ILogger<GlobalExceptionHandler>>());
+
+        Assert.True(await handler.TryHandleAsync(
+            context, unknown, TestContext.Current.CancellationToken));
+        Assert.Equal(StatusCodes.Status500InternalServerError, context.Response.StatusCode);
+
+        responseStream.Position = 0;
+        using var document = await JsonDocument.ParseAsync(
+            responseStream, cancellationToken: TestContext.Current.CancellationToken);
+        var result = document.RootElement;
+        Assert.Equal("dml.rollback_outcome_unknown", result.GetProperty("code").GetString());
+        Assert.Equal("outcome_unknown", result.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, result.GetProperty("committed").ValueKind);
+        Assert.False(result.GetProperty("retryable").GetBoolean());
+        Assert.Contains("could not be confirmed rolled back", result.GetProperty("error").GetString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.False(result.TryGetProperty("detail", out var detail) &&
+                     detail.ValueKind == JsonValueKind.String);
+    }
+
+    [Fact]
     public async Task OrdinaryInvalidOperation_KeepsLegacyErrorShape()
     {
         var environment = new Mock<IWebHostEnvironment>();
