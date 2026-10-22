@@ -106,7 +106,7 @@ public sealed class PostgresLegacyDmlCutoverVerifierIntegrationTests
         // executed with the owner's elevated rights is an independent path.
         await ExecuteAsync(admin,
             $"CREATE FUNCTION {target.SchemaName}.legacy_routine() RETURNS integer " +
-            "LANGUAGE sql SECURITY DEFINER AS $ SELECT 1 $; " +
+            "LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'; " +
             $"ALTER ROLE {target.LegacyRole} NOLOGIN", ct);
         var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             verifier.VerifyAsync(admin, target.LegacyRole, ct));
