@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Runtime.ExceptionServices;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -71,20 +72,51 @@ public sealed class RelationalDmlTargetExecutionFence : IDmlTargetExecutionFence
         // A committed revocation row survives crashes. A concurrent admitted
         // worker's uncommitted unique-key row must commit/rollback before
         // the new insertion can be confirmed by the target database.
-        await using var transaction = await openConnection.BeginTransactionAsync(
-            IsolationLevel.Serializable, cancellationToken);
+        var commitAcknowledged = false;
+        ExceptionDispatchInfo? primaryFailure = null;
         try
         {
-            await InsertAsync(openConnection, transaction, provider, evidence,
-                RevocationKind, cancellationToken);
-            // A lost COMMIT acknowledgement is NOT a confirmed fence.
-            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+            await using var transaction = await openConnection.BeginTransactionAsync(
+                IsolationLevel.Serializable, cancellationToken);
+            try
+            {
+                await InsertAsync(openConnection, transaction, provider, evidence,
+                    RevocationKind, cancellationToken);
+                // A lost COMMIT acknowledgement is NOT a confirmed fence.
+                await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+                commitAcknowledged = true;
+            }
+            catch (Exception failure)
+            {
+                await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
+                    transaction, failure);
+                try
+                {
+                    DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+                }
+                catch (DmlRollbackOutcomeUnknownException rollbackUnknown)
+                {
+                    primaryFailure = ExceptionDispatchInfo.Capture(rollbackUnknown);
+                    throw;
+                }
+
+                primaryFailure = ExceptionDispatchInfo.Capture(failure);
+                throw;
+            }
         }
-        catch (Exception failure)
+        catch (Exception) when (commitAcknowledged)
         {
-            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
-                transaction, failure);
-            DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            // Revocation COMMIT is positively acknowledged. DisposeAsync
+            // cannot turn that durable barrier into a reported failure.
+            return;
+        }
+        catch (Exception cleanupFailure) when (
+            primaryFailure is not null
+            && !ReferenceEquals(cleanupFailure, primaryFailure.SourceException))
+        {
+            // A provider cleanup error cannot erase a lost COMMIT
+            // acknowledgement or failed ROLLBACK classification.
+            primaryFailure.Throw();
             throw;
         }
     }

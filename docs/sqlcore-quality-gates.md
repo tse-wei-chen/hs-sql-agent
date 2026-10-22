@@ -602,6 +602,14 @@ published as measured percentages or silently set to 100.
       compatible deserialization. Add a real SQLite restart matrix for
       witness-present and witness-removed completions, consumed approval
       non-replayability, and target witness row atomicity.
+- [x] Preserve target revocation's physical COMMIT classification across
+      provider transaction DisposeAsync failures. Acknowledged revocation
+      COMMIT remains successful even if cleanup fails; unacknowledged COMMIT
+      remains a typed `DmlCommitOutcomeUnknownException`, and failed
+      mutation plus unconfirmed rollback remains a typed
+      `DmlRollbackOutcomeUnknownException`. Fault-injection tests cover
+      all three branches. Cleanup exceptions cannot accidentally authorize
+      an operator to infer successful revocation or definite failure.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.
