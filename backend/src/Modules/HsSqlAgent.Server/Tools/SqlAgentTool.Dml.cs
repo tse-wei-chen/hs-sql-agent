@@ -180,25 +180,22 @@ public partial class SqlAgentTool
                 };
             }
 
-            await WriteDmlAuditAsync(
-                parsedBatch,
-                "success",
-                "approved",
-                stopwatch,
-                approvalWaitDurationMs,
-                affectedRowCount,
-                parsedBatch.Count == 1
-                    ? "Committed after typed policy and approval revalidation."
-                    : $"Committed atomic transaction with {parsedBatch.Count} statements after per-statement revalidation.",
-                cancellationToken);
-            return McpDmlToolResult.CommittedResult(
-                providerName,
-                parsedBatch.Count,
-                execution.AffectedRows,
-                execution.ApprovalWaitDurationMs,
-                execution.ApprovalRequestId,
-                execution.ReturnedRows,
-                execution.Result);
+            // The target COMMIT is already positively acknowledged here.
+            // An audit write, request cancellation, or audit-store outage cannot
+            // reclassify it as failed: the consumed approval must not be retried.
+            return await CompleteConfirmedDmlAsync(
+                providerName, parsedBatch.Count, execution,
+                () => WriteDmlAuditAsync(
+                    parsedBatch,
+                    "success",
+                    "approved",
+                    stopwatch,
+                    approvalWaitDurationMs,
+                    affectedRowCount,
+                    parsedBatch.Count == 1
+                        ? "Committed after typed policy and approval revalidation."
+                        : $"Committed atomic transaction with {parsedBatch.Count} statements after per-statement revalidation.",
+                    cancellationToken));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is DmlCommitOutcomeUnknownException or DmlRollbackOutcomeUnknownException)
@@ -269,6 +266,41 @@ public partial class SqlAgentTool
                 affectedRowCount,
                 approvalWaitDurationMs);
         }
+    }
+
+    // Keep the side-effect/result boundary testable without connecting to a
+    // target DB. A confirmed physical COMMIT is authoritative; audit is
+    // secondary telemetry and must never manufacture a retryable failure.
+    internal static async Task<McpDmlToolResult> CompleteConfirmedDmlAsync(
+        string? provider,
+        int statementCount,
+        TypedDmlExecutionTiming execution,
+        Func<Task> writeAudit)
+    {
+        ArgumentNullException.ThrowIfNull(writeAudit);
+        if (!execution.Committed)
+            throw new ArgumentException(
+                "Only an acknowledged DML COMMIT can use the confirmed-result boundary.",
+                nameof(execution));
+
+        try
+        {
+            await writeAudit();
+        }
+        catch (Exception)
+        {
+            // Commit is irreversible; losing the audit acknowledgement does
+            // not change the physical outcome or restore the one-time approval.
+        }
+
+        return McpDmlToolResult.CommittedResult(
+            provider,
+            statementCount,
+            execution.AffectedRows,
+            execution.ApprovalWaitDurationMs,
+            execution.ApprovalRequestId,
+            execution.ReturnedRows,
+            execution.Result);
     }
 
     private async Task WriteDmlAuditAsync(

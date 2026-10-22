@@ -101,6 +101,66 @@ public class SqlAgentToolDmlStructuredResultTests
         Assert.False(result.Error!.Retryable);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfirmedDmlCommit_AuditFailureOrCancellation_NeverTurnsCommitIntoFailed(bool cancelled)
+    {
+        var auditAttempted = false;
+        var execution = new TypedDmlExecutionTiming(
+            "Successfully committed.",
+            ApprovalWaitDurationMs: 18,
+            AffectedRows: 2,
+            Committed: true,
+            ApprovalRequestId: "approval-already-consumed",
+            ReturnedRows: [new Dictionary<string, object?> { ["ID"] = 42 }]);
+
+        var result = await SqlAgentTool.CompleteConfirmedDmlAsync(
+            "Sqlite", 2, execution, () =>
+            {
+                auditAttempted = true;
+                return cancelled
+                    ? Task.FromException(new OperationCanceledException("Audit cancellation after target COMMIT."))
+                    : Task.FromException(new IOException("Admin audit database unavailable after target COMMIT."));
+            });
+
+        Assert.True(auditAttempted);
+        Assert.Equal("committed", result.Status);
+        Assert.True(result.Committed);
+        Assert.Equal(true, result.CommitConfirmed);
+        Assert.Equal("approved", result.ApprovalDecision);
+        Assert.Equal("approval-already-consumed", result.ApprovalRequestId);
+        Assert.Equal(2, result.AffectedRows);
+        Assert.Equal(42, Assert.Single(result.ReturnedRows)["ID"]);
+        Assert.Null(result.Error);
+    }
+
+    [Fact]
+    public async Task ConfirmedDmlCommit_HappyAudit_StillReturnsSameCommittedResult()
+    {
+        var calls = 0;
+        var execution = new TypedDmlExecutionTiming(
+            "Committed.", 0, 1, true, ApprovalRequestId: "approval-once");
+        var result = await SqlAgentTool.CompleteConfirmedDmlAsync(
+            "Postgres", 1, execution, () => { calls++; return Task.CompletedTask; });
+
+        Assert.Equal(1, calls);
+        Assert.Equal("committed", result.Status);
+        Assert.True(result.Committed);
+        Assert.Equal("approval-once", result.ApprovalRequestId);
+    }
+
+    [Fact]
+    public async Task ConfirmedDmlCommit_RejectsUnconfirmedExecution()
+    {
+        var auditCalled = false;
+        var execution = new TypedDmlExecutionTiming("Not committed.", 0, null, false);
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            SqlAgentTool.CompleteConfirmedDmlAsync(
+                "Postgres", 1, execution, () => { auditCalled = true; return Task.CompletedTask; }));
+        Assert.False(auditCalled);
+    }
+
     [Fact]
     public async Task ExecuteDmlSql_InvalidConfiguration_ReturnsStructuredFailureWithoutSecret()
     {
