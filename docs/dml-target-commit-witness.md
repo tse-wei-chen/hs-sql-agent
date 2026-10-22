@@ -166,3 +166,5 @@ and the table must be protected from out-of-band edits. Other applications or
 administrators who can forge rows can also forge witness evidence. A future
 worker-fencing protocol must prove that no original worker can still COMMIT
 before allowing a negative physical-outcome conclusion.
+
+The post-probe Admin Store re-read also compares the approval's protected resume payload, access key ID, provider and database identity, in addition to status, update timestamp, reason, evidence fingerprint and target management ID. Any concurrent mutation of those binding fields invalidates the inspected snapshot as `ApprovalChanged`; it cannot be presented as positive COMMIT evidence for a different approval binding.

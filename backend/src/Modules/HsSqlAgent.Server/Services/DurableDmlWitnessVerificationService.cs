@@ -145,7 +145,11 @@ public sealed class DurableDmlWitnessVerificationService(
         if (latest is null || latest.Status != state.Status
             || latest.UpdatedAt != state.UpdatedAt || latest.Reason != state.Reason
             || latest.EvidenceFingerprint != state.EvidenceFingerprint
-            || latest.DbManagementId != state.DbManagementId)
+            || latest.DbManagementId != state.DbManagementId
+            || latest.AccessKeyId != state.AccessKeyId
+            || latest.ProtectedExecutionPayload != state.ProtectedExecutionPayload
+            || latest.DatabaseProvider != state.DatabaseProvider
+            || latest.DatabaseIdentity != state.DatabaseIdentity)
             return Result(ApprovalChanged);
         return Result(status);
     }
