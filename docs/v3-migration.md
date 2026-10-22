@@ -5,7 +5,7 @@ This is an in-progress migration guide, not an already published release.
 ## Breaking changes
 
 - **Custom approval stores:** `IDmlApprovalChallengeStore.TryPromoteAsync` is required for atomic child-to-aggregate promotion. Both one-statement and multi-statement `execute_dml_sql` use the aggregate path. Custom implementations must implement atomic all-or-nothing promotion; sequential delete/add is not safe.
-- **Redis approval keys:** v3 uses `{dml-approval}:` within keys for same-slot atomic Redis Cluster promotion. v2 outstanding approvals are not readable by the new key format; stop new approvals and drain/reject old requests before cutover.
+- **Redis approval keys:** v3 uses `{dml-approval}:` within keys for same-slot atomic Redis Cluster promotion. v2 outstanding approvals are not readable by the new key format; stop new approvals and drain/reject old requests before cutover. A real Redis integration test proves that an old key cannot be consumed or promoted by v3 and remains present until explicitly drained or expired. Mixed old/new workers are therefore unsafe.
 - **Challenge binding:** outstanding approvals without `ApprovalPlanBinding` will fail closed. Request new previews and obtain fresh approval; never replay a consumed nonce.
 - **Mutation policy:** `UPDATE`/`DELETE` with provably always-true predicates (for example `WHERE 1=1`) are denied when a selective predicate is required. Use an actual predicate or explicit full-table authorization.
 - **SQL resource limits:** input beyond 4,194,304 UTF-16 units or 131,072 lexer tokens is rejected.

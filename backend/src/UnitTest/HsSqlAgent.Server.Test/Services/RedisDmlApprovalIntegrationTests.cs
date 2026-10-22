@@ -39,6 +39,47 @@ public sealed class RedisDmlApprovalIntegrationTests
     }
 
     [Fact]
+    public async Task V2LegacyRedisKey_CannotBeConsumedOrPromotedByV3_AndNeedsExplicitDrain()
+    {
+        var connection = ConnectionString();
+        var options = Options(connection);
+        await using var inspector = await ConnectionMultiplexer.ConnectAsync(connection);
+        await using var store = new RedisDmlApprovalChallengeStore(options);
+        var db = inspector.GetDatabase();
+        var legacy = Challenge("v2-legacy");
+        var aggregate = Challenge("v3-aggregate");
+        // v2 used the prefix directly; v3 requires the common Redis Cluster
+        // hash slot. Never silently consume, migrate or overwrite v2 consent.
+        RedisKey oldKey = options.KeyPrefix + legacy.Nonce;
+        var v3Key = Key(options, legacy.Nonce);
+        var aggregateKey = Key(options, aggregate.Nonce);
+
+        try
+        {
+            Assert.True(await db.StringSetAsync(
+                oldKey,
+                System.Text.Json.JsonSerializer.Serialize(legacy),
+                TimeSpan.FromMinutes(5),
+                When.NotExists));
+
+            Assert.False(await store.TryConsumeAsync(
+                legacy, TestContext.Current.CancellationToken));
+            Assert.False(await store.TryPromoteAsync(
+                [legacy], aggregate, TestContext.Current.CancellationToken));
+
+            // The v2 key is still independently live: a mixed-worker rollout
+            // would be unsafe, even though the v3 process fails closed.
+            Assert.True(await db.KeyExistsAsync(oldKey));
+            Assert.False(await db.KeyExistsAsync(v3Key));
+            Assert.False(await db.KeyExistsAsync(aggregateKey));
+        }
+        finally
+        {
+            await db.KeyDeleteAsync([oldKey, v3Key, aggregateKey]);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentPromotions_AcrossIndependentStores_HaveExactlyOneWinner()
     {
         var connection = ConnectionString();
