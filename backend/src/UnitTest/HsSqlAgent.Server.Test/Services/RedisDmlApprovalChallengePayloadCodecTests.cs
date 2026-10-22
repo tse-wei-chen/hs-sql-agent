@@ -28,6 +28,7 @@ public sealed class RedisDmlApprovalChallengePayloadCodecTests
             (int)root["SchemaVersion"]!);
         Assert.Equal(RedisDmlApprovalChallengePayloadCodec.PayloadKind,
             (string?)root["Kind"]);
+        Assert.Equal(9, root["Challenge"]!.AsObject().Count);
         Assert.Equal(challenge, RedisDmlApprovalChallengePayloadCodec.Deserialize(json));
     }
 

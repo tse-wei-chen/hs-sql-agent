@@ -29,6 +29,11 @@ feature addition as another major release.
   v2 DML preview issuance and drain old workers; complete/reject Pending
   requests or require fresh approval where v3 evidence bindings changed.
   The old Redis prefix and unversioned values cannot be silently promoted.
+- **Frozen v1 DTOs:** both durable-resume and Redis challenge envelopes
+  serialize explicit private v1 wire projections, **not** evolving CLR
+  record objects. Adding an optional .NET property later cannot alter
+  canonical Redis Lua equality or implicitly add a security obligation
+  to the encrypted v1 approval.
 - **Encrypted pending payloads:** the Admin Store column is unchanged.
   V3 writes only the versioned envelope, and the same codec is used by both
   completion and independent witness inspection. Legacy flat JSON uses a

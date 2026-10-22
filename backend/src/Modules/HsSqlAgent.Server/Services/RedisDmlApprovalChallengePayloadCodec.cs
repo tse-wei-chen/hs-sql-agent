@@ -19,7 +19,7 @@ internal static class RedisDmlApprovalChallengePayloadCodec
         if (string.IsNullOrWhiteSpace(challenge.Nonce))
             throw new InvalidOperationException("DML approval challenge nonce is missing.");
         return JsonSerializer.Serialize(new ChallengeEnvelope(
-            PayloadKind, CurrentSchemaVersion, challenge));
+            PayloadKind, CurrentSchemaVersion, ChallengeV1.FromDomain(challenge)));
     }
 
     internal static DmlApprovalChallenge Deserialize(string json)
@@ -50,8 +50,8 @@ internal static class RedisDmlApprovalChallengePayloadCodec
                 if (!raw.TryGetProperty(name, out _))
                     throw InvalidPayload();
 
-            var challenge = raw.Deserialize<DmlApprovalChallenge>()
-                ?? throw InvalidPayload();
+            var stored = raw.Deserialize<ChallengeV1>() ?? throw InvalidPayload();
+            var challenge = stored.ToDomain();
             if (string.IsNullOrWhiteSpace(challenge.Nonce))
                 throw InvalidPayload();
             return challenge;
@@ -67,5 +67,31 @@ internal static class RedisDmlApprovalChallengePayloadCodec
         new("Stored DML approval challenge payload is missing, incompatible or invalid.");
 
     private sealed record ChallengeEnvelope(
-        string Kind, int SchemaVersion, DmlApprovalChallenge Challenge);
+        string Kind, int SchemaVersion, ChallengeV1 Challenge);
+
+    // Frozen v1 wire DTO. Changing DmlApprovalChallenge's CLR shape in v3.x
+    // must not change Redis Lua's canonical equality/CAS byte representation.
+    private sealed record ChallengeV1(
+        string PlanFingerprint,
+        string? RowSetFingerprint,
+        int AffectedRows,
+        string PolicyVersion,
+        string ApprovalContextFingerprint,
+        DateTimeOffset IssuedAt,
+        DateTimeOffset ExpiresAt,
+        string Nonce,
+        string? ApprovalPlanBinding)
+    {
+        internal static ChallengeV1 FromDomain(DmlApprovalChallenge c) =>
+            new(c.PlanFingerprint, c.RowSetFingerprint, c.AffectedRows,
+                c.PolicyVersion, c.ApprovalContextFingerprint, c.IssuedAt,
+                c.ExpiresAt, c.Nonce, c.ApprovalPlanBinding);
+
+        internal DmlApprovalChallenge ToDomain() =>
+            new(PlanFingerprint, RowSetFingerprint, AffectedRows, PolicyVersion,
+                ApprovalContextFingerprint, IssuedAt, ExpiresAt, Nonce)
+            {
+                ApprovalPlanBinding = ApprovalPlanBinding
+            };
+    }
 }

@@ -34,7 +34,7 @@ internal static class DurableDmlResumePayloadCodec
     {
         Validate(payload);
         return JsonSerializer.Serialize(new ResumeEnvelope(
-            PayloadKind, CurrentSchemaVersion, payload));
+            PayloadKind, CurrentSchemaVersion, ResumePayloadV1.FromDomain(payload)));
     }
 
     internal static DurableDmlResumePayload Deserialize(string json)
@@ -101,8 +101,13 @@ internal static class DurableDmlResumePayloadCodec
                 || !content.TryGetProperty("RequiresCommitWitness", out _)))
             throw InvalidPayload();
 
-        var payload = content.Deserialize<DurableDmlResumePayload>()
-                      ?? throw InvalidPayload();
+        // Published v1's wire fields are an explicit DTO. Adding a CLR
+        // property later cannot accidentally alter v1 payload bytes.
+        var payload = isLegacy
+            ? content.Deserialize<DurableDmlResumePayload>()
+            : (content.Deserialize<ResumePayloadV1>() ?? throw InvalidPayload()).ToDomain();
+        if (payload is null)
+            throw InvalidPayload();
         Validate(payload);
         if (!isLegacy && payload.FenceProtocol is not null && !payload.RequiresCommitWitness)
             throw InvalidPayload();
@@ -125,5 +130,30 @@ internal static class DurableDmlResumePayloadCodec
         new("Durable DML approval payload is incomplete or invalid; it cannot be resumed.");
 
     private sealed record ResumeEnvelope(
-        string Kind, int SchemaVersion, DurableDmlResumePayload Payload);
+        string Kind, int SchemaVersion, ResumePayloadV1 Payload);
+
+    // Do not add fields to V1. Future required security capabilities get a
+    // new schema version with an explicit reader and authorized upcaster.
+    private sealed record ResumePayloadV1(
+        string Sql,
+        string RequiredToolName,
+        int AccessKeyId,
+        int DbManagementId,
+        SqlAgentToolType SourceDialect,
+        int? CustomToolId,
+        int? CustomToolRevisionId,
+        string ConnectionFingerprint,
+        string? FenceProtocol,
+        bool RequiresCommitWitness)
+    {
+        internal static ResumePayloadV1 FromDomain(DurableDmlResumePayload p) =>
+            new(p.Sql, p.RequiredToolName, p.AccessKeyId, p.DbManagementId,
+                p.SourceDialect, p.CustomToolId, p.CustomToolRevisionId,
+                p.ConnectionFingerprint, p.FenceProtocol, p.RequiresCommitWitness);
+
+        internal DurableDmlResumePayload ToDomain() =>
+            new(Sql, RequiredToolName, AccessKeyId, DbManagementId,
+                SourceDialect, CustomToolId, CustomToolRevisionId,
+                ConnectionFingerprint, FenceProtocol, RequiresCommitWitness);
+    }
 }

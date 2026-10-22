@@ -26,6 +26,9 @@ public sealed class DurableDmlResumePayloadCodecTests
             document.RootElement.GetProperty("SchemaVersion").GetInt32());
         Assert.True(document.RootElement.GetProperty("Payload")
             .GetProperty("RequiresCommitWitness").GetBoolean());
+        // Stable v1 projection: later CLR properties cannot leak into v1 bytes.
+        Assert.Equal(10, document.RootElement.GetProperty("Payload")
+            .EnumerateObject().Count());
         Assert.Equal(value, DurableDmlResumePayloadCodec.Deserialize(encoded));
     }
 
