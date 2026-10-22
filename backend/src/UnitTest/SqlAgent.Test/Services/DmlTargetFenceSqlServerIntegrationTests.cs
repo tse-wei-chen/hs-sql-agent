@@ -85,7 +85,7 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
         }
         finally
         {
-            await ExecuteAsync(root, $"DROP LOGIN IF EXISTS [{login}]", CancellationToken.None);
+            await ExecuteAsync(root, $"DROP LOGIN [{login}]", CancellationToken.None);
         }
     }
 
@@ -126,7 +126,7 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
             }
             finally { await ExecuteAsync(admin, $"DROP USER IF EXISTS [{login}]", ct); }
         }
-        finally { await ExecuteAsync(root, $"DROP LOGIN IF EXISTS [{login}]", CancellationToken.None); }
+        finally { await ExecuteAsync(root, $"DROP LOGIN [{login}]", CancellationToken.None); }
     }
 
     [Fact]
