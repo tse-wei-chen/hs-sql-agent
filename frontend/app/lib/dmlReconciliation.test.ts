@@ -98,6 +98,19 @@ describe("durable DML reconciliation operator guardrails", () => {
       { ...form, confirmation: "wrong" })).toThrow("explicit confirmation");
   });
 
+  it("hides contradictory attestations after inspecting a matching target witness", () => {
+    expect(permittedDmlResolutions(base, true)).toEqual(["committed"]);
+    expect(canSubmitDmlReconciliation(base, form, true)).toBe(false);
+    expect(canSubmitDmlReconciliation(
+      base, { ...form, resolution: "committed" }, true,
+    )).toBe(true);
+    expect(() => buildDmlReconciliationRequest(base, form, true))
+      .toThrow("explicit confirmation");
+    expect(permittedDmlResolutions(base, false)).toEqual([
+      "committed", "not_committed", "indeterminate",
+    ]);
+  });
+
   it("exposes only the positive witness as committed and never treats absence as rollback proof", () => {
     expect(dmlWitnessStatusDescription("CommittedWitnessMatch")).toContain("positive COMMIT evidence");
     expect(dmlWitnessStatusDescription("NotObserved")).toContain("does NOT establish rollback");

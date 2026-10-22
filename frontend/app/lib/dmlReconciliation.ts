@@ -13,6 +13,7 @@ const unknownOutcomeChoices: DmlReconciliationResolution[] = [
 // a reconciliation action; server-side authorization remains authoritative.
 export function permittedDmlResolutions(
   item: DmlReconciliationItem | null,
+  matchingCommitWitness = false,
 ): DmlReconciliationResolution[] {
   if (!item || !Array.isArray(item.allowedResolutions)) return [];
   let safe: DmlReconciliationResolution[] = [];
@@ -29,7 +30,10 @@ export function permittedDmlResolutions(
   ) {
     safe = unknownOutcomeChoices;
   }
-  return safe.filter((value) => item.allowedResolutions.includes(value));
+  return safe.filter(
+    (value) => item.allowedResolutions.includes(value)
+      && (!matchingCommitWitness || value === "committed"),
+  );
 }
 
 export function hasExplicitTimezone(value: string): boolean {
@@ -47,20 +51,24 @@ export interface DmlReconciliationForm {
 export function canSubmitDmlReconciliation(
   item: DmlReconciliationItem | null,
   form: DmlReconciliationForm,
+  matchingCommitWitness = false,
 ): boolean {
   if (!item || !hasExplicitTimezone(item.updatedAt)) return false;
   if (!form.confirmedIndependentReview || form.confirmation !== item.requestId) return false;
   const evidence = form.evidenceReference.trim();
   const note = form.note.trim();
   if (!evidence || evidence.length > 256 || !note || note.length > 700) return false;
-  return permittedDmlResolutions(item).some((choice) => choice === form.resolution);
+  return permittedDmlResolutions(item, matchingCommitWitness)
+    .some((choice) => choice === form.resolution);
 }
 
 export function buildDmlReconciliationRequest(
   item: DmlReconciliationItem,
   form: DmlReconciliationForm,
+  matchingCommitWitness = false,
 ): DmlReconciliationRequest {
-  if (!canSubmitDmlReconciliation(item, form) || form.resolution === "") {
+  if (!canSubmitDmlReconciliation(item, form, matchingCommitWitness)
+      || form.resolution === "") {
     throw new Error("Operator reconciliation evidence and explicit confirmation are required.");
   }
   return {

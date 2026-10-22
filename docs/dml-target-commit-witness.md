@@ -144,6 +144,11 @@ operator attempts to attest `not_committed` or `indeterminate` and rejects
 either outcome if a matching committed witness exists. A negative or
 unverifiable witness remains just one input for the operator's independent
 investigation, never an automatic disposition.
+If an operator has already inspected a matching witness in the Admin Console,
+the UI additionally removes `not_committed` and `indeterminate` from the
+displayed attestation choices. This is **only** an operator safeguard; the
+server independently repeats the verification before saving, so a stale
+or modified browser response never becomes authoritative.
 
 ## Validation and remaining limitations
 

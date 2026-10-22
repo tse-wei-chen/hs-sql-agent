@@ -64,9 +64,14 @@ const form = reactive<DmlReconciliationForm>({
   confirmedIndependentReview: false,
 });
 
-const choices = computed(() => permittedDmlResolutions(selected.value));
+const hasMatchingWitness = computed(() =>
+  !!selected.value && witnessResults.value[selected.value.requestId]?.matchingCommitWitness === true,
+);
+const choices = computed(() => permittedDmlResolutions(
+  selected.value, hasMatchingWitness.value,
+));
 const ready = computed(() =>
-  canSubmitDmlReconciliation(selected.value, form),
+  canSubmitDmlReconciliation(selected.value, form, hasMatchingWitness.value),
 );
 
 const labels: Record<DmlReconciliationResolution, string> = {
@@ -119,7 +124,7 @@ const resolve = async () => {
   try {
     await resolveDmlReconciliation(
       item.requestId,
-      buildDmlReconciliationRequest(item, form),
+      buildDmlReconciliationRequest(item, form, hasMatchingWitness.value),
     );
     toast.success("Operator attestation and audit evidence were recorded.");
     await load();
@@ -232,6 +237,10 @@ onMounted(load);
           <p class="mt-2">Inspected status: <strong>{{ selected.status }}</strong></p>
           <p>Commit evidence: {{ selected.commitEvidence }}</p>
           <p>Updated: {{ formatTime(selected.updatedAt) }}</p>
+          <p v-if="hasMatchingWitness" class="mt-2 font-medium">
+            A matching target witness was observed. Only a committed attestation
+            can be selected; the server will independently reverify before saving.
+          </p>
         </div>
         <label class="block space-y-2 text-sm">
           <span class="font-medium">Operator disposition</span>
