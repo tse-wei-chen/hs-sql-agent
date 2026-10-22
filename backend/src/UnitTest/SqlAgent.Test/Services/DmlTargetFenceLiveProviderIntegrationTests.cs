@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Data;
 using System.Data.Common;
 using HsSqlAgent.SqlCore.Enums;
@@ -174,6 +175,122 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
         Assert.Equal(1L, await CountRowsAsync(verifier, ct));
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, false)]
+    [InlineData(SqlAgentToolType.Postgres, true)]
+    [InlineData(SqlAgentToolType.MySQL, false)]
+    [InlineData(SqlAgentToolType.MySQL, true)]
+    public async Task RealCoordinator_EnlistsFenceBeforeExecutingMutation(
+        SqlAgentToolType provider, bool batch)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var target = await Target.CreateAsync(provider, ct);
+        var evidence = Evidence("coordinator-commit");
+        var factory = new ProviderConnectionFactory(provider);
+        var store = new InMemoryDmlApprovalChallengeStore();
+        const string approvalContext = "live-fence-approval-context-v1";
+        var plan = CreateInsertPlan(provider, 12L);
+        await using var versionReader = await target.OpenAsync(ct);
+        var version = versionReader.ServerVersion.Trim();
+        var preview = await new DmlCoordinator(factory, challengeStore: store)
+            .PreviewAsync(target.ConnectionString, plan, approvalContext, ct, version);
+
+        var result = batch
+            ? await new DmlAtomicTransactionCoordinator(factory,
+                targetCommitWitness: Witness, targetExecutionFence: Fence)
+                .CommitAsync(target.ConnectionString, [plan], [preview], ct,
+                    version, evidence, requireExecutionFence: true)
+            : await new DmlCoordinator(factory, challengeStore: store,
+                targetCommitWitness: Witness, targetExecutionFence: Fence)
+                .CommitAsync(target.ConnectionString, plan, preview.Challenge,
+                    approvalContext, ct, version, evidence, requireExecutionFence: true);
+
+        Assert.True(result.Committed);
+        await using var inspector = await target.OpenAsync(ct);
+        Assert.Equal(1L, await CountRowsAsync(inspector, ct));
+        Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind,
+            (await Fence.ReadAsync(inspector, provider, evidence.RequestId, ct))?.EntryKind);
+        Assert.Equal(evidence.EvidenceFingerprint,
+            await Witness.ReadFingerprintAsync(inspector, provider, evidence.RequestId, ct));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, false)]
+    [InlineData(SqlAgentToolType.Postgres, true)]
+    [InlineData(SqlAgentToolType.MySQL, false)]
+    [InlineData(SqlAgentToolType.MySQL, true)]
+    public async Task RealCoordinator_RevokedRequestNeverExecutesSql(
+        SqlAgentToolType provider, bool batch)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var target = await Target.CreateAsync(provider, ct);
+        var evidence = Evidence("coordinator-revoked");
+        var factory = new ProviderConnectionFactory(provider);
+        var store = new InMemoryDmlApprovalChallengeStore();
+        const string approvalContext = "live-fence-approval-context-v1";
+        var plan = CreateInsertPlan(provider, 13L);
+        await using var inspector = await target.OpenAsync(ct);
+        var version = inspector.ServerVersion.Trim();
+        var preview = await new DmlCoordinator(factory, challengeStore: store)
+            .PreviewAsync(target.ConnectionString, plan, approvalContext, ct, version);
+        await Fence.RevokeAsync(inspector, provider, evidence, ct);
+
+        if (batch)
+            await Assert.ThrowsAnyAsync<DbException>(() =>
+                new DmlAtomicTransactionCoordinator(factory,
+                    targetCommitWitness: Witness, targetExecutionFence: Fence)
+                    .CommitAsync(target.ConnectionString, [plan], [preview], ct,
+                        version, evidence, requireExecutionFence: true));
+        else
+            await Assert.ThrowsAnyAsync<DbException>(() =>
+                new DmlCoordinator(factory, challengeStore: store,
+                    targetCommitWitness: Witness, targetExecutionFence: Fence)
+                    .CommitAsync(target.ConnectionString, plan, preview.Challenge,
+                        approvalContext, ct, version, evidence, requireExecutionFence: true));
+
+        Assert.Equal(0L, await CountRowsAsync(inspector, ct));
+        Assert.Equal(RelationalDmlTargetExecutionFence.RevocationKind,
+            (await Fence.ReadAsync(inspector, provider, evidence.RequestId, ct))?.EntryKind);
+        Assert.Null(await Witness.ReadFingerprintAsync(inspector, provider, evidence.RequestId, ct));
+    }
+
+    private static ValidatedDmlPlan CreateInsertPlan(SqlAgentToolType provider, long id)
+    {
+        const string policyVersion = "live-fence-provider-policy-v1";
+        var parsed = CoreSqlTextParser.ParseDml(
+            $"INSERT INTO hs_sql_agent_dml_probe (id) VALUES ({id})", provider);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, provider, new SqlPlanValidationContext(policyVersion));
+        var rows = ImmutableArray.Create(
+            ImmutableDictionary.CreateRange<string, object?>(
+                StringComparer.OrdinalIgnoreCase,
+                [new KeyValuePair<string, object?>("id", id)]));
+
+        return new ValidatedDmlPlan(
+            DmlOperation.Insert,
+            "hs_sql_agent_dml_probe",
+            command,
+            MatchQueryCommand: null,
+            RowIdentityColumns: ImmutableArray<string>.Empty,
+            RowIdentityAssurance: DmlRowIdentityAssurance.CountOnly,
+            PlanFingerprint: DmlFingerprintService.ComputePlanFingerprint(command, policyVersion),
+            PolicyVersion: policyVersion,
+            ApprovalTtl: TimeSpan.FromMinutes(5),
+            MaxAffectedRows: 1,
+            ApprovalMode: DmlApprovalMode.InsertValues,
+            InsertRows: rows);
+    }
+
+    private sealed class ProviderConnectionFactory(SqlAgentToolType provider) : IDbConnectionFactory
+    {
+        public DbConnection Create(string connectionString) => provider switch
+        {
+            SqlAgentToolType.Postgres => new NpgsqlConnection(connectionString),
+            SqlAgentToolType.MySQL => new MySqlConnection(connectionString),
+            _ => throw new NotSupportedException("Live coordinator tests require Postgres or MySQL.")
+        };
+    }
+
     private static DmlTargetCommitWitnessEvidence Evidence(string scenario) =>
         new("hsa-live-fence-" + scenario, new string('A', 64));
 
@@ -288,6 +405,8 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
                 throw;
             }
         }
+
+        public string ConnectionString => isolatedConnectionString;
 
         public async Task<DbConnection> OpenAsync(CancellationToken ct)
         {
