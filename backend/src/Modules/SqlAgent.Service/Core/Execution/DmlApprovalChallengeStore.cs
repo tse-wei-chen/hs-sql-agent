@@ -13,16 +13,14 @@ public interface IDmlApprovalChallengeStore
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// All-or-nothing conversion of exact child challenges into a single
-    /// one-time aggregate. Old third-party stores compile but cannot provide
-    /// unsafe partial-promotion semantics: batch previews fail closed.
+    /// Atomically promote exact child challenges into a one-time aggregate.
+    /// This v3 interface contract is mandatory for custom stores. Promotion
+    /// MUST be all-or-nothing; sequential consume/register is not safe.
     /// </summary>
     ValueTask<bool> TryPromoteAsync(
         IReadOnlyList<DmlApprovalChallenge> children,
         DmlApprovalChallenge aggregate,
-        CancellationToken cancellationToken = default) =>
-        throw new NotSupportedException(
-            "DML atomic approval promotion requires a challenge store with transactional promotion support.");
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>

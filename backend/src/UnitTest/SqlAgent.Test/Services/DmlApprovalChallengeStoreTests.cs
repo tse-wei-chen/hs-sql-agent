@@ -6,6 +6,15 @@ namespace SqlAgent.Test.Services;
 public class DmlApprovalChallengeStoreTests
 {
     [Fact]
+    public void Promotion_IsRequiredByTheV3CustomStoreContract()
+    {
+        var method = typeof(IDmlApprovalChallengeStore).GetMethod(
+            nameof(IDmlApprovalChallengeStore.TryPromoteAsync));
+        Assert.NotNull(method);
+        Assert.True(method.IsAbstract);
+    }
+
+    [Fact]
     public async Task Challenge_CanBeConsumedExactlyOnce()
     {
         var store = new InMemoryDmlApprovalChallengeStore();

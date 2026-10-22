@@ -92,7 +92,8 @@ public sealed record McpDmlToolResult(
         int statementCount,
         long approvalWaitDurationMs,
         string? approvalRequestId,
-        string message) =>
+        string message,
+        string errorCode = "dml.commit_outcome_unknown") =>
         new(
             "outcome_unknown",
             provider,
@@ -105,7 +106,11 @@ public sealed record McpDmlToolResult(
             null,
             [],
             message,
-            new McpToolError("dml.commit_outcome_unknown", message, "Commit", false))
+            new McpToolError(
+                errorCode,
+                message,
+                errorCode == "dml.rollback_outcome_unknown" ? "Rollback" : "Commit",
+                false))
         {
             CommitConfirmed = null
         };

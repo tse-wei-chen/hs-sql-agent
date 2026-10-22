@@ -112,6 +112,21 @@ internal sealed class TypedDmlApprovalFlow(
                 ErrorStage: "Commit",
                 Retryable: false);
         }
+        catch (DmlRollbackOutcomeUnknownException ex)
+        {
+            // A failed rollback does not prove the transaction was undone.
+            // The approval was consumed and must never be replayed.
+            return new TypedDmlExecutionTiming(
+                ex.Message,
+                approvalWaitDurationMs,
+                null,
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: "dml.rollback_outcome_unknown",
+                ErrorStage: "Rollback",
+                Retryable: false);
+        }
         var result = commit.Committed
             ? $"Success | affectedRows={commit.AffectedRows} | {commit.Message}"
             : commit.Message;

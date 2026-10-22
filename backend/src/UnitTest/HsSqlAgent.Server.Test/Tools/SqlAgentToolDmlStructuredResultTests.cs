@@ -72,6 +72,25 @@ public class SqlAgentToolDmlStructuredResultTests
     }
 
     [Fact]
+    public void RollbackOutcomeUnknown_IsNonRetryableAndNotReportedAsFailure()
+    {
+        var result = McpDmlToolResult.OutcomeUnknown(
+            "Postgres", 1, 12, "approval-rollback",
+            "ROLLBACK unconfirmed; reconcile the target before a new preview.",
+            "dml.rollback_outcome_unknown");
+
+        Assert.Equal("outcome_unknown", result.Status);
+        Assert.False(result.Committed);
+        Assert.Null(result.CommitConfirmed);
+        Assert.Null(result.AffectedRows);
+        Assert.Equal("approved", result.ApprovalDecision);
+        Assert.Equal("approval-rollback", result.ApprovalRequestId);
+        Assert.Equal("dml.rollback_outcome_unknown", result.Error?.Code);
+        Assert.Equal("Rollback", result.Error?.Stage);
+        Assert.False(result.Error!.Retryable);
+    }
+
+    [Fact]
     public async Task ExecuteDmlSql_InvalidConfiguration_ReturnsStructuredFailureWithoutSecret()
     {
         const string secretConnectionString =

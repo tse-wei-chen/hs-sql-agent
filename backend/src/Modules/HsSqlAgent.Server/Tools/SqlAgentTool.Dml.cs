@@ -106,16 +106,18 @@ public partial class SqlAgentTool
             approvalWaitDurationMs = execution.ApprovalWaitDurationMs;
             affectedRowCount = execution.AffectedRows;
             if (!execution.Committed
-                && string.Equals(execution.ErrorCode, "dml.commit_outcome_unknown", StringComparison.Ordinal))
+                && execution.ErrorCode is ("dml.commit_outcome_unknown" or "dml.rollback_outcome_unknown"))
             {
-                // An approved request may have physically committed despite a
-                // lost acknowledgement. Never present this as a failed write.
+                // A lost COMMIT reply or unconfirmed ROLLBACK cannot prove
+                // the absence of physical changes. Never report "failed".
                 try
                 {
                     await WriteDmlAuditAsync(
                         parsedBatch, "outcome_unknown", "approved", stopwatch,
                         approvalWaitDurationMs, null, execution.Result,
-                        CancellationToken.None);
+                        CancellationToken.None,
+                        execution.ErrorCode == "dml.rollback_outcome_unknown"
+                            ? "DmlRollbackOutcomeUnknown" : "DmlCommitOutcomeUnknown");
                 }
                 catch (Exception)
                 {
@@ -123,7 +125,7 @@ public partial class SqlAgentTool
                 }
                 return McpDmlToolResult.OutcomeUnknown(
                     providerName, parsedBatch.Count, approvalWaitDurationMs,
-                    execution.ApprovalRequestId, execution.Result);
+                    execution.ApprovalRequestId, execution.Result, execution.ErrorCode);
             }
 
             if (!execution.Committed)
@@ -199,10 +201,12 @@ public partial class SqlAgentTool
                 execution.Result);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (DmlCommitOutcomeUnknownException ex)
+        catch (Exception ex) when (ex is DmlCommitOutcomeUnknownException or DmlRollbackOutcomeUnknownException)
         {
-            // A lost COMMIT acknowledgement may follow a successful physical
-            // write. Never report "failed" or encourage replay of its approval.
+            // Both outcomes remain physically uncertain and non-retryable.
+            var rollbackUnknown = ex is DmlRollbackOutcomeUnknownException;
+            var outcomeErrorCode = rollbackUnknown
+                ? "dml.rollback_outcome_unknown" : "dml.commit_outcome_unknown";
             // Audit I/O is best-effort here: it must not suppress the warning.
             try
             {
@@ -218,7 +222,7 @@ public partial class SqlAgentTool
                         DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                         AffectedRows = null,
                         ApprovalStatus = "approved",
-                        ErrorCategory = "DmlCommitOutcomeUnknown",
+                        ErrorCategory = rollbackUnknown ? "DmlRollbackOutcomeUnknown" : "DmlCommitOutcomeUnknown",
                         Definition = parsedBatch is null ? null : DescribeDmlBatch(parsedBatch)
                     },
                     ex.Message,
@@ -235,7 +239,8 @@ public partial class SqlAgentTool
                 parsedBatch?.Count ?? 0,
                 approvalWaitDurationMs,
                 null,
-                ex.Message);
+                ex.Message,
+                outcomeErrorCode);
         }
         catch (Exception ex)
         {
@@ -274,7 +279,8 @@ public partial class SqlAgentTool
         long approvalWaitDurationMs,
         int? affectedRows,
         string detail,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? outcomeErrorCategory = null)
     {
         var descriptor = DescribeBatch(parsedBatch);
         await _auditService.WriteEventAsync(
@@ -290,7 +296,7 @@ public partial class SqlAgentTool
                 ApprovalStatus = approvalStatus,
                 ErrorCategory = result switch
                 {
-                    "outcome_unknown" => "DmlCommitOutcomeUnknown",
+                    "outcome_unknown" => outcomeErrorCategory ?? "DmlCommitOutcomeUnknown",
                     "failed" => "PolicyOrExecutionDenied",
                     _ => null
                 },
@@ -320,6 +326,11 @@ public partial class SqlAgentTool
                 "dml.commit_outcome_unknown",
                 error.Message,
                 "Commit",
+                false),
+            DmlRollbackOutcomeUnknownException => new McpToolError(
+                "dml.rollback_outcome_unknown",
+                error.Message,
+                "Rollback",
                 false),
             UnauthorizedAccessException => new McpToolError(
                 "authorization.denied",
