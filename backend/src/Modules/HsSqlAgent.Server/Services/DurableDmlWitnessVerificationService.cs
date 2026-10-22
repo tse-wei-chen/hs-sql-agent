@@ -100,8 +100,7 @@ public sealed class DurableDmlWitnessVerificationService(
                 });
             var actualFingerprint = HMACSHA256.HashData(keyBytes, Encoding.UTF8.GetBytes(connectionString));
             var expected = persisted.GetString();
-            if (expected is null || expected.Length != 64 || !Convert.TryFromHexString(
-                    expected, new byte[32], out var count) || count != 32)
+            if (expected is null || expected.Length != 64 || !expected.All(Uri.IsHexDigit))
                 return Result(TargetChanged);
             if (!CryptographicOperations.FixedTimeEquals(actualFingerprint, Convert.FromHexString(expected)))
                 return Result(TargetChanged);

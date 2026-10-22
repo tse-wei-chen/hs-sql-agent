@@ -40,8 +40,12 @@ const witnessErrors = ref<Record<string, string>>({});
 const inspectWitness = async (item: DmlReconciliationItem) => {
   if (witnessBusy.value || loading.value || busy.value) return;
   witnessBusy.value = item.requestId;
-  delete witnessResults.value[item.requestId];
-  delete witnessErrors.value[item.requestId];
+  witnessResults.value = Object.fromEntries(
+    Object.entries(witnessResults.value).filter(([id]) => id !== item.requestId),
+  );
+  witnessErrors.value = Object.fromEntries(
+    Object.entries(witnessErrors.value).filter(([id]) => id !== item.requestId),
+  );
   try {
     // Independent target read; this NEVER settles an Executing approval.
     witnessResults.value[item.requestId] = await inspectDmlTargetWitness(item.requestId);
