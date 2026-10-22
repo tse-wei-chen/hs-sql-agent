@@ -132,6 +132,10 @@ public sealed class NativeDmlSchemaSnapshotService :
                 await PinMsSqlServerSchemaAsync(
                     connection, transaction, schema, table, cancellationToken);
                 break;
+            case SqlAgentToolType.Oracle:
+                await PinOracleSchemaAsync(
+                    connection, transaction, schema, table, cancellationToken);
+                break;
         }
 
         var readers = ForProvider(provider);
@@ -169,6 +173,29 @@ public sealed class NativeDmlSchemaSnapshotService :
         command.Transaction = transaction;
         command.CommandText =
             $"LOCK TABLE {Quote(schema)}.{Quote(table)} IN ACCESS SHARE MODE";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task PinOracleSchemaAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string schema,
+        string table,
+        CancellationToken cancellationToken)
+    {
+        // Oracle dictionary SELECTs do not protect against concurrent ALTER
+        // or DROP: obtain a transaction-held TM row-share table lock first.
+        // ROW SHARE permits concurrent ordinary DML but conflicts with
+        // exclusive DDL locks. NOWAIT turns contested DDL into fail-closed
+        // revalidation rather than an unbounded worker wait.
+        // Quote each *catalog-attested* identifier independently.
+        static string Quote(string identifier) =>
+            "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            $"LOCK TABLE {Quote(schema)}.{Quote(table)} IN ROW SHARE MODE NOWAIT";
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 

@@ -174,9 +174,12 @@ approved immutable statement's native schema is verified together
 uncommitted DML statements. A fenced batch then enrolls admission;
 per-statement row-set and affected-row rechecks remain mandatory after
 earlier mutations. Other five providers retain their existing per-step
-schema revalidation. Oracle operators must verify DDL coordination for
-the gap between metadata attestation and DML acquisition; independent
-physical fencing/readiness does not replace schema authority. This
+schema revalidation. Oracle live metadata attestation now acquires
+`LOCK TABLE owner.table IN ROW SHARE MODE NOWAIT` inside the same
+transaction before reading catalog definitions, so concurrent exclusive
+DDL cannot replace the attested table before the subsequent DML. A
+contended lock fails closed; this lock mode still permits ordinary
+concurrent DML. See [Oracle's locking contract](https://docs.oracle.com/en/database/oracle/oracle-database/19/adfns/sql-processing-for-application-developers.html). This
 ordering never permits application SQL before the target admission. They reject a missing Witness, missing enforced
 unique keys or nontransactional storage. This requires two extra
 SERIALIZABLE rollback transactions per fenced commit. Unfenced DML remains

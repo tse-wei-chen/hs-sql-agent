@@ -341,6 +341,46 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
         });
     }
 
+    [Fact]
+    public virtual async Task Oracle_NativeSchemaProofHoldsTargetDdlLockUntilTransactionEnds()
+    {
+        if (Strategy.DbType != SqlAgentToolType.Oracle)
+            return;
+
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {table} (ID) VALUES (44)", provider);
+            var freshness = new NativeDmlSchemaSnapshotService();
+            var snapshot = await freshness.CaptureAsync(connection, provider, parsed, token);
+            Assert.NotNull(snapshot);
+
+            await using var tx = await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, token);
+            try
+            {
+                var physicalDigest = await freshness.ReadCurrentSchemaDigestAsync(
+                    connection, tx, provider, snapshot, token);
+                Assert.Equal(snapshot.Sha256, physicalDigest);
+
+                await using var contender = ProviderStrategy.CreateConnection(connectionString);
+                await contender.OpenAsync(token);
+                await using var command = contender.CreateCommand();
+                command.CommandText = $"LOCK TABLE {table} IN EXCLUSIVE MODE NOWAIT";
+                var error = await Assert.ThrowsAnyAsync<DbException>(
+                    () => command.ExecuteNonQueryAsync(token));
+                Assert.Contains("ORA-00054", error.Message, StringComparison.OrdinalIgnoreCase);
+            }
+            finally
+            {
+                await tx.RollbackAsync(token);
+            }
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(connection, table, token));
+        });
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
