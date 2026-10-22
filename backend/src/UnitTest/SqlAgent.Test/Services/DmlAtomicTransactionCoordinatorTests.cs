@@ -250,6 +250,167 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TargetEnlistedWitness_IsCommittedAtomicallyWithApprovedDml(bool atomicBatch)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"hs-sql-agent-target-witness-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            string serverVersion;
+            await using (var setup = new SqliteConnection(connectionString))
+            {
+                await setup.OpenAsync(ct);
+                serverVersion = setup.ServerVersion.Trim();
+                await using var ddl = setup.CreateCommand();
+                ddl.CommandText = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);" +
+                    "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                    "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL);";
+                await ddl.ExecuteNonQueryAsync(ct);
+            }
+
+            var factory = new SqliteConnectionFactory();
+            var challengeStore = new InMemoryDmlApprovalChallengeStore();
+            var witness = new RelationalDmlTargetCommitWitness();
+            var token = new DmlTargetCommitWitnessEvidence("request-unique-1", new string('A', 64));
+            var plan = CreateInsertPlan(11L, "Original", "policy-target-witness");
+            var preview = await new DmlCoordinator(factory,
+                challengeStore: challengeStore).PreviewAsync(
+                    connectionString, plan, ApprovalContextFingerprint, ct, serverVersion);
+
+            var first = atomicBatch
+                ? await new DmlAtomicTransactionCoordinator(factory,
+                    targetCommitWitness: witness).CommitAsync(
+                        connectionString, [plan], [preview], ct, serverVersion, token)
+                : await new DmlCoordinator(factory, challengeStore: challengeStore,
+                    targetCommitWitness: witness).CommitAsync(
+                        connectionString, plan, preview.Challenge,
+                        ApprovalContextFingerprint, ct, serverVersion, token);
+            Assert.True(first.Committed);
+            Assert.Equal(1, first.AffectedRows);
+
+            await using (var inspection = new SqliteConnection(connectionString))
+            {
+                await inspection.OpenAsync(ct);
+                Assert.Equal(token.EvidenceFingerprint,
+                    await witness.ReadFingerprintAsync(inspection, SqlAgentToolType.Sqlite,
+                        token.RequestId, ct));
+                await using var count = inspection.CreateCommand();
+                count.CommandText = "SELECT COUNT(*) FROM users";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync(ct))!);
+            }
+
+            // A fresh approval may have new SQL, but the target table's
+            // PRIMARY KEY prevents reusing a durable approval request ID.
+            var duplicatePlan = CreateInsertPlan(12L, "Second", "policy-target-witness");
+            var secondPreview = await new DmlCoordinator(factory).PreviewAsync(
+                connectionString, duplicatePlan, ApprovalContextFingerprint, ct, serverVersion);
+            Func<Task<DmlCommitResult>> duplicate = atomicBatch
+                ? () => new DmlAtomicTransactionCoordinator(factory,
+                    targetCommitWitness: witness).CommitAsync(
+                        connectionString, [duplicatePlan], [secondPreview], ct, serverVersion, token)
+                : () => new DmlCoordinator(factory, challengeStore: new InMemoryDmlApprovalChallengeStore(),
+                    targetCommitWitness: witness).CommitAsync(
+                        connectionString, duplicatePlan, secondPreview.Challenge,
+                        ApprovalContextFingerprint, ct, serverVersion, token);
+
+            // The one-time challenge is also necessary for the single-statement
+            // route. Register the second challenge before testing target PK.
+            if (!atomicBatch)
+            {
+                var freshChallengeStore = new InMemoryDmlApprovalChallengeStore();
+                await freshChallengeStore.RegisterAsync(secondPreview.Challenge, ct);
+                duplicate = () => new DmlCoordinator(factory, challengeStore: freshChallengeStore,
+                    targetCommitWitness: witness).CommitAsync(
+                        connectionString, duplicatePlan, secondPreview.Challenge,
+                        ApprovalContextFingerprint, ct, serverVersion, token);
+            }
+
+            await Assert.ThrowsAsync<SqliteException>(duplicate);
+            await using var verify = new SqliteConnection(connectionString);
+            await verify.OpenAsync(ct);
+            await using var query = verify.CreateCommand();
+            query.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(1L, (long)(await query.ExecuteScalarAsync(ct))!);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TargetEnlistedWitness_MissingTableRejectsAndRollsBackDml(bool atomicBatch)
+    {
+        var path = Path.Combine(Path.GetTempPath(),
+            $"hs-sql-agent-missing-witness-{Guid.NewGuid():N}.db");
+        var cs = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            string version;
+            await using (var setup = new SqliteConnection(cs))
+            {
+                await setup.OpenAsync(ct);
+                version = setup.ServerVersion.Trim();
+                await using var ddl = setup.CreateCommand();
+                ddl.CommandText = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)";
+                await ddl.ExecuteNonQueryAsync(ct);
+            }
+
+            var factory = new SqliteConnectionFactory();
+            var store = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(1L, "No witness table", "policy-required-witness");
+            var preview = await new DmlCoordinator(factory, challengeStore: store)
+                .PreviewAsync(cs, plan, ApprovalContextFingerprint, ct, version);
+            var witness = new RelationalDmlTargetCommitWitness();
+            var token = new DmlTargetCommitWitnessEvidence("request-missing", new string('B', 64));
+
+            if (atomicBatch)
+                await Assert.ThrowsAsync<SqliteException>(() =>
+                    new DmlAtomicTransactionCoordinator(factory, targetCommitWitness: witness)
+                        .CommitAsync(cs, [plan], [preview], ct, version, token));
+            else
+                await Assert.ThrowsAsync<SqliteException>(() =>
+                    new DmlCoordinator(factory, challengeStore: store, targetCommitWitness: witness)
+                        .CommitAsync(cs, plan, preview.Challenge, ApprovalContextFingerprint, ct, version, token));
+
+            await using var verify = new SqliteConnection(cs);
+            await verify.OpenAsync(ct);
+            await using var query = verify.CreateCommand();
+            query.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(0L, (long)(await query.ExecuteScalarAsync(ct))!);
+            await Assert.ThrowsAsync<SqliteException>(() =>
+                witness.ReadFingerprintAsync(verify, SqlAgentToolType.Sqlite,
+                    "request-missing", ct)); // absence of witness table is not a negative proof
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task WitnessRequestedWithoutRegistration_IsRejectedBeforeExecutingSql()
+    {
+        var factory = new SqliteConnectionFactory();
+        var plan = CreateInsertPlan(1L, "No registration", "policy-missing-registration");
+        var preview = await new DmlCoordinator(factory).PreviewAsync(
+            "Data Source=:memory:", plan, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, "3.46.0");
+        var token = new DmlTargetCommitWitnessEvidence("request-unconfigured", new string('C', 64));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new DmlAtomicTransactionCoordinator(factory).CommitAsync(
+                "Data Source=:memory:", [plan], [preview],
+                TestContext.Current.CancellationToken, "3.46.0", token));
+    }
+
     private static ValidatedDmlPlan CreateInsertPlan(long id, string name, string policyVersion)
     {
         var parsed = CoreSqlTextParser.ParseDml(

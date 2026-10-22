@@ -501,7 +501,10 @@ internal sealed class DurableDmlApprovalLifecycle(
             currentPolicy,
             commitCurrent.AllowedTables,
             approvalContext,
-            cancellationToken);
+            cancellationToken,
+            runtime.HasTargetCommitWitness
+                ? new DmlTargetCommitWitnessEvidence(state.RequestId, state.EvidenceFingerprint)
+                : null);
         if (!commit.Committed)
             throw new DmlApprovalStaleException(
                 "Approved DML could not be committed because commit-time evidence revalidation no longer matched.");

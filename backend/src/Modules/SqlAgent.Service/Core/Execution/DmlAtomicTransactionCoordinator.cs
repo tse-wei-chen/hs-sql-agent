@@ -15,10 +15,12 @@ namespace SqlAgent.Service.Core.Execution;
 internal sealed class DmlAtomicTransactionCoordinator(
     IDbConnectionFactory connectionFactory,
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
-    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null)
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
+    IDmlTargetCommitWitness? targetCommitWitness = null)
 {
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
     private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
+    private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
     private readonly IDmlTransactionIsolationPolicy _transactionIsolationPolicy =
         transactionIsolationPolicy ?? new StrictDmlTransactionIsolationPolicy();
 
@@ -27,8 +29,11 @@ internal sealed class DmlAtomicTransactionCoordinator(
         IReadOnlyList<ValidatedDmlPlan> plans,
         IReadOnlyList<DmlPreview> approvedPreviews,
         CancellationToken cancellationToken,
-        string expectedServerVersionIdentity)
+        string expectedServerVersionIdentity,
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null)
     {
+        if (witnessEvidence is not null && _targetCommitWitness is null)
+            throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentNullException.ThrowIfNull(plans);
         ArgumentNullException.ThrowIfNull(approvedPreviews);
@@ -114,6 +119,9 @@ internal sealed class DmlAtomicTransactionCoordinator(
                 returnedRows.AddRange(execution.ReturnedRows);
             }
 
+            if (witnessEvidence is not null)
+                await _targetCommitWitness!.WriteAsync(connection, transaction, provider,
+                    witnessEvidence, cancellationToken);
             await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
             acknowledgedCommit = new DmlCommitResult(
                 true,

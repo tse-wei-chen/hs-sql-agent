@@ -105,7 +105,8 @@ public static class HsSqlAgentRuntimeServiceExtensions
             challengeStore: provider.GetRequiredService<IDmlApprovalChallengeStore>(),
             compileEvidenceObserver: provider.GetRequiredService<ISqlCompileEvidenceObserver>(),
             schemaFreshnessVerifier: provider.GetService<IDmlSchemaSnapshotFreshnessVerifier>(),
-            schemaSnapshotSource: provider.GetService<IDmlSchemaSnapshotSource>()));
+            schemaSnapshotSource: provider.GetService<IDmlSchemaSnapshotSource>(),
+            targetCommitWitness: provider.GetService<IDmlTargetCommitWitness>()));
         services.AddScoped<DurableDmlApprovalLifecycle>();
         services.AddScoped<IDmlApprovalCompletionSink>(provider =>
             provider.GetRequiredService<DurableDmlApprovalLifecycle>());

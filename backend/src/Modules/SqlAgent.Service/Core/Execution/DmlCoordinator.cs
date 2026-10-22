@@ -17,11 +17,13 @@ public sealed class DmlCoordinator(
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
     IDmlPreviewTransactionFactory? previewTransactionFactory = null,
-    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null) : IDmlCoordinator
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
+    IDmlTargetCommitWitness? targetCommitWitness = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
     private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
+    private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
@@ -104,14 +106,27 @@ public sealed class DmlCoordinator(
         throw new InvalidOperationException(
             "Verified runtime server-version identity is required for DML commit.");
 
+    public Task<DmlCommitResult> CommitAsync(
+        string connectionString,
+        ValidatedDmlPlan plan,
+        DmlApprovalChallenge approvedChallenge,
+        string approvalContextFingerprint,
+        CancellationToken cancellationToken,
+        string expectedServerVersionIdentity) =>
+        CommitAsync(connectionString, plan, approvedChallenge, approvalContextFingerprint,
+            cancellationToken, expectedServerVersionIdentity, witnessEvidence: null);
+
     public async Task<DmlCommitResult> CommitAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         string approvalContextFingerprint,
         CancellationToken cancellationToken,
-        string expectedServerVersionIdentity)
+        string expectedServerVersionIdentity,
+        DmlTargetCommitWitnessEvidence? witnessEvidence)
     {
+        if (witnessEvidence is not null && _targetCommitWitness is null)
+            throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
@@ -150,7 +165,8 @@ public sealed class DmlCoordinator(
                     transaction,
                     plan,
                     approvedChallenge,
-                    cancellationToken);
+                    cancellationToken,
+                    witnessEvidence);
                 if (insertResult.Committed)
                     acknowledgedCommit = insertResult;
                 return insertResult;
@@ -203,6 +219,8 @@ public sealed class DmlCoordinator(
                     $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
             }
 
+            await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
+                witnessEvidence, cancellationToken);
             await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
             acknowledgedCommit = new DmlCommitResult(
                 true,
@@ -278,12 +296,13 @@ public sealed class DmlCoordinator(
             challenge);
     }
 
-    private static async Task<DmlCommitResult> CommitInsertValuesAsync(
+    private async Task<DmlCommitResult> CommitInsertValuesAsync(
         DbConnection connection,
         DbTransaction transaction,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DmlTargetCommitWitnessEvidence? witnessEvidence)
     {
         var execution = await ExecuteMutationAsync(
             connection,
@@ -301,6 +320,8 @@ public sealed class DmlCoordinator(
                 $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
         }
 
+        await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
+            witnessEvidence, cancellationToken);
         await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
         return new DmlCommitResult(
             true,
@@ -310,6 +331,12 @@ public sealed class DmlCoordinator(
             ReturnedRows = execution.ReturnedRows
         };
     }
+
+    private Task WriteWitnessAsync(
+        DbConnection connection, DbTransaction transaction, SqlAgentToolType provider,
+        DmlTargetCommitWitnessEvidence? evidence, CancellationToken cancellationToken) =>
+        evidence is null ? Task.CompletedTask
+        : _targetCommitWitness!.WriteAsync(connection, transaction, provider, evidence, cancellationToken);
 
     private DmlApprovalChallenge CreateChallenge(
         ValidatedDmlPlan plan,

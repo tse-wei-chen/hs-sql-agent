@@ -18,7 +18,8 @@ public sealed class TypedDmlRuntime(
     IDmlPreviewTransactionFactory? previewTransactionFactory = null,
     ISqlCompileEvidenceObserver? compileEvidenceObserver = null,
     IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
-    IDmlSchemaSnapshotSource? schemaSnapshotSource = null)
+    IDmlSchemaSnapshotSource? schemaSnapshotSource = null,
+    IDmlTargetCommitWitness? targetCommitWitness = null)
 {
     private const int MaxStatementsPerTransaction = 16;
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
@@ -31,6 +32,9 @@ public sealed class TypedDmlRuntime(
     private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
     private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
     private readonly IDmlSchemaSnapshotSource? _schemaSnapshotSource = schemaSnapshotSource;
+    private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
+
+    internal bool HasTargetCommitWitness => _targetCommitWitness is not null;
 
     public async Task<ParsedStatement> ParseDmlWithVerifiedRuntimeProfileAsync(
         ISqlProvider provider,
@@ -272,7 +276,8 @@ public sealed class TypedDmlRuntime(
         SecurityPolicyModel currentPolicy,
         IReadOnlySet<string>? currentAllowedTables,
         DmlApprovalExecutionContext currentApprovalContext,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(session);
@@ -313,14 +318,16 @@ public sealed class TypedDmlRuntime(
             _timeProvider,
             _challengeStore,
             previewTransactionFactory: ResolvePreviewTransactions(provider),
-            schemaFreshnessVerifier: _schemaFreshnessVerifier);
+            schemaFreshnessVerifier: _schemaFreshnessVerifier,
+            targetCommitWitness: _targetCommitWitness);
         return await coordinator.CommitAsync(
             connectionString,
             session.Plan,
             session.Preview.Challenge,
             currentApprovalContextFingerprint,
             cancellationToken,
-            session.VerifiedServerVersionIdentity);
+            session.VerifiedServerVersionIdentity,
+            witnessEvidence);
     }
 
     public async Task<DmlCommitResult> CommitTransactionAsync(
@@ -330,7 +337,8 @@ public sealed class TypedDmlRuntime(
         SecurityPolicyModel currentPolicy,
         IReadOnlySet<string>? currentAllowedTables,
         DmlApprovalExecutionContext currentApprovalContext,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(session);
@@ -387,13 +395,15 @@ public sealed class TypedDmlRuntime(
 
         var coordinator = new DmlAtomicTransactionCoordinator(
             provider.Connections,
-            schemaFreshnessVerifier: _schemaFreshnessVerifier);
+            schemaFreshnessVerifier: _schemaFreshnessVerifier,
+            targetCommitWitness: _targetCommitWitness);
         return await coordinator.CommitAsync(
             connectionString,
             session.Statements.Select(x => x.Plan).ToArray(),
             session.Statements.Select(x => x.Preview).ToArray(),
             cancellationToken,
-            serverVersion);
+            serverVersion,
+            witnessEvidence);
     }
 
     private async Task CleanupChildChallengesBestEffortAsync(

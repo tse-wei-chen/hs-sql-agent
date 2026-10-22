@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using SqlAgent.Service.Factories;
+using SqlAgent.Service.Core.Execution;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;
@@ -71,6 +72,78 @@ public sealed class DurableDmlApprovalLifecycleTests
         }
 
         Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task DurableApproval_WithTargetEnlistedWitness_BindsCommitToPersistedEvidence()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using var ddl = target.CreateCommand();
+            ddl.CommandText = "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL)";
+            await ddl.ExecuteNonQueryAsync(ct);
+        }
+
+        var witness = new RelationalDmlTargetCommitWitness();
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider,
+                new TypedDmlRuntime(targetCommitWitness: witness));
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint),
+                ct);
+            Assert.Equal(DmlApprovalCompletionStatus.Executed, result.Status);
+            var state = await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+            await using var target = new SqliteConnection(fixture.TargetConnectionString);
+            await target.OpenAsync(ct);
+            Assert.Equal(state.EvidenceFingerprint,
+                await witness.ReadFingerprintAsync(target, SqlAgentToolType.Sqlite,
+                    approval.RequestId, ct));
+        }
+
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider,
+                new TypedDmlRuntime(targetCommitWitness: witness));
+            var replay = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint),
+                ct);
+            Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
+        }
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task DurableApproval_WithWitnessEnabledButTableMissing_FailsWithoutMutation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider,
+                new TypedDmlRuntime(targetCommitWitness: new RelationalDmlTargetCommitWitness()));
+            var outcome = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint),
+                ct);
+            Assert.Equal(DmlApprovalCompletionStatus.Failed, outcome.Status);
+            Assert.False(outcome.Retryable);
+            var state = await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+            Assert.Equal("Failed", state.Status);
+        }
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
     [Fact]

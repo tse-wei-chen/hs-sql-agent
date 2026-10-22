@@ -541,6 +541,25 @@ published as measured percentages or silently set to 100.
       duplicate-key mutation failures are not masked by a connection
       disposal error, with the batch still rolled back. This is not
       a substitute for target-enlisted commit evidence or worker fencing.
+- [x] Introduce an **opt-in, target-enlisted positive COMMIT witness** for durable
+      DML. The physical target database must be provisioned with a unique
+      `HS_SQL_AGENT_DML_WITNESS.REQUEST_ID` primary key, INSERT/SELECT privileges
+      and transactional storage. With
+      `builder.AddHsSqlAgentTargetCommitWitness()`, durable approvals pass
+      their persisted request ID and evidence fingerprint through TypedDmlRuntime.
+      Both single and atomic batch coordinators write the witness on the exact
+      open target DbConnection/DbTransaction **after** mutation revalidation and
+      **before** COMMIT; missing table, invalid fingerprint, duplicate request ID,
+      write failure or no registered writer fail closed. SQLite real-database
+      tests cover successful commit, same-transaction failure rollback, duplicate
+      request rejection and end-to-end durable approval binding after restart.
+      The read method observes an independently committed fingerprint but
+      does not make negative reads authoritative. This remains disabled by
+      default and does **not** change existing six-provider capabilities.
+      See [target-enlisted COMMIT witness](dml-target-commit-witness.md).
+      Other five providers' live DDL/ADO transport interoperability and
+      independent multi-worker safety require additional integration evidence;
+      do not infer worker quiescence from a missing witness.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.
