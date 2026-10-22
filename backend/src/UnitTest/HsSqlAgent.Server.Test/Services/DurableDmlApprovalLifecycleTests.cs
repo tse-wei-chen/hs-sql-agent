@@ -76,6 +76,83 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task VersionedFencedDurableApproval_CommitsAdmissionWitnessAndMutationAfterRestart()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var fence = new RelationalDmlTargetExecutionFence();
+        var witness = new RelationalDmlTargetCommitWitness();
+        await ProvisionTargetFenceAsync(fixture, ct);
+
+        var request = await PersistPendingInsertAsync(fixture,
+            new TypedDmlRuntime(targetCommitWitness: witness, targetExecutionFence: fence));
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var runtime = new TypedDmlRuntime(targetCommitWitness: witness, targetExecutionFence: fence);
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, runtime);
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint), ct);
+            Assert.Equal(DmlApprovalCompletionStatus.Executed, result.Status);
+
+            var state = await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(ct);
+            await using var target = new SqliteConnection(fixture.TargetConnectionString);
+            await target.OpenAsync(ct);
+            var row = await fence.ReadAsync(target, SqlAgentToolType.Sqlite, request.RequestId, ct);
+            Assert.NotNull(row);
+            Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind, row.EntryKind);
+            Assert.Equal(state.EvidenceFingerprint, row.EvidenceFingerprint);
+            Assert.Equal(state.EvidenceFingerprint, await witness.ReadFingerprintAsync(
+                target, SqlAgentToolType.Sqlite, request.RequestId, ct));
+        }
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task FencedApproval_RestartWithoutFencingComponent_FailsClosedBeforeTargetMutation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var fence = new RelationalDmlTargetExecutionFence();
+        var witness = new RelationalDmlTargetCommitWitness();
+        await ProvisionTargetFenceAsync(fixture, ct);
+        var request = await PersistPendingInsertAsync(fixture,
+            new TypedDmlRuntime(targetCommitWitness: witness, targetExecutionFence: fence));
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider,
+                new TypedDmlRuntime(targetCommitWitness: witness));
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(request.RequestId, request.ApprovalFingerprint), ct);
+            Assert.Equal(DmlApprovalCompletionStatus.Failed, result.Status);
+            Assert.False(result.Retryable);
+        }
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+        await using var target = new SqliteConnection(fixture.TargetConnectionString);
+        await target.OpenAsync(ct);
+        Assert.Null(await fence.ReadAsync(target, SqlAgentToolType.Sqlite, request.RequestId, ct));
+        Assert.Null(await witness.ReadFingerprintAsync(
+            target, SqlAgentToolType.Sqlite, request.RequestId, ct));
+    }
+
+    private static async Task ProvisionTargetFenceAsync(Fixture fixture, CancellationToken ct)
+    {
+        await using var target = new SqliteConnection(fixture.TargetConnectionString);
+        await target.OpenAsync(ct);
+        await using var ddl = target.CreateCommand();
+        ddl.CommandText =
+            "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+            "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL);" +
+            "CREATE TABLE HS_SQL_AGENT_DML_FENCE (" +
+            "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL, " +
+            "ENTRY_KIND VARCHAR(16) NOT NULL CHECK (ENTRY_KIND IN ('Admitted','Revoked')));";
+        await ddl.ExecuteNonQueryAsync(ct);
+    }
+
+    [Fact]
     public async Task DurableApproval_WithTargetEnlistedWitness_BindsCommitToPersistedEvidence()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -672,10 +749,11 @@ public sealed class DurableDmlApprovalLifecycleTests
         Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
-    private static async Task<DmlApprovalRequest> PersistPendingInsertAsync(Fixture fixture)
+    private static async Task<DmlApprovalRequest> PersistPendingInsertAsync(
+        Fixture fixture, TypedDmlRuntime? runtimeOverride = null)
     {
         const string sql = "INSERT INTO items (id, name) VALUES (1, 'Alice')";
-        var runtime = new TypedDmlRuntime();
+        var runtime = runtimeOverride ?? new TypedDmlRuntime();
         var policyState = CreatePolicyState();
         var policy = policyState.GetCurrent();
         var approvalContext = new DmlApprovalExecutionContext(

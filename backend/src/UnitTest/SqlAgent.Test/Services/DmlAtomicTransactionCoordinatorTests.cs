@@ -411,6 +411,214 @@ public sealed class DmlAtomicTransactionCoordinatorTests
                 TestContext.Current.CancellationToken, "3.46.0", token));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RevocationCommittedFirst_PreventsLateWorkerFromMutatingTarget(bool batch)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hs-sql-agent-fenced-before-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        var fence = new RelationalDmlTargetExecutionFence();
+        var witness = new RelationalDmlTargetCommitWitness();
+        var evidence = new DmlTargetCommitWitnessEvidence("request-revoked-first", new string('A', 64));
+        try
+        {
+            var version = await ProvisionFencedSqliteAsync(connectionString, ct);
+            await using (var revoker = new SqliteConnection(connectionString))
+            {
+                await revoker.OpenAsync(ct);
+                await fence.RevokeAsync(revoker, SqlAgentToolType.Sqlite, evidence, ct);
+                Assert.Equal(RelationalDmlTargetExecutionFence.RevocationKind,
+                    (await fence.ReadAsync(revoker, SqlAgentToolType.Sqlite, evidence.RequestId, ct))?.EntryKind);
+            }
+
+            var factory = new SqliteConnectionFactory();
+            var store = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(101L, "Late", "policy-fence-v1");
+            var preview = await new DmlCoordinator(factory, challengeStore: store).PreviewAsync(
+                connectionString, plan, ApprovalContextFingerprint, ct, version);
+
+            if (batch)
+                await Assert.ThrowsAsync<SqliteException>(() =>
+                    new DmlAtomicTransactionCoordinator(factory,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(connectionString, [plan], [preview], ct, version,
+                            evidence, requireExecutionFence: true));
+            else
+                await Assert.ThrowsAsync<SqliteException>(() =>
+                    new DmlCoordinator(factory, challengeStore: store,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(connectionString, plan, preview.Challenge,
+                            ApprovalContextFingerprint, ct, version, evidence,
+                            requireExecutionFence: true));
+
+            await using var verify = new SqliteConnection(connectionString);
+            await verify.OpenAsync(ct);
+            await using var count = verify.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(0L, (long)(await count.ExecuteScalarAsync(ct))!);
+            Assert.Null(await witness.ReadFingerprintAsync(
+                verify, SqlAgentToolType.Sqlite, evidence.RequestId, ct));
+            Assert.Equal(RelationalDmlTargetExecutionFence.RevocationKind,
+                (await fence.ReadAsync(verify, SqlAgentToolType.Sqlite, evidence.RequestId, ct))?.EntryKind);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AdmittedWorkerCommit_IsAtomicWithWitness_AndCannotBeRevoked(bool batch)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hs-sql-agent-admitted-first-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        var fence = new RelationalDmlTargetExecutionFence();
+        var witness = new RelationalDmlTargetCommitWitness();
+        var evidence = new DmlTargetCommitWitnessEvidence("request-committed-first", new string('B', 64));
+        try
+        {
+            var version = await ProvisionFencedSqliteAsync(connectionString, ct);
+            var factory = new SqliteConnectionFactory();
+            var store = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(102L, "Committed", "policy-fence-v1");
+            var preview = await new DmlCoordinator(factory, challengeStore: store).PreviewAsync(
+                connectionString, plan, ApprovalContextFingerprint, ct, version);
+            var result = batch
+                ? await new DmlAtomicTransactionCoordinator(factory,
+                    targetCommitWitness: witness, targetExecutionFence: fence)
+                    .CommitAsync(connectionString, [plan], [preview], ct, version,
+                        evidence, requireExecutionFence: true)
+                : await new DmlCoordinator(factory, challengeStore: store,
+                    targetCommitWitness: witness, targetExecutionFence: fence)
+                    .CommitAsync(connectionString, plan, preview.Challenge,
+                        ApprovalContextFingerprint, ct, version, evidence,
+                        requireExecutionFence: true);
+            Assert.True(result.Committed);
+
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(ct);
+            var admitted = await fence.ReadAsync(connection, SqlAgentToolType.Sqlite,
+                evidence.RequestId, ct);
+            Assert.NotNull(admitted);
+            Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind, admitted.EntryKind);
+            Assert.Equal(evidence.EvidenceFingerprint, admitted.EvidenceFingerprint);
+            Assert.Equal(evidence.EvidenceFingerprint, await witness.ReadFingerprintAsync(
+                connection, SqlAgentToolType.Sqlite, evidence.RequestId, ct));
+
+            // Primary-key collision is NOT a successful revocation.
+            await Assert.ThrowsAsync<SqliteException>(() =>
+                fence.RevokeAsync(connection, SqlAgentToolType.Sqlite, evidence, ct));
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(1L, (long)(await count.ExecuteScalarAsync(ct))!);
+            Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind,
+                (await fence.ReadAsync(connection, SqlAgentToolType.Sqlite, evidence.RequestId, ct))?.EntryKind);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MutationFailure_RollsBackAdmissionAndAllowsPermanentRevocation(bool batch)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"hs-sql-agent-fence-rollback-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={path};Pooling=False";
+        var ct = TestContext.Current.CancellationToken;
+        var fence = new RelationalDmlTargetExecutionFence();
+        var witness = new RelationalDmlTargetCommitWitness();
+        var evidence = new DmlTargetCommitWitnessEvidence("request-sql-failed", new string('C', 64));
+        try
+        {
+            var version = await ProvisionFencedSqliteAsync(connectionString, ct);
+            await using (var setup = new SqliteConnection(connectionString))
+            {
+                await setup.OpenAsync(ct);
+                await using var sql = setup.CreateCommand();
+                sql.CommandText = "INSERT INTO users (id, name) VALUES (103, 'Existing')";
+                await sql.ExecuteNonQueryAsync(ct);
+            }
+
+            var factory = new SqliteConnectionFactory();
+            var store = new InMemoryDmlApprovalChallengeStore();
+            var plan = CreateInsertPlan(103L, "Duplicate", "policy-fence-v1");
+            var preview = await new DmlCoordinator(factory, challengeStore: store).PreviewAsync(
+                connectionString, plan, ApprovalContextFingerprint, ct, version);
+            if (batch)
+                await Assert.ThrowsAsync<SqliteException>(() =>
+                    new DmlAtomicTransactionCoordinator(factory,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(connectionString, [plan], [preview], ct, version,
+                            evidence, requireExecutionFence: true));
+            else
+                await Assert.ThrowsAsync<SqliteException>(() =>
+                    new DmlCoordinator(factory, challengeStore: store,
+                        targetCommitWitness: witness, targetExecutionFence: fence)
+                        .CommitAsync(connectionString, plan, preview.Challenge,
+                            ApprovalContextFingerprint, ct, version, evidence,
+                            requireExecutionFence: true));
+
+            await using var revoker = new SqliteConnection(connectionString);
+            await revoker.OpenAsync(ct);
+            Assert.Null(await fence.ReadAsync(
+                revoker, SqlAgentToolType.Sqlite, evidence.RequestId, ct));
+            Assert.Null(await witness.ReadFingerprintAsync(
+                revoker, SqlAgentToolType.Sqlite, evidence.RequestId, ct));
+            await fence.RevokeAsync(revoker, SqlAgentToolType.Sqlite, evidence, ct);
+            Assert.Equal(RelationalDmlTargetExecutionFence.RevocationKind,
+                (await fence.ReadAsync(revoker, SqlAgentToolType.Sqlite, evidence.RequestId, ct))?.EntryKind);
+            await using var count = revoker.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(1L, (long)(await count.ExecuteScalarAsync(ct))!);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task RequestedFenceWithoutWriter_RejectsBeforeAnyTargetConnection()
+    {
+        var plan = CreateInsertPlan(111L, "Not admitted", "policy-fence-no-writer");
+        var preview = await new DmlCoordinator(new SqliteConnectionFactory()).PreviewAsync(
+            "Data Source=:memory:", plan, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, "3.46.0");
+        var token = new DmlTargetCommitWitnessEvidence("req-no-fence", new string('D', 64));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new DmlAtomicTransactionCoordinator(new SqliteConnectionFactory(),
+                targetCommitWitness: new RelationalDmlTargetCommitWitness())
+            .CommitAsync("Data Source=:memory:", [plan], [preview],
+                TestContext.Current.CancellationToken, "3.46.0", token,
+                requireExecutionFence: true));
+    }
+
+    private static async Task<string> ProvisionFencedSqliteAsync(
+        string connectionString, CancellationToken ct)
+    {
+        await using var setup = new SqliteConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var version = setup.ServerVersion.Trim();
+        await using var command = setup.CreateCommand();
+        command.CommandText =
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);" +
+            "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+            "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL);" +
+            "CREATE TABLE HS_SQL_AGENT_DML_FENCE (" +
+            "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL, " +
+            "ENTRY_KIND VARCHAR(16) NOT NULL CHECK (ENTRY_KIND IN ('Admitted','Revoked')));";
+        await command.ExecuteNonQueryAsync(ct);
+        return version;
+    }
+
     private static ValidatedDmlPlan CreateInsertPlan(long id, string name, string policyVersion)
     {
         var parsed = CoreSqlTextParser.ParseDml(

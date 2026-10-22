@@ -576,6 +576,24 @@ published as measured percentages or silently set to 100.
       witness and read-failure tests and verify the GET route is restricted
       to human `/runtime/security.edit`. This still is **not** worker
       fencing or six-provider live witness parity.
+- [x] Implement the **opt-in, version-stamped target admission/fence kernel**
+      before mutation execution: `target-fence-v1` is sealed into the
+      encrypted durable approval payload at issuance. Both single and atomic
+      DML coordinators must INSERT a unique `Admitted` row into a
+      separately provisioned `HS_SQL_AGENT_DML_FENCE` **at the start of
+      the same physical target transaction**, before revalidation or SQL.
+      Independent `RevokeAsync` competes for the same unique request ID,
+      leaving a durably COMMIT-acknowledged `Revoked` row. Whichever
+      COMMITs first excludes the other; conflicts, cancellation and
+      uncertain COMMIT are not negative proof. All mutation, admission and
+      positive COMMIT witness rows succeed/rollback atomically. This adds
+      neither a default feature nor any reconciliation of `Executing`.
+      Real SQLite tests cover revocation-first, worker-first, failed SQL,
+      restart and missing DI fail-closed for both DML execution routes.
+      See [target execution fence protocol](dml-target-execution-fence.md).
+      **Still open:** fleet-version enforcement, supervised revocation API,
+      six-provider real unique-index/transaction semantics and admission
+      race fault injection before `Executing` can be resolved.
 - [ ] Prove worker quiescence with an actual fencing mechanism before
       permitting reconciliation of `Executing` approvals. A timeout or a
       timestamp alone must never authorize that transition.

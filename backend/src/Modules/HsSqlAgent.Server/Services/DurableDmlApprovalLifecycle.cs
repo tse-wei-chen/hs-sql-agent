@@ -68,6 +68,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
         "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
     private const string ApprovalStateUnknownCode = "dml.approval_state_unknown";
+    internal const string TargetFenceProtocol = "target-fence-v1";
 
     public async Task PersistPendingAsync(
         DmlApprovalRequest request,
@@ -94,6 +95,9 @@ internal sealed class DurableDmlApprovalLifecycle(
         if (durableUntil <= now)
             throw new InvalidOperationException("DML approval durable completion deadline has already expired.");
 
+        if (runtime.HasTargetExecutionFence && !runtime.HasTargetCommitWitness)
+            throw new InvalidOperationException("Target execution fencing requires target commit witness to be configured.");
+
         var payload = new ProtectedResumePayload(
             resumeContext.Sql,
             resumeContext.RequiredToolName,
@@ -102,7 +106,8 @@ internal sealed class DurableDmlApprovalLifecycle(
             resumeContext.SourceDialect,
             resumeContext.CustomToolId,
             resumeContext.CustomToolRevisionId,
-            ComputeConnectionFingerprint(connectionString, secret));
+            ComputeConnectionFingerprint(connectionString, secret),
+            runtime.HasTargetExecutionFence ? TargetFenceProtocol : null);
         var protectedPayload = crypto.EncryptText(JsonSerializer.Serialize(payload), secret)
                                ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
 
@@ -449,6 +454,12 @@ internal sealed class DurableDmlApprovalLifecycle(
                           ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
         var payload = JsonSerializer.Deserialize<ProtectedResumePayload>(payloadJson)
                       ?? throw new InvalidOperationException("Durable DML approval payload is invalid.");
+        if (payload.FenceProtocol is not null &&
+            (payload.FenceProtocol != TargetFenceProtocol
+             || !runtime.HasTargetExecutionFence || !runtime.HasTargetCommitWitness))
+            throw new InvalidOperationException(
+                "Versioned target execution fencing is required by this approval but is unavailable. " +
+                "Do not downgrade to an unfenced execution.");
 
         var current = await ResolveCurrentExecutionAsync(context, state, payload, secret, cancellationToken);
         var parsedBatch = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
@@ -504,7 +515,8 @@ internal sealed class DurableDmlApprovalLifecycle(
             cancellationToken,
             runtime.HasTargetCommitWitness
                 ? new DmlTargetCommitWitnessEvidence(state.RequestId, state.EvidenceFingerprint)
-                : null);
+                : null,
+            requireExecutionFence: payload.FenceProtocol == TargetFenceProtocol);
         if (!commit.Committed)
             throw new DmlApprovalStaleException(
                 "Approved DML could not be committed because commit-time evidence revalidation no longer matched.");
@@ -678,7 +690,8 @@ internal sealed class DurableDmlApprovalLifecycle(
         SqlAgentToolType SourceDialect,
         int? CustomToolId,
         int? CustomToolRevisionId,
-        string ConnectionFingerprint);
+        string ConnectionFingerprint,
+        string? FenceProtocol = null);
 
     private sealed record CurrentExecution(
         SqlAgentToolType ProviderType,

@@ -16,11 +16,13 @@ internal sealed class DmlAtomicTransactionCoordinator(
     IDbConnectionFactory connectionFactory,
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
     IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
-    IDmlTargetCommitWitness? targetCommitWitness = null)
+    IDmlTargetCommitWitness? targetCommitWitness = null,
+    IDmlTargetExecutionFence? targetExecutionFence = null)
 {
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
     private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
     private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
+    private readonly IDmlTargetExecutionFence? _targetExecutionFence = targetExecutionFence;
     private readonly IDmlTransactionIsolationPolicy _transactionIsolationPolicy =
         transactionIsolationPolicy ?? new StrictDmlTransactionIsolationPolicy();
 
@@ -30,8 +32,11 @@ internal sealed class DmlAtomicTransactionCoordinator(
         IReadOnlyList<DmlPreview> approvedPreviews,
         CancellationToken cancellationToken,
         string expectedServerVersionIdentity,
-        DmlTargetCommitWitnessEvidence? witnessEvidence = null)
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null,
+        bool requireExecutionFence = false)
     {
+        if (requireExecutionFence && (witnessEvidence is null || _targetExecutionFence is null))
+            throw new InvalidOperationException("Versioned target fencing requires both durable evidence and a configured admission writer.");
         if (witnessEvidence is not null && _targetCommitWitness is null)
             throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -67,6 +72,10 @@ internal sealed class DmlAtomicTransactionCoordinator(
         var returnedRows = ImmutableArray.CreateBuilder<IReadOnlyDictionary<string, object?>>();
         try
         {
+            if (requireExecutionFence)
+                await _targetExecutionFence!.AdmitAsync(
+                    connection, transaction, provider, witnessEvidence!, cancellationToken);
+
             for (var index = 0; index < plans.Count; index++)
             {
                 var plan = plans[index];

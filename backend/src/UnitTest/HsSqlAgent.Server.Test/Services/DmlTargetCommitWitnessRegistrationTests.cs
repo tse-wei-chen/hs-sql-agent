@@ -27,4 +27,19 @@ public sealed class DmlTargetCommitWitnessRegistrationTests
 
         Assert.Throws<InvalidOperationException>(() => builder.AddHsSqlAgentTargetCommitWitness());
     }
+    [Fact]
+    public void ExecutionFenceRegistration_AutomaticallyIncludesWitnessAndIsSingleRegistration()
+    {
+        var services = new ServiceCollection();
+        var builder = services.AddHsSqlAgentCore().AddHsSqlAgentTargetExecutionFence();
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IDmlTargetExecutionFence)
+            && descriptor.ImplementationType == typeof(RelationalDmlTargetExecutionFence)
+            && descriptor.Lifetime == ServiceLifetime.Singleton);
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IDmlTargetCommitWitness)
+            && descriptor.ImplementationType == typeof(RelationalDmlTargetCommitWitness));
+        Assert.Throws<InvalidOperationException>(() => builder.AddHsSqlAgentTargetExecutionFence());
+    }
+
 }

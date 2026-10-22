@@ -18,12 +18,14 @@ public sealed class DmlCoordinator(
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
     IDmlPreviewTransactionFactory? previewTransactionFactory = null,
     IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
-    IDmlTargetCommitWitness? targetCommitWitness = null) : IDmlCoordinator
+    IDmlTargetCommitWitness? targetCommitWitness = null,
+    IDmlTargetExecutionFence? targetExecutionFence = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
     private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
     private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
+    private readonly IDmlTargetExecutionFence? _targetExecutionFence = targetExecutionFence;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
@@ -123,8 +125,11 @@ public sealed class DmlCoordinator(
         string approvalContextFingerprint,
         CancellationToken cancellationToken,
         string expectedServerVersionIdentity,
-        DmlTargetCommitWitnessEvidence? witnessEvidence)
+        DmlTargetCommitWitnessEvidence? witnessEvidence,
+        bool requireExecutionFence = false)
     {
+        if (requireExecutionFence && (witnessEvidence is null || _targetExecutionFence is null))
+            throw new InvalidOperationException("Versioned target fencing requires both durable evidence and a configured admission writer.");
         if (witnessEvidence is not null && _targetCommitWitness is null)
             throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
@@ -152,6 +157,10 @@ public sealed class DmlCoordinator(
 
         try
         {
+            if (requireExecutionFence)
+                await _targetExecutionFence!.AdmitAsync(connection, transaction,
+                    plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
+
             // A compile-time snapshot digest alone does not attest to the live database.
             // Verify inside the same transaction before either INSERT or row-set DML.
             await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
