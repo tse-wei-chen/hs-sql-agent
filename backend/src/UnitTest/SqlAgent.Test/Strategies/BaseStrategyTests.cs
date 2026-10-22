@@ -435,9 +435,25 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             Assert.Equal(revokedFirst ? 0L : 1L,
                 await CountTargetFenceRowsAsync(inspect, table, token));
             var entry = await fence.ReadAsync(inspect, provider, evidence.RequestId, token);
+            if (entry is null)
+            {
+                // Diagnostic must inspect physically committed rows, not
+                // infer success from a coordinator return value.
+                await using var audit = inspect.CreateCommand();
+                audit.CommandText =
+                    "SELECT REQUEST_ID, ENTRY_KIND FROM HS_SQL_AGENT_DML_FENCE";
+                var actual = new List<string>();
+                await using var reader = await audit.ExecuteReaderAsync(token);
+                while (await reader.ReadAsync(token))
+                    actual.Add($"{reader.GetString(0)}:{reader.GetString(1)}");
+                Assert.Fail(
+                    $"Compiled DML returned without the required committed admission. " +
+                    $"provider={provider}; batch={batch}; revokedFirst={revokedFirst}; " +
+                    $"request={evidence.RequestId}; actual=[{string.Join(", ", actual)}]");
+            }
             Assert.Equal(revokedFirst
                 ? RelationalDmlTargetExecutionFence.RevocationKind
-                : RelationalDmlTargetExecutionFence.AdmissionKind, entry?.EntryKind);
+                : RelationalDmlTargetExecutionFence.AdmissionKind, entry.EntryKind);
             Assert.Equal(revokedFirst ? null : evidence.EvidenceFingerprint,
                 await witness.ReadFingerprintAsync(inspect, provider, evidence.RequestId, token));
         });
