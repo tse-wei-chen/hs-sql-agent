@@ -145,7 +145,12 @@ the protected approval payload is stamped `FenceProtocol=target-fence-v1`.
 Execution of that approval later *requires* a fencing-capable runtime and
 an enabled COMMIT witness. Downgrading to an unfenced runner is prohibited.
 Approvals created before enrollment are **not** retroactively proven safe.
-Do not interpret them as fenced, even if the process is upgraded later.
+Once fencing is enabled on an upgraded worker, completing one of these older
+Pending approvals **fails closed before opening the target connection**, even
+if it previously required a COMMIT witness. Re-preview and obtain a fresh
+fenced human approval; do not interpret a historical request as fenced.
+Older binaries cannot enforce this rule, so **all old eligible workers must
+still be drained before enabling the new protocol**.
 
 **Deployment safety precondition:** ALL potentially eligible worker binaries
 and nodes must already implement and enforce this protocol *before any

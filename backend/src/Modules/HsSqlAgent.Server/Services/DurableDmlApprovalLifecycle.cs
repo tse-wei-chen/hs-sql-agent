@@ -465,6 +465,17 @@ internal sealed class DurableDmlApprovalLifecycle(
             throw new InvalidOperationException(
                 "Versioned target execution fencing is required by this approval but is unavailable. " +
                 "Do not downgrade to an unfenced execution.");
+        // A fence-enabled runtime must not execute a historical Pending request
+        // which was created before admission fencing was enrolled. Treating a
+        // missing protocol as permission to bypass admission would silently
+        // downgrade precisely the fleet whose operator opted into fencing.
+        // Upgrade rollout must drain/reject these requests and re-preview
+        // with a fresh, versioned human authorization instead.
+        if (runtime.HasTargetExecutionFence && payload.FenceProtocol != TargetFenceProtocol)
+            throw new InvalidOperationException(
+                "Legacy durable DML approval predates target execution fencing. " +
+                "Request a new fenced preview and approval after draining older workers; " +
+                "never execute the legacy approval without target admission.");
 
         var current = await ResolveCurrentExecutionAsync(context, state, payload, secret, cancellationToken);
         var parsedBatch = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(

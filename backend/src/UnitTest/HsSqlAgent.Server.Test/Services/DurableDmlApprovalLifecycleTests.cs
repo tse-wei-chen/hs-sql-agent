@@ -138,6 +138,58 @@ public sealed class DurableDmlApprovalLifecycleTests
             target, SqlAgentToolType.Sqlite, request.RequestId, ct));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyPendingApproval_EnablingTargetFenceRequiresFreshFencedApproval(
+        bool legacyHadCommitWitness)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var fence = new RelationalDmlTargetExecutionFence();
+        var witness = new RelationalDmlTargetCommitWitness();
+        await ProvisionTargetFenceAsync(fixture, ct);
+
+        var legacyRuntime = legacyHadCommitWitness
+            ? new TypedDmlRuntime(targetCommitWitness: witness)
+            : new TypedDmlRuntime();
+        var approval = await PersistPendingInsertAsync(fixture, legacyRuntime);
+
+        // The upgraded process has target fencing, but the persisted v2 request
+        // never obtained a versioned target-admission contract. It cannot use
+        // this new component as retroactive proof and may not execute unfenced.
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider,
+                new TypedDmlRuntime(targetCommitWitness: witness, targetExecutionFence: fence));
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint), ct);
+
+            Assert.Equal(DmlApprovalCompletionStatus.Failed, result.Status);
+            Assert.False(result.Retryable);
+            Assert.Contains("Legacy durable DML approval", result.Message,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("Failed", (await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(ct)).Status);
+        }
+
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+        await using var inspector = new SqliteConnection(fixture.TargetConnectionString);
+        await inspector.OpenAsync(ct);
+        Assert.Null(await fence.ReadAsync(inspector, SqlAgentToolType.Sqlite, approval.RequestId, ct));
+        Assert.Null(await witness.ReadFingerprintAsync(
+            inspector, SqlAgentToolType.Sqlite, approval.RequestId, ct));
+
+        await using var secondRestart = fixture.CreateRestartedServices();
+        await using var secondScope = secondRestart.CreateAsyncScope();
+        var replay = await fixture.CreateLifecycle(secondScope.ServiceProvider,
+                new TypedDmlRuntime(targetCommitWitness: witness, targetExecutionFence: fence))
+            .CompleteAsync(DmlApprovalCompletion.Approve(
+                approval.RequestId, approval.ApprovalFingerprint), ct);
+        Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
+    }
+
     private static async Task ProvisionTargetFenceAsync(Fixture fixture, CancellationToken ct)
     {
         await using var target = new SqliteConnection(fixture.TargetConnectionString);
