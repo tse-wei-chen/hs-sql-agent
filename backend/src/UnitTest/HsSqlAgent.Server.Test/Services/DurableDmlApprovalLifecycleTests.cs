@@ -76,6 +76,75 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
+    public async Task NewPendingApproval_WritesVersionedProtectedExecutionPayload()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var services = scope.ServiceProvider;
+        var state = await services.GetRequiredService<AdminContext>().DmlApprovalRequests
+            .AsNoTracking().SingleAsync(
+                x => x.RequestId == approval.RequestId,
+                TestContext.Current.CancellationToken);
+
+        var crypto = services.GetRequiredService<ICryptoService>();
+        var json = crypto.DecryptText(
+            state.ProtectedExecutionPayload,
+            System.Text.Encoding.UTF8.GetBytes(HmacSecret));
+        Assert.NotNull(json);
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(DurableDmlResumePayloadCodec.CurrentSchemaVersion,
+            document.RootElement.GetProperty("SchemaVersion").GetInt32());
+        Assert.Equal(DurableDmlResumePayloadCodec.PayloadKind,
+            document.RootElement.GetProperty("Kind").GetString());
+        Assert.Equal("execute_dml_sql",
+            document.RootElement.GetProperty("Payload").GetProperty("RequiredToolName").GetString());
+    }
+
+    [Fact]
+    public async Task FutureDurablePayloadVersion_FailsClosedAfterRestartWithoutTargetCommit()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var services = scope.ServiceProvider;
+            var db = services.GetRequiredService<AdminContext>();
+            var state = await db.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == approval.RequestId,
+                TestContext.Current.CancellationToken);
+            var crypto = services.GetRequiredService<ICryptoService>();
+            var secret = System.Text.Encoding.UTF8.GetBytes(HmacSecret);
+            var json = crypto.DecryptText(state.ProtectedExecutionPayload, secret);
+            Assert.NotNull(json);
+            var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+            root["SchemaVersion"] = DurableDmlResumePayloadCodec.CurrentSchemaVersion + 1;
+            state.ProtectedExecutionPayload = crypto.EncryptText(root.ToJsonString(), secret)
+                ?? throw new InvalidOperationException("Could not reencrypt test fixture.");
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await using (var restarted = fixture.CreateRestartedServices())
+        await using (var scope = restarted.CreateAsyncScope())
+        {
+            var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+            var result = await lifecycle.CompleteAsync(
+                DmlApprovalCompletion.Approve(
+                    approval.RequestId, approval.ApprovalFingerprint),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(DmlApprovalCompletionStatus.Failed, result.Status);
+            Assert.False(result.Retryable);
+            Assert.Contains("schema version", result.Message, StringComparison.OrdinalIgnoreCase);
+            var state = await scope.ServiceProvider.GetRequiredService<AdminContext>()
+                .DmlApprovalRequests.AsNoTracking().SingleAsync(
+                    x => x.RequestId == approval.RequestId,
+                    TestContext.Current.CancellationToken);
+            Assert.Equal("Failed", state.Status);
+        }
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
     public async Task VersionedFencedDurableApproval_CommitsAdmissionWitnessAndMutationAfterRestart()
     {
         await using var fixture = await Fixture.CreateAsync();

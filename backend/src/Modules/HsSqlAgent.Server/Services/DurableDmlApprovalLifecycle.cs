@@ -98,7 +98,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         if (runtime.HasTargetExecutionFence && !runtime.HasTargetCommitWitness)
             throw new InvalidOperationException("Target execution fencing requires target commit witness to be configured.");
 
-        var payload = new ProtectedResumePayload(
+        var payload = new DurableDmlResumePayload(
             resumeContext.Sql,
             resumeContext.RequiredToolName,
             resumeContext.AccessKeyId,
@@ -109,7 +109,7 @@ internal sealed class DurableDmlApprovalLifecycle(
             ComputeConnectionFingerprint(connectionString, secret),
             runtime.HasTargetExecutionFence ? TargetFenceProtocol : null,
             RequiresCommitWitness: runtime.HasTargetCommitWitness);
-        var protectedPayload = crypto.EncryptText(JsonSerializer.Serialize(payload), secret)
+        var protectedPayload = crypto.EncryptText(DurableDmlResumePayloadCodec.Serialize(payload), secret)
                                ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
 
         context.DmlApprovalRequests.Add(new DmlApprovalRequestState
@@ -453,8 +453,7 @@ internal sealed class DurableDmlApprovalLifecycle(
         var secret = RequireHmacSecret();
         var payloadJson = RequireCrypto().DecryptText(state.ProtectedExecutionPayload, secret)
                           ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
-        var payload = JsonSerializer.Deserialize<ProtectedResumePayload>(payloadJson)
-                      ?? throw new InvalidOperationException("Durable DML approval payload is invalid.");
+        var payload = DurableDmlResumePayloadCodec.Deserialize(payloadJson);
         if (payload.RequiresCommitWitness && !runtime.HasTargetCommitWitness)
             throw new InvalidOperationException(
                 "The durable approval requires a target-enlisted COMMIT witness, but this runtime has no witness writer. " +
@@ -546,7 +545,7 @@ internal sealed class DurableDmlApprovalLifecycle(
     private async Task<CurrentExecution> ResolveCurrentExecutionAsync(
         IAdminContext context,
         DmlApprovalRequestState state,
-        ProtectedResumePayload payload,
+        DurableDmlResumePayload payload,
         byte[] secret,
         CancellationToken cancellationToken)
     {
@@ -697,21 +696,6 @@ internal sealed class DurableDmlApprovalLifecycle(
         return leftBytes.Length == rightBytes.Length
                && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
-
-    private sealed record ProtectedResumePayload(
-        string Sql,
-        string RequiredToolName,
-        int AccessKeyId,
-        int DbManagementId,
-        SqlAgentToolType SourceDialect,
-        int? CustomToolId,
-        int? CustomToolRevisionId,
-        string ConnectionFingerprint,
-        string? FenceProtocol = null,
-        // Old pre-witness payloads deserialize with false. Once the
-        // approval was created with an enrolled witness, restart/config
-        // changes cannot silently make the final COMMIT witness-free.
-        bool RequiresCommitWitness = false);
 
     private sealed record CurrentExecution(
         SqlAgentToolType ProviderType,

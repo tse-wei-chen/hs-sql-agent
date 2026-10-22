@@ -17,6 +17,9 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [v2 → v3 migration 
   Real-Redis integration tests prevent accidental changes to this contract.
 - Approval challenges without the new plan binding are rejected. Re-preview and
   obtain new human approval; do not replay consumed approvals.
+- Introduce a versioned encrypted durable DML resume payload with an explicit
+  legacy v2 decoder. Unknown versions fail closed instead of silently defaulting
+  new approval safety requirements; old records require no database column change.
 - Under selective UPDATE/DELETE policy, demonstrably always-true predicates,
   including `WHERE 1=1`, are denied unless full-table authority is explicit.
 - Compiler input/token resource ceilings reject previously accepted oversized SQL.
