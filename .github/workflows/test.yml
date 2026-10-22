@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
+      - run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
 
   auth-test:
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/Auth.Test/Auth.Test.csproj
+      - run: dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj
 
   admin-test:
     runs-on: ubuntu-latest
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/Admin.Test/Admin.Test.csproj
+      - run: dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
 
   server-test:
     runs-on: ubuntu-latest
@@ -64,7 +64,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -90,7 +90,7 @@ jobs:
       - name: Verify real Redis and run cross-instance approval races
         run: |
           test -n "${HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION:?Redis service is required}"
-          dotnet test backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests'
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests'
         env:
           HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION: "localhost:6379,abortConnect=true,connectTimeout=5000"
 
@@ -106,7 +106,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Run generated SQL grammar matrices
-        run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)
         run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
       - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
@@ -193,7 +193,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Run remaining SQL service tests
-        run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -226,7 +226,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
+      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -256,7 +256,7 @@ jobs:
         # Dedicated service job to keep the regular SQL test shards lightweight.
         # Missing/unready SQL Server is a hard failure in CI, never a skip.
         run: >
-          dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
           --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"

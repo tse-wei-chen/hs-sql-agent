@@ -48,8 +48,7 @@
     <PackageVersion Include="Testcontainers.Oracle" Version="4.16.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
     <PackageVersion Include="Testcontainers.FirebirdSql" Version="4.16.0" />
-    <!-- Keep VSTest-compatible xUnit; 4.x defaults to MTP v2 and breaks existing dotnet test commands. -->
-    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="xunit.v3" Version="4.0.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="Moq" Version="4.21.0" />
