@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using Admin.Service.Data;
 using Admin.Service.Models;
 using Common.Interfaces;
@@ -75,16 +74,13 @@ public sealed class DurableDmlWitnessVerificationService(
         {
             var plain = cryptoService.DecryptText(state.ProtectedExecutionPayload, keyBytes);
             if (string.IsNullOrWhiteSpace(plain)) return Result(TargetChanged);
-            using var document = JsonDocument.Parse(plain);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("ConnectionFingerprint", out var persisted)
-                || persisted.ValueKind != JsonValueKind.String
-                || !root.TryGetProperty("DbManagementId", out var id)
-                || id.GetInt32() != state.DbManagementId
-                || !root.TryGetProperty("AccessKeyId", out var accessKey)
-                || accessKey.GetInt32() != state.AccessKeyId
-                || !root.TryGetProperty("SourceDialect", out var dialect)
-                || dialect.Deserialize<SqlAgentToolType>() != provider)
+            // One authoritative decoder for both completion and independent
+            // witness inspection. An old flat payload is explicitly upcast;
+            // unknown envelope versions never allow a target connection probe.
+            var resume = DurableDmlResumePayloadCodec.Deserialize(plain);
+            if (resume.DbManagementId != state.DbManagementId
+                || resume.AccessKeyId != state.AccessKeyId
+                || resume.SourceDialect != provider)
                 return Result(TargetChanged);
 
             var password = cryptoService.DecryptText(db.PasswordHash, keyBytes);
@@ -99,10 +95,8 @@ public sealed class DurableDmlWitnessVerificationService(
                     ExtraSettings = db.ExtraSettings
                 });
             var actualFingerprint = HMACSHA256.HashData(keyBytes, Encoding.UTF8.GetBytes(connectionString));
-            var expected = persisted.GetString();
-            if (expected is null || expected.Length != 64 || !expected.All(Uri.IsHexDigit))
-                return Result(TargetChanged);
-            if (!CryptographicOperations.FixedTimeEquals(actualFingerprint, Convert.FromHexString(expected)))
+            if (!CryptographicOperations.FixedTimeEquals(
+                    actualFingerprint, Convert.FromHexString(resume.ConnectionFingerprint)))
                 return Result(TargetChanged);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
