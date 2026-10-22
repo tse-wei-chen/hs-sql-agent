@@ -154,7 +154,7 @@ public sealed class DmlTargetFenceLiveProviderIntegrationTests
             await using var revoker = await target.OpenAsync(deadline.Token);
             reachedRevocation.TrySetResult();
             await Fence.RevokeAsync(revoker, provider, evidence, deadline.Token);
-        });
+        }, ct);
         await reachedRevocation.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
         // The INSERT competes for the same unique target request ID. A
         // revocation cannot report success while the worker holds admission.
