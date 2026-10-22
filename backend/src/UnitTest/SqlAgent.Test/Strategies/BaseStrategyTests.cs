@@ -66,6 +66,173 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     protected abstract DmlDefinition CreateInsertDml();
 
 
+    // These are physical target-database fences, not a fabricated provider shim.
+    // All six existing provider fixtures (including Oracle / Firebird containers)
+    // execute the exact same admission, revocation and witness protocol.
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_RevocationFirstBlocksLateWorker()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "fence-revoked-" + Guid.NewGuid().ToString("N"), new string('A', 64));
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+
+            await using (var revoker = ProviderStrategy.CreateConnection(connectionString))
+            {
+                await revoker.OpenAsync(token);
+                await fence.RevokeAsync(revoker, provider, evidence, token);
+            }
+
+            await using (var worker = ProviderStrategy.CreateConnection(connectionString))
+            {
+                await worker.OpenAsync(token);
+                await using var transaction = await worker.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable, token);
+                await Assert.ThrowsAnyAsync<DbException>(() =>
+                    fence.AdmitAsync(worker, transaction, provider, evidence, token));
+                await transaction.RollbackAsync(token);
+            }
+
+            await using var inspector = ProviderStrategy.CreateConnection(connectionString);
+            await inspector.OpenAsync(token);
+            Assert.Equal(RelationalDmlTargetExecutionFence.RevocationKind,
+                (await fence.ReadAsync(inspector, provider, evidence.RequestId, token))?.EntryKind);
+            Assert.Null(await witness.ReadFingerprintAsync(inspector, provider, evidence.RequestId, token));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(inspector, table, token));
+        });
+    }
+
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_AdmissionAndWitnessCommitAtomically()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "fence-admitted-" + Guid.NewGuid().ToString("N"), new string('B', 64));
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+
+            await using (var worker = ProviderStrategy.CreateConnection(connectionString))
+            {
+                await worker.OpenAsync(token);
+                await using var transaction = await worker.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable, token);
+                await fence.AdmitAsync(worker, transaction, provider, evidence, token);
+                await ExecuteTargetFenceSqlAsync(worker,
+                    $"INSERT INTO {table} (ID) VALUES (1)", token, transaction);
+                await witness.WriteAsync(worker, transaction, provider, evidence, token);
+                await transaction.CommitAsync(token);
+            }
+
+            await using var inspector = ProviderStrategy.CreateConnection(connectionString);
+            await inspector.OpenAsync(token);
+            Assert.Equal(RelationalDmlTargetExecutionFence.AdmissionKind,
+                (await fence.ReadAsync(inspector, provider, evidence.RequestId, token))?.EntryKind);
+            Assert.Equal(evidence.EvidenceFingerprint,
+                await witness.ReadFingerprintAsync(inspector, provider, evidence.RequestId, token));
+            Assert.Equal(1L, await CountTargetFenceRowsAsync(inspector, table, token));
+
+            // An admitted COMMIT cannot be relabeled as a successful revocation.
+            await Assert.ThrowsAnyAsync<DbException>(() =>
+                fence.RevokeAsync(inspector, provider, evidence, token));
+        });
+    }
+
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_RollbackReleasesBothEvidenceRows()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            var evidence = new DmlTargetCommitWitnessEvidence(
+                "fence-rollback-" + Guid.NewGuid().ToString("N"), new string('C', 64));
+            var fence = new RelationalDmlTargetExecutionFence();
+            var witness = new RelationalDmlTargetCommitWitness();
+
+            await using (var worker = ProviderStrategy.CreateConnection(connectionString))
+            {
+                await worker.OpenAsync(token);
+                await using var transaction = await worker.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable, token);
+                await fence.AdmitAsync(worker, transaction, provider, evidence, token);
+                await ExecuteTargetFenceSqlAsync(worker,
+                    $"INSERT INTO {table} (ID) VALUES (1)", token, transaction);
+                await witness.WriteAsync(worker, transaction, provider, evidence, token);
+                await transaction.RollbackAsync(token);
+            }
+
+            await using var inspector = ProviderStrategy.CreateConnection(connectionString);
+            await inspector.OpenAsync(token);
+            Assert.Null(await fence.ReadAsync(inspector, provider, evidence.RequestId, token));
+            Assert.Null(await witness.ReadFingerprintAsync(inspector, provider, evidence.RequestId, token));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(inspector, table, token));
+            await fence.RevokeAsync(inspector, provider, evidence, token);
+            Assert.Equal(RelationalDmlTargetExecutionFence.RevocationKind,
+                (await fence.ReadAsync(inspector, provider, evidence.RequestId, token))?.EntryKind);
+        });
+    }
+
+    private async Task WithTargetFenceTablesAsync(
+        Func<string, string, SqlAgentToolType, CancellationToken, Task> assertion)
+    {
+        var provider = Strategy.DbType;
+        var token = TestContext.Current.CancellationToken;
+        var connectionString = provider == SqlAgentToolType.Firebird
+            ? new FirebirdSql.Data.FirebirdClient.FbConnectionStringBuilder(Fixture.ConnectionString)
+                { Pooling = false }.ConnectionString
+            : Fixture.ConnectionString;
+        var probe = "HSFENCE_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var oracle = provider == SqlAgentToolType.Oracle;
+        var mysql = provider == SqlAgentToolType.MySQL;
+        var prefix = oracle ? "VARCHAR2" : "VARCHAR";
+        var charSize = oracle ? " CHAR" : string.Empty;
+        var suffix = oracle ? " SEGMENT CREATION IMMEDIATE" : mysql ? " ENGINE=InnoDB" : string.Empty;
+        var requestType = $"{prefix}(64{charSize})";
+        var kindType = $"{prefix}(16{charSize})";
+        var fingerprintType = oracle ? "CHAR(64 CHAR)" : "CHAR(64)";
+        var fenceSchema = $"CREATE TABLE HS_SQL_AGENT_DML_FENCE (" +
+            $"REQUEST_ID {requestType} NOT NULL PRIMARY KEY, " +
+            $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL, " +
+            $"ENTRY_KIND {kindType} NOT NULL)" + suffix;
+        var witnessSchema = $"CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+            $"REQUEST_ID {requestType} NOT NULL PRIMARY KEY, " +
+            $"EVIDENCE_FINGERPRINT {fingerprintType} NOT NULL)" + suffix;
+        var probeSchema = $"CREATE TABLE {probe} (ID INTEGER PRIMARY KEY)" + suffix;
+        await using var ddl = ProviderStrategy.CreateConnection(connectionString);
+        await ddl.OpenAsync(token);
+        await ExecuteTargetFenceSqlAsync(ddl, fenceSchema, token);
+        try
+        {
+            await ExecuteTargetFenceSqlAsync(ddl, witnessSchema, token);
+            try
+            {
+                await ExecuteTargetFenceSqlAsync(ddl, probeSchema, token);
+                try { await assertion(connectionString, probe, provider, token); }
+                finally { await ExecuteTargetFenceSqlAsync(ddl, $"DROP TABLE {probe}", token); }
+            }
+            finally { await ExecuteTargetFenceSqlAsync(ddl, "DROP TABLE HS_SQL_AGENT_DML_WITNESS", token); }
+        }
+        finally { await ExecuteTargetFenceSqlAsync(ddl, "DROP TABLE HS_SQL_AGENT_DML_FENCE", token); }
+    }
+
+    private static async Task ExecuteTargetFenceSqlAsync(DbConnection connection, string sql,
+        CancellationToken token, DbTransaction? transaction = null)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(token);
+    }
+
+    private static async Task<long> CountTargetFenceRowsAsync(DbConnection connection, string table,
+        CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM {table}";
+        return Convert.ToInt64(await command.ExecuteScalarAsync(token));
+    }
+
     [Fact]
     public virtual async Task NativeDmlSchemaFreshness_RealProviderRecheckUsesCurrentTransaction()
     {
