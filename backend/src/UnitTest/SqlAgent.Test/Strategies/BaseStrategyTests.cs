@@ -388,9 +388,28 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
                 System.Data.IsolationLevel.Serializable, token))
             {
                 await fence.AdmitAsync(connection, tx, provider, evidence, token);
+                // The Oracle anomaly may originate in provider metadata
+                // queries. Assert physical admission in the SAME transaction
+                // at each boundary, before any business INSERT.
+                async Task<long> CountAdmissionInTransactionAsync()
+                {
+                    await using var inspectAdmission = connection.CreateCommand();
+                    inspectAdmission.Transaction = tx;
+                    inspectAdmission.CommandText =
+                        "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+                    return Convert.ToInt64(await inspectAdmission.ExecuteScalarAsync(token));
+                }
+
+                Assert.Equal(1L, await CountAdmissionInTransactionAsync());
+
                 if (revalidateSchema)
                     await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
                         connection, tx, plan!.MutationCommand, snapshot!, freshness, token);
+
+                Assert.True(await CountAdmissionInTransactionAsync() == 1L,
+                    $"Target admission disappeared after schema revalidation " +
+                    $"but before business mutation. provider={provider}; " +
+                    $"dapper={useDapperMutation}; revalidate={revalidateSchema}");
 
                 if (useDapperMutation)
                     await Dapper.SqlMapper.ExecuteAsync(connection,
