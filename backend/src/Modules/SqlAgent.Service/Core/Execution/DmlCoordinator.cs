@@ -174,20 +174,22 @@ public sealed class DmlCoordinator(
 
         try
         {
-            if (requireExecutionFence)
-                await _targetExecutionFence!.AdmitAsync(connection, transaction,
-                    plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
-
-            // A compile-time snapshot digest alone does not attest to the live database.
-            // Verify inside the same transaction before either INSERT or row-set DML.
+            // Catalog verification must finish before durable admission.
+            // Oracle may invalidate an earlier uncommitted target admission
+            // while reading dictionary metadata. Revocation still races the
+            // INSERT below, before any business DML is permitted.
             await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
                 connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
                 _schemaFreshnessVerifier, cancellationToken);
 
             if (requireExecutionFence)
+            {
+                await _targetExecutionFence!.AdmitAsync(connection, transaction,
+                    plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
                 await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
                     connection, transaction, plan.MutationCommand.TargetProvider,
                     witnessEvidence!, cancellationToken);
+            }
 
             if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             {

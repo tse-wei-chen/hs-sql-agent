@@ -346,7 +346,7 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
-    public virtual async Task TargetFence_RealProvider_AdmissionSurvivesReadinessOnSameConnection(
+    public virtual async Task TargetFence_RealProvider_NativeSchemaVerificationPrecedesTargetAdmission(
         bool useDapperMutation, bool revalidateSchema)
     {
         await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
@@ -387,29 +387,17 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
             await using (var tx = await connection.BeginTransactionAsync(
                 System.Data.IsolationLevel.Serializable, token))
             {
-                await fence.AdmitAsync(connection, tx, provider, evidence, token);
-                // The Oracle anomaly may originate in provider metadata
-                // queries. Assert physical admission in the SAME transaction
-                // at each boundary, before any business INSERT.
-                async Task<long> CountAdmissionInTransactionAsync()
-                {
-                    await using var inspectAdmission = connection.CreateCommand();
-                    inspectAdmission.Transaction = tx;
-                    inspectAdmission.CommandText =
-                        "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
-                    return Convert.ToInt64(await inspectAdmission.ExecuteScalarAsync(token));
-                }
-
-                Assert.Equal(1L, await CountAdmissionInTransactionAsync());
-
+                // Oracle's real transaction test showed that its native
+                // catalog read can erase an earlier uncommitted admission.
+                // Complete all immutable plan schema checks first, then
+                // admit before touching any application table.
                 if (revalidateSchema)
                     await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
                         connection, tx, plan!.MutationCommand, snapshot!, freshness, token);
 
-                Assert.True(await CountAdmissionInTransactionAsync() == 1L,
-                    $"Target admission disappeared after schema revalidation " +
-                    $"but before business mutation. provider={provider}; " +
-                    $"dapper={useDapperMutation}; revalidate={revalidateSchema}");
+                await fence.AdmitAsync(connection, tx, provider, evidence, token);
+                await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                    connection, tx, provider, evidence, token);
 
                 if (useDapperMutation)
                     await Dapper.SqlMapper.ExecuteAsync(connection,

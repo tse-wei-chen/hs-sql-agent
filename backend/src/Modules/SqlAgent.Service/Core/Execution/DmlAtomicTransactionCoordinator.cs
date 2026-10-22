@@ -89,6 +89,21 @@ internal sealed class DmlAtomicTransactionCoordinator(
         var returnedRows = ImmutableArray.CreateBuilder<IReadOnlyDictionary<string, object?>>();
         try
         {
+            // Oracle dictionary reads during native Schema Freshness may
+            // invalidate an earlier uncommitted admission. For fenced Oracle
+            // batches, prove every immutable plan against the *same* live
+            // transaction before admitting, with no intervening application
+            // mutation. Other dialects retain per-step revalidation.
+            var oraclePrevalidated = requireExecutionFence
+                && provider == SqlAgentToolType.Oracle;
+            if (oraclePrevalidated)
+            {
+                foreach (var plan in plans)
+                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                        connection, transaction, plan.MutationCommand,
+                        plan.SchemaSnapshot, _schemaFreshnessVerifier, cancellationToken);
+            }
+
             if (requireExecutionFence)
                 await _targetExecutionFence!.AdmitAsync(
                     connection, transaction, provider, witnessEvidence!, cancellationToken);
@@ -100,9 +115,14 @@ internal sealed class DmlAtomicTransactionCoordinator(
 
                 // Revalidate each proof after earlier statements in the same atomic
                 // transaction. A changed or unreadable schema aborts the whole batch.
-                await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
-                    connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
-                    _schemaFreshnessVerifier, cancellationToken);
+                // Oracle was schema-attested for the whole immutable batch
+                // immediately before admission. Re-reading Oracle catalogs
+                // after admission could erase that admission; fail closed
+                // rather than silently downgrade the target fence.
+                if (!oraclePrevalidated)
+                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                        connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                        _schemaFreshnessVerifier, cancellationToken);
 
                 if (requireExecutionFence)
                     await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(

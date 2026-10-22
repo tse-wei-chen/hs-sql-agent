@@ -7,8 +7,9 @@ namespace SqlAgent.Service.Core.Execution;
 /// <summary>
 /// Persistent, target-enlisted admission barrier. The first admitted writer
 /// and any later revoker compete for the same UNIQUE request ID in the target
-/// database. The admission INSERT must happen at the beginning of the
-/// mutation transaction, before schema queries and before application SQL.
+/// database. The admission INSERT must occur before application SQL,
+/// after provider-native catalog verification that could interfere with
+/// an existing uncommitted Oracle admission.
 /// </summary>
 public interface IDmlTargetExecutionFence
 {

@@ -164,7 +164,15 @@ approvals. This also opts into the required target COMMIT witness.
 The default runtime remains unchanged. For fenced DML only, both
 single-statement and atomic batch coordinators automatically run the
 rollback-only target readiness proof on the **actual opened DML connection**
-before any application SQL. They reject a missing Witness, missing enforced
+before any application SQL. When an Oracle native schema snapshot is present, the coordinator must
+finish all transaction-bound metadata verification **before** enrolling the
+target admission. Oracle dictionary revalidation after an uncommitted
+admission has been observed to invalidate that admission in real provider
+tests. For an Oracle fenced batch, every approved immutable statement's
+schema is verified together before admission, while row-set/affected-row
+proofs remain statement-by-statement after earlier mutations. Other five
+providers retain their existing per-statement schema revalidation. This
+ordering never permits application SQL before the target admission. They reject a missing Witness, missing enforced
 unique keys or nontransactional storage. This requires two extra
 SERIALIZABLE rollback transactions per fenced commit. Unfenced DML remains
 on the original execution path.
