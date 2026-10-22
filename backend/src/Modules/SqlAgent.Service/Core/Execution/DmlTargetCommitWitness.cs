@@ -91,7 +91,10 @@ public sealed class RelationalDmlTargetCommitWitness : IDmlTargetCommitWitness
                               $"WHERE REQUEST_ID = {placeholder}request_id";
         Bind(command, "request_id", requestId, placeholder);
         var result = await command.ExecuteScalarAsync(cancellationToken);
-        return result is null or DBNull ? null : Convert.ToString(result, System.Globalization.CultureInfo.InvariantCulture);
+        // Oracle and other fixed-width CHAR(64) providers may right-pad the
+        // stored digest. Strip only SQL CHAR padding, never arbitrary data.
+        return result is null or DBNull ? null
+            : Convert.ToString(result, System.Globalization.CultureInfo.InvariantCulture)?.TrimEnd(' ');
     }
 
     private static void ValidateConnection(DbConnection connection, DbTransaction transaction)

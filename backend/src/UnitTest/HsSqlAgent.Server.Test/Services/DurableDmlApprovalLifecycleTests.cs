@@ -437,6 +437,45 @@ public sealed class DurableDmlApprovalLifecycleTests
         Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
+    [Fact]
+    public async Task IndependentWitnessInspection_AcceptsFixedWidthCharPadding()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var approval = await PersistPendingInsertAsync(fixture);
+        var ct = TestContext.Current.CancellationToken;
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+        var state = await context.DmlApprovalRequests.SingleAsync(ct);
+        state.Status = "OutcomeUnknown";
+        await context.SaveChangesAsync(ct);
+        context.ChangeTracker.Clear();
+
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using var ddl = target.CreateCommand();
+            ddl.CommandText = "CREATE TABLE HS_SQL_AGENT_DML_WITNESS (" +
+                "REQUEST_ID VARCHAR(64) PRIMARY KEY, EVIDENCE_FINGERPRINT CHAR(70) NOT NULL)";
+            await ddl.ExecuteNonQueryAsync(ct);
+            await using var insert = target.CreateCommand();
+            insert.CommandText = "INSERT INTO HS_SQL_AGENT_DML_WITNESS " +
+                "(REQUEST_ID, EVIDENCE_FINGERPRINT) VALUES (@id, @digest)";
+            insert.Parameters.AddWithValue("@id", approval.RequestId);
+            insert.Parameters.AddWithValue("@digest", state.EvidenceFingerprint + "      ");
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        var inspection = fixture.CreateWitnessInspection(
+            scope.ServiceProvider, new RelationalDmlTargetCommitWitness());
+        var result = await inspection.InspectAsync(approval.RequestId, ct);
+        Assert.NotNull(result);
+        Assert.Equal("CommittedWitnessMatch", result.WitnessStatus);
+        Assert.True(result.MatchingCommitWitness);
+        Assert.Equal("OutcomeUnknown",
+            (await context.DmlApprovalRequests.AsNoTracking().SingleAsync(ct)).Status);
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
     [Theory]
     [InlineData("fingerprint")]
     [InlineData("protected-payload")]
