@@ -70,6 +70,64 @@ public abstract class BaseStrategyTests<TStrategy, TFixture> : IClassFixture<TFi
     // All six existing provider fixtures (including Oracle / Firebird containers)
     // execute the exact same admission, revocation and witness protocol.
     [Fact]
+    public virtual async Task TargetFence_RealProvider_DeploymentReadinessIsRollbackOnly()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+            var probe = new DmlTargetFenceReadinessProbe();
+
+            await probe.VerifyAsync(connection, provider,
+                new RelationalDmlTargetExecutionFence(),
+                new RelationalDmlTargetCommitWitness(), token);
+
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_WITNESS";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(connection, table, token));
+        });
+    }
+
+    [Fact]
+    public virtual async Task TargetFence_RealProvider_ReadinessFailureRollsBackAdmission()
+    {
+        await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
+        {
+            await using var connection = ProviderStrategy.CreateConnection(connectionString);
+            await connection.OpenAsync(token);
+            var probe = new DmlTargetFenceReadinessProbe();
+
+            await Assert.ThrowsAsync<IOException>(() =>
+                probe.VerifyAsync(connection, provider,
+                    new RelationalDmlTargetExecutionFence(),
+                    new ReadinessRejectedWitness(), token));
+
+            await using var count = connection.CreateCommand();
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_FENCE";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            count.CommandText = "SELECT COUNT(*) FROM HS_SQL_AGENT_DML_WITNESS";
+            Assert.Equal(0L, Convert.ToInt64(await count.ExecuteScalarAsync(token)));
+            Assert.Equal(0L, await CountTargetFenceRowsAsync(connection, table, token));
+        });
+    }
+
+    private sealed class ReadinessRejectedWitness : IDmlTargetCommitWitness
+    {
+        public Task WriteAsync(
+            DbConnection connection, DbTransaction transaction, SqlAgentToolType provider,
+            DmlTargetCommitWitnessEvidence evidence, CancellationToken cancellationToken) =>
+            Task.FromException(new IOException("Simulated witness permission denial"));
+
+        public Task<string?> ReadFingerprintAsync(
+            DbConnection openConnection, SqlAgentToolType provider,
+            string requestId, CancellationToken cancellationToken) =>
+            Task.FromResult<string?>(null);
+    }
+
+    [Fact]
     public virtual async Task TargetFence_RealProvider_RevocationFirstBlocksLateWorker()
     {
         await WithTargetFenceTablesAsync(async (connectionString, table, provider, token) =>
