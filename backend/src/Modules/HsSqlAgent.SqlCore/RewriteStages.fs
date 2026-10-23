@@ -826,6 +826,51 @@ module internal RewriteStages =
                             FunctionName.create sourceName
                     FunctionCall { call with Name = renderedName; Arguments = arguments }
 
+    and private normalizeCteAliases (cte: Cte) =
+        // The Query has already been normalized by the mixed post-order
+        // mapper, so aliases are lowered after the CTE body completes.
+        if cte.ColumnAliases.IsEmpty then cte
+        else
+            let projection = cte.Query.Head.Projection
+            if projection |> List.exists (fun item ->
+                match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then
+                invalidOp (
+                    "CTE '" + cte.Name.Value
+                    + "' column aliases cannot be lowered safely when the CTE projection contains a wildcard.")
+            if projection.Length <> cte.ColumnAliases.Length then
+                invalidOp (
+                    "CTE '" + cte.Name.Value + "' declares "
+                    + string cte.ColumnAliases.Length
+                    + " column alias(es) but its statically modeled projection has "
+                    + string projection.Length + " column(s).")
+            let rewritten =
+                (projection, cte.ColumnAliases)
+                ||> List.map2 (fun item alias -> { item with Alias = Some alias })
+                |> NonEmpty.ofList "CTE projection"
+            { cte with
+                ColumnAliases = []
+                Query =
+                    { cte.Query with
+                        Head = { cte.Query.Head with ProjectionItems = rewritten } } }
+
+    and private normalizeQuery sourceDialect target (query: Query) =
+        // One explicit continuation stack crosses every Query/Select/Expr/
+        // CTE/Source/Join boundary, preserving diagnostic evaluation order.
+        RewriteAstTraversal.mapQueryGraphPostOrder
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            (normalizeScalarNode sourceDialect target)
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            normalizeCteAliases
+            query
+
+    and private normalizeSource sourceDialect target (source: TableSource) =
+        RewriteAstTraversal.mapSourceGraphPostOrder
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            (normalizeScalarNode sourceDialect target)
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            normalizeCteAliases
+            source
+
     let private normalizeReturning source target (items: ReturningItem list) =
         items
         |> List.map (function
