@@ -369,8 +369,9 @@ module internal RewriteRenderer =
         | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
         | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
             renderLeftDeepBoolean ctx renderExpr chain
-        | Expr.Binary((BinaryOperator.Add | BinaryOperator.Subtract
-                       | BinaryOperator.Multiply | BinaryOperator.Divide), _, _) as chain ->
+        | Expr.Binary(op, _, _) as chain
+            when op = BinaryOperator.Add || op = BinaryOperator.Subtract
+                 || op = BinaryOperator.Multiply || op = BinaryOperator.Divide ->
             renderLeftDeepArithmetic ctx chain
         | Expr.Binary(operator, left, right) ->
             let leftSql = renderExpr ctx left
@@ -602,8 +603,9 @@ module internal RewriteRenderer =
         let mutable descending = true
         while descending do
             match Expr.unspan current with
-            | Binary((BinaryOperator.Add | BinaryOperator.Subtract
-                      | BinaryOperator.Multiply | BinaryOperator.Divide as op), left, right) ->
+            | Binary(op, left, right)
+                when op = BinaryOperator.Add || op = BinaryOperator.Subtract
+                     || op = BinaryOperator.Multiply || op = BinaryOperator.Divide ->
                 RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
                 operations.Add(op, right)
                 current <- left
