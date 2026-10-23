@@ -428,6 +428,12 @@ published as measured percentages or silently set to 100.
       from ~14.99 MB to ~15.87 MB on the first Binder query-frame version;
       run the same six-provider depth benchmark before accepting this fast
       path as a performance fix.
+- [x] Avoid repeated prefix copies and alias-rescanning in Binder JOIN
+      scope construction. Persist source bindings by O(1) prepend and use
+      an insertion-ordered first-display dictionary for duplicate-alias
+      diagnostics. JOIN source correlation and ON-predicate binding still
+      see precisely the preceding sources; six-dialect 16-join parameter
+      ordering and alias collision cases guard these invariants.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
