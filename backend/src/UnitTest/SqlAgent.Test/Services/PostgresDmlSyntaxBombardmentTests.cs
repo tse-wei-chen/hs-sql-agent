@@ -187,6 +187,14 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "UPDATE users AS u SET name = 'Alice' WHERE users.id = 1",
             "unknown table/alias qualifier");
         yield return Reject(
+            "delete-target-alias-hides-original-name",
+            "DELETE FROM users AS u WHERE users.id = 1",
+            "unknown table/alias qualifier");
+    }
+
+    public static IEnumerable<object[]> DuplicateAliasBindingPostgresDml()
+    {
+        yield return Reject(
             "update-from-duplicate-source-alias",
             "UPDATE users SET status = a.status FROM archived AS a, tenants AS a WHERE users.id = a.id",
             "Duplicate table alias");
@@ -198,10 +206,23 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "update-from-alias-conflicts-with-target",
             "UPDATE users AS u SET status = u.status FROM archived AS u WHERE u.id = 1",
             "Duplicate table alias");
-        yield return Reject(
-            "delete-target-alias-hides-original-name",
-            "DELETE FROM users AS u WHERE users.id = 1",
-            "unknown table/alias qualifier");
+    }
+
+    [Theory]
+    [MemberData(nameof(DuplicateAliasBindingPostgresDml))]
+    public void DuplicateAliasBindingPostgresDml_IsRejectedWithBindingDiagnostic(
+        string name, string sql, string expectedDiagnostic)
+    {
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("postgres-dml-syntax-bombardment-v1")));
+
+        Assert.Contains(expectedDiagnostic, error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+        Assert.False(string.IsNullOrWhiteSpace(name));
     }
 
     public static IEnumerable<object[]> ExplicitFailClosedPostgresDml()
