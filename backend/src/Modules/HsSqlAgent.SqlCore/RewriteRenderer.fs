@@ -352,6 +352,14 @@ module internal RewriteRenderer =
         | ScalarCastComplete of castExpression: Expr
         | ScalarConcatProof of unprovenMessage: string
 
+    // Nested PostgreSQL SET branches share an append-only SQL buffer.
+    // Explicit frames avoid a CLR Query -> branch Query recursion and the
+    // previous O(depth^2) intermediate SQL materialization.
+    type private SetEmitFrame =
+        | EnterSetBody of Query
+        | EmitSetBranch of SetBranch
+        | CloseNestedSet
+
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
@@ -1382,28 +1390,52 @@ module internal RewriteRenderer =
         sql.ToString()
 
     and private renderSetBody (ctx: RenderContext) (query: Query) =
-        let headNoCtes = { query.Head with Ctes = [] }
-        let sql = RenderBuffer(ctx, renderSelectBody ctx headNoCtes)
-        for branch in query.SetOperations do
-            let branchNoTail =
-                { branch.Query with
-                    OrderBy = []
-                    Limit = None
-                    Offset = None
-                    FetchPercent = None
-                    FetchWithTies = false }
-            let branchSql =
-                if ctx.Provider = PostgreSql && not branchNoTail.SetOperations.IsEmpty then
-                    "(" + renderQueryCore ctx branchNoTail + ")"
+        let sql = RenderBuffer(ctx, "")
+        let pending = ResizeArray<SetEmitFrame>()
+        pending.Add(EnterSetBody query)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | EnterSetBody current ->
+                sql.Append(renderSelectBody ctx { current.Head with Ctes = [] }) |> ignore
+                for branch in List.rev current.SetOperations do
+                    pending.Add(EmitSetBranch branch)
+            | EmitSetBranch branch ->
+                let branchNoTail =
+                    { branch.Query with
+                        OrderBy = []
+                        Limit = None
+                        Offset = None
+                        FetchPercent = None
+                        FetchWithTies = false }
+                sql.Append(" ").Append(setText branch.Operator).Append(" ") |> ignore
+                if ctx.Provider = PostgreSql
+                   && not branchNoTail.SetOperations.IsEmpty
+                   && branchNoTail.Head.Ctes.IsEmpty then
+                    sql.Append('(') |> ignore
+                    pending.Add(CloseNestedSet)
+                    pending.Add(EnterSetBody branchNoTail)
+                elif ctx.Provider = PostgreSql
+                     && not branchNoTail.SetOperations.IsEmpty then
+                    // Preserve the full WITH/SET contract for the uncommon
+                    // CTE-bearing branch; do not lower away capability proof.
+                    sql.Append("(").Append(renderQueryCore ctx branchNoTail)
+                       .Append(')') |> ignore
                 elif branchNoTail.Head.Ctes.IsEmpty then
-                    renderQueryCore ctx branchNoTail
+                    sql.Append(renderQueryCore ctx branchNoTail) |> ignore
                 else
-                    "SELECT * FROM ("
-                    + renderQueryCore ctx branchNoTail
-                    + ") AS "
-                    + renderAlias ctx.Provider
-                        { Value = "_set_branch"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            sql.Append(" ").Append(setText branch.Operator).Append(" ").Append(branchSql) |> ignore
+                    sql.Append("SELECT * FROM (")
+                       .Append(renderQueryCore ctx branchNoTail)
+                       .Append(") AS ")
+                       .Append(renderAlias ctx.Provider
+                           { Value = "_set_branch"
+                             WasQuoted = false
+                             PreserveSpelling = false
+                             Span = { Start = 0; Length = 0 } }) |> ignore
+            | CloseNestedSet -> sql.Append(')') |> ignore
         sql.ToString()
 
     and private renderOrderClause (ctx: RenderContext) setTail orderBy =

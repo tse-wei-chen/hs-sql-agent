@@ -650,6 +650,26 @@ public sealed class CoreSqlNestedExpressionStressTests
     }
 
     [Fact]
+    public void PostgresNestedSetBranches_StreamWithStableParameterOrder()
+    {
+        const int depth = 64;
+        var sql = "SELECT id FROM users WHERE id = 1";
+        for (var i = 2; i <= depth; i++)
+            sql = $"SELECT id FROM users WHERE id = {i} UNION ({sql})";
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("nested-set-stream-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(compiled.Sql);
+        Assert.Equal(depth - 1,
+            compiled.Sql.Split(" UNION (", StringSplitOptions.None).Length - 1);
+        Assert.Equal(Enumerable.Range(1, depth).Reverse().Select(i => (long)i),
+            compiled.Parameters.Select(value => Convert.ToInt64(value.Value)));
+    }
+
+    [Fact]
     public void DeepNestedCte_StreamsIntoSingleBoundedEmitter()
     {
         const int depth = 128;

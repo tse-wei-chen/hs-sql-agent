@@ -1129,3 +1129,14 @@ whitespace and quoted strings that previously consumed CPU without many
 tokens. Scanning quota/deadline checks are amortized in 4,096-character
 chunks; the 4 MiB source cap and existing syntax precedence remain.
 A 1 MiB block-comment regression verifies the `WorkUnits` measurement.
+
+### PostgreSQL nested SET output stream
+
+For a parenthesized PostgreSQL UNION/INTERSECT/EXCEPT branch with no
+branch-local CTE or paging tail, the Query Renderer now emits the entire
+nested branch chain into **one checked RenderBuffer**, using explicit
+enter/branch/close frames. This eliminates one full intermediate rendered
+SQL string per nesting level, preserves branch source order and existing
+binding ordinals, and continues to use the full provider-specific path
+for CTE-bearing branches. A 64-level nested UNION regression locks both
+parenthesis structure and parameter order.
