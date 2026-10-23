@@ -139,6 +139,31 @@ jobs:
               status = "ok" if worker.get("success") else "FAILED"
               print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} elapsedUs={worker.get('elapsedMicroseconds')} exitCode={item['processExitCode']}")
           PY
+      - name: Characterize mixed Expr/EXISTS Query nesting (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres,Oracle
+          --shapes mixed-query-graph --depths 128,512,2048
+          --output artifacts/sqlcore-mixed-depth-pr.json
+      - name: Print mixed Query depth outcomes
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-mixed-depth-pr.json; then
+            echo "Mixed Query depth report missing; preceding step failed." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-mixed-depth-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"Mixed Query depth: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              status = "ok" if worker.get("success") else "FAILED"
+              print(f"{item['dialect']:12} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} exitCode={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -166,6 +191,7 @@ jobs:
           path: |
             artifacts/sqlcore-depth-pr.json
             artifacts/sqlcore-small-stack-pr.json
+            artifacts/sqlcore-mixed-depth-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

@@ -50,6 +50,13 @@ The outer process startup and JIT cost affect elapsed results; compare within
 the same .NET/runtime/OS environment. These measurements do not justify an
 arbitrary `MaxAstDepth` constant.
 
+PR CI also records an isolated **PostgreSQL + Oracle 128/512/2048**
+mixed-query graph diagnostic report. This is an observational corpus,
+not a new source/target capability claim, and its output is kept separate
+from both the original 72-case depth floor and the constrained-stack
+safety gate. Crashes and resource rejections are printed explicitly
+rather than counted as successful SQL compilation.
+
 ## Interpretation
 
 - These are microbenchmark measurements, not production latency/SLO guarantees.
