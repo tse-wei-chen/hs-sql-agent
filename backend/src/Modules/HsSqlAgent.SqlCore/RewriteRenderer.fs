@@ -2145,7 +2145,7 @@ module internal RewriteRenderer =
             | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
                 " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let mutable sql =
+        let sql = RenderBuffer(ctx,
             "UPDATE "
             + renderIdentifier ctx.Provider update.Target
             + targetAlias
@@ -2154,16 +2154,18 @@ module internal RewriteRenderer =
             + (if ctx.Provider = SqlServer then
                    renderSqlServerOutput "INSERTED" ctx update.Returning
                else
-                   "")
+                   ""))
         if not update.From.IsEmpty then
             if ctx.Provider <> PostgreSql
                && ctx.Provider <> SqlServer
                && ctx.Provider <> SQLite
                && ctx.Provider <> Oracle then
                 invalidOp "UPDATE ... FROM is not supported by the target provider."
-            sql <- sql + " FROM " + (update.From |> List.map (renderSource ctx) |> String.concat ", ")
-        update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
-        sql + renderTrailingReturning ctx update.Returning
+            sql.Append(" FROM ").Append(update.From |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
+        update.Where
+        |> Option.iter (fun predicate ->
+            sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+        sql.Append(renderTrailingReturning ctx update.Returning).ToString()
 
     let private renderDelete (ctx: RenderContext) (delete: Delete) =
         let targetAlias =
@@ -2173,35 +2175,33 @@ module internal RewriteRenderer =
                 " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let renderedTarget = renderIdentifier ctx.Provider delete.Target
-        let mutable sql =
+        let sql = RenderBuffer(ctx,
             "DELETE FROM "
             + renderedTarget
             + targetAlias
             + (if ctx.Provider = SqlServer then
                    renderSqlServerOutput "DELETED" ctx delete.Returning
                else
-                   "")
+                   ""))
         if not delete.Using.IsEmpty then
             match ctx.Provider with
             | PostgreSql ->
-                sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+                sql.Append(" USING ").Append(delete.Using |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
             | SqlServer ->
                 if delete.TargetAlias.IsSome then
                     invalidOp "SQL Server joined DELETE target aliases require FROM-scope alias declaration and are not represented by the current Core DML target-alias shape."
-                sql <-
-                    sql
-                    + " FROM "
-                    + renderedTarget
-                    + ", "
-                    + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+                sql.Append(" FROM ").Append(renderedTarget).Append(", ")
+                   .Append(delete.Using |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
             | Oracle ->
                 if delete.TargetAlias.IsSome then
                     invalidOp "Oracle direct-join DELETE target aliases are not represented by the current Core target-alias lowering."
-                sql <- sql + " FROM " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+                sql.Append(" FROM ").Append(delete.Using |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
             | _ ->
                 invalidOp "Joined DELETE is not supported by the target provider."
-        delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
-        sql + renderTrailingReturning ctx delete.Returning
+        delete.Where
+        |> Option.iter (fun predicate ->
+            sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+        sql.Append(renderTrailingReturning ctx delete.Returning).ToString()
 
     let private renderMerge (ctx: RenderContext) (merge: Merge) =
         if ctx.Provider <> SqlServer then
@@ -2216,7 +2216,7 @@ module internal RewriteRenderer =
             |> NonEmpty.toList
             |> List.map (renderExpr ctx)
             |> String.concat ", "
-        let mutable sql =
+        let sql = RenderBuffer(ctx,
             "MERGE INTO "
             + renderIdentifier SqlServer merge.Target
             + " AS "
@@ -2228,12 +2228,12 @@ module internal RewriteRenderer =
             + " ("
             + sourceColumns
             + ") ON "
-            + renderPredicate ctx merge.MatchPredicate
+            + renderPredicate ctx merge.MatchPredicate)
 
         merge.Matched
         |> Option.iter (function
             | MergeDelete ->
-                sql <- sql + " WHEN MATCHED THEN DELETE"
+                sql.Append(" WHEN MATCHED THEN DELETE") |> ignore
             | MergeUpdate assignments ->
                 let rendered =
                     assignments
@@ -2243,7 +2243,7 @@ module internal RewriteRenderer =
                         + " = "
                         + renderExpr ctx assignment.Value)
                     |> String.concat ", "
-                sql <- sql + " WHEN MATCHED THEN UPDATE SET " + rendered)
+                sql.Append(" WHEN MATCHED THEN UPDATE SET ").Append(rendered) |> ignore)
 
         merge.NotMatched
         |> Option.iter (fun mergeInsert ->
@@ -2257,9 +2257,10 @@ module internal RewriteRenderer =
                 |> NonEmpty.toList
                 |> List.map (renderExpr ctx)
                 |> String.concat ", "
-            sql <- sql + " WHEN NOT MATCHED THEN INSERT (" + columns + ") VALUES (" + values + ")")
+            sql.Append(" WHEN NOT MATCHED THEN INSERT (").Append(columns)
+               .Append(") VALUES (").Append(values).Append(')') |> ignore)
 
-        sql + ";"
+        sql.Append(';').ToString()
 
     let private providerForRuntime = function
         | TargetRuntime.PostgreSqlRuntime -> Provider.PostgreSql
