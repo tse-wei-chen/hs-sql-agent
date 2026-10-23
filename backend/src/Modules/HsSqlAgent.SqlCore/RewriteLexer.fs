@@ -120,6 +120,15 @@ module internal RewriteLexer =
         let mutable groupingDepth = 0
         let mutable outermostOpen = -1
         let mutable overNestingAt = -1
+        let mutable chargedCharPosition = 0
+
+        // Comments and literals have scanning work even without emitted
+        // tokens. Amortize resource deadline checks every 4096 UTF-16 units.
+        let chargeSourceProgress () =
+            let delta = i - chargedCharPosition
+            if delta >= 4096 then
+                RewriteResourceBudget.charge (int64 delta)
+                chargedCharPosition <- i
 
         let lexicalError code message start spanLength : 'T =
             let spanLength = max 1 spanLength
@@ -254,6 +263,7 @@ module internal RewriteLexer =
             let buffer = Text.StringBuilder()
             let mutable closed = false
             while i < length && not closed do
+                if (i &&& 4095) = 0 then chargeSourceProgress ()
                 if sql[i] = '\'' then
                     if i + 1 < length && sql[i + 1] = '\'' then
                         buffer.Append('\'') |> ignore
@@ -270,17 +280,21 @@ module internal RewriteLexer =
             add (StringLiteral(buffer.ToString())) start i
 
         while i < length do
+            chargeSourceProgress ()
             let c = sql[i]
             if Char.IsWhiteSpace(c) then
                 i <- i + 1
             elif c = '-' && i + 1 < length && sql[i + 1] = '-' && isDashDashCommentStart () then
                 i <- i + 2
-                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do i <- i + 1
+                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
+                    i <- i + 1
             elif c = '/' && i + 1 < length && sql[i + 1] = '*' then
                 let start = i
                 i <- i + 2
                 let mutable closed = false
                 while i + 1 < length && not closed do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
                     if sql[i] = '*' && sql[i + 1] = '/' then
                         i <- i + 2
                         closed <- true
@@ -288,7 +302,9 @@ module internal RewriteLexer =
                 if not closed then parseError "Unterminated block comment." start (length - start)
             elif c = '#' && semantics.HashLineComment then
                 i <- i + 1
-                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do i <- i + 1
+                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
+                    i <- i + 1
             elif (c = 'q' || c = 'Q') && i + 2 < length && sql[i + 1] = '\'' then
                 let start = i
                 if not semantics.OracleQuotedString then
@@ -578,6 +594,8 @@ module internal RewriteLexer =
                 | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                 | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                 i <- i + 1
+
+        chargeSourceProgress ()
 
         if groupingDepth <> 0 then
             lexicalError

@@ -1120,3 +1120,12 @@ family validation. The negative cases specifically lock the existing
 `SQL_SCHEMA_COLUMN_NOT_FOUND` and `SQL_SCHEMA_TYPE_MISMATCH`
 diagnostics deep inside a set branch, rather than asserting only that the
 compiler returned some error.
+
+### Lexical scanning work units
+
+Parsing now accounts for scanned UTF-16 characters as well as token
+emission and parser cursor consumption. This covers large comments,
+whitespace and quoted strings that previously consumed CPU without many
+tokens. Scanning quota/deadline checks are amortized in 4,096-character
+chunks; the 4 MiB source cap and existing syntax precedence remain.
+A 1 MiB block-comment regression verifies the `WorkUnits` measurement.

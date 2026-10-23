@@ -69,6 +69,45 @@ public sealed class CoreCompilerResourceTelemetryTests
     }
 
     [Fact]
+    public void LargeComment_IsChargedAsInputScanWorkWithoutExtraTokens()
+    {
+        const int contentLength = 1_048_576;
+        var ownerThread = Environment.CurrentManagedThreadId;
+        var samples = new List<long>();
+        var subscriptions = new List<IDisposable>();
+        using var listener = DiagnosticListener.AllListeners.Subscribe(
+            new Observer<DiagnosticListener>(source =>
+            {
+                if (source.Name != "HsSqlAgent.SqlCore.Compiler") return;
+                subscriptions.Add(source.Subscribe(
+                    new Observer<KeyValuePair<string, object?>>(measurement =>
+                    {
+                        if (measurement.Key != "StageCompleted" || measurement.Value is null
+                            || Environment.CurrentManagedThreadId != ownerThread)
+                            return;
+                        if (!Equals(Get(measurement.Value, "Stage"), "Parsing")
+                            || !Equals(Get(measurement.Value, "Success"), true))
+                            return;
+                        samples.Add(Convert.ToInt64(Get(measurement.Value, "WorkUnits")));
+                    })));
+            }));
+        try
+        {
+            var sql = "/*" + new string('x', contentLength) + "*/ SELECT 1";
+            var result = SqlCoreFacade.CompileQuery(
+                sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("long-comment-work-budget-v1"),
+                new SqlExecutionPlanPolicy());
+            Assert.NotEmpty(result.Sql);
+            Assert.Contains(samples, units => units >= contentLength);
+        }
+        finally
+        {
+            foreach (var subscription in subscriptions) subscription.Dispose();
+        }
+    }
+
+    [Fact]
     public void FailingTelemetryObserver_NeverOverridesSqlValidationDiagnostic()
     {
         var ownerThread = Environment.CurrentManagedThreadId;
