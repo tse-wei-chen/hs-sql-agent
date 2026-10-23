@@ -17,7 +17,9 @@
    confirm neither row persisted. It also deliberately retries the same
    request ID inside the two rollback-only transactions and requires the
    target's **physical UNIQUE/PRIMARY KEY constraints** to reject duplicate
-   Fence and Witness entries independently. Critically, it tests
+   Fence and Witness entries independently. On Oracle, only the second
+   deliberate Witness-key collision runs at READ COMMITTED: an ORA-08177
+   serialization error is **not** accepted as uniqueness evidence. Critically, it tests
    `Admitted` versus `Revoked` using the **same request ID**, so a
    misleading composite UNIQUE(`REQUEST_ID`, `ENTRY_KIND`) cannot
    masquerade as a valid fence. Witness uniqueness is tested with the
@@ -109,8 +111,12 @@ readiness probe on the actual opened target connection, **before** the
 business mutation transaction. Production fenced writes require the built-in
 audited relational Fence and Witness; injected custom no-op implementations
 are not accepted as validated readiness. Each fenced commit therefore costs
-**two additional SERIALIZABLE transactions, both rolled back**, plus
-residual-evidence visibility queries. No cross-connection/global cached
+**two additional rollback-only transactions**, plus residual-evidence
+visibility queries. The admission/witness enlistment check always uses
+SERIALIZABLE; the second intentional witness UNIQUE-key conflict uses
+READ COMMITTED only on Oracle (to require ORA-00001 rather than
+unrelated ORA-08177 serialization errors). All five other providers use
+SERIALIZABLE for both transactions. No cross-connection/global cached
 readiness can justify another write. A failed preflight occurs after approval
 consumption and cannot be used to replay the original approval.
 
