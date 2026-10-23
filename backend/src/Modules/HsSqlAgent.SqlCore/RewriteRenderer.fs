@@ -1178,7 +1178,7 @@ module internal RewriteRenderer =
                 if index > 0 then result.Append(", ") |> ignore
                 result.Append(renderAlias ctx.Provider cte.Name)
                       .Append(" AS (")
-                      .Append(renderCteQuery ctx cte.Query)
+                      .Append((renderCteQuery ctx cte.Query) : string)
                       .Append(')') |> ignore)
             result.Append(' ').ToString()
 
