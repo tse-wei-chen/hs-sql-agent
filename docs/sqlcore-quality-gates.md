@@ -358,6 +358,12 @@ published as measured percentages or silently set to 100.
       iteratively. Oracle/SQL Server native predicates retain numeric
       CASE truth comparison and parameter-binding behavior. General SQL
       expression rendering remains recursive and separately tracked.
+- [x] Collapse contiguous Unary +/− and Spanned prefix wrappers
+      iteratively in Binder and Normalizer (reverse frames preserve original
+      AST/source-span ordering, unary-plus elimination and sign semantics).
+      Parser now scans unary +/− prefixes iteratively while preserving signed
+      number folding and postfix CAST handling; six-provider 32/128-prefix
+      regressions keep compiled SQL/parameter behavior stable.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

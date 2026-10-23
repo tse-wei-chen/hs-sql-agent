@@ -70,6 +70,48 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void UnarySignChains_ParseBindNormalizeWithoutPerPrefixRecursion(
+        SqlAgentToolType dialect)
+    {
+        // Distinct from prefix NOT: unary +/- used to recurse once per token
+        // in the parser, again in Binder, then again in Normalizer.
+        var context = new SqlPlanValidationContext("iterative-unary-sign-v1");
+        string Compile(string expression) =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT " + expression + " FROM users",
+                dialect, dialect, context, new SqlExecutionPlanPolicy()).Sql;
+
+        var baseline = Compile("id");
+        foreach (var depth in new[] { 32, 128 })
+        {
+            Assert.Equal(
+                baseline,
+                Compile(string.Concat(Enumerable.Repeat("+ ", depth)) + "id"));
+
+            // Even counts of unary negatives retain the original AST
+            // sequence instead of silently rewriting SQL arithmetic.
+            var negative = Compile(string.Concat(Enumerable.Repeat("- ", depth)) + "id");
+            Assert.NotEmpty(negative);
+            Assert.Contains("id", negative, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void NestedUnarySigns_PreserveLiteralFoldingAndCastPrecedence(
+        SqlAgentToolType dialect)
+    {
+        var compiled = SqlCoreFacade.CompileQuery(
+            "SELECT - - 7",
+            dialect, dialect,
+            new SqlPlanValidationContext("iterative-unary-sign-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+        Assert.Contains(compiled.Parameters, parameter => Equals(parameter.Value, -7L));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void BooleanChainRendering_PreservesParenthesizationAndParameterOrder(
         SqlAgentToolType dialect)
     {

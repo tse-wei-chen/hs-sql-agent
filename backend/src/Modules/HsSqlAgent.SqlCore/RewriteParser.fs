@@ -914,35 +914,54 @@ module internal RewriteParser =
         | _ -> fail token "PostgreSQL JSON ->/->> requires a text property key or 32-bit integer array index"
 
     and private parseUnary cursor =
-        let parseSigned signMultiplier operator =
-            let sign = cursor.Take()
+        // Prefix +/- chains are right-associative, but they do not need a
+        // recursive parseUnary call per operator. Preserve signed numeric
+        // literal folding (and its postfix CAST handling) at the innermost
+        // sign before rebuilding outer SourceSpan-wrapped unary nodes.
+        let signs = ResizeArray<struct (int * UnaryOperator)>()
+        let mutable scanning = true
+        while scanning do
             match cursor.Current.Kind with
-            | IntegerLiteral value ->
-                cursor.Advance()
-                let mutable expression = Literal(ScalarValue.Integer(signMultiplier * value))
-                let mutable scanning = true
-                while scanning do
-                    match tryParsePostfixCast cursor expression with
-                    | Some casted -> expression <- casted
-                    | None -> scanning <- false
-                expression
-            | DecimalLiteral value ->
-                cursor.Advance()
-                let mutable expression = Literal(ScalarValue.Decimal(decimal signMultiplier * value))
-                let mutable scanning = true
-                while scanning do
-                    match tryParsePostfixCast cursor expression with
-                    | Some casted -> expression <- casted
-                    | None -> scanning <- false
-                expression
-            | _ ->
-                let operand = parseUnary cursor
-                markExpr sign.Start cursor (Unary(operator, operand))
-
-        match cursor.Current.Kind with
-        | Operator "-" -> parseSigned -1L UnaryOperator.Negate
-        | Operator "+" -> parseSigned 1L UnaryOperator.Positive
-        | _ -> parsePostfix cursor
+            | Operator "-" ->
+                let token = cursor.Take()
+                signs.Add(struct (token.Start, UnaryOperator.Negate))
+            | Operator "+" ->
+                let token = cursor.Take()
+                signs.Add(struct (token.Start, UnaryOperator.Positive))
+            | _ -> scanning <- false
+        if signs.Count = 0 then
+            parsePostfix cursor
+        else
+            let struct (start, innermost) = signs.[signs.Count - 1]
+            let inner =
+                match cursor.Current.Kind with
+                | IntegerLiteral value ->
+                    cursor.Advance()
+                    let signed = if innermost = UnaryOperator.Negate then -value else value
+                    let mutable expression = Literal(ScalarValue.Integer signed)
+                    let mutable scanningCast = true
+                    while scanningCast do
+                        match tryParsePostfixCast cursor expression with
+                        | Some casted -> expression <- casted
+                        | None -> scanningCast <- false
+                    expression
+                | DecimalLiteral value ->
+                    cursor.Advance()
+                    let signed = if innermost = UnaryOperator.Negate then -value else value
+                    let mutable expression = Literal(ScalarValue.Decimal signed)
+                    let mutable scanningCast = true
+                    while scanningCast do
+                        match tryParsePostfixCast cursor expression with
+                        | Some casted -> expression <- casted
+                        | None -> scanningCast <- false
+                    expression
+                | _ ->
+                    markExpr start cursor (Unary(innermost, parsePostfix cursor))
+            let mutable expression = inner
+            for index = signs.Count - 2 downto 0 do
+                let struct (start, operation) = signs.[index]
+                expression <- markExpr start cursor (Unary(operation, expression))
+            expression
 
     and private parsePostfix cursor =
         let directFunctionSyntax =
