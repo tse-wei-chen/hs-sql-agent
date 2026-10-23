@@ -101,6 +101,40 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         Assert.NotEmpty(compiled.Sql);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void ExcessiveExpressionAstNodes_AreRejectedBeforeBinding(
+        SqlAgentToolType dialect)
+    {
+        // 40k operands + 40k binary nodes exceed the 65,536-node
+        // AST budget, while staying under the independent lexical
+        // 131,072-token and 4 Mi-character input caps.
+        var sql = "SELECT id" + string.Concat(
+            Enumerable.Repeat(" + id", 40_000)) + " FROM users";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect,
+                new SqlPlanValidationContext("ast-budget-v1"),
+                new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_COMPILER_AST_NODE_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+    }
+
+    [Fact]
+    public void ExcessiveDmlAstNodes_AreRejectedBeforeBinding()
+    {
+        var sql = "UPDATE users SET id = id" +
+            string.Concat(Enumerable.Repeat(" + id", 40_000));
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileDml(
+                sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("ast-budget-v1")));
+        Assert.Equal("SQL_COMPILER_AST_NODE_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+    }
+
     [Fact]
     public void NormalSql_IsNotAffectedByResourceBudgets()
     {

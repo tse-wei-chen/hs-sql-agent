@@ -265,6 +265,22 @@ published as measured percentages or silently set to 100.
 - [x] Add fail-closed lexical budgets before AST allocation:
       4,194,304 UTF-16 code units per SQL input and 131,072 tokens,
       with source-span, Lexical-stage typed diagnostics.
+- [x] Gate the parsed closed AST before Binder with a 65,536-node
+      resource budget. Count Expr, Query, Select, Source and DML conflict
+      arithmetic nodes using explicit work stacks rather than CLR
+      recursion; include all five statement forms (SELECT, INSERT,
+      UPDATE, DELETE, MERGE), RETURNING and nested QuerySource/DML
+      sources. Typed `SQL_COMPILER_AST_NODE_LIMIT` at Binding/Resource
+      prevents over-budget statements reaching Binder, schema/type
+      validation or Renderer. PostgreSQL and SQLite long-SELECT plus
+      PostgreSQL long-UPDATE tests verify that input can remain below
+      lexical limits while its AST is rejected independently.
+- [x] Refuse compiled SQL larger than 16,777,216 UTF-16 code units
+      using `SQL_COMPILER_RENDERED_OUTPUT_LIMIT` at
+      RenderingInvariant/Resource before it can be sent to execution.
+      This is a post-render *output contract*, not yet a strict
+      peak-allocation ceiling: large intermediate materializations in
+      specialized renderers need further streaming guards.
 - [x] Add an independent, deliberately generous 8,192-level
       **balanced parenthesis nesting resource ceiling** before Parser
       allocation. It is 4x the existing 2,048-depth six-provider matrix

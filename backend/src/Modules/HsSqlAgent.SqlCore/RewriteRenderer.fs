@@ -15,6 +15,11 @@ module internal RewriteRenderer =
     type Provider = PostgreSql | MySql | SqlServer | SQLite | Oracle | Firebird
     type RenderedCommand = { Sql: string; Parameters: (obj | null) list; ReturnsRows: bool }
 
+    // Independent of the source lexer character/token caps: a dialect
+    // renderer can expand validated AST nodes when lowering SQL.
+    [<Literal>]
+    let private MaxRenderedSqlLength = 16777216 // UTF-16 code units
+
     type private RenderContext(provider: Provider, targetRuntime: TargetRuntime) =
         let parameters = ResizeArray<obj | null>()
         let sharedParameters = Dictionary<string, string * (obj | null)>(StringComparer.Ordinal)
@@ -2110,4 +2115,26 @@ module internal RewriteRenderer =
             | Statement.UpdateStatement update -> renderUpdate ctx update, not update.Returning.IsEmpty
             | Statement.DeleteStatement delete -> renderDelete ctx delete, not delete.Returning.IsEmpty
             | Statement.MergeStatement merge -> renderMerge ctx merge, false
+        // Fail closed before exposing a generated command to the executor.
+        // This guards the delivered artifact size; individual specialized
+        // emitters still need streaming checks to cap transient allocations.
+        if sql.Length > MaxRenderedSqlLength then
+            let detail =
+                "Rendered SQL exceeds the maximum "
+                + string MaxRenderedSqlLength
+                + " UTF-16 code units."
+            let location =
+                if document.Span.Start >= 0 && document.Span.Length >= 0 then
+                    SqlDiagnosticSpan(document.Span.Start, document.Span.Length)
+                else
+                    Unchecked.defaultof<SqlDiagnosticSpan>
+            raise (
+                SqlCompilationException(
+                    detail,
+                    SqlDiagnostic(
+                        "SQL_COMPILER_RENDERED_OUTPUT_LIMIT",
+                        SqlDiagnosticStage.RenderingInvariant,
+                        SqlDiagnosticCategory.Resource,
+                        detail,
+                        location)))
         { Sql = sql; Parameters = ctx.Parameters; ReturnsRows = returnsRows }
