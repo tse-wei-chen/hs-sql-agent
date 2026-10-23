@@ -210,3 +210,187 @@ module internal RewriteAstTraversal =
                 let branches = List.toArray query.SetOperations
                 for index = branches.Length - 1 downto 0 do
                     push (QueryNode branches.[index].Query)
+
+    // General scalar-expression post-order reconstruction shared by Binder
+    // and Normalizer. Explicit enter/exit frames and a result stack replace
+    // recursive map calls for all closed Expr DU constructors. Query bodies
+    // remain explicit semantic boundaries; the onQuery callback retains the
+    // caller's current CTE/correlation scope.
+    [<Struct>]
+    type private RebuildFrame =
+        | RebuildEnter of node: Expr
+        | RebuildExit of originalNode: Expr
+
+    let mapPostOrder
+        (onEnter: Expr -> unit)
+        (onRebuilt: Expr -> Expr)
+        (onQuery: Query -> Query)
+        (root: Expr) : Expr =
+        let pending = ResizeArray<RebuildFrame>()
+        let results = ResizeArray<Expr>()
+        let inline enter node = pending.Add(RebuildEnter node)
+        let pop () =
+            let last = results.Count - 1
+            if last < 0 then
+                invalidOp "Expression post-order result stack underflow."
+            let result = results.[last]
+            results.RemoveAt last
+            result
+        let popList count =
+            let mutable rebuilt = []
+            for _ = 1 to count do
+                rebuilt <- pop () :: rebuilt
+            rebuilt
+        let popOptional (value: Expr option) =
+            if value.IsSome then Some(pop ()) else None
+        let enterReverse (values: Expr list) =
+            let items = List.toArray values
+            for index = items.Length - 1 downto 0 do
+                enter items.[index]
+        let enterOrders (values: OrderBy list) =
+            let items = List.toArray values
+            for index = items.Length - 1 downto 0 do
+                enter items.[index].Expression
+        let rebuildOrders (values: OrderBy list) =
+            let mapped = popList (List.length values)
+            List.map2 (fun order expr -> { order with Expression = expr }) values mapped
+
+        enter root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | RebuildEnter node ->
+                onEnter node
+                pending.Add(RebuildExit node)
+                // Push rightmost child first; each child is rebuilt before
+                // its parent's exit frame, preserving left-to-right binding.
+                match node with
+                | Spanned(_, inner)
+                | Unary(_, inner)
+                | Cast(inner, _)
+                | Extract(_, inner)
+                | PostgresJsonAccess(inner, _, _)
+                | IsNull(inner, _) -> enter inner
+                | DateAdd(_, left, right)
+                | DateDiff(_, left, right)
+                | Binary(_, left, right)
+                | Like(left, right, _, _, _)
+                | RegexMatch(left, right)
+                | FilteredAggregate(left, right) ->
+                    enter right
+                    enter left
+                | RawRegexCall(args, _) -> enterReverse args
+                | FunctionCall call ->
+                    enterOrders call.AggregateOrderBy
+                    enterReverse call.Arguments
+                | Windowed(value, window) ->
+                    enterOrders window.OrderBy
+                    enterReverse window.PartitionBy
+                    enter value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter enter
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        enter branch.Result
+                        enter branch.Match) branches
+                    enter input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter enter
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        enter branch.Result
+                        enter branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse enter items
+                    enter value
+                | InSubquery(value, _, _) -> enter value
+                | Between(value, lower, upper, _) ->
+                    enter upper
+                    enter lower
+                    enter value
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ | ScalarSubquery _ | Exists _ -> ()
+            | RebuildExit node ->
+                let rebuilt =
+                    match node with
+                    | Spanned(span, _) -> Expr.withSpan span (pop ())
+                    | Unary(op, _) -> Unary(op, pop ())
+                    | Cast(_, targetType) -> Cast(pop (), targetType)
+                    | Extract(field, _) -> Extract(field, pop ())
+                    | PostgresJsonAccess(_, selector, kind) ->
+                        PostgresJsonAccess(pop (), selector, kind)
+                    | IsNull(_, negated) -> IsNull(pop (), negated)
+                    | DateAdd(unit, _, _) ->
+                        let value = pop ()
+                        let amount = pop ()
+                        DateAdd(unit, amount, value)
+                    | DateDiff(unit, _, _) ->
+                        let finish = pop ()
+                        let start = pop ()
+                        DateDiff(unit, start, finish)
+                    | Binary(op, _, _) ->
+                        let right = pop ()
+                        let left = pop ()
+                        Binary(op, left, right)
+                    | Like(_, _, escape, negated, insensitive) ->
+                        let pattern = pop ()
+                        let value = pop ()
+                        Like(value, pattern, escape, negated, insensitive)
+                    | RegexMatch _ ->
+                        let pattern = pop ()
+                        let value = pop ()
+                        RegexMatch(value, pattern)
+                    | FilteredAggregate _ ->
+                        let predicate = pop ()
+                        let value = pop ()
+                        FilteredAggregate(value, predicate)
+                    | RawRegexCall(args, distinct) ->
+                        RawRegexCall(popList (List.length args), distinct)
+                    | FunctionCall call ->
+                        // The result stack has ORDER BY items on top of args.
+                        let orders = rebuildOrders call.AggregateOrderBy
+                        let args = popList (List.length call.Arguments)
+                        FunctionCall { call with Arguments = args; AggregateOrderBy = orders }
+                    | Windowed(_, window) ->
+                        let orders = rebuildOrders window.OrderBy
+                        let partition = popList (List.length window.PartitionBy)
+                        let value = pop ()
+                        Windowed(value, { window with PartitionBy = partition; OrderBy = orders })
+                    | SimpleCase(_, branches, fallback) ->
+                        let other = popOptional fallback
+                        let original = NonEmpty.toList branches |> List.toArray
+                        let mapped = Array.zeroCreate<SimpleCaseBranch> original.Length
+                        for index = original.Length - 1 downto 0 do
+                            let result = pop ()
+                            let matchExpr = pop ()
+                            mapped.[index] <- { Match = matchExpr; Result = result }
+                        let input = pop ()
+                        SimpleCase(input, NonEmpty.ofList "SimpleCase" (Array.toList mapped), other)
+                    | SearchedCase(branches, fallback) ->
+                        let other = popOptional fallback
+                        let original = NonEmpty.toList branches |> List.toArray
+                        let mapped = Array.zeroCreate<SearchedCaseBranch> original.Length
+                        for index = original.Length - 1 downto 0 do
+                            let result = pop ()
+                            let condition = pop ()
+                            mapped.[index] <- { Condition = condition; Result = result }
+                        SearchedCase(NonEmpty.ofList "SearchedCase" (Array.toList mapped), other)
+                    | InList(_, items, negated) ->
+                        let mapped = popList (NonEmpty.length items)
+                        InList(pop (), NonEmpty.ofList "InList" mapped, negated)
+                    | InSubquery(_, query, negated) ->
+                        let value = pop ()
+                        InSubquery(value, onQuery query, negated)
+                    | Between(_, _, _, negated) ->
+                        let upper = pop ()
+                        let lower = pop ()
+                        let value = pop ()
+                        Between(value, lower, upper, negated)
+                    | ScalarSubquery query -> ScalarSubquery(onQuery query)
+                    | Exists(query, negated) -> Exists(onQuery query, negated)
+                    | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                    | Literal _ | Interval _ -> node
+                results.Add(onRebuilt rebuilt)
+        if results.Count <> 1 then
+            invalidOp "Expression post-order frames did not reconstruct one root."
+        results.[0]
