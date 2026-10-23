@@ -107,7 +107,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             new SqlPlanValidationContext("iterative-unary-sign-v1"),
             new SqlExecutionPlanPolicy());
         Assert.NotEmpty(compiled.Sql);
-        Assert.Contains(compiled.Parameters, parameter => Equals(parameter.Value, -7L));
+        Assert.Contains(compiled.Parameters, parameter => Convert.ToInt64(parameter.Value) == -7L);
     }
 
     [Theory]
