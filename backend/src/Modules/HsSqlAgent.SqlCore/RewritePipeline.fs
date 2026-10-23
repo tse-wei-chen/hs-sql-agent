@@ -5,7 +5,6 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
-open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteParser
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -115,109 +114,7 @@ module internal RewritePipeline =
             ex.Data[diagnosticDataKey] <- diagnostic
             reraise()
 
-    // Parse-time lexical budgets protect source bytes and token count.
-    // This separate pre-Binder gate bounds the actual closed AST work
-    // generated from otherwise small legal SQL. It visits all SQL statement
-    // families and Query/Source/Expr edges without recursive CLR calls.
-    [<Literal>]
-    let private MaxAstNodes = 65536
-
-    let private validateAstResourceBudget (parsed: ParsedSql) =
-        let document = Parsed.value parsed
-        let mutable visited = 0
-        let addNode () =
-            visited <- visited + 1
-            if visited > MaxAstNodes then
-                let detail =
-                    "SQL AST exceeds the compiler's maximum "
-                    + string MaxAstNodes
-                    + " structural nodes; reduce query complexity."
-                let location =
-                    if document.Span.Start >= 0 && document.Span.Length >= 0 then
-                        SqlDiagnosticSpan(document.Span.Start, document.Span.Length)
-                    else
-                        Unchecked.defaultof<SqlDiagnosticSpan>
-                raise (
-                    SqlCompilationException(
-                        detail,
-                        SqlDiagnostic(
-                            "SQL_COMPILER_AST_NODE_LIMIT",
-                            SqlDiagnosticStage.Binding,
-                            SqlDiagnosticCategory.Resource,
-                            detail,
-                            location)))
-        let traverse frame =
-            RewriteAstTraversal.iterIncludingQueries
-                (function
-                | RewriteAstTraversal.ExprNode _
-                | RewriteAstTraversal.QueryNode _
-                | RewriteAstTraversal.SelectNode _
-                | RewriteAstTraversal.SourceNode _ -> addNode ()
-                | RewriteAstTraversal.AfterCtes _
-                | RewriteAstTraversal.AfterQueryHead _ -> ())
-                frame
-        let expr value = traverse (RewriteAstTraversal.ExprNode value)
-        let query value = traverse (RewriteAstTraversal.QueryNode value)
-        let source value = traverse (RewriteAstTraversal.SourceNode value)
-        let returning (items: ReturningItem list) =
-            for item in items do expr item.Expression
-        let assignments (values: Assignment list) =
-            for value in values do expr value.Value
-        let conflict (value: ConflictValue) =
-            let pending = ResizeArray<ConflictValue>()
-            pending.Add value
-            while pending.Count > 0 do
-                let last = pending.Count - 1
-                let item = pending.[last]
-                pending.RemoveAt last
-                addNode ()
-                match item with
-                | ConflictNegate inner -> pending.Add inner
-                | ConflictBinary(_, left, right) ->
-                    pending.Add right
-                    pending.Add left
-                | ConflictProposedColumn _
-                | ConflictTargetColumn _
-                | ConflictLiteral _ -> ()
-        addNode () // Statement itself.
-        match document.Statement with
-        | QueryStatement value -> query value
-        | InsertStatement value ->
-            match value.Input with
-            | Values rows ->
-                NonEmpty.iter (fun row -> NonEmpty.iter expr row) rows
-            | QuerySource selected -> query selected
-            | DefaultValues -> ()
-            match value.Conflict with
-            | Some conflictClause ->
-                match conflictClause.Action with
-                | DoNothing -> ()
-                | UpdateProposedValues entries ->
-                    NonEmpty.iter (fun (entry: ConflictAssignment) -> conflict entry.Value) entries
-            | None -> ()
-            returning value.Returning
-        | UpdateStatement value ->
-            assignments value.Assignments
-            for item in value.From do source item
-            value.Where |> Option.iter expr
-            returning value.Returning
-        | DeleteStatement value ->
-            for item in value.Using do source item
-            value.Where |> Option.iter expr
-            returning value.Returning
-        | MergeStatement value ->
-            NonEmpty.iter expr value.Source.SourceValues
-            expr value.MatchPredicate
-            match value.Matched with
-            | Some(MergeUpdate fields) ->
-                NonEmpty.iter (fun (field: Assignment) -> expr field.Value) fields
-            | Some MergeDelete | None -> ()
-            value.NotMatched
-            |> Option.iter (fun action ->
-                NonEmpty.iter expr action.InsertValues)
-
     let private bind options parsed =
-        validateAstResourceBudget parsed
         let sourceProviderType =
             options.Source
             |> VerifiedSource.dialect
