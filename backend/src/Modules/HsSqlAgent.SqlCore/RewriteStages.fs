@@ -494,6 +494,13 @@ module internal RewriteStages =
         | NormalizeSpan of span: Span
         | NormalizeUnary of operation: UnaryOperator
 
+    // A set-operation tree is reconstructed in two stages, preserving the
+    // original Head -> set branches (left-to-right) -> ORDER BY failure order.
+    [<Struct>]
+    type private NormalizeQueryFrame =
+        | BeginQuery of inputQuery: Query
+        | CompleteQuery of originalQuery: Query * normalizedHead: Select
+
     let rec private normalizeExpr source target expression =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         match expression with
@@ -954,14 +961,41 @@ module internal RewriteStages =
             Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
 
     and private normalizeQuery sourceDialect target (query: Query) =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        { query with
-            Head = normalizeSelect sourceDialect target query.Head
-            SetOperations =
-                query.SetOperations
-                |> List.map (fun (branch: SetBranch) ->
-                    { branch with Query = normalizeQuery sourceDialect target branch.Query })
-            OrderBy = query.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
+        // Post-order reconstruction uses a heap-backed continuation stack.
+        // Normalizing the head when entering a frame preserves the old
+        // lexical/error order; child set branches are completed in source
+        // order before this query's trailing ORDER BY.
+        let pending = ResizeArray<NormalizeQueryFrame>()
+        let completed = ResizeArray<Query>()
+        pending.Add(BeginQuery query)
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | BeginQuery current ->
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                let head = normalizeSelect sourceDialect target current.Head
+                pending.Add(CompleteQuery(current, head))
+                let branches = List.toArray current.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    pending.Add(BeginQuery branches.[index].Query)
+            | CompleteQuery(current, head) ->
+                let branches = List.toArray current.SetOperations
+                let rebuilt = Array.zeroCreate<SetBranch> branches.Length
+                for index = branches.Length - 1 downto 0 do
+                    let childIndex = completed.Count - 1
+                    let child = completed.[childIndex]
+                    completed.RemoveAt childIndex
+                    rebuilt.[index] <- { branches.[index] with Query = child }
+                completed.Add
+                    { current with
+                        Head = head
+                        SetOperations = List.ofArray rebuilt
+                        OrderBy = current.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
+        if completed.Count <> 1 then
+            invalidOp "Normalizer set-operation continuation frames were not balanced."
+        completed.[0]
 
     let private normalizeReturning source target (items: ReturningItem list) =
         items
