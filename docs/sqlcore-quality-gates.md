@@ -477,6 +477,30 @@ published as measured percentages or silently set to 100.
       qualifier diagnostics cover this boundary. An additional opt-in
       isolated mixed EXISTS depth shape measures real cross-query nesting
       without raising the historic 72-case CI depth floor.
+- [x] Rebuild the compositional Scalar Renderer with one typed
+      `ScalarNode / ScalarText` SQL-emission stack, covering right-deep and
+      alternating unary, arithmetic/comparison, CAST, EXTRACT, IS NULL,
+      BETWEEN, IN-list, LIKE, REGEX and PostgreSQL JSON-access nodes.
+      Preserve the Oracle expanded NULL-safe comparison, MySQL/SQL Server
+      native CONCAT, PostgreSQL JSON selector-before-value binding,
+      Postgres/SQLite/Oracle/Firebird EXTRACT lowering and left-to-right
+      parameters. Frame-buffer allocation is bypassed for terminal two-
+      operand predicates, keeping the existing 2,048-deep PostgreSQL
+      left-AND benchmark at ~11.03 MB rather than ~11.46 MB.
+      Six-provider 128-deep right-nested arithmetic/negation, composite
+      predicates and PostgreSQL JSON binding-order tests guard the migration.
+- [x] Record the previously optional mixed Query depth probe in CI as
+      a separate observational artifact: PostgreSQL and Oracle
+      `Expr → EXISTS → Query → WHERE` at 128/512/2048 all compile
+      (6/6, zero crashes on run 39971366954), without altering the
+      original 72 normal-depth / 16 constrained-stack gates.
+- [ ] Resolve measured Query Renderer allocation growth from nested SQL
+      string materialization. At mixed depth 2048, run 39971366954
+      allocated PostgreSQL 269,330,144 bytes and Oracle 353,506,448
+      bytes despite compiling successfully. Optimize general Query/Expr
+      streaming and remeasure the *same* six isolated samples, while
+      preserving provider-specific paging/set-tail/shared parameter
+      semantics and existing CTE/render diagnostic precedence.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

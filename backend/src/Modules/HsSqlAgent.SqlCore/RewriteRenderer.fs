@@ -285,6 +285,8 @@ module internal RewriteRenderer =
         | ScalarNode of expression: Expr
         | ScalarText of emittedText: string
         | ScalarRegexCheck
+        | ScalarCastComplete of castExpression: Expr
+        | ScalarConcatProof of unprovenMessage: string
 
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
@@ -622,6 +624,19 @@ module internal RewriteRenderer =
                 | SQLite | Firebird ->
                     invalidOp (capabilityError ctx.Provider "function.regex_match")
                 | _ -> ()
+            | ScalarConcatProof message ->
+                invalidOp (
+                    "Validated SQL reached rendering without SQL Server concat proof: "
+                    + message)
+            | ScalarCastComplete original ->
+                match Expr.unspan original with
+                | Expr.Cast(_, targetType) ->
+                    append (
+                        " AS "
+                        + RewriteCastTypes.renderTarget
+                            (providerTool ctx.Provider) targetType
+                        + ")")
+                | _ -> invalidOp "Scalar CAST completion frame lost its source AST."
             | ScalarNode original ->
                 RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
                 match Expr.unspan original with
@@ -651,9 +666,10 @@ module internal RewriteRenderer =
                         binary "(" " + " ")" left right
                     | BinaryOperator.Concat, SqlServer,
                         SqlServerRuntime(Unproven message) ->
-                        invalidOp (
-                            "Validated SQL reached rendering without SQL Server concat proof: "
-                            + message)
+                        // A nonportable concat proof originally fails AFTER
+                        // its left and right operands have been rendered.
+                        pending.Add(ScalarConcatProof message)
+                        binary "(" " + " ")" left right
                     | BinaryOperator.NotDistinctFrom, MySql, _ ->
                         binary "(" " <=> " ")" left right
                     | BinaryOperator.DistinctFrom, MySql, _ ->
@@ -716,11 +732,12 @@ module internal RewriteRenderer =
                         | JsonResult -> "->"
                         | TextResult -> "->>"
                     wrap "(" (" " + operator + " " + selectorSql + ")") value
-                | Expr.Cast(value, targetType) ->
-                    let targetTypeSql =
-                        RewriteCastTypes.renderTarget
-                            (providerTool ctx.Provider) targetType
-                    wrap "CAST(" (" AS " + targetTypeSql + ")") value
+                | Expr.Cast(value, _) ->
+                    // CAST target validation/rendering runs only after its
+                    // operand, retaining the previous diagnostic precedence.
+                    append "CAST("
+                    pending.Add(ScalarCastComplete original)
+                    node value
                 | Expr.Extract(field, value) ->
                     let part =
                         ExtractField.value field
