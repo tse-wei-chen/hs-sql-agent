@@ -486,6 +486,28 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void MixedBinderGraph_AlternatingExistsDepthPreservesCorrelatedScope(
+        SqlAgentToolType dialect)
+    {
+        // Alternates Query and Expr/WHERE with no pure-scalar-chain
+        // shortcut. The Binder must retain the outer user alias through
+        // every independently scoped EXISTS predicate.
+        const int depth = 48;
+        var sql = "SELECT u.id FROM users u WHERE EXISTS ("
+            + string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth))
+            + "SELECT u.id" + new string(')', depth + 1);
+        var command = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("mixed-binder-depth-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(command.Sql);
+        Assert.Equal(depth + 1,
+            command.Sql.Split("EXISTS (", StringSplitOptions.None).Length - 1);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {

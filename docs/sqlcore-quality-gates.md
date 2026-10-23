@@ -464,6 +464,19 @@ published as measured percentages or silently set to 100.
       derived/UNION positive, CTE alias and width fail-closed tests guard
       the cut-over. Binder scope-aware mixed continuations and general
       Renderer remain open.
+- [x] Route mixed Binder Query/Select/CTE/Source/JOIN/Expr graphs through
+      an explicit Scope-aware continuation machine. CTE definitions are
+      sequentially bound with recursive self-visibility, FROM sources bind
+      under the enclosing parent scope, LATERAL JOIN sources receive all
+      preceding row sources, non-LATERAL sources do not, and projection/
+      ORDER BY aliases retain head/branch boundaries. Scalar Query callbacks
+      are scheduled as Query frames instead of re-entering bindQuery.
+      Preserve the established pure scalar-chain and ordinary SELECT fast
+      paths. Six-provider correlated IN/EXISTS/derived UNION/CTE cases,
+      PostgreSQL nested LATERAL success/fail-closed cases, and first-invalid
+      qualifier diagnostics cover this boundary. An additional opt-in
+      isolated mixed EXISTS depth shape measures real cross-query nesting
+      without raising the historic 72-case CI depth floor.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

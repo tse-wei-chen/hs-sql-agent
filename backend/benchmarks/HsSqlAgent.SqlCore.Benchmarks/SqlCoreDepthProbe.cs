@@ -16,6 +16,11 @@ internal static class SqlCoreDepthProbe
 {
     private static readonly string[] Shapes =
         ["redundant-grouping", "nested-scalar-subquery", "prefix-not", "left-deep-and"];
+    // Opt-in shape: alternates SELECT/WHERE/EXISTS Query boundaries rather
+    // than only repeating an inert scalar projection. Keep the historic
+    // default 72-case CI depth floor intact; use --shapes to measure this
+    // additional resource class in an isolated subprocess.
+    private static readonly string[] OptionalShapes = ["mixed-query-graph"];
 
     public static bool TryRun(string[] args)
     {
@@ -68,6 +73,10 @@ internal static class SqlCoreDepthProbe
             "left-deep-and" =>
                 "SELECT id FROM users WHERE " +
                 string.Join(" AND ", Enumerable.Repeat("id = 7", depth)),
+            "mixed-query-graph" =>
+                "SELECT u.id FROM users u WHERE EXISTS (" +
+                string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth)) +
+                "SELECT u.id" + new string(')', depth + 1),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
 
@@ -176,7 +185,8 @@ internal static class SqlCoreDepthProbe
         {
             shapes = requestedShapes.Split(',', StringSplitOptions.RemoveEmptyEntries);
             if (shapes.Length == 0 || shapes.Distinct().Count() != shapes.Length
-                || shapes.Any(value => !Shapes.Contains(value, StringComparer.Ordinal)))
+                || shapes.Any(value => !Shapes.Contains(value, StringComparer.Ordinal)
+                    && !OptionalShapes.Contains(value, StringComparer.Ordinal)))
                 throw new ArgumentException("Unknown or repeated depth-probe shape.");
         }
         var outputIndex = Array.IndexOf(args, "--output");

@@ -29,6 +29,12 @@ four input shapes (pure parenthesis wrappers, nested scalar subqueries,
 prefix-NOT chains, left-deep AND chains), and 8/32/128/512/2048 nesting units.
 For targeted investigation, pass `--dialects Postgres,Sqlite`, 
 `--shapes prefix-not,left-deep-and`, or `--depths 128,512,2048`.
+The opt-in `--shapes mixed-query-graph` probes alternating
+`Expr → EXISTS → Query → WHERE → Expr` boundaries, including a correlated
+outer column at the innermost level. It is **not** part of the unchanged
+72-case CI default depth floor: collect its higher-depth failures/typed
+resource rejections as observational evidence without masking crashes or
+silently redefining the existing baseline.
 PR CI additionally records a **non-gating** PostgreSQL 12-case sweep at
 128/512/2048 nesting units and uploads `sqlcore-depth-pr.json` for analysis.
 The subprocess reports compilation latency and current-thread allocations,
