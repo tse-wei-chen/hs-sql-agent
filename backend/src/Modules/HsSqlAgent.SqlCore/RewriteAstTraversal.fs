@@ -108,10 +108,6 @@ module internal RewriteAstTraversal =
     let iterIncludingQueries (visit: Frame -> unit) (root: Frame) =
         let pending = ResizeArray<Frame>()
         let inline push frame = pending.Add frame
-        let pushReverse (items: Frame list) =
-            let buffer = List.toArray items
-            for index = buffer.Length - 1 downto 0 do
-                push buffer.[index]
         let pushExprs (expressions: Expr list) =
             let buffer = List.toArray expressions
             for index = buffer.Length - 1 downto 0 do

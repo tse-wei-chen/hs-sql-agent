@@ -312,6 +312,11 @@ published as measured percentages or silently set to 100.
       machine. Preserve CTE-first, FROM-first, projection/WHERE/JOIN and
       ORDER BY alias-check diagnostic precedence; retain nested subquery
       whitelist verification with six-dialect positive/negative tests.
+- [x] Replace recursive parent-scope qualifier/source lookup in Binder
+      with iterative ancestry scans. Existing correlated-subquery binding
+      behavior and six-dialect 2,048-level nested scalar probes remain gates.
+- [x] Use value-type continuation frames and avoid per-node intermediate
+      List.map/collect allocations to bound the new policy walk's GC cost.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

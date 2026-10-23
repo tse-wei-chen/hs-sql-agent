@@ -59,17 +59,29 @@ module internal RewriteBinder =
     let private localQualifierExists qualifier (scope: Scope) =
         scope.Sources |> List.exists (containsQualifier qualifier)
 
-    let rec private ancestorQualifierExists qualifier (scope: Scope) =
-        match scope.Parent with
-        | Some parent when localQualifierExists qualifier parent -> true
-        | Some parent -> ancestorQualifierExists qualifier parent
-        | None -> false
+    // Parent scopes can be as deep as a nested subquery chain. Qualifier
+    // lookup must never spend one CLR call frame per ancestor.
+    let private ancestorQualifierExists qualifier (scope: Scope) =
+        let mutable current = scope.Parent
+        let mutable found = false
+        while current.IsSome && not found do
+            match current with
+            | Some parent ->
+                found <- localQualifierExists qualifier parent
+                current <- parent.Parent
+            | None -> ()
+        found
 
-    let rec private ancestorHasSources (scope: Scope) =
-        match scope.Parent with
-        | Some parent when not parent.Sources.IsEmpty -> true
-        | Some parent -> ancestorHasSources parent
-        | None -> false
+    let private ancestorHasSources (scope: Scope) =
+        let mutable current = scope.Parent
+        let mutable found = false
+        while current.IsSome && not found do
+            match current with
+            | Some parent ->
+                found <- not parent.Sources.IsEmpty
+                current <- parent.Parent
+            | None -> ()
+        found
 
     let private scopeId parentScope = parentScope |> Option.map (fun (scope: Scope) -> scope.Id + 1) |> Option.defaultValue 0
 
