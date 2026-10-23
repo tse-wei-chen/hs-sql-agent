@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore
 
 open System
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
@@ -50,24 +51,33 @@ type SqlCoreInspection private () =
     static member GetQueryFacts(sql: string, sourceDialect: SqlAgentToolType) =
         ArgumentNullException.ThrowIfNull(sql)
 
-        RewriteFacadeAdapter.parseSourceValidated sql sourceDialect null
-        |> RewriteBinder.bind sourceDialect
-        |> RewriteInspection.inspectBound
+        RewriteResourceBudget.withCompilation (fun () ->
+            let parsed =
+                RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                    RewriteFacadeAdapter.parseSourceValidated sql sourceDialect null)
+            let bound =
+                RewriteResourceBudget.withStage "Binding" SqlDiagnosticStage.Binding (fun () ->
+                    RewriteBinder.bind sourceDialect parsed)
+            RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.Binding (fun () ->
+                RewriteInspection.inspectBound bound))
 
     static member GetQueryFacts(parsed: ParsedStatement) =
         ArgumentNullException.ThrowIfNull(parsed)
 
-        if parsed.EnforceSourceDialectSyntax then
-            match parsed.RawSql with
-            | null -> ()
-            | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
-            | rawSql ->
-                RewriteFacadeAdapter.parseSourceValidated
-                    rawSql
-                    parsed.SourceDialect
-                    parsed.SourceProfile
-                |> ignore
+        RewriteResourceBudget.withCompilation (fun () ->
+            if parsed.EnforceSourceDialectSyntax then
+                match parsed.RawSql with
+                | null -> ()
+                | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
+                | rawSql ->
+                    RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                        RewriteFacadeAdapter.parseSourceValidated
+                            rawSql parsed.SourceDialect parsed.SourceProfile)
+                    |> ignore
 
-        RewriteLegacyAstAdapter.toParsed parsed.Statement
-        |> RewriteBinder.bind parsed.SourceDialect
-        |> RewriteInspection.inspectBound
+            let bound =
+                RewriteResourceBudget.withStage "Binding" SqlDiagnosticStage.Binding (fun () ->
+                    RewriteLegacyAstAdapter.toParsed parsed.Statement
+                    |> RewriteBinder.bind parsed.SourceDialect)
+            RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.Binding (fun () ->
+                RewriteInspection.inspectBound bound))

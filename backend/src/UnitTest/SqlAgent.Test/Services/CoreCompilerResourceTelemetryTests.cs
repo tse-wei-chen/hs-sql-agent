@@ -34,6 +34,8 @@ public sealed class CoreCompilerResourceTelemetryTests
                 new SqlPlanValidationContext("resource-telemetry-v1"),
                 new SqlExecutionPlanPolicy());
             Assert.NotEmpty(command.Sql);
+            Assert.NotNull(SqlCoreInspection.GetQueryFacts(
+                "SELECT 1 AS result", SqlAgentToolType.Postgres));
 
             List<object> captured;
             lock (samples) captured = samples.ToList();
@@ -44,7 +46,7 @@ public sealed class CoreCompilerResourceTelemetryTests
                 .Where(x => Equals(Get(x, "Success"), true)).ToList();
             var stages = successful.Select(x => Get(x, "Stage") as string).ToHashSet();
             foreach (var name in new[] { "Parsing", "Binding", "Normalization",
-                        "Validation", "Policy", "Rendering" })
+                        "Validation", "Policy", "Rendering", "Inspection" })
                 Assert.Contains(name, stages);
 
             foreach (var data in successful)

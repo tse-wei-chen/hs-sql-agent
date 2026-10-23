@@ -1014,3 +1014,14 @@ and `nested-cte` are sampled at 128/512/2048 in the CI artifact
 missing metrics for successful compilation and negative measurements
 fail CI, but a path still constrained by CLR stack must first be migrated
 before the deep-shape successful-compilation gate can become mandatory.
+
+### Standalone inspection scope parity
+
+`SqlCoreInspection.GetQueryFacts` from raw SQL and parsed statements now
+shares the compilation-scoped Parsing, Binding and Inspection budget stages,
+rather than bypassing stage accounting through a separate facade.
+`GetDeterminismFacts` also owns one compilation scope with isolated
+Parsing, Binding, Normalization and Inspection stages. This preserves
+existing capability behavior and diagnostics while accounting for work
+entered through public inspection APIs. Recursive F# structural formatting
+in the determinism fingerprint remains an outstanding resource hot path.
