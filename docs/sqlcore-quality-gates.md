@@ -933,3 +933,14 @@ Query/CTE/derived-table paths can still materialize intermediate strings.
 Neither threshold should be represented as a universal process-memory bound.
 Stage-isolated allocation/time profiling and remaining Query/Parser/Schema
 recursion are further merge gates.
+
+### Strict schema stack reserve (PR #300)
+
+Both metadata-backed `queryColumns` (Binding) and type-family `queryTypes`
+(SemanticValidation) now check the remaining CLR stack at each Query entry.
+This closes a safety gap for deeply nested leaf-only derived tables, CTEs and
+set branches that may not enter expression visitors. A low-stack request must
+fail with the existing typed stack-reserve diagnostic rather than crash.
+This is a **fail-closed fallback**, not proof of stack-independent schema
+validation; replacing remaining recursive Query/Expr/Source calls with
+scope-aware continuation frames remains outstanding.

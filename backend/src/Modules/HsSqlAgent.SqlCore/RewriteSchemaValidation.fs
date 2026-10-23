@@ -302,6 +302,10 @@ module internal RewriteSchemaValidation =
         current, ctes, output
 
     and private queryColumns catalog ctes parent (query: Query) =
+        // Guard Query -> CTE/derived/set -> Query transitions as well as
+        // Expr recursion. A leaf-only deeply nested source may never enter
+        // the expression visitor's existing stack-reserve check.
+        RewriteStackSafety.compile SqlDiagnosticStage.Binding
         let scope, visibleCtes, output = selectColumns catalog ctes parent query.Head
         query.SetOperations |> List.iter (fun branch ->
             let other = queryColumns catalog visibleCtes parent branch.Query

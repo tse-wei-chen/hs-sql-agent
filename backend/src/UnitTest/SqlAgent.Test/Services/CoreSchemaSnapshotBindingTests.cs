@@ -56,6 +56,23 @@ public sealed class CoreSchemaSnapshotBindingTests
 
     [Theory]
     [MemberData(nameof(SixDialects))]
+    public void NestedDerivedQueries_KeepSchemaBindingAndProjectionNames(
+        SqlAgentToolType dialect)
+    {
+        // Query -> derived Source -> Query must run the stack-reserve
+        // check at each boundary, even with only terminal Column expressions.
+        var query = "SELECT id FROM users";
+        for (var depth = 0; depth < 64; depth++)
+            query = $"SELECT d.id FROM ({query}) d";
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(compiled.Sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
     public void AllDialects_ValidateExistingQualifiedAndUnqualifiedColumns(SqlAgentToolType dialect)
     {
         var context = Context(dialect);

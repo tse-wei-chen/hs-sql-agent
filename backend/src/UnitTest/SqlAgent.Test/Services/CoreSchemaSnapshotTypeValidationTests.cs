@@ -65,6 +65,24 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
 
     [Theory]
     [MemberData(nameof(Providers))]
+    public void NestedDerivedQueries_KeepTypedNumericProjectionProof(
+        SqlAgentToolType dialect)
+    {
+        // Typed query projection checks must remain safe across
+        // Query -> derived Source -> Query transitions.
+        var query = "SELECT id FROM users";
+        for (var depth = 0; depth < 64; depth++)
+            query = $"SELECT d.id FROM ({query}) d";
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect, Context(dialect, typed: true),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(compiled.Sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
     public void TypedSnapshot_PreservesValidNumericAndTextPredicatesAndAssignments(
         SqlAgentToolType dialect)
     {

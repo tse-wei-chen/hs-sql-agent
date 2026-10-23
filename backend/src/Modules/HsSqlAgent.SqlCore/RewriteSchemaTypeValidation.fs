@@ -332,6 +332,10 @@ module internal RewriteSchemaTypeValidation =
             |> sourceAlias catalog alias
 
     and private queryTypes catalog inheritedCtes parent (query: Query) =
+        // Type proofs recurse through derived/CTE/SET Query graphs even
+        // when they contain no recursive Expr shape. Fail closed before
+        // CLR stack exhaustion; iterative schema traversal is still pending.
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let mutable ctes = inheritedCtes
         // Sequential visibility follows the already validated CTE lexical scope.
         for cte in query.Head.Ctes do
