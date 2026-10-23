@@ -486,6 +486,56 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void NestedExistsWhereQueryStream_PreservesOuterToInnerParameterOrder(
+        SqlAgentToolType dialect)
+    {
+        // Every level has one bound projection literal. The iterative
+        // renderer must bind them outer-to-inner, not render the innermost
+        // SQL first or materialize O(depth) intermediate query strings.
+        const int depth = 128;
+        var prefixes = Enumerable.Range(1, depth)
+            .Select(index => $"SELECT {index} WHERE EXISTS (");
+        var sql = "SELECT u.id FROM users u WHERE EXISTS ("
+            + string.Concat(prefixes)
+            + "SELECT u.id" + new string(')', depth + 1);
+
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("streaming-exists-query-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(
+            Enumerable.Range(1, depth).Select(i => (long)i),
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+        Assert.Equal(depth + 1,
+            result.Sql.Split("EXISTS (", StringSplitOptions.None).Length - 1);
+        if (dialect == SqlAgentToolType.Oracle)
+            Assert.Contains("FROM DUAL", result.Sql, StringComparison.Ordinal);
+        if (dialect == SqlAgentToolType.Firebird)
+            Assert.Contains("FROM RDB$DATABASE", result.Sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void NestedExistsWhereQueryStream_StopsAtNonSimpleInnerSelect(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT u.id FROM users u WHERE EXISTS ("
+            + "SELECT 1 WHERE EXISTS ("
+            + "SELECT 2 WHERE EXISTS ("
+            + "SELECT a.id FROM archived AS a WHERE a.id = u.id AND a.id > 3)))";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("streaming-exists-query-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(new long[] { 1, 2, 3 },
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+        Assert.Contains("archived", result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void MixedBinderGraph_AlternatingExistsDepthPreservesCorrelatedScope(
         SqlAgentToolType dialect)
     {
