@@ -204,49 +204,61 @@ module internal RewriteRenderer =
     let private hasTail (query: Query) =
         not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome || query.FetchPercent.IsSome || query.FetchWithTies
 
-    let rec private isBooleanExpression expression =
-        match expression with
-        | Spanned(_, inner) -> isBooleanExpression inner
-        | Literal(ScalarValue.Boolean _) -> true
-        | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ | RegexMatch _ -> true
-        | Unary(UnaryOperator.Not, _) -> true
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.DistinctFrom
-                 | BinaryOperator.NotDistinctFrom
-                 | BinaryOperator.And
-                 | BinaryOperator.Or), _, _) -> true
-        | SimpleCase(_, branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+    // The renderer's Boolean CASE classifier must not recursively consume
+    // one CLR call frame per nested CASE result. Keep its original proof:
+    // only non-NULL result arms count, and WHEN predicates are not inspected.
+    let private isBooleanExpression expression =
+        let pending = ResizeArray<Expr>()
+        pending.Add expression
+        let mutable isBoolean = true
+        while isBoolean && pending.Count > 0 do
+            let index = pending.Count - 1
+            let current = Expr.unspan pending.[index]
+            pending.RemoveAt index
+            match current with
+            | Literal(ScalarValue.Boolean _) -> ()
+            | IsNull _ | InList _ | InSubquery _ | Between _
+            | Exists _ | Like _ | RegexMatch _ -> ()
+            | Unary(UnaryOperator.Not, _) -> ()
+            | Binary((BinaryOperator.Equal
+                     | BinaryOperator.NotEqual
+                     | BinaryOperator.GreaterThan
+                     | BinaryOperator.LessThan
+                     | BinaryOperator.GreaterThanOrEqual
+                     | BinaryOperator.LessThanOrEqual
+                     | BinaryOperator.DistinctFrom
+                     | BinaryOperator.NotDistinctFrom
+                     | BinaryOperator.And
+                     | BinaryOperator.Or), _, _) -> ()
+            | SimpleCase(_, branches, fallback) ->
+                let mutable nonNull = 0
+                let push value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
-        | SearchedCase(branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter push
+                NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                    push branch.Result) branches
+                if nonNull = 0 then isBoolean <- false
+            | SearchedCase(branches, fallback) ->
+                let mutable nonNull = 0
+                let push value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
-        | _ -> false
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter push
+                NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                    push branch.Result) branches
+                if nonNull = 0 then isBoolean <- false
+            | _ -> isBoolean <- false
+        isBoolean
 
-    let rec private renderBooleanTruthValue expression =
-        match expression with
-        | Spanned(_, inner) -> renderBooleanTruthValue inner
+    let private renderBooleanTruthValue expression =
+        match Expr.unspan expression with
         | Literal(ScalarValue.Boolean true) -> "1"
         | Literal(ScalarValue.Boolean false) -> "0"
         | Literal ScalarValue.Null -> "NULL"

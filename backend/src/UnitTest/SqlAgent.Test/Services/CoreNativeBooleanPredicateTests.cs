@@ -74,6 +74,22 @@ public sealed class CoreNativeBooleanPredicateTests
             parameter => parameter.Value is bool);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void Compile_BooleanCasePredicate_EmitsSameNumericTruthComparison(
+        SqlAgentToolType targetProvider)
+    {
+        var command = CompileQuery(
+            "SELECT id FROM users WHERE CASE WHEN id = 1 THEN TRUE ELSE FALSE END",
+            targetProvider);
+
+        Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("THEN 1 ELSE 0", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("END = 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(command.Parameters, parameter => parameter.Value is bool);
+    }
+
     private static CompiledSqlCommand CompileQuery(
         string sql,
         SqlAgentToolType targetProvider) =>

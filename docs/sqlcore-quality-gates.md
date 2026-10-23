@@ -353,6 +353,11 @@ published as measured percentages or silently set to 100.
       and legacy aggregate-local ORDER BY regex-proof boundaries.
       Six-provider nested COALESCE positives, deep wrong-source-function
       negatives, and nested NULLS FIRST rejection are regression gates.
+- [x] Remove Renderer Boolean CASE classification recursion by iterating
+      non-NULL CASE result arms; renderBooleanTruthValue now unwraps spans
+      iteratively. Oracle/SQL Server native predicates retain numeric
+      CASE truth comparison and parameter-binding behavior. General SQL
+      expression rendering remains recursive and separately tracked.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
