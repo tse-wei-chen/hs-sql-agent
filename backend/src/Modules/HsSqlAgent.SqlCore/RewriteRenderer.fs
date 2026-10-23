@@ -266,10 +266,20 @@ module internal RewriteRenderer =
             raise (SqlCompilationException(
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
+    // SQL fragments are emitted in source order. Text frames and Expr
+    // frames share one heap-backed stack, so right-deep and alternating
+    // arithmetic / unary / predicate trees do not consume CLR call frames.
+    // Distinct field names are required by an F# struct discriminated union.
+    [<Struct>]
+    type private ScalarRenderFrame =
+        | ScalarNode of expression: Expr
+        | ScalarText of emittedText: string
+        | ScalarRegexCheck
+
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
-        | Expr.Spanned(_, inner) -> renderExpr ctx inner
+        | Expr.Spanned _ -> renderExpr ctx (Expr.unspan expression)
         | Expr.Column identifier
         | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx.Provider identifier
         | Expr.Wildcard None -> "*"
@@ -364,67 +374,28 @@ module internal RewriteRenderer =
                 "TIMESTAMPDIFF(" + keyword + ", " + startValue + ", " + finish + ")"
             | Firebird ->
                 "DATEDIFF(" + keyword + " FROM " + startValue + " TO " + finish + ")"
-        | Expr.Unary(UnaryOperator.Not, operand) -> "NOT (" + renderExpr ctx operand + ")"
-        | Expr.Unary(UnaryOperator.Negate, operand) -> "(-" + renderExpr ctx operand + ")"
-        | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
+        | Expr.Unary _ -> renderScalarGraph ctx expression
         | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
             renderBooleanGraph ctx renderExpr chain
-        | Expr.Binary(op, _, _) as chain
-            when op = BinaryOperator.Add || op = BinaryOperator.Subtract
-                 || op = BinaryOperator.Multiply || op = BinaryOperator.Divide ->
-            renderLeftDeepArithmetic ctx chain
-        | Expr.Binary(operator, left, right) ->
+        | Expr.Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom as op), left, right)
+            when ctx.Provider = Oracle ->
+            // Oracle null-safe comparison expands the already rendered
+            // operands several times. Cache their SQL text once so bind
+            // parameters are NOT allocated twice.
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
-            match operator, ctx.Provider, ctx.TargetRuntime with
-            | BinaryOperator.Modulo, (Oracle | Firebird), _ -> "MOD(" + leftSql + ", " + rightSql + ")"
-            | BinaryOperator.Concat, MySql, _ -> "CONCAT(" + leftSql + ", " + rightSql + ")"
-            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven NativePipes) ->
-                "(" + leftSql + " || " + rightSql + ")"
-            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven PlusOperator) ->
-                "(" + leftSql + " + " + rightSql + ")"
-            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Unproven message) ->
-                invalidOp ("Validated SQL reached rendering without SQL Server concat proof: " + message)
-            | BinaryOperator.NotDistinctFrom, MySql, _ ->
-                "(" + leftSql + " <=> " + rightSql + ")"
-            | BinaryOperator.DistinctFrom, MySql, _ ->
-                "NOT (" + leftSql + " <=> " + rightSql + ")"
-            | (BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), Oracle, _ ->
-                let equal =
-                    "CASE WHEN " + leftSql + " IS NULL THEN CASE WHEN " + rightSql
-                    + " IS NULL THEN 1 ELSE 0 END WHEN " + rightSql
-                    + " IS NULL THEN 0 WHEN " + leftSql + " = " + rightSql
-                    + " THEN 1 ELSE 0 END"
-                "(" + equal
-                + (if operator = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
-            | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
-        | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
-            if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")
-            let positive =
-                "(" + renderExpr ctx value + " " + (if caseInsensitive then "ILIKE" else "LIKE") + " " + renderExpr ctx pattern
-                + (escape |> Option.map (fun value -> " ESCAPE " + renderLikeEscape ctx.Provider value) |> Option.defaultValue "") + ")"
-            if negated then "NOT (" + positive + ")" else positive
+            let equal =
+                "CASE WHEN " + leftSql + " IS NULL THEN CASE WHEN " + rightSql
+                + " IS NULL THEN 1 ELSE 0 END WHEN " + rightSql
+                + " IS NULL THEN 0 WHEN " + leftSql + " = " + rightSql
+                + " THEN 1 ELSE 0 END"
+            "(" + equal
+            + (if op = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
+        | Expr.Binary _ | Expr.Like _ -> renderScalarGraph ctx expression
         | Expr.RawRegexCall _ ->
             invalidOp "Raw REGEXP_LIKE reached rendering before canonicalization."
-        | Expr.RegexMatch(value, pattern) ->
-            let valueSql = renderExpr ctx value
-            let patternSql = renderExpr ctx pattern
-            match ctx.Provider with
-            | PostgreSql -> "(" + valueSql + " ~ " + patternSql + ")"
-            | MySql | Oracle | SqlServer -> "REGEXP_LIKE(" + valueSql + ", " + patternSql + ")"
-            | SQLite | Firebird -> invalidOp (capabilityError ctx.Provider "function.regex_match")
-        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
-            if ctx.Provider <> PostgreSql then
-                invalidOp (capabilityError ctx.Provider "json.operator.postgres_arrow")
-            let selectorSql =
-                match selector with
-                | PostgresJsonProperty key -> ctx.Bind(box key)
-                | PostgresJsonArrayIndex index -> ctx.Bind(box index)
-            let operator =
-                match resultKind with
-                | JsonResult -> "->"
-                | TextResult -> "->>"
-            "(" + renderExpr ctx value + " " + operator + " " + selectorSql + ")"
+        | Expr.RegexMatch _ | Expr.PostgresJsonAccess _ ->
+            renderScalarGraph ctx expression
         | Expr.FunctionCall call ->
             renderFunction ctx call
         | Expr.FilteredAggregate(value, predicate) ->
@@ -433,31 +404,7 @@ module internal RewriteRenderer =
                 renderExpr ctx value + " FILTER (WHERE " + renderPredicate ctx predicate + ")"
             | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
-        | Expr.Cast(value, targetType) -> "CAST(" + renderExpr ctx value + " AS " + RewriteCastTypes.renderTarget (providerTool ctx.Provider) targetType + ")"
-        | Expr.Extract(field, value) ->
-            let part = ExtractField.value field |> fun value -> value.Trim().ToUpperInvariant()
-            let tool = providerTool ctx.Provider
-            match SqlDatePartCapabilityRules.TargetValidationError(part, tool) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            let rendered = renderExpr ctx value
-            match ctx.Provider with
-            | SqlServer -> "DATEPART(" + part + ", " + rendered + ")"
-            | MySql -> part + "(" + rendered + ")"
-            | PostgreSql
-            | Oracle -> "EXTRACT(" + part + " FROM " + rendered + ")"
-            | Firebird -> "EXTRACT(" + part + " FROM CAST(" + rendered + " AS DATE))"
-            | SQLite ->
-                match part with
-                | "YEAR" -> "CAST(STRFTIME('%Y', " + rendered + ") AS INTEGER)"
-                | "MONTH" -> "CAST(STRFTIME('%m', " + rendered + ") AS INTEGER)"
-                | "DAY" -> "CAST(STRFTIME('%d', " + rendered + ") AS INTEGER)"
-                | "HOUR" -> "CAST(STRFTIME('%H', " + rendered + ") AS INTEGER)"
-                | "MINUTE" -> "CAST(STRFTIME('%M', " + rendered + ") AS INTEGER)"
-                | "SECOND" -> "CAST(STRFTIME('%S', " + rendered + ") AS INTEGER)"
-                | "QUARTER" ->
-                    "CAST(((CAST(STRFTIME('%m', " + rendered + ") AS INTEGER) + 2) / 3) AS INTEGER)"
-                | _ -> raise (SqlCompilationException("SQLite does not support date part " + part + "."))
+        | Expr.Cast _ | Expr.Extract _ -> renderScalarGraph ctx expression
         | Expr.SimpleCase(input, branches, fallback) ->
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
             "CASE " + renderExpr ctx input + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
@@ -469,14 +416,13 @@ module internal RewriteRenderer =
                     " WHEN " + renderPredicate ctx branch.Condition + " THEN " + renderExpr ctx branch.Result)
                 |> String.concat ""
             "CASE" + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
-        | Expr.InList(value, items, negated) ->
-            "(" + renderExpr ctx value + (if negated then " NOT IN " else " IN ") + "(" + (items |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + "))"
+        | Expr.InList _ -> renderScalarGraph ctx expression
         | Expr.InSubquery(value, query, negated) ->
             "(" + renderExpr ctx value
             + (if negated then " NOT IN (" else " IN (")
             + renderSubquery ctx query + "))"
-        | Expr.Between(value, lower, upper, negated) -> "(" + renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper + ")"
-        | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
+        | Expr.Between _ | Expr.IsNull _ ->
+            renderScalarGraph ctx expression
         | Expr.ScalarSubquery query ->
             // Materializing the entire inner SELECT at every level was O(n^2)
             // in SQL-string allocations for a pure nested scalar SELECT chain.
@@ -606,29 +552,181 @@ module internal RewriteRenderer =
     // SQL prefixes for left-deep arithmetic trees. Complex operators (e.g.
     // MOD, CONCAT, IS DISTINCT FROM) continue through their dialect-aware
     // renderer instead of being incorrectly treated as infix arithmetic.
-    and private renderLeftDeepArithmetic (ctx: RenderContext) expression =
-        let operations = ResizeArray<BinaryOperator * Expr>()
-        let mutable current = expression
-        let mutable descending = true
-        while descending do
-            match Expr.unspan current with
-            | Binary(op, left, right)
-                when op = BinaryOperator.Add || op = BinaryOperator.Subtract
-                     || op = BinaryOperator.Multiply || op = BinaryOperator.Divide ->
+    // Emit the compositional scalar grammar into ONE StringBuilder. The
+    // old renderExpr recursively entered itself through every unary,
+    // right-nested binary, CAST, LIKE, BETWEEN and IN-list node. Arithmetic
+    // is not flattened or reassociated: parentheses are emitted exactly
+    // as for the recursive implementation, including dialect-specific
+    // MOD/CONCAT/NULL-safe forms and left-to-right parameter binding.
+    and private renderScalarGraph (ctx: RenderContext) root =
+        let pending = ResizeArray<ScalarRenderFrame>()
+        let output = StringBuilder()
+        let inline node value = pending.Add(ScalarNode value)
+        let inline text (value: string) = pending.Add(ScalarText value)
+        let append (value: string) = output.Append(value) |> ignore
+        let wrap prefix suffix child =
+            append prefix
+            text suffix
+            node child
+        let binary prefix separator suffix left right =
+            append prefix
+            text suffix
+            node right
+            text separator
+            node left
+        node root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | ScalarText fragment -> append fragment
+            | ScalarRegexCheck ->
+                match ctx.Provider with
+                | SQLite | Firebird ->
+                    invalidOp (capabilityError ctx.Provider "function.regex_match")
+                | _ -> ()
+            | ScalarNode original ->
                 RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
-                operations.Add(op, right)
-                current <- left
-            | _ -> descending <- false
-
-        let builder = StringBuilder()
-        for _ in 1 .. operations.Count do
-            builder.Append('(') |> ignore
-        builder.Append(renderExpr ctx current) |> ignore
-        for index = operations.Count - 1 downto 0 do
-            let op, right = operations[index]
-            builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
-            builder.Append(renderExpr ctx right).Append(')') |> ignore
-        builder.ToString()
+                match Expr.unspan original with
+                | Expr.Unary(UnaryOperator.Not, operand) ->
+                    wrap "NOT (" ")" operand
+                | Expr.Unary(UnaryOperator.Negate, operand) ->
+                    wrap "(-" ")" operand
+                | Expr.Unary(UnaryOperator.Positive, operand) ->
+                    wrap "(+" ")" operand
+                | Expr.Binary((BinaryOperator.DistinctFrom
+                              | BinaryOperator.NotDistinctFrom), _, _)
+                    when ctx.Provider = Oracle ->
+                    // Oracle expands operands more than once; renderExpr
+                    // caches them in the special-case branch above.
+                    append (renderExpr ctx original)
+                | Expr.Binary(op, left, right) ->
+                    match op, ctx.Provider, ctx.TargetRuntime with
+                    | BinaryOperator.Modulo, (Oracle | Firebird), _ ->
+                        binary "MOD(" ", " ")" left right
+                    | BinaryOperator.Concat, MySql, _ ->
+                        binary "CONCAT(" ", " ")" left right
+                    | BinaryOperator.Concat, SqlServer,
+                        SqlServerRuntime(Proven NativePipes) ->
+                        binary "(" " || " ")" left right
+                    | BinaryOperator.Concat, SqlServer,
+                        SqlServerRuntime(Proven PlusOperator) ->
+                        binary "(" " + " ")" left right
+                    | BinaryOperator.Concat, SqlServer,
+                        SqlServerRuntime(Unproven message) ->
+                        invalidOp (
+                            "Validated SQL reached rendering without SQL Server concat proof: "
+                            + message)
+                    | BinaryOperator.NotDistinctFrom, MySql, _ ->
+                        binary "(" " <=> " ")" left right
+                    | BinaryOperator.DistinctFrom, MySql, _ ->
+                        binary "NOT (" " <=> " ")" left right
+                    | _ ->
+                        binary "(" (" " + binaryText op + " ") ")" left right
+                | Expr.IsNull(value, negated) ->
+                    wrap "(" (if negated then " IS NOT NULL)" else " IS NULL)") value
+                | Expr.Between(value, lower, upper, negated) ->
+                    append "("
+                    text ")"
+                    node upper
+                    text " AND "
+                    node lower
+                    text (if negated then " NOT BETWEEN " else " BETWEEN ")
+                    node value
+                | Expr.InList(value, items, negated) ->
+                    append "("
+                    text "))"
+                    let entries = NonEmpty.toList items |> List.toArray
+                    for index = entries.Length - 1 downto 0 do
+                        node entries.[index]
+                        if index > 0 then text ", "
+                    text (if negated then " NOT IN (" else " IN (")
+                    node value
+                | Expr.Like(value, pattern, escape, negated, insensitive) ->
+                    if insensitive && ctx.Provider <> PostgreSql then
+                        invalidOp (capabilityError ctx.Provider "operator.ilike")
+                    append (if negated then "NOT ((" else "(")
+                    text (if negated then "))" else ")")
+                    text (escape
+                          |> Option.map (fun value ->
+                              " ESCAPE " + renderLikeEscape ctx.Provider value)
+                          |> Option.defaultValue "")
+                    node pattern
+                    text (if insensitive then " ILIKE " else " LIKE ")
+                    node value
+                | Expr.RegexMatch(value, pattern) ->
+                    match ctx.Provider with
+                    | PostgreSql ->
+                        binary "(" " ~ " ")" value pattern
+                    | MySql | Oracle | SqlServer ->
+                        binary "REGEXP_LIKE(" ", " ")" value pattern
+                    | SQLite | Firebird ->
+                        // Historically target checks happen after both
+                        // operand subtrees are rendered.
+                        pending.Add ScalarRegexCheck
+                        binary "REGEXP_LIKE(" ", " ")" value pattern
+                | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+                    if ctx.Provider <> PostgreSql then
+                        invalidOp (capabilityError ctx.Provider "json.operator.postgres_arrow")
+                    // The legacy renderer binds the selector first, then
+                    // visits the value expression. Retain that exact order.
+                    let selectorSql =
+                        match selector with
+                        | PostgresJsonProperty key -> ctx.Bind(box key)
+                        | PostgresJsonArrayIndex index -> ctx.Bind(box index)
+                    let operator =
+                        match resultKind with
+                        | JsonResult -> "->"
+                        | TextResult -> "->>"
+                    wrap "(" (" " + operator + " " + selectorSql + ")") value
+                | Expr.Cast(value, targetType) ->
+                    let targetTypeSql =
+                        RewriteCastTypes.renderTarget
+                            (providerTool ctx.Provider) targetType
+                    wrap "CAST(" (" AS " + targetTypeSql + ")") value
+                | Expr.Extract(field, value) ->
+                    let part =
+                        ExtractField.value field
+                        |> fun value -> value.Trim().ToUpperInvariant()
+                    match SqlDatePartCapabilityRules.TargetValidationError(
+                              part, providerTool ctx.Provider) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    match ctx.Provider with
+                    | SqlServer ->
+                        wrap ("DATEPART(" + part + ", ") ")" value
+                    | MySql ->
+                        wrap (part + "(") ")" value
+                    | PostgreSql | Oracle ->
+                        wrap ("EXTRACT(" + part + " FROM ") ")" value
+                    | Firebird ->
+                        wrap ("EXTRACT(" + part + " FROM CAST(") " AS DATE))" value
+                    | SQLite ->
+                        let fmt =
+                            match part with
+                            | "YEAR" -> "%Y" | "MONTH" -> "%m"
+                            | "DAY" -> "%d" | "HOUR" -> "%H"
+                            | "MINUTE" -> "%M" | "SECOND" -> "%S"
+                            | "QUARTER" -> "%m"
+                            | _ ->
+                                raise (SqlCompilationException(
+                                    "SQLite does not support date part " + part + "."))
+                        let prefix =
+                            if part = "QUARTER" then
+                                "CAST(((CAST(STRFTIME('" + fmt + "', "
+                            else "CAST(STRFTIME('" + fmt + "', "
+                        let suffix =
+                            if part = "QUARTER" then
+                                ") AS INTEGER) + 2) / 3) AS INTEGER)"
+                            else ") AS INTEGER)"
+                        wrap prefix suffix value
+                | _ ->
+                    // Functions, CASE, windows and Query bodies still have
+                    // their specialized semantic/parameter pathways. Only
+                    // non-compositional leaves are delegated.
+                    append (renderExpr ctx original)
+        output.ToString()
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
