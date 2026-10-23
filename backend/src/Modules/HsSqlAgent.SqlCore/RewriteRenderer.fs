@@ -1228,9 +1228,9 @@ module internal RewriteRenderer =
             // SQLite and Oracle tails are suffixes and can stream safely.
             let tailIsSuffix =
                 not (hasTail current)
-                || match ctx.Provider with
-                   | PostgreSql | MySql | SQLite | Oracle -> true
-                   | SqlServer | Firebird -> false
+                || (match ctx.Provider with
+                    | PostgreSql | MySql | SQLite | Oracle -> true
+                    | SqlServer | Firebird -> false)
             if not head.Ctes.IsEmpty
                || head.DistinctMode <> SelectDistinct.AllRows
                || not head.Joins.IsEmpty
@@ -1277,11 +1277,11 @@ module internal RewriteRenderer =
                 wrapper.Head.Where
                 |> Option.iter (fun predicate ->
                     result.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
-                result.Append(renderOrderClause ctx false wrapper.OrderBy) |> ignore
+                result.Append((renderOrderClause ctx false wrapper.OrderBy) : string) |> ignore
                 if hasTail wrapper then
                     // Only providers with a suffix-only paging contract
                     // can reach here; passing "" avoids copying a prefix.
-                    result.Append(renderPaging ctx wrapper "") |> ignore
+                    result.Append((renderPaging ctx wrapper "") : string) |> ignore
             result.Append(')')
                   .Append(tableAliasPrefix ctx.Provider)
                   .Append(renderAlias ctx.Provider alias)
