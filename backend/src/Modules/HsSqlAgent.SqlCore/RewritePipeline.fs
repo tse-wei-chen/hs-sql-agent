@@ -119,13 +119,17 @@ module internal RewritePipeline =
             options.Source
             |> VerifiedSource.dialect
             |> sourceProvider
-        let bound = parsed |> RewriteBinder.bind sourceProviderType
+        let bound =
+            RewriteResourceBudget.withStage "Binding" SqlDiagnosticStage.Binding (fun () ->
+                parsed |> RewriteBinder.bind sourceProviderType)
         match options.SchemaSnapshot with
         | None -> bound
         | Some snapshot ->
-            bound
-            |> RewriteSchemaValidation.verify sourceProviderType snapshot
-            |> RewriteSchemaTypeValidation.verify sourceProviderType snapshot
+            let checked =
+                RewriteResourceBudget.withStage "SchemaBinding" SqlDiagnosticStage.Binding (fun () ->
+                    RewriteSchemaValidation.verify sourceProviderType snapshot bound)
+            RewriteResourceBudget.withStage "SchemaType" SqlDiagnosticStage.SemanticValidation (fun () ->
+                RewriteSchemaTypeValidation.verify sourceProviderType snapshot checked)
 
     let private finishBound options bound =
         let source = options.Source
@@ -134,29 +138,31 @@ module internal RewritePipeline =
         let sourceSemantics = VerifiedSource.semantics source
         let targetRuntime = VerifiedTarget.runtime target
 
-        bound
-        |> RewriteStages.normalize
-            sourceSemantics.EnforceDialectSyntax
-            sourceDialect
-            targetRuntime
-            sourceSemantics.Expressions.RegexMatch
-            sourceSemantics.Ordering
-            sourceSemantics.MySqlPipes
-            (VerifiedSource.profile source)
-            (VerifiedTarget.profile target)
-        |> RewriteStages.validate
-            options.AllowedTables
-            targetRuntime
-            sourceSemantics.Expressions
-            (VerifiedTarget.expressions target)
-            sourceSemantics.Joins
-            (VerifiedTarget.joins target)
-            (VerifiedTarget.ordering target)
-            sourceSemantics.Dml
-            (VerifiedTarget.dml target)
-            options.ConflictProofs
-        |> RewritePolicy.authorize options.Policy
-        |> renderWithDiagnostic
+        let canonical =
+            RewriteResourceBudget.withStage "Normalization" SqlDiagnosticStage.SemanticValidation (fun () ->
+                RewriteStages.normalize
+                    sourceSemantics.EnforceDialectSyntax
+                    sourceDialect targetRuntime
+                    sourceSemantics.Expressions.RegexMatch
+                    sourceSemantics.Ordering
+                    sourceSemantics.MySqlPipes
+                    (VerifiedSource.profile source)
+                    (VerifiedTarget.profile target)
+                    bound)
+        let validated =
+            RewriteResourceBudget.withStage "Validation" SqlDiagnosticStage.SemanticValidation (fun () ->
+                RewriteStages.validate
+                    options.AllowedTables targetRuntime
+                    sourceSemantics.Expressions (VerifiedTarget.expressions target)
+                    sourceSemantics.Joins (VerifiedTarget.joins target)
+                    (VerifiedTarget.ordering target)
+                    sourceSemantics.Dml (VerifiedTarget.dml target)
+                    options.ConflictProofs canonical)
+        let executable =
+            RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
+                RewritePolicy.authorize options.Policy validated)
+        RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
+            renderWithDiagnostic executable)
 
     let private finish options parsed =
         parsed
@@ -165,27 +171,32 @@ module internal RewritePipeline =
 
     let private parse options sql =
         let source = options.Source
-        RewriteParser.parseForWith
-            (VerifiedSource.semantics source)
-            (VerifiedSource.dialect source)
-            sql
+        RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+            RewriteParser.parseForWith
+                (VerifiedSource.semantics source)
+                (VerifiedSource.dialect source)
+                sql)
 
     let compileParsed options parsed =
-        finish options parsed
+        RewriteResourceBudget.withCompilation (fun () -> finish options parsed)
 
     let compileWithParsed options sql =
-        let parsed = parse options sql
-        parsed, finish options parsed
+        RewriteResourceBudget.withCompilation (fun () ->
+            let parsed = parse options sql
+            parsed, finish options parsed)
 
     let compileWithQueryFacts options sql =
-        let parsed = parse options sql
-        let bound = bind options parsed
-        let facts = RewriteInspection.inspectBound bound
-        try
-            parsed, facts, finishBound options bound
-        with ex ->
-            RewriteInspection.attachToException facts ex
-            reraise()
+        RewriteResourceBudget.withCompilation (fun () ->
+            let parsed = parse options sql
+            let bound = bind options parsed
+            let facts =
+                RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.Binding (fun () ->
+                    RewriteInspection.inspectBound bound)
+            try
+                parsed, facts, finishBound options bound
+            with ex ->
+                RewriteInspection.attachToException facts ex
+                reraise())
 
     let compile options sql =
         compileWithParsed options sql |> snd

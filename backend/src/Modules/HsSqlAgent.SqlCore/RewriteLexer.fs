@@ -160,6 +160,7 @@ module internal RewriteLexer =
                         SqlDiagnosticSpan(offset, 1))))
 
         let add kind start finish =
+            RewriteResourceBudget.checkpoint ()
             if tokens.Count >= MaxTokens then
                 lexicalError
                     "SQL_LEXICAL_TOKEN_LIMIT"

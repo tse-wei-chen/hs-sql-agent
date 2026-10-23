@@ -31,9 +31,11 @@ module internal RewriteStackSafety =
     let inline private enough () = RuntimeHelpers.TryEnsureSufficientExecutionStack()
 
     let parse sourceOffset =
+        RewriteResourceBudget.checkpoint ()
         if not (enough ()) then
             raise (SqlParseException(message, diagnostic SqlDiagnosticStage.Parse sourceOffset))
 
     let compile stage =
+        RewriteResourceBudget.checkpoint ()
         if not (enough ()) then
             raise (SqlCompilationException(message, diagnostic stage -1))

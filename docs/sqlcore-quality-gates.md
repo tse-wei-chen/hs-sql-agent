@@ -944,3 +944,24 @@ fail with the existing typed stack-reserve diagnostic rather than crash.
 This is a **fail-closed fallback**, not proof of stack-independent schema
 validation; replacing remaining recursive Query/Expr/Source calls with
 scope-aware continuation frames remains outstanding.
+
+### Phase budgets, monotonic deadline, and allocation telemetry (PR #300)
+
+The rewrite pipeline now owns one isolated compilation-scope quota. Parser,
+Binder, strict Schema/Type, Normalizer, Validator, Policy, Renderer and the
+inspection path each run within a named stage and publish `StageCompleted`
+events using `DiagnosticListener("HsSqlAgent.SqlCore.Compiler")`. Payload:
+`Stage`, `ElapsedMicroseconds`, `AllocatedBytes`,
+`WorkUnits`, `Success`. It intentionally contains **no SQL text,
+parameters, schema contents or user identifiers**. Allocations are
+**current-thread allocated bytes**, not peak RSS or GC heap retained size.
+
+A stage has an initial ceiling of **8,000,000 deterministic work units**,
+**30 seconds elapsed**, and its compilation attempt has a shared
+**90-second monotonic deadline**. The budget is checked at stage transitions
+and at amortized recursive/token checkpoints (one clock check per 256 units).
+Typed resource errors: `SQL_COMPILER_STAGE_WORK_LIMIT` and
+`SQL_COMPILER_DEADLINE_EXCEEDED`. These are **cooperative** deadlines,
+not preemptive cancellation or database execution timeouts. A CPU-bound
+loop lacking checkpoints is still a known gap. No public ABI or provider
+capability is changed.
