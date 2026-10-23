@@ -443,6 +443,15 @@ published as measured percentages or silently set to 100.
       remain on the existing guarded path. Six-provider 96-level correlated
       ancestor and 48-level unknown-qualifier regressions cover the boundary;
       general mixed Query/Expr/Source continuations remain open.
+- [x] Complete the deterministic native ON CONFLICT arithmetic path's
+      stack-independent AST conversion, portable-conflict capability proof
+      and SQL rendering. `ConflictValue.tryOfExpression/toExpression`,
+      `validateValue`, and `renderConflictValue` now use explicit
+      continuation/work stacks, preserve parentheses, left-to-right
+      literal/parameter order, proposed-column inclusion requirements and
+      fail-closed rejection for unsupported expressions. PostgreSQL/SQLite
+      48/128-operator positives, nested unary/parentheses and 96-level
+      missing-EXCLUDED-column negatives exercise these boundaries.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
