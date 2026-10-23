@@ -86,7 +86,23 @@ public sealed class SqliteMigrationIntegrationTests
                 // Materialize the actual v2 durable-approval schema before
                 // applying the newer v3-compatible migration set.
                 await adminContext.GetService<IMigrator>().MigrateAsync(
-                    "20260905130453_AddDurableDmlApprovals", cancellationToken);
+                    "20261018150000_AddManagementApiKeys", cancellationToken);
+                // Upgrade from the actual last v2.0.6 Admin Store migration,
+                // not only the earlier September durable-approval schema.
+                var managementKey = new ManagementApiKey
+                {
+                    Name = "v2.0.6 preserved operator key",
+                    KeyPrefix = "v2_legacy",
+                    KeyHash = new string('A', 64),
+                    PermissionsJson = "[\\"runtime.read\\"]",
+                    CreatedBy = "v2-operator",
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddYears(1)
+                };
+                adminContext.ManagementApiKeys.Add(managementKey);
+                await adminContext.SaveChangesAsync(cancellationToken);
+                var originalKeyId = managementKey.Id;
+
                 var consumed = NewConsumedApproval("sqlite-v2-upgrade");
                 var pending = NewConsumedApproval("sqlite-v2-pending");
                 pending.Status = "Pending";
@@ -118,6 +134,12 @@ public sealed class SqliteMigrationIntegrationTests
                 await adminContext.Database.MigrateAsync(cancellationToken);
                 var preserved = await adminContext.DmlApprovalRequests
                     .AsNoTracking().SingleAsync(x => x.RequestId == consumed.RequestId, cancellationToken);
+                var preservedKey = await adminContext.ManagementApiKeys.AsNoTracking()
+                    .SingleAsync(x => x.Id == originalKeyId, cancellationToken);
+                Assert.Equal("v2_legacy", preservedKey.KeyPrefix);
+                Assert.Equal(new string('A', 64), preservedKey.KeyHash);
+                Assert.Equal("[\\"runtime.read\\"]", preservedKey.PermissionsJson);
+                Assert.Equal("v2-operator", preservedKey.CreatedBy);
                 Assert.Equal("OutcomeUnknown", preserved.Status);
                 Assert.Equal(consumed.EvidenceFingerprint, preserved.EvidenceFingerprint);
                 Assert.Equal(consumed.ProtectedExecutionPayload, preserved.ProtectedExecutionPayload);

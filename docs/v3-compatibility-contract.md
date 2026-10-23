@@ -51,9 +51,13 @@ feature addition as another major release.
   Store providers now ship a **v3 admission marker migration** that refuses
   Pending/Executing durable approvals; a corresponding startup preflight
   gives a diagnostic before the normal migrator runs. The tests upgrade the
-  v2 durable-approval schema, prove unresolved requests block direct EF
-  migration, and verify consumed evidence survives after explicitly
-  resolving the test fixture. The v3 marker also adds a database-enforced
+  **published v2.0.6 Admin Store migration head** (including Management
+  API Keys), prove unresolved requests block direct EF migration, and verify
+  consumed approval evidence **and existing Management API Key data** survive
+  after explicitly resolving the test fixture. CI also pins the immutable
+  v2.0.6 commit and verifies all historical SQLite/PostgreSQL Admin Store
+  migration files remain byte-identical; old migrations may not be rewritten
+  to manufacture a green upgrade test. The v3 marker also adds a database-enforced
   `AdmissionProtocolVersion` column (old writes default to 0): any
   Pending/Executing INSERT or UPDATE without protocol version 1+ is denied.
   Both providers test that late legacy writes fail, versioned v3 writes

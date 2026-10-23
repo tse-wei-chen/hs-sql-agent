@@ -63,6 +63,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Verify released v2.0.6 Admin Store migration baseline is immutable
+        shell: bash
+        run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
         run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests'
 
