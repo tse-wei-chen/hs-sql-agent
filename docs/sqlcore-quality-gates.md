@@ -336,6 +336,11 @@ published as measured percentages or silently set to 100.
       positive and 23 negative four-dialect grammar cases remain required;
       extra regressions verify deep scalar nesting and hidden duplicate
       subquery references without weakening any binding diagnostics.
+- [x] Convert metadata-backed schema qualified/unqualified column resolution,
+      wildcard source-qualifier lookup and schema-type ancestor-kind resolution
+      to loops. Preserve nearest-scope alias shadowing and ambiguity/fail-closed
+      diagnostics. Nested correlated SELECT positive/negative regressions
+      verify outer-scope resolution at 8/32 layers.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

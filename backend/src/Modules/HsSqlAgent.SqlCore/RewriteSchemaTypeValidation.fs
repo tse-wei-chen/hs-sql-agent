@@ -120,31 +120,41 @@ module internal RewriteSchemaTypeValidation =
           Sources = sources
           Unqualified = sources |> List.collect sourceOutput }
 
-    let rec private kindInScope scope qualifier column =
-        let sources =
-            match qualifier with
-            | None -> scope.Sources
-            | Some value ->
-                scope.Sources
-                |> List.filter (fun source -> List.contains value source.Qualifiers)
-        let hits =
-            match qualifier with
-            | None ->
-                scope.Unqualified
-                |> List.choose (fun (name, kind) ->
-                    if name = column then Some kind else None)
-            | Some _ ->
-                sources
-                |> List.choose (fun source ->
-                    Map.tryFind column source.Kinds |> Option.map typeKnown)
-        match hits with
-        | [ found ] -> found
-        | [] ->
-            match scope.Parent with
-            | Some parent when qualifier.IsNone || sources.IsEmpty ->
-                kindInScope parent qualifier column
-            | _ -> None
-        | _ -> None // The name binder already rejects ambiguous references.
+    let private kindInScope scope qualifier column =
+        let mutable current = Some scope
+        let mutable doneWalking = false
+        let mutable result = None
+        while current.IsSome && not doneWalking do
+            let active = Option.get current
+            let sources =
+                match qualifier with
+                | None -> active.Sources
+                | Some value ->
+                    active.Sources
+                    |> List.filter (fun source -> List.contains value source.Qualifiers)
+            let hits =
+                match qualifier with
+                | None ->
+                    active.Unqualified
+                    |> List.choose (fun (name, kind) ->
+                        if name = column then Some kind else None)
+                | Some _ ->
+                    sources
+                    |> List.choose (fun source ->
+                        Map.tryFind column source.Kinds |> Option.map typeKnown)
+            match hits with
+            | [ found ] ->
+                result <- found
+                doneWalking <- true
+            | [] ->
+                match active.Parent with
+                | Some parent when qualifier.IsNone || sources.IsEmpty ->
+                    current <- Some parent
+                | _ -> doneWalking <- true
+            | _ ->
+                // Name binding rejects ambiguity; no speculative type proof.
+                doneWalking <- true
+        result
 
     let private columnKind catalog scope identifier =
         let parts = Identifier.parts identifier

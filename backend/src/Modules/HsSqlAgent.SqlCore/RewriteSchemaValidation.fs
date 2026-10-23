@@ -92,27 +92,34 @@ module internal RewriteSchemaValidation =
 
     let private countColumn source key = source.Columns |> List.filter ((=) key) |> List.length
 
-    let rec private resolveColumn scope qualifier key span =
-        let matchingSources =
-            match qualifier with
-            | None -> scope.Sources
-            | Some name -> scope.Sources |> List.filter (fun item -> List.contains name item.Qualifiers)
-        let hits =
-            match qualifier with
-            | None -> scope.Unqualified |> List.filter ((=) key) |> List.length
-            | Some _ -> matchingSources |> List.sumBy (fun item -> countColumn item key)
-        if hits > 1 then
-            reject "SQL_SCHEMA_COLUMN_AMBIGUOUS" span (
-                "Column '" + key + "' is ambiguous across the current schema scope.")
-        elif hits = 1 then ()
-        else
-            match qualifier, scope.Parent with
-            | None, Some parent -> resolveColumn parent None key span
-            | Some name, Some parent when matchingSources.IsEmpty ->
-                resolveColumn parent (Some name) key span
-            | _ ->
-                reject "SQL_SCHEMA_COLUMN_NOT_FOUND" span (
-                    "Column '" + key + "' is missing from the resolved schema scope.")
+    // Keep the original nearest-scope and alias-hiding rules without
+    // recursively calling through a chain of correlated SELECT scopes.
+    let private resolveColumn scope qualifier key span =
+        let mutable current = Some scope
+        while current.IsSome do
+            let active = Option.get current
+            let matchingSources =
+                match qualifier with
+                | None -> active.Sources
+                | Some name ->
+                    active.Sources |> List.filter (fun item -> List.contains name item.Qualifiers)
+            let hits =
+                match qualifier with
+                | None -> active.Unqualified |> List.filter ((=) key) |> List.length
+                | Some _ -> matchingSources |> List.sumBy (fun item -> countColumn item key)
+            if hits > 1 then
+                reject "SQL_SCHEMA_COLUMN_AMBIGUOUS" span (
+                    "Column '" + key + "' is ambiguous across the current schema scope.")
+            elif hits = 1 then
+                current <- None
+            else
+                match qualifier, active.Parent with
+                | None, Some parent -> current <- Some parent
+                | Some _, Some parent when matchingSources.IsEmpty ->
+                    current <- Some parent
+                | _ ->
+                    reject "SQL_SCHEMA_COLUMN_NOT_FOUND" span (
+                        "Column '" + key + "' is missing from the resolved schema scope.")
 
     let private column catalog scope span identifier =
         let parts = Identifier.parts identifier
@@ -127,14 +134,19 @@ module internal RewriteSchemaValidation =
                 |> Some
         resolveColumn scope qualifier key span
 
-    let rec private qualifiedSource scope name span =
-        match scope.Sources |> List.filter (fun source -> List.contains name source.Qualifiers) with
-        | [ found ] -> found
-        | [] ->
-            match scope.Parent with
-            | Some parent -> qualifiedSource parent name span
-            | None -> reject "SQL_SCHEMA_QUALIFIER_UNPROVABLE" span ("Unknown table qualifier '" + name + "'.")
-        | _ -> reject "SQL_SCHEMA_QUALIFIER_UNPROVABLE" span ("Ambiguous table qualifier '" + name + "'.")
+    let private qualifiedSource scope name span =
+        let mutable current = Some scope
+        let mutable resolved = None
+        while current.IsSome && resolved.IsNone do
+            let active = Option.get current
+            match active.Sources |> List.filter (fun source -> List.contains name source.Qualifiers) with
+            | [ found ] -> resolved <- Some found
+            | [] -> current <- active.Parent
+            | _ ->
+                reject "SQL_SCHEMA_QUALIFIER_UNPROVABLE" span ("Ambiguous table qualifier '" + name + "'.")
+        match resolved with
+        | Some source -> source
+        | None -> reject "SQL_SCHEMA_QUALIFIER_UNPROVABLE" span ("Unknown table qualifier '" + name + "'.")
 
     let private wildcard catalog scope span qualifier =
         match qualifier with

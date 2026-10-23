@@ -202,6 +202,37 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", ex.Diagnostic?.Code);
     }
 
+    [Theory]
+    [InlineData(8)]
+    [InlineData(32)]
+    public void Postgres_DeepCorrelatedSubqueries_ResolveAncestorSchemaWithoutRecursiveScopeLookup(
+        int depth)
+    {
+        var nested = string.Concat(Enumerable.Repeat(
+            "EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND ", depth))
+            + "u.id = 7" + new string(')', depth);
+        var sql = "SELECT u.id FROM users u WHERE " + nested;
+        var context = Context(SqlAgentToolType.Postgres);
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Contains("EXISTS", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+
+        // An outer alias still resolves, but its missing column must fail
+        // at the original Schema Binding stage, not silently bind locally.
+        var invalidSql = "SELECT u.id FROM users u WHERE "
+            + string.Concat(Enumerable.Repeat(
+                "EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND ", depth))
+            + "u.missing = 7" + new string(')', depth);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalidSql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
+    }
+
     [Fact]
     public void Postgres_SnapshotValidation_RefusesRecursiveCteAndUnprovenProjection()
     {
