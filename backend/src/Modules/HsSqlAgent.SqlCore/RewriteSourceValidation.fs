@@ -28,88 +28,138 @@ module internal RewriteSourceValidation =
         | RejectedCapability rejection ->
             raise (SqlCompilationException(sourceCapabilityMessage rejection))
 
-    let rec private verifySourceRegexExpr regexProof expression =
-        match expression with
-        | Spanned(_, inner) -> verifySourceRegexExpr regexProof inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            verifySourceRegexExpr regexProof amount
-            verifySourceRegexExpr regexProof value
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (verifySourceRegexExpr regexProof)
-            requireSourceRegexCapability regexProof
-        | RegexMatch(value, pattern) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof pattern
-        | PostgresJsonAccess(value, _, _) ->
-            verifySourceRegexExpr regexProof value
-        | Unary(_, operand) -> verifySourceRegexExpr regexProof operand
-        | Binary(_, left, right) ->
-            verifySourceRegexExpr regexProof left
-            verifySourceRegexExpr regexProof right
-        | Like(value, pattern, _, _, _) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof pattern
-        | FunctionCall call ->
-            call.Arguments |> List.iter (verifySourceRegexExpr regexProof)
-        | FilteredAggregate(value, predicate) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof predicate
-        | Windowed(value, window) ->
-            verifySourceRegexExpr regexProof value
-            window.PartitionBy |> List.iter (verifySourceRegexExpr regexProof)
-            window.OrderBy |> List.iter (fun order -> verifySourceRegexExpr regexProof order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            verifySourceRegexExpr regexProof value
-        | SimpleCase(input, branches, fallback) ->
-            verifySourceRegexExpr regexProof input
-            branches |> NonEmpty.iter (fun branch ->
-                verifySourceRegexExpr regexProof branch.Match
-                verifySourceRegexExpr regexProof branch.Result)
-            fallback |> Option.iter (verifySourceRegexExpr regexProof)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                verifySourceRegexExpr regexProof branch.Condition
-                verifySourceRegexExpr regexProof branch.Result)
-            fallback |> Option.iter (verifySourceRegexExpr regexProof)
-        | InList(value, items, _) ->
-            verifySourceRegexExpr regexProof value
-            items |> NonEmpty.iter (verifySourceRegexExpr regexProof)
-        | InSubquery(value, query, _) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexQuery regexProof query
-        | Between(value, lower, upper, _) ->
-            verifySourceRegexExpr regexProof value
-            verifySourceRegexExpr regexProof lower
-            verifySourceRegexExpr regexProof upper
-        | IsNull(value, _) ->
-            verifySourceRegexExpr regexProof value
-        | ScalarSubquery query | Exists(query, _) ->
-            verifySourceRegexQuery regexProof query
+    // Source capability proof is not an AST rewrite. A shared explicit
+    // visitation stack keeps the SQL source's check order without using
+    // CLR call frames proportional to expression/query depth.
+    [<Struct>]
+    type private WalkFrame =
+        | WalkExpr of expression: Expr
+        | WalkQuery of query: Query
+        | WalkSelect of select: Select
+        | WalkSource of source: TableSource
+        | WalkOrder of ordering: OrderBy
+        | WalkAfterCtes of select: Select
+        | WalkAfterRegexArguments
 
-    and private verifySourceRegexSource regexProof source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> verifySourceRegexQuery regexProof query
+    // Regex validation historically ignores aggregate-local ORDER BY on
+    // FunctionCall, whereas raw-source validation explicitly inspects it.
+    // This flag preserves that legacy distinction, rather than silently
+    // widening a security proof during a stack-safety refactor.
+    let private walkSource includeAggregateOrder onExpr onRawRegexDone onSelect onOrder initial =
+        let pending = ResizeArray<WalkFrame>()
+        let inline push frame = pending.Add frame
+        let pushExprs (expressions: Expr list) =
+            let items = List.toArray expressions
+            for index = items.Length - 1 downto 0 do
+                push (WalkExpr items.[index])
+        let pushOrders (orders: OrderBy list) =
+            let items = List.toArray orders
+            for index = items.Length - 1 downto 0 do
+                push (WalkOrder items.[index])
+        push initial
+        while pending.Count > 0 do
+            let index = pending.Count - 1
+            let frame = pending.[index]
+            pending.RemoveAt index
+            match frame with
+            | WalkExpr expr ->
+                onExpr expr
+                match expr with
+                | Spanned(_, value) -> push (WalkExpr value)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | RegexMatch(left, right)
+                | FilteredAggregate(left, right) | Like(left, right, _, _, _) ->
+                    push (WalkExpr right)
+                    push (WalkExpr left)
+                | Unary(_, value) | Cast(value, _) | Extract(_, value)
+                | PostgresJsonAccess(value, _, _) | IsNull(value, _) ->
+                    push (WalkExpr value)
+                | RawRegexCall(args, _) ->
+                    push WalkAfterRegexArguments
+                    pushExprs args
+                | FunctionCall call ->
+                    if includeAggregateOrder then pushOrders call.AggregateOrderBy
+                    pushExprs call.Arguments
+                | Windowed(value, window) ->
+                    pushOrders window.OrderBy
+                    pushExprs window.PartitionBy
+                    push (WalkExpr value)
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (WalkExpr value))
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push (WalkExpr branch.Result)
+                        push (WalkExpr branch.Match)) branches
+                    push (WalkExpr input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (WalkExpr value))
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push (WalkExpr branch.Result)
+                        push (WalkExpr branch.Condition)) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (fun item -> push (WalkExpr item)) items
+                    push (WalkExpr value)
+                | InSubquery(value, query, _) ->
+                    push (WalkQuery query)
+                    push (WalkExpr value)
+                | Between(value, lower, upper, _) ->
+                    push (WalkExpr upper)
+                    push (WalkExpr lower)
+                    push (WalkExpr value)
+                | ScalarSubquery query | Exists(query, _) -> push (WalkQuery query)
+            | WalkAfterRegexArguments -> onRawRegexDone ()
+            | WalkOrder order ->
+                onOrder order
+                push (WalkExpr order.Expression)
+            | WalkSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (WalkQuery query)
+            | WalkQuery query ->
+                pushOrders query.OrderBy
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (WalkQuery branches.[index].Query)
+                push (WalkSelect query.Head)
+            | WalkSelect select ->
+                push (WalkAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (WalkQuery ctes.[index].Query)
+            | WalkAfterCtes select ->
+                onSelect select
+                select.Having |> Option.iter (fun value -> push (WalkExpr value))
+                pushExprs select.GroupBy
+                select.Where |> Option.iter (fun value -> push (WalkExpr value))
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> push (WalkExpr predicate)
+                    | None -> ()
+                    push (WalkSource joins.[index].Source)
+                select.From |> Option.iter (fun value -> push (WalkSource value))
+                NonEmpty.iterReverse (fun item ->
+                    push (WalkExpr item.Expression)) select.ProjectionItems
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (fun value -> push (WalkExpr value)) values
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
 
-    and private verifySourceRegexSelect regexProof select =
-        select.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
-        iterDistinctOn (verifySourceRegexExpr regexProof) select
-        select.Projection |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
-        select.From |> Option.iter (verifySourceRegexSource regexProof)
-        select.Joins |> List.iter (fun join ->
-            verifySourceRegexSource regexProof join.Source
-            join.Predicate |> Option.iter (verifySourceRegexExpr regexProof))
-        select.Where |> Option.iter (verifySourceRegexExpr regexProof)
-        select.GroupBy |> List.iter (verifySourceRegexExpr regexProof)
-        select.Having |> Option.iter (verifySourceRegexExpr regexProof)
+    let private verifyRegexWalk regexProof frame =
+        walkSource false ignore
+            (fun () -> requireSourceRegexCapability regexProof)
+            ignore ignore frame
 
-    and private verifySourceRegexQuery regexProof query =
-        verifySourceRegexSelect regexProof query.Head
-        query.SetOperations |> List.iter (fun branch -> verifySourceRegexQuery regexProof branch.Query)
-        query.OrderBy |> List.iter (fun order -> verifySourceRegexExpr regexProof order.Expression)
+    let private verifySourceRegexExpr regexProof expression =
+        verifyRegexWalk regexProof (WalkExpr expression)
+
+    let private verifySourceRegexSource regexProof source =
+        verifyRegexWalk regexProof (WalkSource source)
+
+    let private verifySourceRegexQuery regexProof query =
+        verifyRegexWalk regexProof (WalkQuery query)
 
     let verifyRegexDocument regexProof document =
         match document.Statement with
@@ -194,120 +244,38 @@ module internal RewriteSourceValidation =
             | null -> ()
             | message -> compilationError message
 
-    let rec private validateRawSourceExpr source orderingProofs mySqlPipes expression =
-        validateRawSourceFunction source expression
-        match expression with
-        | Spanned(_, inner) -> validateRawSourceExpr source orderingProofs mySqlPipes inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes amount
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | Unary(_, operand) -> validateRawSourceExpr source orderingProofs mySqlPipes operand
-        | Binary(BinaryOperator.Concat, left, right) ->
-            validateRawConcat source mySqlPipes
-            validateRawSourceExpr source orderingProofs mySqlPipes left
-            validateRawSourceExpr source orderingProofs mySqlPipes right
-        | Binary(BinaryOperator.Modulo, left, right) ->
-            match SqlModuloCapabilityRules.SourceValidationError(source) with
-            | null -> ()
-            | message -> compilationError message
-            validateRawSourceExpr source orderingProofs mySqlPipes left
-            validateRawSourceExpr source orderingProofs mySqlPipes right
-        | Binary(_, left, right) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes left
-            validateRawSourceExpr source orderingProofs mySqlPipes right
-        | Like(value, pattern, _, _, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | RegexMatch(value, pattern) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | FunctionCall call ->
-            call.Arguments |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                validateRawSourceOrder orderingProofs order
-                validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes predicate
-        | Windowed(value, window) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            window.PartitionBy |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-            window.OrderBy
-            |> List.iter (fun order ->
-                validateRawSourceOrder orderingProofs order
-                validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
-        | Cast(value, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | Extract(_, value) ->
-            match SqlExtractSourceCapabilityRules.SourceValidationError(source) with
-            | null -> ()
-            | message -> compilationError message
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | SimpleCase(input, branches, fallback) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes input
-            branches |> NonEmpty.iter (fun branch ->
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Match
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Result)
-            fallback |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Condition
-                validateRawSourceExpr source orderingProofs mySqlPipes branch.Result)
-            fallback |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | InList(value, items, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            items |> NonEmpty.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        | InSubquery(value, query, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceQuery source orderingProofs mySqlPipes query
-        | Between(value, lower, upper, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-            validateRawSourceExpr source orderingProofs mySqlPipes lower
-            validateRawSourceExpr source orderingProofs mySqlPipes upper
-        | IsNull(value, _) ->
-            validateRawSourceExpr source orderingProofs mySqlPipes value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateRawSourceQuery source orderingProofs mySqlPipes query
+    let private validateRawWalk source orderingProofs mySqlPipes frame =
+        let onExpr expression =
+            validateRawSourceFunction source expression
+            match expression with
+            | Binary(BinaryOperator.Concat, _, _) -> validateRawConcat source mySqlPipes
+            | Binary(BinaryOperator.Modulo, _, _) ->
+                match SqlModuloCapabilityRules.SourceValidationError(source) with
+                | null -> ()
+                | message -> compilationError message
+            | Extract _ ->
+                match SqlExtractSourceCapabilityRules.SourceValidationError(source) with
+                | null -> ()
+                | message -> compilationError message
+            | _ -> ()
+        let onSelect select =
+            match select.DistinctMode with
+            | SelectDistinct.DistinctOn _ ->
+                match SqlDistinctOnCapabilityRules.SourceValidationError(source) with
+                | null -> ()
+                | message -> compilationError message
+            | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+        walkSource true onExpr ignore onSelect
+            (validateRawSourceOrder orderingProofs) frame
 
-    and private validateRawSourceTable source orderingProofs mySqlPipes table =
-        match table with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> validateRawSourceQuery source orderingProofs mySqlPipes query
+    let private validateRawSourceExpr source orderingProofs mySqlPipes expression =
+        validateRawWalk source orderingProofs mySqlPipes (WalkExpr expression)
 
-    and private validateRawSourceSelect source orderingProofs mySqlPipes select =
-        select.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
-        match select.DistinctMode with
-        | SelectDistinct.DistinctOn _ ->
-            match SqlDistinctOnCapabilityRules.SourceValidationError(source) with
-            | null -> ()
-            | message -> compilationError message
-        | SelectDistinct.AllRows
-        | SelectDistinct.DistinctRows -> ()
-        iterDistinctOn (validateRawSourceExpr source orderingProofs mySqlPipes) select
-        select.Projection |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
-        select.From |> Option.iter (validateRawSourceTable source orderingProofs mySqlPipes)
-        select.Joins |> List.iter (fun join ->
-            validateRawSourceTable source orderingProofs mySqlPipes join.Source
-            join.Predicate |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes))
-        select.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        select.GroupBy |> List.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
-        select.Having |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)
+    let private validateRawSourceTable source orderingProofs mySqlPipes table =
+        validateRawWalk source orderingProofs mySqlPipes (WalkSource table)
 
-    and private validateRawSourceQuery source orderingProofs mySqlPipes query =
-        validateRawSourceSelect source orderingProofs mySqlPipes query.Head
-        query.SetOperations |> List.iter (fun branch -> validateRawSourceQuery source orderingProofs mySqlPipes branch.Query)
-        query.OrderBy
-        |> List.iter (fun order ->
-            validateRawSourceOrder orderingProofs order
-            validateRawSourceExpr source orderingProofs mySqlPipes order.Expression)
+    let private validateRawSourceQuery source orderingProofs mySqlPipes query =
+        validateRawWalk source orderingProofs mySqlPipes (WalkQuery query)
 
     let validateRawDocument source orderingProofs mySqlPipes document =
         match document.Statement with
