@@ -1177,3 +1177,16 @@ limits, a nested DML batch shares the outer budget, and failure does not
 leak state into the following request. The telemetry regression now
 requires public parsing and batch-splitting stage events alongside the
 ordinary compiler/inspection stages.
+
+### Derived-table strict Schema/Type Query continuations
+
+For an uncorrelated, single-source derived-table chain without JOIN,
+CTE at the same level or SET branches, the name and type proof walkers
+now unwind **heap query frames** rather than recurring
+`Query -> Source -> Query`. Each continuation rehydrates the nested
+column names/type families under the declared alias, then validates the
+outer projection, WHERE, GROUP, HAVING and ORDER BY against the original
+correlation parent. Ordinary derived-table alias hiding is preserved.
+Six-provider existing positive name/type regression depths were raised
+from 64 to **256 levels**. LATERAL, JOIN, mixed SET and complex nested
+subquery graphs deliberately remain on guarded full-proof paths.

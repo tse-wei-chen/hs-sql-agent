@@ -211,6 +211,10 @@ module internal RewriteSchemaTypeValidation =
         | FinishTypedUnary of Span * UnaryOperator
         | FinishTypedBinary of Span * BinaryOperator
 
+    type private TypedQueryFrame =
+        | ResumeTypedCte of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * Cte
+        | ResumeTypedDerived of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * IdentifierPart
+
     let rec private expression catalog ctes scope span expr =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let evaluate = expression catalog ctes scope Span.unknown
@@ -411,10 +415,7 @@ module internal RewriteSchemaTypeValidation =
     // recursive fallback.
     and private queryTypes catalog inheritedCtes parent (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        let pending =
-            ResizeArray<struct (
-                Map<string, (string * SqlSchemaValueKind option) list>
-                * Scope option * Query * Cte)>()
+        let pending = ResizeArray<TypedQueryFrame>()
         let mutable current = query
         let mutable currentParent = parent
         let mutable scanning = true
@@ -422,26 +423,43 @@ module internal RewriteSchemaTypeValidation =
             RewriteResourceBudget.checkpoint ()
             match current.Head.Ctes, current.SetOperations with
             | [ cte ], [] when not cte.RecursiveScope ->
-                pending.Add(struct (inheritedCtes, currentParent, current, cte))
+                pending.Add(ResumeTypedCte(inheritedCtes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
+            | [], [] when current.Head.Joins.IsEmpty ->
+                match current.Head.From with
+                | Some (DerivedTable(inner, alias)) ->
+                    pending.Add(ResumeTypedDerived(inheritedCtes, currentParent, current, alias))
+                    current <- inner
+                    currentParent <- None
+                | _ -> scanning <- false
             | _ -> scanning <- false
 
         let mutable projected = queryTypesOne catalog inheritedCtes currentParent current
         for index = pending.Count - 1 downto 0 do
             RewriteResourceBudget.checkpoint ()
-            let struct (inherited, originalParent, outer, cte) = pending.[index]
-            let names =
-                if cte.ColumnAliases.IsEmpty then projected |> List.map fst
-                else cte.ColumnAliases
-                     |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
-            let typed =
-                List.zip names (projected |> List.map snd)
-                |> List.choose (fun (name, kind) ->
-                    name |> Option.map (fun value -> value, kind))
-            let visible = Map.add (keyPart catalog.Dialect cte.Name) typed inherited
-            let stripped = { outer with Head = { outer.Head with Ctes = [] } }
-            projected <- queryTypesOne catalog visible originalParent stripped
+            match pending.[index] with
+            | ResumeTypedCte(inherited, originalParent, outer, cte) ->
+                let names =
+                    if cte.ColumnAliases.IsEmpty then projected |> List.map fst
+                    else cte.ColumnAliases
+                         |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+                let typed =
+                    List.zip names (projected |> List.map snd)
+                    |> List.choose (fun (name, kind) ->
+                        name |> Option.map (fun value -> value, kind))
+                let visible = Map.add (keyPart catalog.Dialect cte.Name) typed inherited
+                let stripped = { outer with Head = { outer.Head with Ctes = [] } }
+                projected <- queryTypesOne catalog visible originalParent stripped
+            | ResumeTypedDerived(inherited, originalParent, outer, alias) ->
+                let columns =
+                    projected |> List.choose (fun (name, kind) ->
+                        name |> Option.map (fun value -> value, kind))
+                let source = sourceAlias catalog alias columns
+                let _, result =
+                    queryTypesHeadWithFirst catalog inherited originalParent
+                        outer (Some source)
+                projected <- result
         projected
 
     and private queryTypesOne catalog inheritedCtes parent (query: Query) =
@@ -480,6 +498,9 @@ module internal RewriteSchemaTypeValidation =
         !result
 
     and private queryTypesHead catalog inheritedCtes parent (query: Query) =
+        queryTypesHeadWithFirst catalog inheritedCtes parent query None
+
+    and private queryTypesHeadWithFirst catalog inheritedCtes parent (query: Query) firstOverride =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let mutable ctes = inheritedCtes
         // Sequential visibility follows the already validated CTE lexical scope.
@@ -494,9 +515,12 @@ module internal RewriteSchemaTypeValidation =
             ctes <- Map.add (keyPart catalog.Dialect cte.Name) typed ctes
 
         let initial =
-            match query.Head.From with
-            | None -> makeScope parent []
-            | Some table -> makeScope parent [ tableSource catalog ctes parent table ]
+            match firstOverride with
+            | Some resolved -> makeScope parent [ resolved ]
+            | None ->
+                match query.Head.From with
+                | None -> makeScope parent []
+                | Some table -> makeScope parent [ tableSource catalog ctes parent table ]
         let mutable scope = initial
         for join in query.Head.Joins do
             let sourceParent =

@@ -161,6 +161,10 @@ module internal RewriteSchemaValidation =
         | VisitSchemaExpr of Span * Expr
         | VisitSchemaQuery of Query
 
+    type private SchemaQueryFrame =
+        | ResumeSchemaCte of Map<string, string list> * Scope option * Query * Cte
+        | ResumeSchemaDerived of Map<string, string list> * Scope option * Query * Span * IdentifierPart
+
     let rec private expression catalog ctes scope span expr =
         let pending = ResizeArray<SchemaExprFrame>()
         let inline push span expression = pending.Add(VisitSchemaExpr(span, expression))
@@ -251,6 +255,9 @@ module internal RewriteSchemaValidation =
         names
 
     and private selectColumns catalog inheritedCtes parent (select: Select) =
+        selectColumnsWithFirst catalog inheritedCtes parent select None
+
+    and private selectColumnsWithFirst catalog inheritedCtes parent (select: Select) firstOverride =
         let mutable ctes = inheritedCtes
         for cte in select.Ctes do
             if cte.RecursiveScope then
@@ -267,9 +274,12 @@ module internal RewriteSchemaValidation =
             ctes <- Map.add (keyPart catalog.Dialect cte.Name) names ctes
 
         let first =
-            match select.From with
-            | None -> makeScope parent []
-            | Some item -> makeScope parent [ source catalog ctes parent item ]
+            match firstOverride with
+            | Some resolved -> makeScope parent [ resolved ]
+            | None ->
+                match select.From with
+                | None -> makeScope parent []
+                | Some item -> makeScope parent [ source catalog ctes parent item ]
         let mutable current = first
         for join in select.Joins do
             let sourceParent =
@@ -338,7 +348,7 @@ module internal RewriteSchemaValidation =
     // Multi-CTE, SET and derived-source shapes use the full proof path.
     and private queryColumns catalog ctes parent (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.Binding
-        let pending = ResizeArray<struct (Map<string, string list> * Scope option * Query * Cte)>()
+        let pending = ResizeArray<SchemaQueryFrame>()
         let mutable current = query
         let mutable currentParent = parent
         let mutable scanning = true
@@ -346,31 +356,49 @@ module internal RewriteSchemaValidation =
             RewriteResourceBudget.checkpoint ()
             match current.Head.Ctes, current.SetOperations with
             | [ cte ], [] when not cte.RecursiveScope ->
-                pending.Add(struct (ctes, currentParent, current, cte))
+                pending.Add(ResumeSchemaCte(ctes, currentParent, current, cte))
                 current <- cte.Query
-                // A CTE body does not inherit the caller's correlated scope.
                 currentParent <- None
+            | [], [] when current.Head.Joins.IsEmpty ->
+                match current.Head.From with
+                | Some (DerivedTable(inner, alias)) ->
+                    pending.Add(ResumeSchemaDerived(
+                        ctes, currentParent, current, inner.Span, alias))
+                    current <- inner
+                    // Ordinary derived sources never inherit outer correlation.
+                    currentParent <- None
+                | _ -> scanning <- false
             | _ -> scanning <- false
 
         let mutable projected = queryColumnsSingle catalog ctes currentParent current
         for index = pending.Count - 1 downto 0 do
             RewriteResourceBudget.checkpoint ()
-            let struct (inherited, originalParent, outer, cte) = pending.[index]
-            let names =
-                match cte.ColumnAliases with
-                | [] -> requireNamedProjection cte.Span projected
-                | aliases when aliases.Length = projected.Length ->
-                    aliases |> List.map (keyPart catalog.Dialect)
-                | _ ->
-                    reject "SQL_SCHEMA_SHAPE_UNPROVABLE" cte.Span
-                        "CTE projection and column-alias widths differ."
-            let visible = Map.add (keyPart catalog.Dialect cte.Name) names inherited
-            let withoutCte = { outer.Head with Ctes = [] }
-            let scope, afterCtes, columns =
-                selectColumns catalog visible originalParent withoutCte
-            outer.OrderBy |> List.iter (fun item ->
-                expression catalog afterCtes scope Span.unknown item.Expression)
-            projected <- columns
+            match pending.[index] with
+            | ResumeSchemaCte(inherited, originalParent, outer, cte) ->
+                let names =
+                    match cte.ColumnAliases with
+                    | [] -> requireNamedProjection cte.Span projected
+                    | aliases when aliases.Length = projected.Length ->
+                        aliases |> List.map (keyPart catalog.Dialect)
+                    | _ ->
+                        reject "SQL_SCHEMA_SHAPE_UNPROVABLE" cte.Span
+                            "CTE projection and column-alias widths differ."
+                let visible = Map.add (keyPart catalog.Dialect cte.Name) names inherited
+                let withoutCte = { outer.Head with Ctes = [] }
+                let scope, afterCtes, columns =
+                    selectColumns catalog visible originalParent withoutCte
+                outer.OrderBy |> List.iter (fun item ->
+                    expression catalog afterCtes scope Span.unknown item.Expression)
+                projected <- columns
+            | ResumeSchemaDerived(inherited, originalParent, outer, innerSpan, alias) ->
+                let columns = requireNamedProjection innerSpan projected
+                let resolved = aliasedSource catalog.Dialect alias columns
+                let scope, visibleCtes, output =
+                    selectColumnsWithFirst catalog inherited originalParent
+                        outer.Head (Some resolved)
+                outer.OrderBy |> List.iter (fun item ->
+                    expression catalog visibleCtes scope Span.unknown item.Expression)
+                projected <- output
         projected
 
     and private queryColumnsSingle catalog ctes parent (query: Query) =

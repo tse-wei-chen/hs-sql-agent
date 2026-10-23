@@ -115,7 +115,7 @@ public sealed class CoreSchemaSnapshotBindingTests
         // Query -> derived Source -> Query must run the stack-reserve
         // check at each boundary, even with only terminal Column expressions.
         var query = "SELECT id FROM users";
-        for (var depth = 0; depth < 64; depth++)
+        for (var depth = 0; depth < 256; depth++)
             query = $"SELECT d.id FROM ({query}) d";
 
         var compiled = SqlCoreFacade.CompileQuery(
