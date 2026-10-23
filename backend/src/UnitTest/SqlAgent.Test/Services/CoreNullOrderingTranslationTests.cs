@@ -146,6 +146,19 @@ public class CoreNullOrderingTranslationTests
     }
 
     [Fact]
+    public void Compile_ScalarSubqueryComputedInverseNullOrdering_StillFailsClosed()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "SELECT (SELECT id FROM users "
+            + "ORDER BY LOWER(name) ASC NULLS LAST LIMIT 1) FROM users",
+            SqlAgentToolType.Postgres,
+            SqlAgentToolType.MySQL));
+
+        Assert.Contains("ordering.nulls", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_InsertSelectDefaultEquivalentNullOrdering_UsesSharedDmlRewrite()
     {
         var parsed = CoreSqlTextParser.ParseDml(

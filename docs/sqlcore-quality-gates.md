@@ -386,6 +386,13 @@ published as measured percentages or silently set to 100.
       preserving clause context, projection-width checks and error order.
       Six-provider nested scalar + set-width fail-closed tests and aggregate
       placement regressions are required for acceptance.
+- [x] Replace ordering/paging capability Expr/Query/Source recursion with
+      explicit frames. 256-KiB probe artifact identified the previous
+      `proveOrderingExpr` recursion as the exact cause of 8 left-deep AND
+      worker StackOverflows (4 dialects × 2 depths); preserve statement-tail
+      vs aggregate/window-local NULL ordering checks and existing error
+      precedence. Positive six-dialect deep-predicate and negative nested
+      computed NULLS ordering tests cover this new boundary.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

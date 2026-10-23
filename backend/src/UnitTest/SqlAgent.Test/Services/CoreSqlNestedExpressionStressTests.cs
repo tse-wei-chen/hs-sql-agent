@@ -186,6 +186,24 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void OrderingCapabilityProof_WithDeepPredicate_RemainsStackIndependent(
+        SqlAgentToolType dialect)
+    {
+        // The capability proof must visit WHERE even when no ORDER BY exists.
+        // A deep predicate previously exhausted a 256 KiB execution stack in
+        // proveOrderingExpr rather than rejecting safely.
+        var sql = "SELECT id FROM users WHERE "
+            + string.Join(" AND ", Enumerable.Repeat("id = 7", 128));
+        var command = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-ordering-proof-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(command.Sql);
+        Assert.Equal(128, command.Parameters.Length);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {
