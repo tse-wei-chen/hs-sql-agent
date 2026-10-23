@@ -182,6 +182,63 @@ public sealed class CoreDmlReturningExpressionTests
         Assert.Equal(2L, Convert.ToInt64(command.Parameters[1].Value));
     }
 
+    [Theory]
+    [InlineData(32)]
+    [InlineData(128)]
+    public void Compile_DeepRichReturningArithmetic_ProvesEveryScalarAndPreservesBindings(
+        int depth)
+    {
+        // RETURNING permits only the proven target-row scalar subset.
+        // Arithmetic trees previously consumed one CLR frame per Binary.
+        var arithmetic = "id" + string.Concat(Enumerable.Repeat(" + 1", depth));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING " + arithmetic + " AS calculated",
+            SqlAgentToolType.Postgres);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("returning-iterative-arithmetic-v1"));
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(depth + 1, command.Parameters.Length);
+        Assert.All(command.Parameters, parameter =>
+            Assert.Equal(1L, Convert.ToInt64(parameter.Value)));
+    }
+
+    [Fact]
+    public void Compile_DeepReturningCasePredicate_StillAdmitsOnlyProvenLocalRowSubset()
+    {
+        var condition = string.Join(" AND ", Enumerable.Repeat("id > 0", 64));
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING "
+            + "CASE WHEN " + condition + " THEN id + 1 ELSE id - 1 END AS result",
+            SqlAgentToolType.Postgres);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("returning-iterative-case-v1"));
+
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_DeepRichReturning_WithHiddenAggregate_StillFailsClosed()
+    {
+        var arithmetic = "id" + string.Concat(Enumerable.Repeat(" + id", 64))
+            + " + SUM(id)";
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users WHERE id = 1 RETURNING " + arithmetic,
+            SqlAgentToolType.Postgres);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("returning-iterative-negative-v1")));
+
+        Assert.Contains("SUM", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("fail-closed", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_DirectPortableScalarFunctionReturning_IsAllowed()
     {

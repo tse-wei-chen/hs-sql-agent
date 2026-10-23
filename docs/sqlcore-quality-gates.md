@@ -400,6 +400,13 @@ published as measured percentages or silently set to 100.
       24-branch six-provider CTE/parameter ordering and wrong-branch-alias
       negative tests guard these contracts. Scalar/derived-subquery binding
       still crosses a recursive Query callback and is not yet stack independent.
+- [x] Convert DML rich RETURNING subset proof from mutually recursive
+      Scalar/Predicate validation to one typed continuation stack. It retains
+      strict local-row bindings, direct portable scalar-function checks,
+      CASE condition/result context separation, nested Boolean/comparison
+      gates, and fail-closed rejection of aggregates and subqueries.
+      Deep 32/128 arithmetic, 64-predicate CASE and hidden aggregate
+      negative regression tests exercise the previously recursive paths.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
