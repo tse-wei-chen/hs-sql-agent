@@ -1176,10 +1176,36 @@ module internal RewriteRenderer =
             ctes
             |> List.iteri (fun index cte ->
                 if index > 0 then result.Append(", ") |> ignore
-                result.Append(renderAlias ctx.Provider cte.Name)
-                      .Append(" AS (")
-                      .Append((renderCteQuery ctx cte.Query) : string)
-                      .Append(')') |> ignore)
+                result.Append(renderAlias ctx.Provider cte.Name).Append(" AS (") |> ignore
+
+                // Streaming one-CTE nesting is crucial: each nested CTE body
+                // used to render to a complete string before its parent,
+                // allocating O(depth^2) SQL text. Keep Query tails, SET,
+                // recursive scopes and multi-CTE bodies on the full path.
+                let nested = ResizeArray<Query>()
+                let mutable current = cte.Query
+                let mutable walking = true
+                while walking do
+                    RewriteResourceBudget.checkpoint ()
+                    match current.Head.Ctes with
+                    | [ innerCte ] when not innerCte.RecursiveScope
+                                        && current.SetOperations.IsEmpty
+                                        && not (hasTail current) ->
+                        result.Append("WITH ")
+                              .Append(renderAlias ctx.Provider innerCte.Name)
+                              .Append(" AS (") |> ignore
+                        nested.Add(current)
+                        current <- innerCte.Query
+                    | _ -> walking <- false
+
+                result.Append((renderCteQuery ctx current) : string) |> ignore
+                for nesting = nested.Count - 1 downto 0 do
+                    result.Append(") ") |> ignore
+                    let query = nested.[nesting]
+                    result.Append(
+                        (renderSelectBody ctx { query.Head with Ctes = [] }) : string)
+                    |> ignore
+                result.Append(')') |> ignore)
             result.Append(' ').ToString()
 
     and private renderSource (ctx: RenderContext) source =

@@ -599,6 +599,23 @@ public sealed class CoreSqlNestedExpressionStressTests
             command.Sql.Split("EXISTS (", StringSplitOptions.None).Length - 1);
     }
 
+    [Fact]
+    public void DeepNestedCte_StreamsIntoSingleBoundedEmitter()
+    {
+        const int depth = 128;
+        var query = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            query = $"WITH c AS ({query}) SELECT id FROM c";
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("nested-cte-render-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(compiled.Sql);
+        Assert.Equal(depth,
+            compiled.Sql.Split("WITH ", StringSplitOptions.None).Length - 1);
+    }
+
     [Theory]
     [MemberData(nameof(SourceDialects))]
     public void DerivedTableChain_StreamsWithoutRecursiveQueryMaterialization(

@@ -1025,3 +1025,16 @@ Parsing, Binding, Normalization and Inspection stages. This preserves
 existing capability behavior and diagnostics while accounting for work
 entered through public inspection APIs. Recursive F# structural formatting
 in the determinism fingerprint remains an outstanding resource hot path.
+
+### Nested CTE output-memory regression
+
+The CTE emitter now consumes a chain of single, nonrecursive nested CTE
+definitions on one bounded output buffer. It streams the deepest body once,
+then closes inner-to-outer CTE tails; target-specific alias spellings and
+parameter allocation order follow the previous sequential render path.
+Richer recursive, multiple-CTE, SET and paging forms preserve the
+provider-specific fallback. The initial isolated 2,048-nested-CTE
+benchmark measured **474,123,528 rendering-stage allocated bytes**
+(**505,890,832 total**), compared with **28,678,992 total** for simple
+2,048 nested derived queries; the new optimization must be checked against
+the exact same before/after benchmark before promoting a CI ceiling.
