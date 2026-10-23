@@ -104,6 +104,14 @@ module internal RewriteLexer =
     [<Literal>]
     let MaxTokens = 131072 // non-End lexical tokens
 
+    // A generous structural safety ceiling, deliberately 4x the 2,048-deep
+    // six-provider CI corpus. This is NOT an arbitrary per-expression AST
+    // limit: unary/Boolean iteration is independent of parenthesis depth.
+    // It bounds pathological recursive Query/Source grammar shapes that
+    // still need heap/CPU work after their syntax has become stack-safe.
+    [<Literal>]
+    let MaxGroupingNesting = 8192
+
     let tokenizeWith semantics (sql: string) =
         if Object.ReferenceEquals(sql, null) then nullArg "sql"
         let length = sql.Length
@@ -111,6 +119,7 @@ module internal RewriteLexer =
         let mutable i = 0
         let mutable groupingDepth = 0
         let mutable outermostOpen = -1
+        let mutable overNestingAt = -1
 
         let lexicalError code message start spanLength : 'T =
             let spanLength = max 1 spanLength
@@ -132,6 +141,24 @@ module internal RewriteLexer =
                  + " UTF-16 code units.")
                 MaxSqlSourceLength 1
 
+        // Distinguish resource exhaustion from malformed syntax. A
+        // balanced but oversized query reports Resource with the first
+        // over-limit opening delimiter's source span.
+        let nestingResourceError offset : 'T =
+            let detail =
+                "SQL grouping nesting exceeds the maximum "
+                + string MaxGroupingNesting
+                + " parenthesis levels. Position " + string offset + "."
+            raise (
+                SqlParseException(
+                    detail,
+                    SqlDiagnostic(
+                        "SQL_LEXICAL_NESTING_LIMIT",
+                        SqlDiagnosticStage.Lexical,
+                        SqlDiagnosticCategory.Resource,
+                        detail,
+                        SqlDiagnosticSpan(offset, 1))))
+
         let add kind start finish =
             if tokens.Count >= MaxTokens then
                 lexicalError
@@ -139,13 +166,15 @@ module internal RewriteLexer =
                     ("SQL text exceeds the maximum " + string MaxTokens + " lexical tokens.")
                     start (finish - start)
 
-            // A malformed input with tens of thousands of unmatched open
-            // parentheses must never enter recursive-descent parsing.
-            // This is a grammatical balance check, not a depth limit.
+            // Preserve the original unmatched-parentheses diagnostic
+            // precedence. Depth is checked after complete lexical balance,
+            // while overNestingAt records the first excessive open token.
             match kind with
             | Symbol '(' ->
                 if groupingDepth = 0 then outermostOpen <- start
                 groupingDepth <- groupingDepth + 1
+                if groupingDepth > MaxGroupingNesting && overNestingAt < 0 then
+                    overNestingAt <- start
             | Symbol ')' ->
                 if groupingDepth = 0 then
                     lexicalError
@@ -554,6 +583,11 @@ module internal RewriteLexer =
                 "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
                 "SQL text ends with an opening parenthesis that has no matching closing parenthesis."
                 outermostOpen 1
+
+        // Malformed grouping remains a Syntax error, even if the malformed
+        // text also exceeded the resource ceiling (e.g. 25,000 unmatched
+        // opens). Only balanced, excessively nested SQL is Resource.
+        if overNestingAt >= 0 then nestingResourceError overNestingAt
 
         tokens.Add({ Kind = End; Start = length; Length = 0 })
         tokens |> Seq.toList

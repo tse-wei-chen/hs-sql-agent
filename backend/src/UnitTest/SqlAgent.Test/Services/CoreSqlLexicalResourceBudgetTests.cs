@@ -48,6 +48,55 @@ public sealed class CoreSqlLexicalResourceBudgetTests
         Assert.Equal(SqlDiagnosticCategory.Syntax, error.Diagnostic.Category);
     }
 
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void BalancedNestingBeyondEightThousandLevels_FailsWithTypedResourceDiagnostic(
+        SqlAgentToolType dialect)
+    {
+        // Well below existing source length/token budgets: only the
+        // independent *structural* budget may reject this input.
+        const int permittedDepth = 8_192;
+        var sql = "SELECT " + new string('(', permittedDepth + 1)
+            + "1" + new string(')', permittedDepth + 1);
+        var error = Assert.Throws<SqlParseException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect,
+                new SqlPlanValidationContext("nesting-budget-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Equal("SQL_LEXICAL_NESTING_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Lexical, error.Diagnostic?.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+        Assert.Equal("SELECT ".Length + permittedDepth, error.Diagnostic?.Span?.Start);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void ParensInsideQuotedSqlLiteral_DoNotUseStructuralBudget(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT '" + new string('(', 8_193) + "'";
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("nesting-budget-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void BalancedDepthTwoThousandFortyEight_RemainsAccepted(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 2_048;
+        var sql = "SELECT " + new string('(', depth) + "1" + new string(')', depth);
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("nesting-budget-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+    }
+
     [Fact]
     public void NormalSql_IsNotAffectedByResourceBudgets()
     {

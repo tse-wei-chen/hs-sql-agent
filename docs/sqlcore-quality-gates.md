@@ -265,6 +265,21 @@ published as measured percentages or silently set to 100.
 - [x] Add fail-closed lexical budgets before AST allocation:
       4,194,304 UTF-16 code units per SQL input and 131,072 tokens,
       with source-span, Lexical-stage typed diagnostics.
+- [x] Add an independent, deliberately generous 8,192-level
+      **balanced parenthesis nesting resource ceiling** before Parser
+      allocation. It is 4x the existing 2,048-depth six-provider matrix
+      and does not restrict non-parenthesized AST depth or require a
+      blanket MaxAstDepth. Excess balanced nesting returns typed
+      `SQL_LEXICAL_NESTING_LIMIT` / Lexical / Resource at the first
+      excessive opening parenthesis. Preserve legacy
+      `SQL_LEXICAL_UNBALANCED_PARENTHESIS` / Syntax precedence for
+      malformed unmatched opens. Quoted string content and comments do
+      not consume grouping budget. Tests cover 8,193 balanced/unbalanced
+      levels and 2,048 supported levels in all six dialects.
+      Other budgets already include 4 Mi UTF-16 input chars and 131,072
+      tokens. The 8,192 value is a tunable engineering policy candidate
+      for later profiling, **not** a promise all inputs below it compile.
+
 - [x] Parse arbitrary prefix-NOT chains iteratively and canonicalize
       double-negation with a SQL three-valued-logic proof, retaining UNKNOWN
       semantics and source spans. Six-dialect tests cover 2,049 prefixes,

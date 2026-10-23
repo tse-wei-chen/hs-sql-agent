@@ -807,6 +807,22 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void UnbalancedAndOverBudgetGrouping_PreservesSyntaxDiagnosticPrecedence(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT " + new string('(', 8_193) + "1";
+        var error = Assert.Throws<SqlParseException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect,
+                new SqlPlanValidationContext("nesting-budget-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticCategory.Syntax, error.Diagnostic?.Category);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void ExtraClosingParenthesis_IsRejectedWithTypedLexicalDiagnostic(
         SqlAgentToolType dialect)
     {
