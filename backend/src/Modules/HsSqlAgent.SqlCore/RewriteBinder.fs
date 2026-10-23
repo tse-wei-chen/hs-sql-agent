@@ -273,10 +273,36 @@ module internal RewriteBinder =
                     || SqlCanonicalFunctionRegistry.IsWindow(name))
             | _ -> false) (CteProofQuery query)
 
+    [<Struct>]
+    type private BindPrefixFrame =
+        | BindSpan of span: Span
+        | BindUnary of operation: UnaryOperator
+
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
         RewriteStackSafety.compile SqlDiagnosticStage.Binding
         match expression with
-        | Spanned(span, inner) -> bindExpr scope inner |> Expr.withSpan span
+        | Spanned _ | Unary _ ->
+            // The original binder called itself once per Span/Unary wrapper.
+            // Keep exactly the same wrapping order using a heap work stack.
+            let frames = ResizeArray<BindPrefixFrame>()
+            let mutable tail = expression
+            let mutable peeling = true
+            while peeling do
+                match tail with
+                | Spanned(span, inner) ->
+                    frames.Add(BindSpan span)
+                    tail <- inner
+                | Unary(op, inner) ->
+                    frames.Add(BindUnary op)
+                    tail <- inner
+                | _ -> peeling <- false
+            let mutable result = bindExpr scope tail
+            for index = frames.Count - 1 downto 0 do
+                result <-
+                    match frames.[index] with
+                    | BindSpan span -> Expr.withSpan span result
+                    | BindUnary op -> Unary(op, result)
+            result
         | Column identifier -> bindColumn scope identifier
         | BoundColumn _ -> expression
         | Wildcard(Some identifier) ->
@@ -290,7 +316,6 @@ module internal RewriteBinder =
         | Wildcard None | OrderOrdinal _ | Literal _ | Interval _ -> expression
         | DateAdd(unit, amount, value) -> DateAdd(unit, bindExpr scope amount, bindExpr scope value)
         | DateDiff(unit, startValue, finishValue) -> DateDiff(unit, bindExpr scope startValue, bindExpr scope finishValue)
-        | Unary(op, operand) -> Unary(op, bindExpr scope operand)
         | Binary(op, left, right) -> Binary(op, bindExpr scope left, bindExpr scope right)
         | Like(value, pattern, escape, negated, caseInsensitive) ->
             Like(bindExpr scope value, bindExpr scope pattern, escape, negated, caseInsensitive)

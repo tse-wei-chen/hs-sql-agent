@@ -489,17 +489,42 @@ module internal RewriteStages =
                 AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
                 AggregateSeparator = None }
 
+    [<Struct>]
+    type private NormalizePrefixFrame =
+        | NormalizeSpan of span: Span
+        | NormalizeUnary of operation: UnaryOperator
+
     let rec private normalizeExpr source target expression =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         match expression with
-        | Spanned(span, inner) -> normalizeExpr source target inner |> Expr.withSpan span
+        | Spanned _ | Unary _ ->
+            // Consume nested unary operators and SourceSpans iteratively.
+            // Unary Positive disappears during normalization as before.
+            let frames = ResizeArray<NormalizePrefixFrame>()
+            let mutable tail = expression
+            let mutable peeling = true
+            while peeling do
+                match tail with
+                | Spanned(span, inner) ->
+                    frames.Add(NormalizeSpan span)
+                    tail <- inner
+                | Unary(op, inner) ->
+                    frames.Add(NormalizeUnary op)
+                    tail <- inner
+                | _ -> peeling <- false
+            let mutable result = normalizeExpr source target tail
+            for index = frames.Count - 1 downto 0 do
+                result <-
+                    match frames.[index] with
+                    | NormalizeSpan span -> Expr.withSpan span result
+                    | NormalizeUnary Positive -> result
+                    | NormalizeUnary op -> Unary(op, result)
+            result
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
         | DateAdd(unit, amount, value) ->
             DateAdd(unit, normalizeExpr source target amount, normalizeExpr source target value)
         | DateDiff(unit, startValue, finishValue) ->
             DateDiff(unit, normalizeExpr source target startValue, normalizeExpr source target finishValue)
-        | Unary(Positive, operand) -> normalizeExpr source target operand
-        | Unary(op, operand) -> Unary(op, normalizeExpr source target operand)
         | Binary(op, left, right) -> Binary(op, normalizeExpr source target left, normalizeExpr source target right)
         | Like(value, pattern, escape, negated, insensitive) ->
             Like(normalizeExpr source target value, normalizeExpr source target pattern, escape, negated, insensitive)
