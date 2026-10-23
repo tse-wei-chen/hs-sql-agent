@@ -186,7 +186,7 @@ jobs:
           dotnet run -c Release --no-build
           --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
-          --shapes nested-derived-source,nested-cte --depths 128,512,2048
+          --shapes nested-derived-source,nested-cte,nested-cte-typed-schema --depths 128,512,2048
           --output artifacts/sqlcore-query-phases-pr.json
       - name: Inspect per-stage query profiling and resource exits
         if: always()
@@ -215,8 +215,8 @@ jobs:
                   raise SystemExit("Successful compilation omitted required stage telemetry.")
           # Lock in both measured 2,048-depth Query shapes. Before the
           # streaming CTE change this shape allocated >500 MB.
-          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
-              raise SystemExit("Nested derived/CTE depth floor regressed.")
+          if report["samples"] != 9 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Nested derived/CTE/typed-CTE depth floor regressed.")
           for item in report["observations"]:
               worker = item.get("worker") or {}
               if not worker.get("success") or item["processExitCode"] != 0:

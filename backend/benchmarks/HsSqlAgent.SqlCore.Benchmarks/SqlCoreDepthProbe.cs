@@ -20,7 +20,8 @@ internal static class SqlCoreDepthProbe
     // than only repeating an inert scalar projection. Keep the historic
     // default 72-case CI depth floor intact; use --shapes to measure this
     // additional resource class in an isolated subprocess.
-    private static readonly string[] OptionalShapes = ["mixed-query-graph", "nested-derived-source", "nested-cte"];
+    private static readonly string[] OptionalShapes =
+        ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -105,6 +106,7 @@ internal static class SqlCoreDepthProbe
                 "SELECT u.id" + new string(')', depth + 1),
             "nested-derived-source" => NestDerived(depth),
             "nested-cte" => NestCte(depth),
+            "nested-cte-typed-schema" => NestCte(depth),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
 
@@ -138,10 +140,20 @@ internal static class SqlCoreDepthProbe
             var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
             try
             {
+                var context = new SqlPlanValidationContext("depth-probe-v1");
+                if (shape == "nested-cte-typed-schema")
+                {
+                    var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
+                    var table = uppercase ? "USERS" : "users";
+                    var column = uppercase ? "ID" : "id";
+                    context = context.WithSchemaSnapshot(new SqlSchemaSnapshot(
+                        dialect, "depth-typed-snapshot-v1",
+                        new[] { SqlSchemaTable.WithTypes(
+                            table, new[] { new SqlSchemaColumn(
+                                column, SqlSchemaValueKind.Numeric) }) }));
+                }
                 var compiled = SqlCoreFacade.CompileQuery(
-                    query, dialect, dialect,
-                    new SqlPlanValidationContext("depth-probe-v1"),
-                    new SqlExecutionPlanPolicy());
+                    query, dialect, dialect, context, new SqlExecutionPlanPolicy());
                 stopwatch.Stop();
                 report = JsonSerializer.Serialize(new
                 {

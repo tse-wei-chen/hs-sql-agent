@@ -1083,3 +1083,13 @@ Firebird retain explicit fail-closed negative target-capability tests.
 Mixed multi-CTE, derived/LATERAL/SET and rich expression Query graphs
 continue through stack-reserve fallbacks and are NOT yet globally
 stack-independent.
+
+### Typed Schema CTE isolated-depth gate
+
+The isolated resource harness now includes `nested-cte-typed-schema`:
+it compiles the same nested CTE text with a typed SQL schema snapshot,
+forcing both strict name and type proof stages. CI samples Postgres at
+128/512/2048 levels and requires no unexpected failures/timeouts and
+less than 120 MB cumulative worker allocations at depth 2048, alongside
+the existing derived and untyped CTE shape gates. This is deliberately
+not proof that every Query/Parser/Schema/Type grammar shape is iterative.
