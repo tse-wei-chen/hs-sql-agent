@@ -610,7 +610,7 @@ public sealed class CoreSqlNestedExpressionStressTests
             sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("nested-cte-parameter-order-v1"),
             new SqlExecutionPlanPolicy());
-        Assert.Equal(4, command.Parameters.Count);
+        Assert.Equal(4, command.Parameters.Count());
         Assert.Equal(new long[] { 11, 22, 33, 44 },
             command.Parameters.Select(item => Convert.ToInt64(item.Value)).ToArray());
     }
