@@ -1517,7 +1517,7 @@ module internal RewriteRenderer =
         | ConflictNode of conflictValue: ConflictValue
         | ConflictText of emittedText: string
 
-    let private renderConflictValue (ctx: RenderContext) proposedQualifier value =
+    let private renderConflictValue (ctx: RenderContext) (proposedQualifier: string) (value: ConflictValue) =
         // Explicit preorder emission preserves left-to-right parameter
         // binding for nested conflict arithmetic without consuming a CLR
         // call frame for every ConflictBinary/ConflictNegate.
