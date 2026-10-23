@@ -144,6 +144,135 @@ module internal RewriteBinder =
             else
                 invalidOp (context + " references unknown table/alias qualifier '" + qualifier + "'.")
 
+    // Recursive CTE proofs traverse expressions AND nested queries. The
+    // former mutually-recursive walkers consumed one CLR frame per AST level,
+    // including nested scalar queries inside recursive UNION members.
+    // Explicit work frames retain the original proof boundary: inspect the
+    // SELECT body and set branches but NOT separately scoped CTE definitions
+    // or DISTINCT ON expressions when counting self-references.
+    [<Struct>]
+    type private CteProofFrame =
+        | CteProofExpr of expression: Expr
+        | CteProofQuery of queryBody: Query
+        | CteProofSelect of selectBody: Select
+        | CteProofSource of tableSource: TableSource
+
+    let private walkCteProof visit (root: CteProofFrame) =
+        let pending = ResizeArray<CteProofFrame>()
+        let inline push frame = pending.Add frame
+        let pushExprs (expressions: Expr list) =
+            let entries = List.toArray expressions
+            for index = entries.Length - 1 downto 0 do
+                push (CteProofExpr entries.[index])
+        let pushOrders (orders: OrderBy list) =
+            let entries = List.toArray orders
+            for index = entries.Length - 1 downto 0 do
+                push (CteProofExpr entries.[index].Expression)
+        push root
+        let mutable stopped = false
+        while pending.Count > 0 && not stopped do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            if visit frame then stopped <- true
+            else
+                match frame with
+                | CteProofQuery query ->
+                    pushOrders query.OrderBy
+                    let branches = List.toArray query.SetOperations
+                    for index = branches.Length - 1 downto 0 do
+                        push (CteProofQuery branches.[index].Query)
+                    push (CteProofSelect query.Head)
+                | CteProofSelect select ->
+                    select.Having |> Option.iter (fun value -> push (CteProofExpr value))
+                    pushExprs select.GroupBy
+                    select.Where |> Option.iter (fun value -> push (CteProofExpr value))
+                    NonEmpty.iterReverse (fun item ->
+                        push (CteProofExpr item.Expression)) select.ProjectionItems
+                    let joins = List.toArray select.Joins
+                    for index = joins.Length - 1 downto 0 do
+                        match joins.[index].Predicate with
+                        | Some predicate -> push (CteProofExpr predicate)
+                        | None -> ()
+                        push (CteProofSource joins.[index].Source)
+                    select.From |> Option.iter (fun source -> push (CteProofSource source))
+                | CteProofSource source ->
+                    match source with
+                    | NamedTable _ | CteTable _ -> ()
+                    | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                        push (CteProofQuery query)
+                | CteProofExpr expression ->
+                    match expression with
+                    | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                    | Literal _ | Interval _ -> ()
+                    | Spanned(_, inner) -> push (CteProofExpr inner)
+                    | Unary(_, operand) | Cast(operand, _)
+                    | Extract(_, operand) | PostgresJsonAccess(operand, _, _)
+                    | IsNull(operand, _) -> push (CteProofExpr operand)
+                    | Binary(_, left, right) | RegexMatch(left, right)
+                    | FilteredAggregate(left, right)
+                    | DateAdd(_, left, right) | DateDiff(_, left, right)
+                    | Like(left, right, _, _, _) ->
+                        push (CteProofExpr right)
+                        push (CteProofExpr left)
+                    | RawRegexCall(arguments, _) -> pushExprs arguments
+                    | FunctionCall call ->
+                        pushOrders call.AggregateOrderBy
+                        pushExprs call.Arguments
+                    | Windowed(value, window) ->
+                        pushOrders window.OrderBy
+                        pushExprs window.PartitionBy
+                        push (CteProofExpr value)
+                    | SimpleCase(input, branches, fallback) ->
+                        fallback |> Option.iter (fun value -> push (CteProofExpr value))
+                        NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                            push (CteProofExpr branch.Result)
+                            push (CteProofExpr branch.Match)) branches
+                        push (CteProofExpr input)
+                    | SearchedCase(branches, fallback) ->
+                        fallback |> Option.iter (fun value -> push (CteProofExpr value))
+                        NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                            push (CteProofExpr branch.Result)
+                            push (CteProofExpr branch.Condition)) branches
+                    | InList(value, items, _) ->
+                        NonEmpty.iterReverse (fun item -> push (CteProofExpr item)) items
+                        push (CteProofExpr value)
+                    | InSubquery(value, query, _) ->
+                        push (CteProofQuery query)
+                        push (CteProofExpr value)
+                    | Between(value, lower, upper, _) ->
+                        push (CteProofExpr upper)
+                        push (CteProofExpr lower)
+                        push (CteProofExpr value)
+                    | ScalarSubquery query | Exists(query, _) ->
+                        push (CteProofQuery query)
+        stopped
+
+    let private countCteSelfReferences dialect cteKey frame =
+        let mutable count = 0
+        walkCteProof (function
+            | CteProofSource(NamedTable(name, _) | CteTable(name, _))
+                when StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey) ->
+                count <- count + 1
+                false
+            | _ -> false) frame |> ignore
+        count
+
+    let private containsRestrictedRecursiveMember query =
+        walkCteProof (function
+            | CteProofQuery q ->
+                not q.OrderBy.IsEmpty || q.Limit.IsSome || q.Offset.IsSome || q.FetchWithTies
+            | CteProofSelect select ->
+                select.DistinctMode <> SelectDistinct.AllRows
+                || not select.GroupBy.IsEmpty || select.Having.IsSome
+            | CteProofExpr(FilteredAggregate _ | Windowed _) -> true
+            | CteProofExpr(FunctionCall call) ->
+                let name = FunctionName.value call.Name
+                not (FunctionName.hasQuotedParts call.Name)
+                && (SqlCanonicalFunctionRegistry.IsAggregate(name)
+                    || SqlCanonicalFunctionRegistry.IsWindow(name))
+            | _ -> false) (CteProofQuery query)
+
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
         RewriteStackSafety.compile SqlDiagnosticStage.Binding
         match expression with
@@ -231,162 +360,23 @@ module internal RewriteBinder =
         | LateralDerivedTable(query, alias) ->
             LateralDerivedTable(bindQuery dialect parentScope visibleCtes query, alias)
 
-    and private countRecursiveReferencesExpr dialect cteKey expression =
-        let recurse = countRecursiveReferencesExpr dialect cteKey
-        match expression with
-        | Spanned(_, inner) -> recurse inner
-        | Column _
-        | BoundColumn _
-        | Wildcard _
-        | OrderOrdinal _
-        | Literal _
-        | Interval _ -> 0
-        | Unary(_, operand)
-        | Cast(operand, _)
-        | Extract(_, operand)
-        | PostgresJsonAccess(operand, _, _)
-        | IsNull(operand, _) -> recurse operand
-        | Binary(_, left, right)
-        | RegexMatch(left, right)
-        | FilteredAggregate(left, right)
-        | DateAdd(_, left, right)
-        | DateDiff(_, left, right) -> recurse left + recurse right
-        | Like(value, pattern, _, _, _) -> recurse value + recurse pattern
-        | RawRegexCall(arguments, _) -> arguments |> List.sumBy recurse
-        | FunctionCall call ->
-            (call.Arguments |> List.sumBy recurse)
-            + (call.AggregateOrderBy |> List.sumBy (fun item -> recurse item.Expression))
-        | Windowed(value, window) ->
-            recurse value
-            + (window.PartitionBy |> List.sumBy recurse)
-            + (window.OrderBy |> List.sumBy (fun item -> recurse item.Expression))
-        | SimpleCase(input, branches, fallback) ->
-            recurse input
-            + (branches |> NonEmpty.toList |> List.sumBy (fun branch -> recurse branch.Match + recurse branch.Result))
-            + (fallback |> Option.map recurse |> Option.defaultValue 0)
-        | SearchedCase(branches, fallback) ->
-            (branches |> NonEmpty.toList |> List.sumBy (fun branch -> recurse branch.Condition + recurse branch.Result))
-            + (fallback |> Option.map recurse |> Option.defaultValue 0)
-        | InList(value, items, _) ->
-            recurse value + (items |> NonEmpty.toList |> List.sumBy recurse)
-        | InSubquery(value, query, _) ->
-            recurse value + countRecursiveReferencesQuery dialect cteKey query
-        | Between(value, lower, upper, _) ->
-            recurse value + recurse lower + recurse upper
-        | ScalarSubquery query
-        | Exists(query, _) ->
-            countRecursiveReferencesQuery dialect cteKey query
+    and private countRecursiveReferencesSelect dialect cteKey (select: Select) =
+        countCteSelfReferences dialect cteKey (CteProofSelect select)
 
-    and private hasRestrictedRecursiveExpr expression =
-        let recurse = hasRestrictedRecursiveExpr
-        match expression with
-        | Spanned(_, inner) -> recurse inner
-        | Column _
-        | BoundColumn _
-        | Wildcard _
-        | OrderOrdinal _
-        | Literal _
-        | Interval _ -> false
-        | Unary(_, operand)
-        | Cast(operand, _)
-        | Extract(_, operand)
-        | PostgresJsonAccess(operand, _, _)
-        | IsNull(operand, _) -> recurse operand
-        | Binary(_, left, right)
-        | RegexMatch(left, right)
-        | DateAdd(_, left, right)
-        | DateDiff(_, left, right) -> recurse left || recurse right
-        | FilteredAggregate _ -> true
-        | Like(value, pattern, _, _, _) -> recurse value || recurse pattern
-        | RawRegexCall(arguments, _) -> arguments |> List.exists recurse
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name
-            let knownRestricted =
-                not (FunctionName.hasQuotedParts call.Name)
-                && (SqlCanonicalFunctionRegistry.IsAggregate(name)
-                    || SqlCanonicalFunctionRegistry.IsWindow(name))
-            knownRestricted
-            || (call.Arguments |> List.exists recurse)
-            || (call.AggregateOrderBy |> List.exists (fun item -> recurse item.Expression))
-        | Windowed _ -> true
-        | SimpleCase(input, branches, fallback) ->
-            recurse input
-            || (branches |> NonEmpty.toList |> List.exists (fun branch -> recurse branch.Match || recurse branch.Result))
-            || (fallback |> Option.exists recurse)
-        | SearchedCase(branches, fallback) ->
-            (branches |> NonEmpty.toList |> List.exists (fun branch -> recurse branch.Condition || recurse branch.Result))
-            || (fallback |> Option.exists recurse)
-        | InList(value, items, _) ->
-            recurse value || (items |> NonEmpty.toList |> List.exists recurse)
-        | InSubquery(value, query, _) ->
-            recurse value || hasRestrictedRecursiveQuery query
-        | Between(value, lower, upper, _) ->
-            recurse value || recurse lower || recurse upper
-        | ScalarSubquery query
-        | Exists(query, _) ->
-            hasRestrictedRecursiveQuery query
-
-    and private hasRestrictedRecursiveSource source =
-        match source with
-        | NamedTable _
-        | CteTable _ -> false
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> hasRestrictedRecursiveQuery query
-
-    and private hasRestrictedRecursiveSelect (select: Select) =
-        select.DistinctMode <> SelectDistinct.AllRows
-        || not select.GroupBy.IsEmpty
-        || select.Having.IsSome
-        || (select.Projection |> List.exists (fun item -> hasRestrictedRecursiveExpr item.Expression))
-        || (select.Where |> Option.exists hasRestrictedRecursiveExpr)
-        || (select.From |> Option.exists hasRestrictedRecursiveSource)
-        || (select.Joins
-            |> List.exists (fun join ->
-                hasRestrictedRecursiveSource join.Source
-                || (join.Predicate |> Option.exists hasRestrictedRecursiveExpr)))
-
-    and private hasRestrictedRecursiveQuery (query: Query) =
-        hasRestrictedRecursiveSelect query.Head
-        || not query.OrderBy.IsEmpty
-        || query.Limit.IsSome
-        || query.Offset.IsSome
-        || query.FetchWithTies
-        || (query.SetOperations |> List.exists (fun branch -> hasRestrictedRecursiveQuery branch.Query))
-
-    and private countRecursiveReferencesSource dialect cteKey source =
-        match source with
-        | NamedTable(name, _)
-        | CteTable(name, _) ->
-            if StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey) then 1 else 0
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) ->
-            countRecursiveReferencesQuery dialect cteKey query
+    and private countRecursiveReferencesQuery dialect cteKey (query: Query) =
+        countCteSelfReferences dialect cteKey (CteProofQuery query)
 
     and private countDirectRecursiveSources dialect cteKey (select: Select) =
         let countDirect source =
             match source with
-            | NamedTable(name, _)
-            | CteTable(name, _) when StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey) -> 1
+            | NamedTable(name, _) | CteTable(name, _)
+                when StringComparer.Ordinal.Equals(identifierKey dialect name, cteKey) -> 1
             | _ -> 0
         (select.From |> Option.map countDirect |> Option.defaultValue 0)
         + (select.Joins |> List.sumBy (fun join -> countDirect join.Source))
 
-    and private countRecursiveReferencesSelect dialect cteKey (select: Select) =
-        let expr = countRecursiveReferencesExpr dialect cteKey
-        (select.From |> Option.map (countRecursiveReferencesSource dialect cteKey) |> Option.defaultValue 0)
-        + (select.Joins
-           |> List.sumBy (fun join ->
-               countRecursiveReferencesSource dialect cteKey join.Source
-               + (join.Predicate |> Option.map expr |> Option.defaultValue 0)))
-        + (select.Projection |> List.sumBy (fun item -> expr item.Expression))
-        + (select.Where |> Option.map expr |> Option.defaultValue 0)
-        + (select.GroupBy |> List.sumBy expr)
-        + (select.Having |> Option.map expr |> Option.defaultValue 0)
-
-    and private countRecursiveReferencesQuery dialect cteKey (query: Query) =
-        countRecursiveReferencesSelect dialect cteKey query.Head
-        + (query.SetOperations |> List.sumBy (fun branch -> countRecursiveReferencesQuery dialect cteKey branch.Query))
-        + (query.OrderBy |> List.sumBy (fun item -> countRecursiveReferencesExpr dialect cteKey item.Expression))
+    and private hasRestrictedRecursiveQuery (query: Query) =
+        containsRestrictedRecursiveMember query
 
     and private validateRecursiveCteShape dialect (cte: Cte) =
         if cte.RecursiveScope then
