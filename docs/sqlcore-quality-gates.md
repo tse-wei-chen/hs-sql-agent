@@ -1103,3 +1103,13 @@ projection-width proof and ORDER BY inspection, with the same depth-first
 first-error precedence as the recursive implementation. CTE body, FROM
 source and scalar-subquery proofs remain separately guarded and are not
 covered by this particular SET-only continuation.
+
+### Strict Type SET branch continuation
+
+The strict type-family evaluator now computes each nested SET-branch
+projection using a per-Query heap accumulator and performs its type-family
+intersection **after** the child subtree finishes. The output family
+for UNION/INTERSECT/EXCEPT uses the original left-to-right proof order;
+unknown family evidence does not become a speculative type. The name and
+type SET continuations are intentionally separate so name-binding errors
+still take precedence over type-family diagnostics.

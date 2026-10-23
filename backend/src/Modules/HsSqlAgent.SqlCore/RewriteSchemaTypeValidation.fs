@@ -446,6 +446,41 @@ module internal RewriteSchemaTypeValidation =
 
     and private queryTypesOne catalog inheritedCtes parent (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+        let visibleCtes, projection = queryTypesHead catalog inheritedCtes parent query
+        let pending = ResizeArray<unit -> unit>()
+        let result = ref projection
+
+        // Every child query needs its own type-intersection accumulator:
+        // evaluate its entire nested SET subtree before comparing the
+        // result with its parent's current output family, exactly as before.
+        let rec scheduleBranches visible parentScope parentOutput branches =
+            for branch in List.rev branches do
+                pending.Add(fun () ->
+                    let child = branch.Query
+                    let childCtes, childProjection =
+                        queryTypesHead catalog visible parentScope child
+                    let childOutput = ref childProjection
+                    pending.Add(fun () ->
+                        let left = !parentOutput
+                        let right = !childOutput
+                        if List.length left = List.length right then
+                            parentOutput :=
+                                List.map2 (fun (name, leftKind) (_, rightKind) ->
+                                    name, (if leftKind = rightKind then leftKind else None))
+                                    left right)
+                    scheduleBranches childCtes parentScope childOutput child.SetOperations)
+
+        scheduleBranches visibleCtes parent result query.SetOperations
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let next = pending.[last]
+            pending.RemoveAt(last)
+            next()
+        !result
+
+    and private queryTypesHead catalog inheritedCtes parent (query: Query) =
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let mutable ctes = inheritedCtes
         // Sequential visibility follows the already validated CTE lexical scope.
         for cte in query.Head.Ctes do
@@ -539,15 +574,7 @@ module internal RewriteSchemaTypeValidation =
                             Some name, (Map.tryFind name source.Kinds |> Option.bind typeKnown)))
                 | _ -> [ None, evaluate item.Expression ])
 
-        // Keep only family proofs shared across every set-operation branch.
-        query.SetOperations
-        |> List.fold (fun output branch ->
-            let candidate = queryTypes catalog ctes parent branch.Query
-            if List.length output <> List.length candidate then output
-            else
-                List.map2 (fun (name, left) (_, right) ->
-                    name, (if left = right then left else None)) output candidate)
-            projection
+        ctes, projection
 
     let private document catalog (document: Document) =
         let root = makeScope None []
