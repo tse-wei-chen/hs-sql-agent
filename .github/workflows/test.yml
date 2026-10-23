@@ -213,6 +213,21 @@ jobs:
                       raise SystemExit("Negative stage resource measurements.")
               if worker.get("success") and not required.issubset(phases):
                   raise SystemExit("Successful compilation omitted required stage telemetry.")
+          # Lock in both measured 2,048-depth Query shapes. Before the
+          # streaming CTE change this shape allocated >500 MB.
+          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Nested derived/CTE depth floor regressed.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              if not worker.get("success") or item["processExitCode"] != 0:
+                  raise SystemExit("Nested Query probe must compile: "
+                                   + str((item["shape"], item["depth"])))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Nested Query 2048 allocation exceeded 120 MB: "
+                                   + str((item["shape"], worker.get("allocatedBytes"))))
           PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
