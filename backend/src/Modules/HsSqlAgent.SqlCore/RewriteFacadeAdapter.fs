@@ -865,49 +865,60 @@ module internal RewriteFacadeAdapter =
                 allowed
                 schemaSnapshot
         try
-            if parsed.EnforceSourceDialectSyntax then
-                match parsed.RawSql with
-                | null -> ()
-                | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
-                | rawSql ->
-                    // Preserve the source-dialect syntax check without making RawSql the executable source
-                    // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
-                    // Statement after parsing; compilation must consume that statement, not silently reparse
-                    // the original text.
-                    parseSourceValidated rawSql source parsed.SourceProfile |> ignore
-            let rendered =
-                runParsed
-                    (compileOptions
-                        source
-                        (parsedSourceSemantics parsed)
-                        target
-                        parsed.SourceProfile
-                        targetProfile
-                        conflictTargetAssurance
-                        resultRowAssurance
-                        policy
-                        allowed
-                        schemaSnapshot)
-                    (RewriteLegacyAstAdapter.toParsed parsed.Statement)
-            let kind = legacyKind parsed.Statement
-            let parameterValues = parameters target rendered.Parameters
-            let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, fingerprintPolicyVersion policyVersion schemaSnapshot)
-            let evidence =
-                CompileEvidenceBuilder.build
-                    evidenceContext
-                    SqlCompileVerdict.Translated
-                    SqlCompileDecisionBoundary.Completed
-                    "SQL_COMPILE_TRANSLATED"
-                    fingerprint
-            CompiledSqlCommand.Create(
-                rendered.Sql,
-                parameterValues,
-                kind,
-                fingerprint,
-                target,
-                rendered.ReturnsRows,
-                evidence)
+            RewriteResourceBudget.withCompilation (fun () ->
+                if parsed.EnforceSourceDialectSyntax then
+                    match parsed.RawSql with
+                    | null -> ()
+                    | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
+                    | rawSql ->
+                        // Validate declared source syntax without treating
+                        // RawSql as the executable AST source of truth.
+                        RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                            parseSourceValidated rawSql source parsed.SourceProfile)
+                        |> ignore
+                let rewritten =
+                    RewriteResourceBudget.withStage "LegacyConversion" SqlDiagnosticStage.Binding (fun () ->
+                        RewriteLegacyAstAdapter.toParsed parsed.Statement)
+                let rendered =
+                    runParsed
+                        (compileOptions
+                            source
+                            (parsedSourceSemantics parsed)
+                            target
+                            parsed.SourceProfile
+                            targetProfile
+                            conflictTargetAssurance
+                            resultRowAssurance
+                            policy
+                            allowed
+                            schemaSnapshot)
+                        rewritten
+                let kind = legacyKind parsed.Statement
+                let parameterValues =
+                    RewriteResourceBudget.withStage "Materialization" SqlDiagnosticStage.RenderingInvariant (fun () ->
+                        parameters target rendered.Parameters)
+                let command =
+                    CompiledSqlCommand.Create(
+                        rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
+                let fingerprint =
+                    RewriteResourceBudget.withStage "Fingerprint" SqlDiagnosticStage.Policy (fun () ->
+                        DmlFingerprintService.ComputePlanFingerprint(
+                            command, fingerprintPolicyVersion policyVersion schemaSnapshot))
+                let evidence =
+                    CompileEvidenceBuilder.build
+                        evidenceContext
+                        SqlCompileVerdict.Translated
+                        SqlCompileDecisionBoundary.Completed
+                        "SQL_COMPILE_TRANSLATED"
+                        fingerprint
+                CompiledSqlCommand.Create(
+                    rendered.Sql,
+                    parameterValues,
+                    kind,
+                    fingerprint,
+                    target,
+                    rendered.ReturnsRows,
+                    evidence))
         with ex ->
             attachRejectedEvidence evidenceContext ex
             reraise()
