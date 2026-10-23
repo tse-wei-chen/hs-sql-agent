@@ -600,6 +600,22 @@ public sealed class CoreSqlNestedExpressionStressTests
     }
 
     [Fact]
+    public void NestedCteStream_PreservesInnermostFirstParameterBindings()
+    {
+        var sql = "WITH outer_cte AS (" +
+                  "WITH inner_cte AS (SELECT 11 AS a, 22 AS b) " +
+                  "SELECT a FROM inner_cte WHERE b = 33" +
+                  ") SELECT a FROM outer_cte WHERE a = 44";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("nested-cte-parameter-order-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Equal(4, command.Parameters.Count);
+        Assert.Equal(new long[] { 11, 22, 33, 44 },
+            command.Parameters.Select(item => Convert.ToInt64(item.Value)).ToArray());
+    }
+
+    [Fact]
     public void DeepNestedCte_StreamsIntoSingleBoundedEmitter()
     {
         const int depth = 128;
