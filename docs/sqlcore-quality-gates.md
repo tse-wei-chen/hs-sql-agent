@@ -303,6 +303,18 @@ published as measured percentages or silently set to 100.
       compilation or this typed fail-closed result; any other failure or crash
       fails the CI syntax-matrix job. This test is about host process safety,
       not an arbitrary SQL nesting-depth limit.
+- [x] Start behavior-preserving stack-independent traversal migration:
+      common explicit heap-backed scalar walker replaces recursive UPDATE/DELETE
+      volatility inspection, INSERT VALUES scope validation and aggregate-order
+      row-column checks. Expr.unspan is iterative.
+- [x] Convert query-table policy validation from mutually recursive
+      expression/query/source/select functions to an explicit continuation-frame
+      machine. Preserve CTE-first, FROM-first, projection/WHERE/JOIN and
+      ORDER BY alias-check diagnostic precedence; retain nested subquery
+      whitelist verification with six-dialect positive/negative tests.
+- [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
+      recursive paths; compare SQL output, parameter order, diagnostics and
+      allocations before claiming arbitrary-depth compiler support.
 - [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.

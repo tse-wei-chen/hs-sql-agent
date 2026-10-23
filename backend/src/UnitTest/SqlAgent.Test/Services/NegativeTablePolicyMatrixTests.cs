@@ -146,6 +146,47 @@ public sealed class NegativeTablePolicyMatrixTests
             ignoreCase: true);
     }
 
+
+    public static IEnumerable<object[]> NestedPolicyDialects() =>
+        Dialects.Select(item => new object[] { item.Value });
+
+    [Theory]
+    [MemberData(nameof(NestedPolicyDialects))]
+    public void IterativePolicyTraversal_DoesNotSkipNestedExistsTable(
+        SqlAgentToolType dialect)
+    {
+        const string sql = "SELECT id FROM users WHERE EXISTS "
+            + "(SELECT id FROM orders WHERE EXISTS (SELECT id FROM archived_users))";
+
+        Assert.NotEmpty(Compile(sql, dialect, ["users", "orders", "archived_users"]).Sql);
+
+        var error = Assert.Throws<UnauthorizedAccessException>(
+            () => Compile(sql, dialect, ["users", "orders"]));
+        Assert.Contains("archived_users", error.Message, StringComparison.OrdinalIgnoreCase);
+        var diagnostic = SyntaxGrammarMatrix.RequireTypedDiagnostic(error);
+        Assert.Equal("SQL_POLICY_TABLE_NOT_ALLOWED", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+    }
+
+    [Theory]
+    [MemberData(nameof(NestedPolicyDialects))]
+    public void IterativePolicyTraversal_PreservesFirstCteErrorBeforeMainSelect(
+        SqlAgentToolType dialect)
+    {
+        const string sql = "WITH x AS (SELECT id FROM orders) "
+            + "SELECT id FROM users WHERE EXISTS (SELECT id FROM archived_users)";
+
+        Assert.NotEmpty(Compile(sql, dialect, ["users", "orders", "archived_users"]).Sql);
+        var error = Assert.Throws<UnauthorizedAccessException>(
+            () => Compile(sql, dialect, ["users"]));
+
+        // The original recursive policy validator walks CTEs before the
+        // main SELECT, preserving which forbidden table is reported first.
+        Assert.Contains("orders", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("SQL_POLICY_TABLE_NOT_ALLOWED",
+            SyntaxGrammarMatrix.RequireTypedDiagnostic(error).Code);
+    }
+
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType dialect,
