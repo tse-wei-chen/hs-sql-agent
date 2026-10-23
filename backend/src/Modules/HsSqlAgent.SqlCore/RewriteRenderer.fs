@@ -505,7 +505,63 @@ module internal RewriteRenderer =
                 builder.Append(')') |> ignore
                 builder.ToString()
         | Expr.Exists(query, negated) ->
-            (if negated then "NOT EXISTS (" else "EXISTS (") + renderSubquery ctx query + ")"
+            renderExistsQueryChain ctx query negated
+
+    // A SELECT-with-EXISTS-WHERE chain forms one SQL output stream, not
+    // one completed SQL string per enclosing Query. Materializing every
+    // inner SELECT first causes quadratic allocations for mixed Expr/Query
+    // nesting even after Binder and Normalizer have become iterative.
+    //
+    // Restrict this fast path to inert, single-leaf SELECTs so every dialect
+    // keeps its exact projection parameter and dummy-FROM order. Any CTE,
+    // set branch, paging tail, non-EXISTS predicate, or richer SELECT returns
+    // to the original provider-aware renderSubquery path.
+    and private renderExistsQueryChain (ctx: RenderContext) query negated =
+        let dummyFrom =
+            match ctx.Provider with
+            | Oracle -> " FROM DUAL"
+            | Firebird -> " FROM RDB$DATABASE"
+            | _ -> ""
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || head.From.IsSome || not head.Joins.IsEmpty
+               || not head.GroupBy.IsEmpty || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then
+                None
+            else
+                match head.Projection, head.Where with
+                | [ { Alias = None; Expression = projected } ], Some predicate ->
+                    match Expr.unspan projected, Expr.unspan predicate with
+                    | (Literal _ | Column _ | BoundColumn _),
+                      Exists(child, isNegated) ->
+                        Some(projected, child, isNegated)
+                    | _ -> None
+                | _ -> None
+        let mutable current = query
+        let mutable currentNegated = negated
+        let mutable wrapping = true
+        let mutable levels = 0
+        let output = StringBuilder()
+        while wrapping do
+            match tryWrapper current with
+            | Some(projected, child, innerNegated) ->
+                RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
+                      .Append("SELECT ")
+                      .Append(renderExpr ctx projected)
+                      .Append(dummyFrom)
+                      .Append(" WHERE ") |> ignore
+                levels <- levels + 1
+                current <- child
+                currentNegated <- innerNegated
+            | None -> wrapping <- false
+        output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
+              .Append(renderSubquery ctx current)
+              .Append(')') |> ignore
+        for _ in 1 .. levels do output.Append(')') |> ignore
+        output.ToString()
 
     and private renderPredicate (ctx: RenderContext) expression =
         match ctx.Provider with
