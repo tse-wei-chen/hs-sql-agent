@@ -559,7 +559,7 @@ module internal RewriteRenderer =
                     | Oracle -> " FROM DUAL"
                     | Firebird -> " FROM RDB$DATABASE"
                     | _ -> ""
-                let builder = RenderBuffer(ctx, )
+                let builder = RenderBuffer(ctx, "")
                 builder.Append('(') |> ignore
                 for _ in 1 .. wrappers do builder.Append("SELECT (") |> ignore
                 builder.Append(renderSubquery ctx current) |> ignore
@@ -612,7 +612,7 @@ module internal RewriteRenderer =
             let mutable currentNegated = negated
             let mutable wrapping = true
             let mutable levels = 0
-            let output = RenderBuffer(ctx, )
+            let output = RenderBuffer(ctx, "")
             while wrapping do
                 match tryWrapper current with
                 | Some(projected, child, innerNegated) ->
@@ -683,7 +683,7 @@ module internal RewriteRenderer =
         (renderLeaf: RenderContext -> Expr -> string)
         expression =
         let pending = ResizeArray<struct (BinaryOperator * Expr * bool)>()
-        let builder = RenderBuffer(ctx, )
+        let builder = RenderBuffer(ctx, "")
         let mutable current = expression
         let mutable visiting = true
         while visiting || pending.Count > 0 do
@@ -723,7 +723,7 @@ module internal RewriteRenderer =
     // MOD/CONCAT/NULL-safe forms and left-to-right parameter binding.
     and private renderScalarGraph (ctx: RenderContext) root =
         let pending = ResizeArray<ScalarRenderFrame>()
-        let output = RenderBuffer(ctx, )
+        let output = RenderBuffer(ctx, "")
         let inline node value = pending.Add(ScalarNode value)
         let inline text (value: string) = pending.Add(ScalarText value)
         let append (value: string) = output.Append(value) |> ignore
@@ -1824,7 +1824,7 @@ module internal RewriteRenderer =
         // binding for nested conflict arithmetic without consuming a CLR
         // call frame for every ConflictBinary/ConflictNegate.
         let pending = ResizeArray<ConflictRenderFrame>()
-        let output = RenderBuffer(ctx, )
+        let output = RenderBuffer(ctx, "")
         pending.Add(ConflictNode value)
         while pending.Count > 0 do
             let last = pending.Count - 1
