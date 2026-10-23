@@ -181,6 +181,39 @@ jobs:
                   raise SystemExit("Mixed Query 2,048-depth allocation exceeded 120 MB: "
                                    + str((item["dialect"], worker.get("allocatedBytes"))))
           PY
+      - name: Profile nested derived and CTE query phases (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-derived-source,nested-cte --depths 128,512,2048
+          --output artifacts/sqlcore-query-phases-pr.json
+      - name: Inspect per-stage query profiling and resource exits
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-query-phases-pr.json; then
+            echo "Nested Query phase report missing." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-query-phases-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"Nested Query stages: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              metrics = worker.get("stageMetrics") or []
+              phases = {phase.get("Stage") for phase in metrics if phase.get("Success")}
+              print(f"{item['shape']:23} depth={item['depth']:4} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} status={worker.get('success')}")
+              for phase in metrics:
+                  print(f"  {phase['Stage']:18} us={phase['ElapsedMicroseconds']} allocated={phase['AllocatedBytes']} work={phase['WorkUnits']} ok={phase['Success']}")
+                  if any(phase[field] < 0 for field in ("ElapsedMicroseconds", "AllocatedBytes", "WorkUnits")):
+                      raise SystemExit("Negative stage resource measurements.")
+              if worker.get("success") and not required.issubset(phases):
+                  raise SystemExit("Successful compilation omitted required stage telemetry.")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -209,6 +242,7 @@ jobs:
             artifacts/sqlcore-depth-pr.json
             artifacts/sqlcore-small-stack-pr.json
             artifacts/sqlcore-mixed-depth-pr.json
+            artifacts/sqlcore-query-phases-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

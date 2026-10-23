@@ -1002,3 +1002,15 @@ preserving left-first checks and strict proven type-family mismatch errors.
 Six-provider 384-deep Boolean regression covers valid and invalid numeric/
 text types. Rich CASE, functions, subqueries and Query/CTE/Source transitions
 are **not yet fully stack-independent** and remain on the frozen merge list.
+
+### Isolated phase benchmark artifact
+
+The SQL depth benchmark now records privacy-safe `stageMetrics` for
+each isolated worker (parsing, binding, normalization, validation,
+policy, rendering), plus outer total allocations, elapsed time and
+typed resource diagnostics. New optional shapes `nested-derived-source`
+and `nested-cte` are sampled at 128/512/2048 in the CI artifact
+`sqlcore-query-phases-pr.json`. This set remains **observational**:
+missing metrics for successful compilation and negative measurements
+fail CI, but a path still constrained by CLR stack must first be migrated
+before the deep-shape successful-compilation gate can become mandatory.
