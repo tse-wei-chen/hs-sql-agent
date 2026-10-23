@@ -1512,23 +1512,44 @@ module internal RewriteRenderer =
         | ConflictDivide -> "/"
         | ConflictModulo -> "%"
 
-    let rec private renderConflictValue (ctx: RenderContext) proposedQualifier = function
-        | ConflictProposedColumn identifier ->
-            proposedQualifier + "." + renderIdentifier ctx.Provider identifier
-        | ConflictTargetColumn identifier ->
-            renderIdentifier ctx.Provider identifier
-        | ConflictLiteral scalar ->
-            renderExpr ctx (Expr.Literal scalar)
-        | ConflictNegate operand ->
-            "(-" + renderConflictValue ctx proposedQualifier operand + ")"
-        | ConflictBinary(operator, left, right) ->
-            "("
-            + renderConflictValue ctx proposedQualifier left
-            + " "
-            + conflictArithmeticText operator
-            + " "
-            + renderConflictValue ctx proposedQualifier right
-            + ")"
+    [<Struct>]
+    type private ConflictRenderFrame =
+        | ConflictNode of ConflictValue
+        | ConflictText of string
+
+    let private renderConflictValue (ctx: RenderContext) proposedQualifier value =
+        // Explicit preorder emission preserves left-to-right parameter
+        // binding for nested conflict arithmetic without consuming a CLR
+        // call frame for every ConflictBinary/ConflictNegate.
+        let pending = ResizeArray<ConflictRenderFrame>()
+        let output = StringBuilder()
+        pending.Add(ConflictNode value)
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | ConflictText text -> output.Append(text) |> ignore
+            | ConflictNode node ->
+                match node with
+                | ConflictProposedColumn identifier ->
+                    output.Append(proposedQualifier).Append(".").Append(renderIdentifier ctx.Provider identifier)
+                    |> ignore
+                | ConflictTargetColumn identifier ->
+                    output.Append(renderIdentifier ctx.Provider identifier) |> ignore
+                | ConflictLiteral scalar ->
+                    output.Append(renderExpr ctx (Expr.Literal scalar)) |> ignore
+                | ConflictNegate operand ->
+                    output.Append("(-") |> ignore
+                    pending.Add(ConflictText ")")
+                    pending.Add(ConflictNode operand)
+                | ConflictBinary(operator, left, right) ->
+                    output.Append("(") |> ignore
+                    pending.Add(ConflictText ")")
+                    pending.Add(ConflictNode right)
+                    pending.Add(ConflictText(" " + conflictArithmeticText operator + " "))
+                    pending.Add(ConflictNode left)
+        output.ToString()
 
     let private renderConflict (ctx: RenderContext) conflict =
         match conflict with
