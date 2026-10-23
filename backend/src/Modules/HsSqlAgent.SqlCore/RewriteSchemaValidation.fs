@@ -376,13 +376,37 @@ module internal RewriteSchemaValidation =
     and private queryColumnsSingle catalog ctes parent (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.Binding
         let scope, visibleCtes, output = selectColumns catalog ctes parent query.Head
-        query.SetOperations |> List.iter (fun branch ->
-            let other = queryColumns catalog visibleCtes parent branch.Query
-            if other.Length <> output.Length then
-                reject "SQL_SCHEMA_SHAPE_UNPROVABLE" branch.Query.Span (
-                    "SET-operation branch has an unproven output width."))
-        query.OrderBy |> List.iter (fun item ->
-            expression catalog visibleCtes scope Span.unknown item.Expression)
+        // A SELECT's set-operation branches form a Query graph, but checking
+        // them need not consume one CLR stack frame per nested set term.
+        // Schedule exactly the former DFS order: a branch's head, then its
+        // nested branches, then its ORDER BY and finally the parent's width
+        // check. Expressions and source/CTE proofs retain their own scopes.
+        let pending = ResizeArray<unit -> unit>()
+        let rec scheduleBranches inheritedCtes inheritedParent expectedWidth branches =
+            let reversed = List.rev branches
+            for branch in reversed do
+                pending.Add(fun () ->
+                    let child = branch.Query
+                    let childScope, childCtes, childOutput =
+                        selectColumns catalog inheritedCtes inheritedParent child.Head
+                    pending.Add(fun () ->
+                        if childOutput.Length <> expectedWidth then
+                            reject "SQL_SCHEMA_SHAPE_UNPROVABLE" child.Span (
+                                "SET-operation branch has an unproven output width."))
+                    pending.Add(fun () ->
+                        child.OrderBy |> List.iter (fun item ->
+                            expression catalog childCtes childScope Span.unknown item.Expression))
+                    scheduleBranches childCtes inheritedParent childOutput.Length child.SetOperations)
+        pending.Add(fun () ->
+            query.OrderBy |> List.iter (fun item ->
+                expression catalog visibleCtes scope Span.unknown item.Expression))
+        scheduleBranches visibleCtes parent output.Length query.SetOperations
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let next = pending.[last]
+            pending.RemoveAt(last)
+            next()
         output
 
     let private returning catalog target (items: ReturningItem list) =

@@ -1093,3 +1093,13 @@ forcing both strict name and type proof stages. CI samples Postgres at
 less than 120 MB cumulative worker allocations at depth 2048, alongside
 the existing derived and untyped CTE shape gates. This is deliberately
 not proof that every Query/Parser/Schema/Type grammar shape is iterative.
+
+### Strict Schema SET-branch traversal
+
+Nested UNION/INTERSECT/EXCEPT branch validation now schedules heap
+continuations instead of recurring through the whole Query graph for
+each SET branch. Each child maintains its own CTE map, parent scope,
+projection-width proof and ORDER BY inspection, with the same depth-first
+first-error precedence as the recursive implementation. CTE body, FROM
+source and scalar-subquery proofs remain separately guarded and are not
+covered by this particular SET-only continuation.
