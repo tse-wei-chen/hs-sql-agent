@@ -664,7 +664,7 @@ public sealed class CoreSqlNestedExpressionStressTests
 
         Assert.NotEmpty(compiled.Sql);
         Assert.Equal(depth - 1,
-            compiled.Sql.Split(" UNION (", StringSplitOptions.None).Length - 1);
+            compiled.Sql.Split(" UNION ", StringSplitOptions.None).Length - 1);
         Assert.Equal(Enumerable.Range(1, depth).Reverse().Select(i => (long)i),
             compiled.Parameters.Select(value => Convert.ToInt64(value.Value)));
     }
