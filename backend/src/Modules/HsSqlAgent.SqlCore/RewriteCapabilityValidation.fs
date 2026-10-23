@@ -136,85 +136,100 @@ module internal RewriteCapabilityValidation =
         | Exists _ ->
             requireFilterCapability capabilityMessage proofs.Subquery
 
+    // Source-order scalar proof traversal. Query callbacks remain scoped to
+    // the owning capability pass, but no Expr branch consumes a CLR call
+    // frame proportional to AST nesting depth.
+    [<Struct>]
+    type private CapabilityExprFrame =
+        | CapabilityExpr of value: Expr
+        | CapabilityQuery of body: Query
+
+    let private walkCapabilityExpr onExpr onQuery root =
+        let pending = ResizeArray<CapabilityExprFrame>()
+        let inline push value = pending.Add(CapabilityExpr value)
+        let pushExprs (values: Expr list) =
+            let entries = List.toArray values
+            for index = entries.Length - 1 downto 0 do
+                push entries.[index]
+        let pushOrders (orders: OrderBy list) =
+            let entries: OrderBy array = List.toArray orders
+            for index = entries.Length - 1 downto 0 do
+                push entries.[index].Expression
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | CapabilityQuery query -> onQuery query
+            | CapabilityExpr expression ->
+                onExpr expression
+                match expression with
+                | Spanned(_, inner) -> push inner
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | Like(left, right, _, _, _)
+                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+                    push right
+                    push left
+                | Unary(_, inner) | Cast(inner, _) | Extract(_, inner)
+                | PostgresJsonAccess(inner, _, _) | IsNull(inner, _) ->
+                    push inner
+                | RawRegexCall(args, _) -> pushExprs args
+                | FunctionCall call ->
+                    pushOrders call.AggregateOrderBy
+                    pushExprs call.Arguments
+                | Windowed(value, window) ->
+                    pushOrders window.OrderBy
+                    pushExprs window.PartitionBy
+                    push value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter push
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push branch.Result
+                        push branch.Match) branches
+                    push input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter push
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push branch.Result
+                        push branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse push items
+                    push value
+                | InSubquery(value, query, _) ->
+                    pending.Add(CapabilityQuery query)
+                    push value
+                | Between(value, lower, upper, _) ->
+                    push upper
+                    push lower
+                    push value
+                | ScalarSubquery query | Exists(query, _) ->
+                    pending.Add(CapabilityQuery query)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+
     let rec private proveFilterExpr capabilityMessage (expressionProofs: ExpressionProofs) expression =
-        match expression with
-        | Spanned(_, inner) -> proveFilterExpr capabilityMessage expressionProofs inner
-        | Column _
-        | BoundColumn _
-        | Wildcard _
-        | OrderOrdinal _
-        | Literal _ -> ()
-        | Interval _ ->
-            requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            proveFilterExpr capabilityMessage expressionProofs amount
-            proveFilterExpr capabilityMessage expressionProofs value
-        | Unary(_, operand) ->
-            proveFilterExpr capabilityMessage expressionProofs operand
-        | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
-            requireFilterCapability capabilityMessage expressionProofs.DistinctFrom
-            proveFilterExpr capabilityMessage expressionProofs left
-            proveFilterExpr capabilityMessage expressionProofs right
-        | Binary(_, left, right) ->
-            proveFilterExpr capabilityMessage expressionProofs left
-            proveFilterExpr capabilityMessage expressionProofs right
-        | Like(value, pattern, _, _, caseInsensitive) ->
-            if caseInsensitive then requireFilterCapability capabilityMessage expressionProofs.ILike
-            proveFilterExpr capabilityMessage expressionProofs value
-            proveFilterExpr capabilityMessage expressionProofs pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveFilterExpr capabilityMessage expressionProofs)
-        | RegexMatch(value, pattern) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-            proveFilterExpr capabilityMessage expressionProofs pattern
-        | PostgresJsonAccess(value, _, _) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-        | FunctionCall call ->
-            if FunctionName.hasQuotedParts call.Name then
-                requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
-            if FunctionName.isQualified call.Name then
-                requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
-            call.Arguments |> List.iter (proveFilterExpr capabilityMessage expressionProofs)
-            call.AggregateOrderBy |> List.iter (fun order -> proveFilterExpr capabilityMessage expressionProofs order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
-            proveFilterPredicate capabilityMessage expressionProofs.FilterPredicate predicate
-            proveFilterExpr capabilityMessage expressionProofs value
-            proveFilterExpr capabilityMessage expressionProofs predicate
-        | Windowed(value, window) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-            window.PartitionBy |> List.iter (proveFilterExpr capabilityMessage expressionProofs)
-            window.OrderBy |> List.iter (fun order -> proveFilterExpr capabilityMessage expressionProofs order.Expression)
-        | Cast(value, _)
-        | Extract(_, value) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-        | SimpleCase(input, branches, fallback) ->
-            proveFilterExpr capabilityMessage expressionProofs input
-            branches |> NonEmpty.iter (fun branch ->
-                proveFilterExpr capabilityMessage expressionProofs branch.Match
-                proveFilterExpr capabilityMessage expressionProofs branch.Result)
-            fallback |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveFilterExpr capabilityMessage expressionProofs branch.Condition
-                proveFilterExpr capabilityMessage expressionProofs branch.Result)
-            fallback |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-        | InList(value, items, _) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-            items |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs)
-        | InSubquery(value, query, _) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-            proveFilterQuery capabilityMessage expressionProofs query
-        | Between(value, lower, upper, _) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-            proveFilterExpr capabilityMessage expressionProofs lower
-            proveFilterExpr capabilityMessage expressionProofs upper
-        | IsNull(value, _) ->
-            proveFilterExpr capabilityMessage expressionProofs value
-        | ScalarSubquery query
-        | Exists(query, _) ->
-            proveFilterQuery capabilityMessage expressionProofs query
+        let validate node =
+            match node with
+            | Interval _ ->
+                requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
+            | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), _, _) ->
+                requireFilterCapability capabilityMessage expressionProofs.DistinctFrom
+            | Like(_, _, _, _, true) ->
+                requireFilterCapability capabilityMessage expressionProofs.ILike
+            | FunctionCall call ->
+                if FunctionName.hasQuotedParts call.Name then
+                    requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
+                if FunctionName.isQualified call.Name then
+                    requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
+            | FilteredAggregate(_, predicate) ->
+                requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
+                // Predicate-specific proof precedes the ordinary value walk,
+                // exactly as in the original recursive validation.
+                proveFilterPredicate capabilityMessage expressionProofs.FilterPredicate predicate
+            | _ -> ()
+        walkCapabilityExpr validate
+            (proveFilterQuery capabilityMessage expressionProofs) expression
 
     and private proveFilterSource capabilityMessage expressionProofs source =
         match source with
@@ -293,110 +308,52 @@ module internal RewriteCapabilityValidation =
         | _ -> false
 
     let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
-        match expression with
-        | Spanned(_, inner) -> proveTargetExpr targetRuntime expressionProofs inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ -> ()
-        | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
-        | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
-        | DateAdd(unit, amount, value) ->
-            match SqlDateMathCapabilityRules.TargetValidationError(
-                      unit,
-                      TargetRuntime.provider targetRuntime,
-                      "CORE_DATE_ADD") with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            proveTargetExpr targetRuntime expressionProofs amount
-            proveTargetExpr targetRuntime expressionProofs value
-        | DateDiff(unit, startValue, finishValue) ->
-            match SqlDateMathCapabilityRules.TargetValidationError(
-                      unit,
-                      TargetRuntime.provider targetRuntime,
-                      "CORE_DATE_DIFF") with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            proveTargetExpr targetRuntime expressionProofs startValue
-            proveTargetExpr targetRuntime expressionProofs finishValue
-        | Unary(_, operand) -> proveTargetExpr targetRuntime expressionProofs operand
-        | Binary(BinaryOperator.Concat, left, right) ->
-            proveSqlServerConcat targetRuntime
-            proveTargetExpr targetRuntime expressionProofs left
-            proveTargetExpr targetRuntime expressionProofs right
-        | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
-            requireExpressionCapability expressionProofs.DistinctFrom
-            if TargetRuntime.provider targetRuntime = SqlAgentToolType.Oracle
-               && (not (isRepeatableDistinctOperand left) || not (isRepeatableDistinctOperand right)) then
-                raise (SqlCompilationException(
-                    "Oracle null-safe distinct lowering requires repeatable scalar operands because the proven CASE lowering may reference each operand more than once; volatile functions, windows, and subqueries remain fail-closed."))
-            proveTargetExpr targetRuntime expressionProofs left
-            proveTargetExpr targetRuntime expressionProofs right
-        | Binary(_, left, right) ->
-            proveTargetExpr targetRuntime expressionProofs left
-            proveTargetExpr targetRuntime expressionProofs right
-        | Like(value, pattern, _, _, caseInsensitive) ->
-            if caseInsensitive then requireExpressionCapability expressionProofs.ILike
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs pattern
-        | RawRegexCall _ ->
-            invalidOp "Raw REGEXP_LIKE reached target validation before canonicalization."
-        | RegexMatch(value, pattern) ->
-            requireExpressionCapability expressionProofs.RegexMatch
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs pattern
-        | PostgresJsonAccess(value, _, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-        | FunctionCall call ->
-            if FunctionName.hasQuotedParts call.Name then
-                requireExpressionCapability expressionProofs.QuotedFunction
-            if FunctionName.isQualified call.Name then
-                requireExpressionCapability expressionProofs.QualifiedFunction
-            call.Arguments |> List.iter (proveTargetExpr targetRuntime expressionProofs)
-            call.AggregateOrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs predicate
-        | Windowed(value, window) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            window.PartitionBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
-            window.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
-        | Cast(value, targetType) ->
-            match targetRuntime, CastType.semantic targetType with
-            | FirebirdRuntime, Some(SqlTime(_, true))
-            | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
-                requireExpressionCapability expressionProofs.FirebirdTimeZoneType
-            | _, Some _ -> ()
-            | _, None ->
-                invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
-            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
-            proveTargetExpr targetRuntime expressionProofs value
-        | Extract(_, value) ->
-            proveTargetExpr targetRuntime expressionProofs value
-        | SimpleCase(input, branches, fallback) ->
-            proveTargetExpr targetRuntime expressionProofs input
-            branches |> NonEmpty.iter (fun branch ->
-                proveTargetExpr targetRuntime expressionProofs branch.Match
-                proveTargetExpr targetRuntime expressionProofs branch.Result)
-            fallback |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveTargetExpr targetRuntime expressionProofs branch.Condition
-                proveTargetExpr targetRuntime expressionProofs branch.Result)
-            fallback |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-        | InList(value, items, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            items |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
-        | InSubquery(value, query, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetQuery targetRuntime expressionProofs query
-        | Between(value, lower, upper, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-            proveTargetExpr targetRuntime expressionProofs lower
-            proveTargetExpr targetRuntime expressionProofs upper
-        | IsNull(value, _) ->
-            proveTargetExpr targetRuntime expressionProofs value
-        | ScalarSubquery query ->
-            proveTargetQuery targetRuntime expressionProofs query
-        | Exists(query, _) ->
-            proveTargetQuery targetRuntime expressionProofs query
+        let validate node =
+            match node with
+            | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
+            | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
+            | DateAdd(unit, _, _) ->
+                match SqlDateMathCapabilityRules.TargetValidationError(
+                          unit, TargetRuntime.provider targetRuntime, "CORE_DATE_ADD") with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | DateDiff(unit, _, _) ->
+                match SqlDateMathCapabilityRules.TargetValidationError(
+                          unit, TargetRuntime.provider targetRuntime, "CORE_DATE_DIFF") with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | Binary(BinaryOperator.Concat, _, _) ->
+                proveSqlServerConcat targetRuntime
+            | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
+                requireExpressionCapability expressionProofs.DistinctFrom
+                if TargetRuntime.provider targetRuntime = SqlAgentToolType.Oracle
+                   && (not (isRepeatableDistinctOperand left)
+                       || not (isRepeatableDistinctOperand right)) then
+                    raise (SqlCompilationException(
+                        "Oracle null-safe distinct lowering requires repeatable scalar operands because the proven CASE lowering may reference each operand more than once; volatile functions, windows, and subqueries remain fail-closed."))
+            | Like(_, _, _, _, true) ->
+                requireExpressionCapability expressionProofs.ILike
+            | RawRegexCall _ ->
+                invalidOp "Raw REGEXP_LIKE reached target validation before canonicalization."
+            | RegexMatch _ ->
+                requireExpressionCapability expressionProofs.RegexMatch
+            | FunctionCall call ->
+                if FunctionName.hasQuotedParts call.Name then
+                    requireExpressionCapability expressionProofs.QuotedFunction
+                if FunctionName.isQualified call.Name then
+                    requireExpressionCapability expressionProofs.QualifiedFunction
+            | Cast(_, targetType) ->
+                match targetRuntime, CastType.semantic targetType with
+                | FirebirdRuntime, Some(SqlTime(_, true))
+                | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
+                    requireExpressionCapability expressionProofs.FirebirdTimeZoneType
+                | _, Some _ -> ()
+                | _, None ->
+                    invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
+                RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
+            | _ -> ()
+        walkCapabilityExpr validate
+            (proveTargetQuery targetRuntime expressionProofs) expression
 
     and private proveTargetSource targetRuntime expressionProofs source =
         match source with
