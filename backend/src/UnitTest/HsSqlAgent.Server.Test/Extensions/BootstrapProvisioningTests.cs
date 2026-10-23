@@ -150,6 +150,9 @@ public class BootstrapProvisioningTests
         bootstrap.Databases[0].McpKeys[0].AllowedTools = "get_tables";
         bootstrap.Databases[0].McpKeys[0].Key = "updated-key";
         appBuilder.UseHsSqlAgent();
+        // Omitting Key on subsequent reconciliation must preserve the stored hash.
+        bootstrap.Databases[0].McpKeys[0].Key = null;
+        appBuilder.UseHsSqlAgent();
 
         await using var verifyContext = new AdminContext(adminDbOptions);
         var dbCount = await verifyContext.DbManagement.CountAsync(TestContext.Current.CancellationToken);
@@ -164,5 +167,60 @@ public class BootstrapProvisioningTests
         Assert.Equal("Renamed Key", key.Name);
         Assert.Equal("get_tables", key.AllowedTools);
         Assert.Equal("updated-", key.KeyPrefix);
+        Assert.Equal(
+            McpAccessKeyCacheKeys.ComputeKeyHash("updated-key", Encoding.UTF8.GetBytes(hmacKey)),
+            key.KeyHash);
+    }
+
+    [Fact]
+    public async Task Bootstrap_MissingKeyOnFirstProvisioning_FailsBeforeWritingDatabase()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var adminDbOptions = new DbContextOptionsBuilder<AdminContext>()
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
+            .Options;
+        var authDbOptions = new DbContextOptionsBuilder<Auth.Service.Data.AuthContext>()
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
+            .Options;
+
+        var services = new ServiceCollection();
+        services.AddAuthorization();
+        services.AddAuthentication();
+        services.AddScoped(_ => new AdminContext(adminDbOptions));
+        services.AddScoped(_ => new Auth.Service.Data.AuthContext(authDbOptions));
+        services.AddSingleton<ICryptoService, CryptoService>();
+        services.AddSingleton<Admin.Service.Interfaces.ISecurityPolicyRuntimeState,
+            Admin.Service.Services.SecurityPolicyRuntimeState>();
+        services.AddSingleton(Options.Create(new McpKeySettings
+        {
+            HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
+        }));
+        services.AddSingleton(Options.Create(new BootstrapOptions
+        {
+            Enabled = true,
+            Databases = [new BootstrapDatabaseOptions
+            {
+                BootstrapId = "db-1",
+                Provider = "Postgres",
+                Host = "localhost",
+                McpKeys = [new BootstrapMcpKeyOptions
+                {
+                    BootstrapId = "key-1",
+                    Name = "Cannot leak",
+                    Key = null
+                }]
+            }]
+        }));
+        var appBuilder = new ApplicationBuilder(services.BuildServiceProvider());
+
+        var exception = Assert.Throws<InvalidOperationException>(() => appBuilder.UseHsSqlAgent());
+        Assert.Contains("requires an explicit Key", exception.Message);
+
+        await using var verify = new AdminContext(adminDbOptions);
+        Assert.Equal(0, await verify.DbManagement.CountAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await verify.McpAccessKeys.CountAsync(TestContext.Current.CancellationToken));
     }
 }

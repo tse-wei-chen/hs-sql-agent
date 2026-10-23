@@ -10,6 +10,7 @@ using HsSqlAgent.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Services;
 
 namespace HsSqlAgent.Server.Background;
 
@@ -58,7 +59,11 @@ public class DbHealthMonitorService(
             await PersistResultsAsync(results, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch (Exception ex) { logger.LogError(ex, "Scheduled database health probe failed."); }
+        catch (Exception ex)
+        {
+            // Never log raw driver exceptions: ToString() can include a connection string.
+            logger.LogError("Scheduled database health probe failed ({ExceptionType}).", ex.GetType().Name);
+        }
     }
 
     private async Task<DbProbeResult> ProbeOneAsync(DbManagement db, CancellationToken cancellationToken)
@@ -92,7 +97,11 @@ public class DbHealthMonitorService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            result = new TestDbConnectionVM { IsSuccess = false, ErrorMessage = ex.Message };
+            result = new TestDbConnectionVM
+            {
+                IsSuccess = false,
+                ErrorMessage = DatabaseErrorMessages.ForException(ex)
+            };
         }
 
         return new DbProbeResult(
@@ -149,9 +158,9 @@ public class DbHealthMonitorService(
                     state.OutageStartedAt = probe.CheckedAt;
                 state.ConsecutiveFailures++;
                 state.Status = state.ConsecutiveFailures >= 3 ? "unhealthy" : "degraded";
-                state.LastError = probe.ErrorMessage?.Length > 2000
-                    ? probe.ErrorMessage[..2000]
-                    : probe.ErrorMessage;
+                // Fail closed even if an alternative IDbSetterService returns raw provider text.
+                // LastError is also included in the outbound health alert Webhook payload.
+                state.LastError = DatabaseErrorMessages.ForHealthRecord(probe.ErrorMessage);
             }
 
             persisted.Add((probe, state));

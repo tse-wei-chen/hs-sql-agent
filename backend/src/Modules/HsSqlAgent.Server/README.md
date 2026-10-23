@@ -283,5 +283,26 @@ Raw SQL, runtime literal/parameter values, full evidence objects, allowed-table 
 
 Do not commit production keys. Supply HMAC/JWT keys and database credentials through your deployment secret store.
 
+### Bootstrap MCP key handling
+
+Bootstrap provisioning no longer prints newly generated MCP keys to stdout. On the
+**first** provisioning of a bootstrap key, configure `Bootstrap:Databases:*:McpKeys:*:Key`
+from a protected configuration source (for example a mounted Kubernetes Secret or
+an environment variable bound through ASP.NET Core configuration). A missing key
+fails startup before bootstrap records are written. On later restarts, omitting
+`Key` preserves the existing stored key hash; providing a new `Key` intentionally
+reconciles/rotates it. Do not put real credentials into source-controlled JSON.
+
+Database connection-test API errors and persisted health statuses now expose only
+fixed, non-sensitive diagnostics. Detailed driver error text may contain credentials
+or complete connection strings and is intentionally not logged or returned.
+If a key was previously printed by bootstrap, revoke/replace it and review access
+to retained container and centralized logs.
+
+**Migration note:** This hardening stage does not rotate the shared legacy MCP
+HMAC secret or re-encrypt stored database credentials / pending DML approvals.
+Changing that secret without a coordinated migration can make saved credentials,
+MCP keys and durable approval payloads unusable.
+
 Full project documentation:
 https://github.com/tse-wei-chen/hs-sql-agent

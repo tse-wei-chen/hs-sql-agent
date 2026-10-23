@@ -15,13 +15,11 @@ namespace SqlAgent.Service.Services
             TestDbConnectionBase request,
             CancellationToken cancellationToken = default)
         {
-            DbConnection? connection = null;
-
             try
             {
                 var provider = request.SqlProvider;
                 if (provider == null)
-                    return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
+                    return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = DatabaseErrorMessages.ProviderRequired };
 
                 var connString = _connectionStringFactory.BuildConnectionString(
                     provider.Value,
@@ -34,20 +32,24 @@ namespace SqlAgent.Service.Services
                         Database = request.Database,
                         ExtraSettings = request.ExtraSettings
                     });
-                connection = _providerFactory.GetProvider(provider.Value).Connections.Create(connString);
+                await using var connection = _providerFactory.GetProvider(provider.Value).Connections.Create(connString);
                 await connection.OpenAsync(cancellationToken);
                 await connection.CloseAsync();
                 return new TestDbConnectionVM { IsSuccess = true };
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DB Test Error] Provider: {request.SqlProvider}, Message: {ex.Message}");
-                return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = ex.Message };
-            }
-            finally
-            {
-                if (connection != null)
-                    await connection.DisposeAsync();
+                // Driver exceptions can contain passwords, hostnames and complete connection strings.
+                // Never emit ex.Message (or ex itself) to client responses or application logs.
+                return new TestDbConnectionVM
+                {
+                    IsSuccess = false,
+                    ErrorMessage = DatabaseErrorMessages.ForException(ex)
+                };
             }
         }
 

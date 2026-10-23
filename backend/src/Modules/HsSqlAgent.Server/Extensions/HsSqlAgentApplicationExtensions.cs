@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Data.Entites;
 using Admin.Service.Models;
@@ -376,6 +375,9 @@ public static class HsSqlAgentApplicationExtensions
         var mcpKeySettings = services.GetRequiredService<IOptions<McpKeySettings>>().Value;
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.HmacSecretKey);
 
+        // Validate the entire declaration before making any database mutations.
+        // Newly generated keys used to be written to stdout, which is unsafe in Docker
+        // and centralized logging. Initial provisioning now requires a supplied secret.
         var databaseIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var keyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var dbConfig in bootstrapOptions.Databases)
@@ -385,6 +387,28 @@ public static class HsSqlAgentApplicationExtensions
             var bootstrapId = dbConfig.BootstrapId.Trim();
             if (!databaseIds.Add(bootstrapId))
                 throw new InvalidOperationException($"Duplicate Bootstrap database id '{bootstrapId}'.");
+
+            foreach (var keyConfig in dbConfig.McpKeys)
+            {
+                if (string.IsNullOrWhiteSpace(keyConfig.BootstrapId))
+                    throw new InvalidOperationException($"Each MCP key for Bootstrap database '{bootstrapId}' requires BootstrapId.");
+                var keyBootstrapId = keyConfig.BootstrapId.Trim();
+                if (!keyIds.Add(keyBootstrapId))
+                    throw new InvalidOperationException($"Duplicate Bootstrap MCP key id '{keyBootstrapId}'.");
+
+                if (string.IsNullOrWhiteSpace(keyConfig.Key) &&
+                    !adminDb.McpAccessKeys.AsNoTracking().Any(x => x.BootstrapId == keyBootstrapId))
+                {
+                    throw new InvalidOperationException(
+                        $"New Bootstrap MCP key '{keyBootstrapId}' requires an explicit Key from a protected configuration source. " +
+                        "Automatic generation and printing of credentials to stdout is not supported.");
+                }
+            }
+        }
+
+        foreach (var dbConfig in bootstrapOptions.Databases)
+        {
+            var bootstrapId = dbConfig.BootstrapId!.Trim();
             var dbName = string.IsNullOrWhiteSpace(dbConfig.Name) ? bootstrapId : dbConfig.Name.Trim();
             var dbEntity = adminDb.DbManagement.FirstOrDefault(x => x.BootstrapId == bootstrapId);
             var now = DateTime.UtcNow;
@@ -408,21 +432,17 @@ public static class HsSqlAgentApplicationExtensions
 
             foreach (var keyConfig in dbConfig.McpKeys)
             {
-                if (string.IsNullOrWhiteSpace(keyConfig.BootstrapId))
-                    throw new InvalidOperationException($"Each MCP key for Bootstrap database '{bootstrapId}' requires BootstrapId.");
-                var keyBootstrapId = keyConfig.BootstrapId.Trim();
-                if (!keyIds.Add(keyBootstrapId))
-                    throw new InvalidOperationException($"Duplicate Bootstrap MCP key id '{keyBootstrapId}'.");
+                var keyBootstrapId = keyConfig.BootstrapId!.Trim();
                 var keyEntity = adminDb.McpAccessKeys.FirstOrDefault(x => x.BootstrapId == keyBootstrapId);
-                var isNew = keyEntity == null;
                 var rawKey = Normalize(keyConfig.Key);
-                if (isNew)
+                if (keyEntity == null)
                 {
-                    rawKey ??= GenerateBootstrapRawKey();
+                    // Defend against a concurrent deletion between preflight and provisioning.
+                    if (rawKey == null)
+                        throw new InvalidOperationException(
+                            $"New Bootstrap MCP key '{keyBootstrapId}' requires an explicit Key.");
                     keyEntity = new McpAccessKey { BootstrapId = keyBootstrapId, CreatedAt = now, CreatedBy = "Bootstrap" };
                     adminDb.McpAccessKeys.Add(keyEntity);
-                    if (string.IsNullOrWhiteSpace(keyConfig.Key))
-                        Console.WriteLine($"[Bootstrap] Generated initial MCP Key for '{keyConfig.Name ?? keyBootstrapId}': {rawKey}");
                 }
                 var managedKey = keyEntity!;
                 if (rawKey != null)
@@ -443,12 +463,4 @@ public static class HsSqlAgentApplicationExtensions
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string GenerateBootstrapRawKey()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(32);
-        return Convert.ToBase64String(bytes)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-    }
 }

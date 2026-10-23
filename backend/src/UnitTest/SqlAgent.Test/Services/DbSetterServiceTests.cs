@@ -45,7 +45,7 @@ public class DbSetterServiceTests
         var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
-        Assert.Equal("Provider is null.", result.ErrorMessage);
+        Assert.Equal(DatabaseErrorMessages.ProviderRequired, result.ErrorMessage);
     }
 
     [Fact]
@@ -97,7 +97,7 @@ public class DbSetterServiceTests
                 It.IsAny<BuildDbConnectionModelBase>()))
             .Returns(connString);
 
-        var mockConnection = CreateMockDbConnection(throwOnOpen: true, errorMessage: "Access denied");
+        var mockConnection = CreateMockDbConnection(throwOnOpen: true, errorMessage: "Access denied;Password=super-secret;Host=private-db");
         var connectionFactory = new Mock<IDbConnectionFactory>();
         connectionFactory.Setup(f => f.Create(connString)).Returns(mockConnection.Object);
         var provider = new Mock<ISqlProvider>();
@@ -107,9 +107,22 @@ public class DbSetterServiceTests
         var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
-        Assert.Equal("Access denied", result.ErrorMessage);
+        Assert.Equal(DatabaseErrorMessages.ConnectionFailed, result.ErrorMessage);
+        Assert.DoesNotContain("super-secret", result.ErrorMessage);
+        Assert.DoesNotContain("private-db", result.ErrorMessage);
         connectionFactory.Verify(f => f.Create(connString), Times.Once);
         mockConnection.Verify(c => c.OpenAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void DatabaseErrorMessages_OnlyAllowsRecognizedHealthMessages()
+    {
+        Assert.Equal(DatabaseErrorMessages.ConnectionFailed,
+            DatabaseErrorMessages.ForHealthRecord("password=my-secret;host=private-db"));
+        Assert.Equal(DatabaseErrorMessages.ConnectionTimedOut,
+            DatabaseErrorMessages.ForHealthRecord(DatabaseErrorMessages.ConnectionTimedOut));
+        Assert.Equal(DatabaseErrorMessages.ConnectionTimedOut,
+            DatabaseErrorMessages.ForException(new TimeoutException("password=my-secret")));
     }
 
     [Fact]

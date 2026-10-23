@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Interfaces;
+using SqlAgent.Service.Services;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Background;
@@ -89,6 +90,65 @@ public class DbHealthMonitorServiceTests
             Assert.NotNull(state.LastSuccessAt);
             Assert.NotNull(state.LatencyMs);
         });
+    }
+
+    [Fact]
+    public async Task ProbeAllAsync_DoesNotPersistOrForwardUntrustedProviderMessage()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
+
+        await using (var setup = new AdminContext(options))
+        {
+            await setup.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+            setup.DbManagement.Add(new DbManagement
+            {
+                Id = 1,
+                Name = "test-db",
+                SqlProvider = "Postgres",
+                PasswordHash = "encrypted",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            await setup.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        var services = new ServiceCollection();
+        services.AddScoped<IAdminContext>(_ => new AdminContext(options));
+        services.AddSingleton<ICryptoService, PassthroughCryptoService>();
+        services.AddSingleton(Options.Create(new McpKeySettings
+        {
+            HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
+        }));
+        services.AddScoped<IDbSetterService>(_ => new UnsafeErrorDbSetterService());
+        using var provider = services.BuildServiceProvider();
+        var monitor = new DbHealthMonitorService(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new OperabilitySettings { HealthProbeEnabled = true }),
+            NullLogger<DbHealthMonitorService>.Instance);
+
+        await monitor.ProbeAllAsync(TestContext.Current.CancellationToken);
+
+        await using var verify = new AdminContext(options);
+        var state = await verify.DbHealthStates.SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(DatabaseErrorMessages.ConnectionFailed, state.LastError);
+        Assert.DoesNotContain("super-secret", state.LastError);
+    }
+
+    private sealed class UnsafeErrorDbSetterService : IDbSetterService
+    {
+        public Task<TestDbConnectionVM> TestDbConnectionAsync(
+            TestDbConnectionBase request, CancellationToken cancellationToken = default)
+            => Task.FromResult(new TestDbConnectionVM
+            {
+                IsSuccess = false,
+                ErrorMessage = "authentication failed;Password=super-secret"
+            });
+
+        public Task<string?> BuildDbConnectionAsync(
+            BuildDbConnectionModel model, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
     }
 
     private sealed class CountingAdminContext(
