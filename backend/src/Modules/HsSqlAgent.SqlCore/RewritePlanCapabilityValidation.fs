@@ -68,8 +68,9 @@ module internal RewritePlanCapabilityValidation =
         | RejectedCapability rejection ->
             raise (SqlCompilationException(capabilityMessage rejection))
 
-    let rec private returningNodeName = function
-        | Spanned(_, inner) -> returningNodeName inner
+    let private returningNodeName expression =
+        // The diagnostic label does not require recursive Span unwrapping.
+        match Expr.unspan expression with
         | Column _ -> "ColumnExpr"
         | BoundColumn _ -> "BoundColumnExpr"
         | Wildcard _ -> "WildcardExpr"
@@ -95,125 +96,136 @@ module internal RewritePlanCapabilityValidation =
         | Between _ -> "BetweenExpr"
         | IsNull _ -> "IsNullExpr"
         | Exists _ -> "ExistsExpr"
+        | Spanned _ -> invalidOp "Expr.unspan did not remove the span wrapper."
 
     let private returningExpressionError detail =
         raise (SqlCompilationException(
             "SQL capability 'dml.returning.expression' " + detail + " remains fail-closed."))
 
-    let rec private validateRichReturningExpression expression =
-        let validateBoundColumn binding =
-            match binding with
-            | ColumnBinding.LocalRowSource -> ()
-            | ColumnBinding.OuterRowSource ->
-                returningExpressionError "does not admit correlated outer-row references"
-            | ColumnBinding.ProjectionAlias ->
-                returningExpressionError "does not admit projection-alias bindings"
+    // The RETURNING proof accepts a deliberately smaller grammar than SELECT.
+    // Mode-specific frames preserve each expression/predicate boundary and
+    // reject unsupported nodes before execution, even for deep ASTs.
+    [<Struct>]
+    type private RichReturningFrame =
+        | ReturningScalar of scalarExpression: Expr
+        | ReturningPredicate of predicateExpression: Expr
 
-        match expression with
-        | Spanned(_, inner) -> validateRichReturningExpression inner
-        | BoundColumn(_, binding) ->
-            validateBoundColumn binding
-        | Column _ ->
-            returningExpressionError "requires every column reference to bind to a local DML row source"
-        | Literal _ -> ()
-        | DateAdd _
-        | DateDiff _ ->
-            returningExpressionError "does not admit temporal date-math expressions yet"
-        | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
-            validateRichReturningExpression operand
-        | Binary((BinaryOperator.Add
-                 | BinaryOperator.Subtract
-                 | BinaryOperator.Multiply
-                 | BinaryOperator.Divide
-                 | BinaryOperator.Modulo
-                 | BinaryOperator.Concat), left, right) ->
-            validateRichReturningExpression left
-            validateRichReturningExpression right
-        | Cast(value, _) ->
-            validateRichReturningExpression value
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            if FunctionName.hasQuotedParts call.Name then
-                returningExpressionError (
-                    "does not infer portable scalar semantics from quoted native function identity; function '"
-                    + name + "'")
-            match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
-            | Some contract
-                when contract.Kind = SqlCanonicalFunctionKind.Scalar
-                     && contract.IsDirectPortable
-                     && not call.IsDistinct
-                     && contract.AcceptsArgumentCount(call.Arguments.Length) ->
-                call.Arguments |> List.iter validateRichReturningExpression
-            | _ ->
-                returningExpressionError (
-                    "accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '"
-                    + name + "'")
-        | SimpleCase(input, branches, fallback) ->
-            validateRichReturningExpression input
-            branches |> NonEmpty.iter (fun branch ->
-                validateRichReturningExpression branch.Match
-                validateRichReturningExpression branch.Result)
-            fallback |> Option.iter validateRichReturningExpression
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateRichReturningPredicate branch.Condition
-                validateRichReturningExpression branch.Result)
-            fallback |> Option.iter validateRichReturningExpression
-        | Unary(UnaryOperator.Not, _)
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.DistinctFrom
-                 | BinaryOperator.NotDistinctFrom
-                 | BinaryOperator.And
-                 | BinaryOperator.Or), _, _)
-        | Like _
-        | IsNull _
-        | Between _
-        | InList _ ->
-            validateRichReturningPredicate expression
-        | _ ->
-            returningExpressionError (
-                "accepts only the proven target-row scalar/predicate subset; expression node "
-                + returningNodeName expression)
+    let private validateRichReturningWalk (root: RichReturningFrame) =
+        let pending = ResizeArray<RichReturningFrame>()
+        let inline push frame = pending.Add frame
+        let pushScalarList (values: Expr list) =
+            let ordered = List.toArray values
+            for index = ordered.Length - 1 downto 0 do
+                push (ReturningScalar ordered.[index])
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | ReturningScalar expression ->
+                match expression with
+                | Spanned(_, inner) -> push (ReturningScalar inner)
+                | BoundColumn(_, ColumnBinding.LocalRowSource) -> ()
+                | BoundColumn(_, ColumnBinding.OuterRowSource) ->
+                    returningExpressionError "does not admit correlated outer-row references"
+                | BoundColumn(_, ColumnBinding.ProjectionAlias) ->
+                    returningExpressionError "does not admit projection-alias bindings"
+                | Column _ ->
+                    returningExpressionError "requires every column reference to bind to a local DML row source"
+                | Literal _ -> ()
+                | DateAdd _ | DateDiff _ ->
+                    returningExpressionError "does not admit temporal date-math expressions yet"
+                | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
+                    push (ReturningScalar operand)
+                | Binary((BinaryOperator.Add
+                         | BinaryOperator.Subtract
+                         | BinaryOperator.Multiply
+                         | BinaryOperator.Divide
+                         | BinaryOperator.Modulo
+                         | BinaryOperator.Concat), left, right) ->
+                    push (ReturningScalar right)
+                    push (ReturningScalar left)
+                | Cast(value, _) -> push (ReturningScalar value)
+                | FunctionCall call ->
+                    let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+                    if FunctionName.hasQuotedParts call.Name then
+                        returningExpressionError (
+                            "does not infer portable scalar semantics from quoted native function identity; function '"
+                            + name + "'")
+                    match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+                    | Some contract
+                        when contract.Kind = SqlCanonicalFunctionKind.Scalar
+                             && contract.IsDirectPortable
+                             && not call.IsDistinct
+                             && contract.AcceptsArgumentCount(call.Arguments.Length) ->
+                        pushScalarList call.Arguments
+                    | _ ->
+                        returningExpressionError (
+                            "accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '"
+                            + name + "'")
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (ReturningScalar value))
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push (ReturningScalar branch.Result)
+                        push (ReturningScalar branch.Match)) branches
+                    push (ReturningScalar input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (ReturningScalar value))
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push (ReturningScalar branch.Result)
+                        push (ReturningPredicate branch.Condition)) branches
+                | Unary(UnaryOperator.Not, _)
+                | Binary((BinaryOperator.Equal
+                         | BinaryOperator.NotEqual
+                         | BinaryOperator.GreaterThan
+                         | BinaryOperator.LessThan
+                         | BinaryOperator.GreaterThanOrEqual
+                         | BinaryOperator.LessThanOrEqual
+                         | BinaryOperator.DistinctFrom
+                         | BinaryOperator.NotDistinctFrom
+                         | BinaryOperator.And
+                         | BinaryOperator.Or), _, _)
+                | Like _ | IsNull _ | Between _ | InList _ ->
+                    push (ReturningPredicate expression)
+                | _ ->
+                    returningExpressionError (
+                        "accepts only the proven target-row scalar/predicate subset; expression node "
+                        + returningNodeName expression)
+            | ReturningPredicate expression ->
+                match expression with
+                | Spanned(_, inner) -> push (ReturningPredicate inner)
+                | Unary(UnaryOperator.Not, operand) ->
+                    push (ReturningPredicate operand)
+                | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
+                    push (ReturningPredicate right)
+                    push (ReturningPredicate left)
+                | Binary((BinaryOperator.Equal
+                         | BinaryOperator.NotEqual
+                         | BinaryOperator.GreaterThan
+                         | BinaryOperator.LessThan
+                         | BinaryOperator.GreaterThanOrEqual
+                         | BinaryOperator.LessThanOrEqual
+                         | BinaryOperator.DistinctFrom
+                         | BinaryOperator.NotDistinctFrom), left, right)
+                | Like(left, right, _, _, _) ->
+                    push (ReturningScalar right)
+                    push (ReturningScalar left)
+                | IsNull(value, _) -> push (ReturningScalar value)
+                | Between(value, lower, upper, _) ->
+                    push (ReturningScalar upper)
+                    push (ReturningScalar lower)
+                    push (ReturningScalar value)
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (fun item -> push (ReturningScalar item)) items
+                    push (ReturningScalar value)
+                | _ ->
+                    returningExpressionError (
+                        "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
+                        + returningNodeName expression)
 
-    and private validateRichReturningPredicate expression =
-        match expression with
-        | Spanned(_, inner) -> validateRichReturningPredicate inner
-        | Unary(UnaryOperator.Not, operand) ->
-            validateRichReturningPredicate operand
-        | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
-            validateRichReturningPredicate left
-            validateRichReturningPredicate right
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.DistinctFrom
-                 | BinaryOperator.NotDistinctFrom), left, right) ->
-            validateRichReturningExpression left
-            validateRichReturningExpression right
-        | Like(value, pattern, _, _, _) ->
-            validateRichReturningExpression value
-            validateRichReturningExpression pattern
-        | IsNull(value, _) ->
-            validateRichReturningExpression value
-        | Between(value, lower, upper, _) ->
-            validateRichReturningExpression value
-            validateRichReturningExpression lower
-            validateRichReturningExpression upper
-        | InList(value, items, _) ->
-            validateRichReturningExpression value
-            items |> NonEmpty.iter validateRichReturningExpression
-        | _ ->
-            returningExpressionError (
-                "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
-                + returningNodeName expression)
+    let private validateRichReturningExpression expression =
+        validateRichReturningWalk (ReturningScalar expression)
 
     let private proveSqlServerOutputAssurance (proofs: DmlProofs) operation target =
         match proofs.SqlServerOutput with
