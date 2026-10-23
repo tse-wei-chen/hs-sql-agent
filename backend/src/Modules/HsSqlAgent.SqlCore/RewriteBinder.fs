@@ -286,24 +286,81 @@ module internal RewriteBinder =
         | BindQueryEnter of query: Query * parentScope: Scope option * inheritedCtes: string list
         | BindQueryComplete of original: Query * head: Select * headScope: Scope * visibleCtes: string list
 
+    // The mixed Binder graph owns its own scope state. Query callbacks
+    // cannot be reconstructed with a scope-free Expr/Query mapper because
+    // LATERAL, recursive CTEs, and projection aliases depend on when
+    // the parent row sources become visible.
+    type private BindGraphQueryContext =
+        { Original: Query
+          Parent: Scope option
+          Inherited: string list
+          SetBranches: SetBranch array
+          TailOrders: OrderBy array
+          BoundBranches: ResizeArray<Query>
+          BoundOrders: ResizeArray<OrderBy>
+          mutable BoundHead: Select option
+          mutable HeadScope: Scope option
+          mutable HeadCtes: string list
+          mutable OrderAliases: IdentifierPart list }
+
+    type private BindGraphSelectContext =
+        { Original: Select
+          Parent: Scope option
+          CteItems: Cte array
+          JoinItems: Join array
+          BoundCtes: ResizeArray<Cte>
+          BoundJoins: ResizeArray<Join>
+          AliasDisplays: System.Collections.Generic.Dictionary<string, string>
+          mutable VisibleCtes: string list
+          mutable BoundFrom: TableSource option
+          mutable Scope: Scope option
+          mutable Slots: Expr array
+          mutable BoundSlots: Expr array }
+
+    type private BindGraphFrame =
+        | GraphQueryEnter of query: BindGraphQueryContext
+        | GraphQueryHeadDone of query: BindGraphQueryContext
+        | GraphQueryBranchNext of query: BindGraphQueryContext * index: int
+        | GraphQueryBranchDone of query: BindGraphQueryContext * index: int
+        | GraphQueryOrderNext of query: BindGraphQueryContext * index: int
+        | GraphQueryOrderDone of query: BindGraphQueryContext * index: int
+        | GraphQueryFinish of query: BindGraphQueryContext
+        | GraphSelectCteNext of selection: BindGraphSelectContext * index: int
+        | GraphSelectCteDone of selection: BindGraphSelectContext * index: int
+        | GraphSelectFrom of selection: BindGraphSelectContext
+        | GraphSelectFromDone of selection: BindGraphSelectContext
+        | GraphSelectJoinNext of selection: BindGraphSelectContext * index: int
+        | GraphSelectJoinSourceDone of selection: BindGraphSelectContext * index: int
+        | GraphSelectJoinPredicateDone of selection: BindGraphSelectContext * index: int * source: TableSource * extendedScope: Scope
+        | GraphSelectSlotNext of selection: BindGraphSelectContext * index: int
+        | GraphSelectSlotDone of selection: BindGraphSelectContext * index: int
+        | GraphSelectFinish of selection: BindGraphSelectContext
+        | GraphSourceEnter of source: TableSource * parent: Scope option * visibleCtes: string list
+        | GraphSourceDone of source: TableSource
+        | GraphExprEnter of expression: Expr * scope: Scope
+        | GraphExprScan of expression: Expr * scope: Scope
+        | GraphExprDone of expression: Expr * scope: Scope * queryCount: int
+
+    let private bindScalarNode (scope: Scope) (value: Expr) : Expr =
+        match value with
+        | Column identifier -> bindColumn scope identifier
+        | Wildcard(Some identifier) ->
+            let qualifier = identifierText identifier
+            ensureQualifier
+                scope
+                (identifierKey scope.Dialect identifier)
+                qualifier
+                ("Wildcard '" + qualifier + ".*'")
+            value
+        | _ -> value
+
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
         // One explicit enter/exit frame per scalar Expr, regardless of
         // branching, CASE, window arguments or binary-tree depth. Query
         // callbacks keep their existing nested correlation/CTE scopes.
         RewriteAstTraversal.mapPostOrder
             (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.Binding)
-            (fun value ->
-                match value with
-                | Column identifier -> bindColumn scope identifier
-                | Wildcard(Some identifier) ->
-                    let qualifier = identifierText identifier
-                    ensureQualifier
-                        scope
-                        (identifierKey scope.Dialect identifier)
-                        qualifier
-                        ("Wildcard '" + qualifier + ".*'")
-                    value
-                | _ -> value)
+            (bindScalarNode scope)
             (bindQuery scope.Dialect (Some scope) scope.VisibleCtes)
             expression
 
