@@ -75,7 +75,11 @@ public sealed class CoreSqlLexicalResourceBudgetTests
     public void ParensInsideQuotedSqlLiteral_DoNotUseStructuralBudget(
         SqlAgentToolType dialect)
     {
-        var sql = "SELECT '" + new string('(', 8_193) + "'";
+        // Split across small literals: Firebird intentionally rejects
+        // a single UTF-8 VARCHAR literal longer than 8,191 characters.
+        // The aggregate source text still contains >8,192 quoted '('.
+        var sql = "SELECT '" + new string('(', 4_096)
+            + "' AS first_part, '" + new string('(', 4_097) + "' AS second_part";
         var compiled = SqlCoreFacade.CompileQuery(
             sql, dialect, dialect,
             new SqlPlanValidationContext("nesting-budget-v1"),
