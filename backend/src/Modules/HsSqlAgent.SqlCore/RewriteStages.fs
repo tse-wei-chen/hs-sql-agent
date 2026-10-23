@@ -489,37 +489,35 @@ module internal RewriteStages =
                 AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
                 AggregateSeparator = None }
 
-    // A set-operation tree is reconstructed in two stages, preserving the
-    // original Head -> set branches (left-to-right) -> ORDER BY failure order.
-    [<Struct>]
-    type private NormalizeQueryFrame =
-        | BeginQuery of inputQuery: Query
-        | CompleteQuery of originalQuery: Query * normalizedHead: Select
-
     let rec private normalizeExpr source target expression =
+        // Standalone DML expression trees use the existing scalar mapper.
+        // Its Query callback delegates to the mixed graph mapper below,
+        // so nested Query/Select/Source subgraphs do not recurse.
         RewriteAstTraversal.mapPostOrder
             (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
-            (fun rebuilt ->
-                match rebuilt with
-                | Unary(Positive, operand) -> operand
-                | RawRegexCall(arguments, _) ->
-                    match arguments with
-                    | [ value; pattern ] -> RegexMatch(value, pattern)
-                    | values ->
-                        compilationError (
-                            "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
-                            + string values.Length + ".")
-                | FunctionCall call -> normalizeFunctionPrepared source target call
-                | Cast(value, targetType) ->
-                    Cast(
-                        value,
-                        RewriteCastTypes.normalize
-                            (sourceProvider source)
-                            (TargetRuntime.provider target)
-                            targetType)
-                | _ -> rebuilt)
+            (normalizeScalarNode source target)
             (normalizeQuery source target)
             expression
+
+    and private normalizeScalarNode source target (rebuilt: Expr) =
+        match rebuilt with
+        | Unary(Positive, operand) -> operand
+        | RawRegexCall(arguments, _) ->
+            match arguments with
+            | [ value; pattern ] -> RegexMatch(value, pattern)
+            | values ->
+                compilationError (
+                    "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
+                    + string values.Length + ".")
+        | FunctionCall call -> normalizeFunctionPrepared source target call
+        | Cast(value, targetType) ->
+            Cast(
+                value,
+                RewriteCastTypes.normalize
+                    (sourceProvider source)
+                    (TargetRuntime.provider target)
+                    targetType)
+        | _ -> rebuilt
 
     and private normalizeFunctionPrepared source target (call: FunctionCall) =
         // Child arguments and aggregate ORDER BY are already normalized by
@@ -827,128 +825,6 @@ module internal RewriteStages =
                         else
                             FunctionName.create sourceName
                     FunctionCall { call with Name = renderedName; Arguments = arguments }
-
-    and private normalizeWindow source target (window: WindowSpec) =
-        { window with
-            PartitionBy = window.PartitionBy |> List.map (normalizeExpr source target)
-            OrderBy = window.OrderBy |> List.map (normalizeOrderBy source target) }
-
-    and private normalizeOrderBy source target (orderBy: OrderBy) =
-        { orderBy with Expression = normalizeExpr source target orderBy.Expression }
-
-    and private normalizeSource sourceDialect target (source: TableSource) =
-        match source with
-        | NamedTable _ | CteTable _ -> source
-        | DerivedTable(query, alias) -> DerivedTable(normalizeQuery sourceDialect target query, alias)
-        | LateralDerivedTable(query, alias) ->
-            LateralDerivedTable(normalizeQuery sourceDialect target query, alias)
-
-    and private normalizeJoin sourceDialect target (join: Join) =
-        match join with
-        | CrossJoin source -> CrossJoin(normalizeSource sourceDialect target source)
-        | NaturalJoin(kind, source) -> NaturalJoin(kind, normalizeSource sourceDialect target source)
-        | OnJoin(kind, source, predicate) ->
-            OnJoin(
-                kind,
-                normalizeSource sourceDialect target source,
-                normalizeExpr sourceDialect target predicate)
-        | UsingJoin(kind, source, columns) ->
-            UsingJoin(
-                kind,
-                normalizeSource sourceDialect target source,
-                columns)
-
-    and private normalizeCte sourceDialect target (cte: Cte) =
-        let query = normalizeQuery sourceDialect target cte.Query
-        if cte.ColumnAliases.IsEmpty then { cte with Query = query }
-        else
-            let projection = query.Head.Projection
-            if projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then
-                invalidOp ("CTE '" + cte.Name.Value + "' column aliases cannot be lowered safely when the CTE projection contains a wildcard.")
-            if projection.Length <> cte.ColumnAliases.Length then
-                invalidOp ("CTE '" + cte.Name.Value + "' declares " + string cte.ColumnAliases.Length + " column alias(es) but its statically modeled projection has " + string projection.Length + " column(s).")
-            let rewritten =
-                (projection, cte.ColumnAliases)
-                ||> List.map2 (fun item alias -> { item with Alias = Some alias })
-                |> NonEmpty.ofList "CTE projection"
-            { cte with ColumnAliases = []; Query = { query with Head = { query.Head with ProjectionItems = rewritten } } }
-
-    and private normalizeSelect sourceDialect target (select: Select) =
-        { select with
-            Ctes = select.Ctes |> List.map (normalizeCte sourceDialect target)
-            DistinctMode = select.DistinctMode |> mapDistinctOn (normalizeExpr sourceDialect target)
-            ProjectionItems =
-                select.ProjectionItems
-                |> NonEmpty.map (fun (item: SelectItem) ->
-                    { item with Expression = normalizeExpr sourceDialect target item.Expression })
-            From = select.From |> Option.map (normalizeSource sourceDialect target)
-            Joins = select.Joins |> List.map (normalizeJoin sourceDialect target)
-            Where = select.Where |> Option.map (normalizeExpr sourceDialect target)
-            GroupBy = select.GroupBy |> List.map (normalizeExpr sourceDialect target)
-            Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
-
-    and private normalizeQuery sourceDialect target (query: Query) =
-        // Flatten only no-FROM single scalar SELECT wrappers. Function and
-        // CAST normalization still runs at the deepest actual expression.
-        if RewriteAstTraversal.trySimpleScalarChain query |> Option.isSome then
-            let frames = ResizeArray<struct (Query * SelectItem)>()
-            let mutable current = query
-            let mutable peeling = true
-            while peeling do
-                match RewriteAstTraversal.trySimpleScalarChain current with
-                | Some(item, child) ->
-                    RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-                    frames.Add(struct (current, item))
-                    current <- child
-                | None -> peeling <- false
-            let mutable result = normalizeQuery sourceDialect target current
-            for index = frames.Count - 1 downto 0 do
-                let struct (original, item) = frames.[index]
-                result <- RewriteAstTraversal.rebuildSimpleScalarChain original item result
-            result
-        elif query.SetOperations.IsEmpty then
-            // A no-set Query has no post-order branches to assemble.
-            RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-            let head = normalizeSelect sourceDialect target query.Head
-            { query with
-                Head = head
-                OrderBy = query.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
-        else
-            // Post-order reconstruction uses a heap-backed continuation stack.
-            // Normalizing the head when entering a frame preserves the old
-            // lexical/error order; child set branches are completed in source
-            // order before this query's trailing ORDER BY.
-            let pending = ResizeArray<NormalizeQueryFrame>()
-            let completed = ResizeArray<Query>()
-            pending.Add(BeginQuery query)
-            while pending.Count > 0 do
-                let last = pending.Count - 1
-                let frame = pending.[last]
-                pending.RemoveAt last
-                match frame with
-                | BeginQuery current ->
-                    RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-                    let head = normalizeSelect sourceDialect target current.Head
-                    pending.Add(CompleteQuery(current, head))
-                    let branches = List.toArray current.SetOperations
-                    for index = branches.Length - 1 downto 0 do
-                        pending.Add(BeginQuery branches.[index].Query)
-                | CompleteQuery(current, head) ->
-                    let branches = List.toArray current.SetOperations
-                    let rebuilt = Array.zeroCreate<SetBranch> branches.Length
-                    for index = branches.Length - 1 downto 0 do
-                        let childIndex = completed.Count - 1
-                        let child = completed.[childIndex]
-                        completed.RemoveAt childIndex
-                        rebuilt.[index] <- { branches.[index] with Query = child }
-                    completed.Add
-                        { current with
-                            Head = head
-                            SetOperations = List.ofArray rebuilt
-                            OrderBy = current.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
-            if completed.Count <> 1 then
-                invalidOp "Normalizer set-operation continuation frames were not balanced."
-            completed.[0]
 
     let private normalizeReturning source target (items: ReturningItem list) =
         items
