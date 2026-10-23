@@ -1037,101 +1037,52 @@ module internal RewriteStages =
         if call.IsDistinct && call.Arguments |> List.exists isWildcard then
             invalidOp "COUNT(DISTINCT *) is not a valid Core aggregate shape."
 
-    let rec private validateExpr allowedTables expression =
-        match expression with
-        | Spanned(_, inner) -> validateExpr allowedTables inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateExpr allowedTables amount
-            validateExpr allowedTables value
-        | Unary(_, operand) -> validateExpr allowedTables operand
-        | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
-        | Like(value, pattern, _, _, _) ->
-            validateExpr allowedTables value
-            validateExpr allowedTables pattern
-        | RawRegexCall _ ->
-            invalidOp "Raw REGEXP_LIKE reached plan validation before canonicalization."
-        | RegexMatch(value, pattern) ->
-            validateExpr allowedTables value
-            validateExpr allowedTables pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateExpr allowedTables value
-        | FunctionCall call ->
-            ensureNoDistinctWildcard call
-            call.Arguments |> List.iter (validateExpr allowedTables)
-            call.AggregateOrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
-        | FilteredAggregate(value, predicate) -> validateExpr allowedTables value; validateExpr allowedTables predicate
-        | Windowed(value, window) ->
-            validateExpr allowedTables value
-            window.PartitionBy |> List.iter (validateExpr allowedTables)
-            window.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
-        | Cast(value, _) -> validateExpr allowedTables value
-        | Extract(_, value) -> validateExpr allowedTables value
-        | SimpleCase(input, branches, fallback) ->
-            validateExpr allowedTables input
-            branches |> NonEmpty.iter (fun branch -> validateExpr allowedTables branch.Match; validateExpr allowedTables branch.Result)
-            fallback |> Option.iter (validateExpr allowedTables)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch -> validateExpr allowedTables branch.Condition; validateExpr allowedTables branch.Result)
-            fallback |> Option.iter (validateExpr allowedTables)
-        | InList(value, items, _) -> validateExpr allowedTables value; items |> NonEmpty.iter (validateExpr allowedTables)
-        | InSubquery(value, query, _) -> validateExpr allowedTables value; validateQuery allowedTables query
-        | Between(value, lower, upper, _) -> validateExpr allowedTables value; validateExpr allowedTables lower; validateExpr allowedTables upper
-        | IsNull(value, _) -> validateExpr allowedTables value
-        | ScalarSubquery query -> validateQuery allowedTables query
-        | Exists(query, _) -> validateQuery allowedTables query
+    // All policy checks run as an explicit continuation-machine traversal.
+    // Preserve the legacy recursive walk's first-error order, notably CTEs
+    // before SELECT, query alias checks before UNION tails, and ON predicates.
+    let private validateWalk allowedTables frame =
+        RewriteAstTraversal.iterIncludingQueries (function
+            | RewriteAstTraversal.ExprNode(RawRegexCall _) ->
+                invalidOp "Raw REGEXP_LIKE reached plan validation before canonicalization."
+            | RewriteAstTraversal.ExprNode(FunctionCall call) ->
+                ensureNoDistinctWildcard call
+            | RewriteAstTraversal.SourceNode(NamedTable(identifier, _)) ->
+                ensureTableAllowed allowedTables identifier
+            | RewriteAstTraversal.AfterCtes select ->
+                if select.From.IsNone && select.Joins.IsEmpty
+                   && (select.Projection |> List.exists (fun item -> isWildcard item.Expression)) then
+                    invalidOp "Column reference '*' requires a FROM source in the portable Core query model."
+            | RewriteAstTraversal.AfterQueryHead query ->
+                let duplicateAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                let seenAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                for item in query.Head.Projection do
+                    match item.Alias with
+                    | Some alias when not (seenAliases.Add alias.Value) ->
+                        duplicateAliases.Add alias.Value |> ignore
+                    | _ -> ()
+                if duplicateAliases.Count > 0 then
+                    for order in query.OrderBy do
+                        match Expr.unspan order.Expression with
+                        | Column identifier
+                        | BoundColumn(identifier, ProjectionAlias)
+                            when Identifier.parts identifier |> List.length = 1 ->
+                            let name = identifierText identifier
+                            if duplicateAliases.Contains name then
+                                if query.Head.From.IsNone && query.Head.Joins.IsEmpty then
+                                    invalidOp ("ORDER BY projection alias '" + name + "' is ambiguous in a no-FROM query.")
+                                else
+                                    invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
+                        | _ -> ()
+            | _ -> ()) frame
 
-    and private validateSource allowedTables source =
-        match source with
-        | NamedTable(identifier, _) -> ensureTableAllowed allowedTables identifier
-        | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> validateQuery allowedTables query
+    let private validateExpr allowedTables expression =
+        validateWalk allowedTables (RewriteAstTraversal.ExprNode expression)
 
-    and private validateSelect allowedTables select =
-        for cte in select.Ctes do validateQuery allowedTables cte.Query
-        if select.From.IsNone && select.Joins.IsEmpty && select.Projection |> List.exists (fun item -> isWildcard item.Expression) then
-            invalidOp "Column reference '*' requires a FROM source in the portable Core query model."
-        select.From |> Option.iter (validateSource allowedTables)
-        iterDistinctOn (validateExpr allowedTables) select
-        select.ProjectionItems |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Expression)
-        select.Where |> Option.iter (validateExpr allowedTables)
-        select.GroupBy |> List.iter (validateExpr allowedTables)
-        select.Having |> Option.iter (validateExpr allowedTables)
-        select.Joins
-        |> List.iter (function
-            | CrossJoin source
-            | NaturalJoin(_, source)
-            | UsingJoin(_, source, _) ->
-                validateSource allowedTables source
-            | OnJoin(_, source, predicate) ->
-                validateSource allowedTables source
-                validateExpr allowedTables predicate)
+    let private validateSource allowedTables source =
+        validateWalk allowedTables (RewriteAstTraversal.SourceNode source)
 
-    and private validateQuery allowedTables query =
-        validateSelect allowedTables query.Head
-        let duplicateAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        let seenAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        for item in query.Head.Projection do
-            match item.Alias with
-            | Some alias when not (seenAliases.Add alias.Value) -> duplicateAliases.Add alias.Value |> ignore
-            | _ -> ()
-        if duplicateAliases.Count > 0 then
-            for order in query.OrderBy do
-                match Expr.unspan order.Expression with
-                | Column identifier
-                | BoundColumn(identifier, ProjectionAlias)
-                    when Identifier.parts identifier |> List.length = 1 ->
-                    let name = identifierText identifier
-                    if duplicateAliases.Contains name then
-                        if query.Head.From.IsNone && query.Head.Joins.IsEmpty then
-                            invalidOp ("ORDER BY projection alias '" + name + "' is ambiguous in a no-FROM query.")
-                        else
-                            invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
-                | _ -> ()
-        query.SetOperations |> List.iter (fun branch -> validateQuery allowedTables branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
+    let private validateQuery allowedTables query =
+        validateWalk allowedTables (RewriteAstTraversal.QueryNode query)
 
     // Use heap-backed work frames rather than consuming a CLR call frame
     // for every nested INSERT VALUES scalar expression.

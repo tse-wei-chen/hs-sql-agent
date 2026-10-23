@@ -87,3 +87,118 @@ module internal RewriteAstTraversal =
     /// Visitor exceptions propagate unmodified, preserving SQL diagnostics.
     let iter (visit: Expr -> unit) (root: Expr) =
         exists true (fun node -> visit node; false) root |> ignore
+
+    /// Explicit continuation frames for policy traversal across queries,
+    /// sources and expressions. The two After* phases retain the previous
+    /// recursive validator's precise ordering of policy errors.
+    type Frame =
+        | ExprNode of Expr
+        | QueryNode of Query
+        | SelectNode of Select
+        | SourceNode of TableSource
+        | AfterCtes of Select
+        | AfterQueryHead of Query
+
+    /// Whole-query pre-order traversal with explicit continuation phases.
+    /// No recursive F# function call is needed for nested queries or
+    /// arbitrarily long expression chains.
+    let iterIncludingQueries (visit: Frame -> unit) (root: Frame) =
+        let pending = ResizeArray<Frame>()
+        let inline push frame = pending.Add frame
+        let pushReverse (items: Frame list) =
+            let buffer = List.toArray items
+            for index = buffer.Length - 1 downto 0 do
+                push buffer.[index]
+        let pushExprs expressions = pushReverse (expressions |> List.map ExprNode)
+
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            visit frame
+            match frame with
+            | ExprNode expression ->
+                match expression with
+                | Spanned(_, inner) -> push (ExprNode inner)
+                | Unary(_, value)
+                | Cast(value, _)
+                | Extract(_, value)
+                | PostgresJsonAccess(value, _, _)
+                | IsNull(value, _) -> push (ExprNode value)
+                | DateAdd(_, left, right)
+                | DateDiff(_, left, right)
+                | Binary(_, left, right)
+                | RegexMatch(left, right)
+                | FilteredAggregate(left, right)
+                | Like(left, right, _, _, _) ->
+                    push (ExprNode right)
+                    push (ExprNode left)
+                | RawRegexCall(arguments, _) -> pushExprs arguments
+                | FunctionCall call ->
+                    pushExprs (call.AggregateOrderBy |> List.map (fun order -> order.Expression))
+                    pushExprs call.Arguments
+                | Windowed(value, window) ->
+                    pushExprs (window.OrderBy |> List.map (fun order -> order.Expression))
+                    pushExprs window.PartitionBy
+                    push (ExprNode value)
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (ExprNode value))
+                    let ordered = NonEmpty.toList branches |> List.toArray
+                    for index = ordered.Length - 1 downto 0 do
+                        push (ExprNode ordered.[index].Result)
+                        push (ExprNode ordered.[index].Match)
+                    push (ExprNode input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (ExprNode value))
+                    let ordered = NonEmpty.toList branches |> List.toArray
+                    for index = ordered.Length - 1 downto 0 do
+                        push (ExprNode ordered.[index].Result)
+                        push (ExprNode ordered.[index].Condition)
+                | InList(value, items, _) ->
+                    pushExprs (NonEmpty.toList items)
+                    push (ExprNode value)
+                | InSubquery(value, query, _) ->
+                    push (QueryNode query)
+                    push (ExprNode value)
+                | Between(value, lower, upper, _) ->
+                    push (ExprNode upper)
+                    push (ExprNode lower)
+                    push (ExprNode value)
+                | ScalarSubquery query | Exists(query, _) -> push (QueryNode query)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+            | QueryNode query ->
+                push (AfterQueryHead query)
+                push (SelectNode query.Head)
+            | SelectNode select ->
+                push (AfterCtes select)
+                pushReverse (select.Ctes |> List.map (fun cte -> QueryNode cte.Query))
+            | AfterCtes select ->
+                // Previous validator: FROM, DISTINCT ON, projections, WHERE,
+                // GROUP BY, HAVING, then JOIN sources and ON predicates.
+                let joins =
+                    select.Joins
+                    |> List.collect (function
+                        | OnJoin(_, source, predicate) ->
+                            [ SourceNode source; ExprNode predicate ]
+                        | CrossJoin source
+                        | NaturalJoin(_, source)
+                        | UsingJoin(_, source, _) -> [ SourceNode source ])
+                pushReverse joins
+                select.Having |> Option.iter (fun value -> push (ExprNode value))
+                pushExprs select.GroupBy
+                select.Where |> Option.iter (fun value -> push (ExprNode value))
+                pushExprs (select.ProjectionItems |> NonEmpty.toList |> List.map (fun item -> item.Expression))
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values -> pushExprs (NonEmpty.toList values)
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+                select.From |> Option.iter (fun value -> push (SourceNode value))
+            | SourceNode source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (QueryNode query)
+            | AfterQueryHead query ->
+                pushExprs (query.OrderBy |> List.map (fun item -> item.Expression))
+                pushReverse (query.SetOperations |> List.map (fun item -> QueryNode item.Query))
