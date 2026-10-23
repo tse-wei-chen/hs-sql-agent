@@ -37,6 +37,11 @@ public sealed class CoreCompilerResourceTelemetryTests
             Assert.NotEmpty(command.Sql);
             Assert.NotNull(SqlCoreInspection.GetQueryFacts(
                 "SELECT 1 AS result", SqlAgentToolType.Postgres));
+            Assert.NotNull(CoreSqlTextParser.ParseQuery(
+                "SELECT 5 AS projected", SqlAgentToolType.Postgres));
+            Assert.Equal(2, CoreDmlBatchTextParser.ParseDmlBatch(
+                "DELETE FROM users WHERE id = 1; DELETE FROM users WHERE id = 2",
+                SqlAgentToolType.Postgres).Count);
 
             List<object> captured;
             lock (samples) captured = samples.ToList();
@@ -47,7 +52,8 @@ public sealed class CoreCompilerResourceTelemetryTests
                 .Where(x => Equals(Get(x, "Success"), true)).ToList();
             var stages = successful.Select(x => Get(x, "Stage") as string).ToHashSet();
             foreach (var name in new[] { "Parsing", "Binding", "Normalization",
-                        "Validation", "Policy", "Rendering", "Inspection" })
+                        "Validation", "Policy", "Rendering", "Inspection",
+                        "CompatibilityProjection", "BatchSplit" })
                 Assert.Contains(name, stages);
 
             foreach (var data in successful)

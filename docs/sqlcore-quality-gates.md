@@ -1168,3 +1168,12 @@ A separate **32,000,000-unit aggregate compilation work budget**
 batches or nested inspections from resetting the total quota even when
 each phase stays under its independent 8,000,000-unit limit. No publicly
 configurable bypass or provider semantics change was added.
+
+The quota regressions invoke the real internal F# compilation scope via
+reflection (without exporting a configurable bypass or test API) to
+assert: phase work overage has the correct Parse/Binding exception type,
+the 32,000,000-unit aggregate is independent of 8,000,000-unit per-phase
+limits, a nested DML batch shares the outer budget, and failure does not
+leak state into the following request. The telemetry regression now
+requires public parsing and batch-splitting stage events alongside the
+ordinary compiler/inspection stages.

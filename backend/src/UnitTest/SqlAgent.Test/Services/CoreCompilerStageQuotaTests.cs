@@ -112,6 +112,54 @@ public sealed class CoreCompilerStageQuotaTests
     }
 
     [Fact]
+    public void AggregateCompilationWork_RejectsIndividuallyValidStages()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compilation(() =>
+            {
+                for (var i = 0; i < 7; i++)
+                    Stage("Phase" + i, SqlDiagnosticStage.Binding, () =>
+                    {
+                        Invoke(Method("charge"), 5_000_000L);
+                        return null;
+                    });
+                return null;
+            }));
+
+        Assert.Equal("SQL_COMPILER_TOTAL_WORK_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+    }
+
+    [Fact]
+    public void DmlBatch_UsesEnclosingAggregateQuotaWithoutReset()
+    {
+        var input = string.Concat(Enumerable.Repeat(
+            "DELETE FROM users WHERE id = 1;", 80));
+        var error = Assert.Throws<SqlParseException>(() =>
+            Compilation(() =>
+            {
+                for (var i = 0; i < 6; i++)
+                    Stage("PreviousStage" + i, SqlDiagnosticStage.Binding, () =>
+                    {
+                        Invoke(Method("charge"), 5_333_316L);
+                        return null;
+                    });
+                return CoreDmlBatchTextParser.ParseDmlBatch(
+                    input, SqlAgentToolType.Postgres);
+            }));
+
+        Assert.Equal("SQL_COMPILER_TOTAL_WORK_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Parse, error.Diagnostic?.Stage);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+
+        // A second request must not inherit the failed batch's quota.
+        Assert.Equal(2, CoreDmlBatchTextParser.ParseDmlBatch(
+            "DELETE FROM users WHERE id = 1; DELETE FROM users WHERE id = 2",
+            SqlAgentToolType.Postgres).Count);
+    }
+
+    [Fact]
     public void NestedCompilation_DoesNotResetTheParentStageQuota()
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
