@@ -371,6 +371,14 @@ published as measured percentages or silently set to 100.
       twelve-branch UNION ALL regressions require preserved SQL branch count,
       ORDER BY and parameter-binding order. Subquery normalizations within
       Head expressions remain a separate recursive path.
+- [x] Introduce shared post-order Expression mapping with explicit Enter/Exit
+      frames and typed Expr result stack. Binder resolves columns and wildcard
+      scope on rebuilt nodes; Normalizer applies function canonicalization,
+      CAST translation, unary-positive erasure and raw regex lowering after
+      children. All closed scalar DU cases (binary, CASE, functions, windows,
+      IN/BETWEEN, etc.) are rebuilt iteratively; nested Query still uses its
+      existing CTE/correlation-scope boundary. Six-dialect 256-node arithmetic
+      and mixed CASE/IN/BETWEEN parameter-order regressions guard parity.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

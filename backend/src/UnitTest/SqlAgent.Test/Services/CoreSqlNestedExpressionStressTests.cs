@@ -140,6 +140,52 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DeepArithmeticTree_PostOrderBindingPreservesEveryParameter(
+        SqlAgentToolType dialect)
+    {
+        // Unlike redundant parentheses/unary prefixes, the full binary AST
+        // contains one meaningful node per addition. Every provider must
+        // preserve source-order parameters after Binder and Normalizer.
+        const int depth = 256;
+        var expression = "id" + string.Concat(
+            Enumerable.Range(1, depth).Select(value => " + " + value));
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT " + expression + " FROM users",
+            dialect, dialect,
+            new SqlPlanValidationContext("iterative-postorder-binary-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(command.Sql);
+        Assert.Equal(depth, command.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, depth).Select(value => (long)value),
+            command.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MixedCaseInListAndBetween_PostOrderKeepsBindingOrder(
+        SqlAgentToolType dialect)
+    {
+        // CASE arms and WHERE predicates include branching nodes rather
+        // than a trivially linear expression chain.
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT CASE WHEN id = 1 THEN COALESCE(id, 2) ELSE 3 END FROM users "
+            + "WHERE id BETWEEN 4 AND 5 AND id IN (6, 7)",
+            dialect, dialect,
+            new SqlPlanValidationContext("iterative-postorder-mixed-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(
+            new long[] { 1, 2, 3, 4, 5, 6, 7 },
+            command.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+        Assert.Contains("CASE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("BETWEEN", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" IN ", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {
