@@ -364,6 +364,13 @@ published as measured percentages or silently set to 100.
       Parser now scans unary +/− prefixes iteratively while preserving signed
       number folding and postfix CAST handling; six-provider 32/128-prefix
       regressions keep compiled SQL/parameter behavior stable.
+- [x] Replace recursive set-operation branch normalization with a
+      two-phase Enter/Complete Query continuation stack. The SELECT Head
+      still normalizes first, child set branches left-to-right, then query
+      ORDER BY; results are rebuilt post-order on the heap. Six-dialect
+      twelve-branch UNION ALL regressions require preserved SQL branch count,
+      ORDER BY and parameter-binding order. Subquery normalizations within
+      Head expressions remain a separate recursive path.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

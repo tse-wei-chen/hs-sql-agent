@@ -58,6 +58,30 @@ public class CoreOrderBySemanticsTests
         Assert.Empty(command.Parameters);
     }
 
+    public static IEnumerable<object[]> SetOperationDialects() =>
+        Enum.GetValues<SqlAgentToolType>().Select(provider => new object[] { provider });
+
+    [Theory]
+    [MemberData(nameof(SetOperationDialects))]
+    public void Compile_MultiBranchSetOperation_PreservesBranchAndParameterOrder(
+        SqlAgentToolType provider)
+    {
+        const int branchCount = 12;
+        var sql = string.Join(" UNION ALL ",
+            Enumerable.Range(1, branchCount).Select(value =>
+                $"SELECT id FROM users WHERE id = {value}")) + " ORDER BY 1";
+
+        var command = Compile(sql, provider);
+
+        Assert.Equal(branchCount - 1,
+            command.Sql.Split("UNION ALL", StringSplitOptions.None).Length - 1);
+        Assert.Contains("ORDER BY 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(branchCount, command.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, branchCount).Select(value => (long)value),
+            command.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+    }
+
     [Fact]
     public void Compile_SetOperationOrderByProjectedAlias_IsSupported()
     {
