@@ -486,6 +486,49 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void WideSelectJoinsAndWhere_KeepSourceOrderedParameters(
+        SqlAgentToolType dialect)
+    {
+        const int joinCount = 32;
+        var clauses = Enumerable.Range(1, joinCount).Select(index =>
+            $"INNER JOIN parts AS p{index} ON p{index}.id = {index}");
+        var sql = "SELECT u.id FROM users AS u "
+            + string.Join(" ", clauses) + " WHERE u.id = 99";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("streaming-wide-select-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(joinCount,
+            result.Sql.Split("INNER JOIN", StringSplitOptions.None).Length - 1);
+        Assert.Equal(
+            Enumerable.Range(1, joinCount).Select(x => (long)x).Append(99L),
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void WideUnionBranches_KeepSetOperatorAndParameterOrder(
+        SqlAgentToolType dialect)
+    {
+        const int branchCount = 48;
+        var branches = Enumerable.Range(1, branchCount)
+            .Select(index => $"SELECT id FROM users WHERE id = {index}");
+        var sql = string.Join(" UNION ALL ", branches);
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("streaming-wide-set-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(branchCount - 1,
+            result.Sql.Split("UNION ALL", StringSplitOptions.None).Length - 1);
+        Assert.Equal(
+            Enumerable.Range(1, branchCount).Select(x => (long)x),
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void NestedExistsWhereQueryStream_PreservesOuterToInnerParameterOrder(
         SqlAgentToolType dialect)
     {

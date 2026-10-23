@@ -539,29 +539,35 @@ module internal RewriteRenderer =
                         Some(projected, child, isNegated)
                     | _ -> None
                 | _ -> None
-        let mutable current = query
-        let mutable currentNegated = negated
-        let mutable wrapping = true
-        let mutable levels = 0
-        let output = StringBuilder()
-        while wrapping do
-            match tryWrapper current with
-            | Some(projected, child, innerNegated) ->
-                RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
-                output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
-                      .Append("SELECT ")
-                      .Append(renderExpr ctx projected)
-                      .Append(dummyFrom)
-                      .Append(" WHERE ") |> ignore
-                levels <- levels + 1
-                current <- child
-                currentNegated <- innerNegated
-            | None -> wrapping <- false
-        output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
-              .Append(renderSubquery ctx current)
-              .Append(')') |> ignore
-        for _ in 1 .. levels do output.Append(')') |> ignore
-        output.ToString()
+        // Ordinary EXISTS has no wrappers: don't allocate a builder or
+        // per-query continuation state just to surround one subquery.
+        if Option.isNone (tryWrapper query) then
+            (if negated then "NOT EXISTS (" else "EXISTS (")
+            + renderSubquery ctx query + ")"
+        else
+            let mutable current = query
+            let mutable currentNegated = negated
+            let mutable wrapping = true
+            let mutable levels = 0
+            let output = StringBuilder()
+            while wrapping do
+                match tryWrapper current with
+                | Some(projected, child, innerNegated) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                    output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
+                          .Append("SELECT ")
+                          .Append(renderExpr ctx projected)
+                          .Append(dummyFrom)
+                          .Append(" WHERE ") |> ignore
+                    levels <- levels + 1
+                    current <- child
+                    currentNegated <- innerNegated
+                | None -> wrapping <- false
+            output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
+                  .Append(renderSubquery ctx current)
+                  .Append(')') |> ignore
+            for _ in 1 .. levels do output.Append(')') |> ignore
+            output.ToString()
 
     and private renderPredicate (ctx: RenderContext) expression =
         match ctx.Provider with
