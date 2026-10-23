@@ -60,8 +60,15 @@ module internal CoreModel =
             | [] -> invalidArg argumentName "Collection must contain at least one item."
         let toList (NonEmpty(head, tail)) = head :: tail
         let map mapping (NonEmpty(head, tail)) = NonEmpty(mapping head, tail |> List.map mapping)
-        let iter action values = values |> toList |> List.iter action
-        let length values = values |> toList |> List.length
+        let iter action (NonEmpty(head, tail)) =
+            action head
+            tail |> List.iter action
+        // Push children in reverse source order for an explicit LIFO walk.
+        // The common single-element case needs no temporary list or array.
+        let iterReverse action (NonEmpty(head, tail)) =
+            tail |> List.rev |> List.iter action
+            action head
+        let length (NonEmpty(_, tail)) = 1 + List.length tail
 
     type NonNegativeRowCount = private NonNegativeRowCount of int
 

@@ -256,19 +256,18 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (AggregateExpr value))
-                    let branches = NonEmpty.toList branches |> List.toArray
-                    for index = branches.Length - 1 downto 0 do
-                        push (AggregateExpr branches.[index].Result)
-                        push (AggregateExpr branches.[index].Match)
+                    NonEmpty.iterReverse (fun branch ->
+                        push (AggregateExpr branch.Result)
+                        push (AggregateExpr branch.Match)) branches
                     push (AggregateExpr input)
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (AggregateExpr value))
-                    let branches = NonEmpty.toList branches |> List.toArray
-                    for index = branches.Length - 1 downto 0 do
-                        push (AggregateExpr branches.[index].Result)
-                        push (AggregateExpr branches.[index].Condition)
+                    NonEmpty.iterReverse (fun branch ->
+                        push (AggregateExpr branch.Result)
+                        push (AggregateExpr branch.Condition)) branches
                 | InList(value, items, _) ->
-                    pushExprs (NonEmpty.toList items)
+                    NonEmpty.iterReverse (fun item ->
+                        push (AggregateExpr item)) items
                     push (AggregateExpr value)
                 | InSubquery(value, query, _) ->
                     push (AggregateQuery query)
@@ -324,12 +323,12 @@ module internal RewriteStages =
                     | None -> ()
                     push (AggregateSource joins.[index].Source)
                 select.From |> Option.iter (fun table -> push (AggregateSource table))
-                let projections = List.toArray select.Projection
-                for index = projections.Length - 1 downto 0 do
-                    push (AggregateExpr projections.[index].Expression)
+                NonEmpty.iterReverse (fun item ->
+                    push (AggregateExpr item.Expression)) select.ProjectionItems
                 match select.DistinctMode with
                 | SelectDistinct.DistinctOn values ->
-                    pushExprs (NonEmpty.toList values)
+                    NonEmpty.iterReverse (fun value ->
+                        push (AggregateExpr value)) values
                 | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
             | AggregateQuery query ->
                 if query.FetchPercent.IsSome then

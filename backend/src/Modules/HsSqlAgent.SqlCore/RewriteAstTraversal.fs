@@ -59,19 +59,17 @@ module internal RewriteAstTraversal =
                     push value
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter push
-                    let ordered = NonEmpty.toList branches |> List.toArray
-                    for index = ordered.Length - 1 downto 0 do
-                        push ordered.[index].Result
-                        push ordered.[index].Match
+                    NonEmpty.iterReverse (fun branch ->
+                        push branch.Result
+                        push branch.Match) branches
                     push input
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter push
-                    let ordered = NonEmpty.toList branches |> List.toArray
-                    for index = ordered.Length - 1 downto 0 do
-                        push ordered.[index].Result
-                        push ordered.[index].Condition
+                    NonEmpty.iterReverse (fun branch ->
+                        push branch.Result
+                        push branch.Condition) branches
                 | InList(value, items, _) ->
-                    pushReverse (NonEmpty.toList items)
+                    NonEmpty.iterReverse push items
                     push value
                 | InSubquery(value, _, _) -> push value
                 | Between(value, lower, upper, _) ->
@@ -150,19 +148,17 @@ module internal RewriteAstTraversal =
                     push (ExprNode value)
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (ExprNode value))
-                    let ordered = NonEmpty.toList branches |> List.toArray
-                    for index = ordered.Length - 1 downto 0 do
-                        push (ExprNode ordered.[index].Result)
-                        push (ExprNode ordered.[index].Match)
+                    NonEmpty.iterReverse (fun branch ->
+                        push (ExprNode branch.Result)
+                        push (ExprNode branch.Match)) branches
                     push (ExprNode input)
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (ExprNode value))
-                    let ordered = NonEmpty.toList branches |> List.toArray
-                    for index = ordered.Length - 1 downto 0 do
-                        push (ExprNode ordered.[index].Result)
-                        push (ExprNode ordered.[index].Condition)
+                    NonEmpty.iterReverse (fun branch ->
+                        push (ExprNode branch.Result)
+                        push (ExprNode branch.Condition)) branches
                 | InList(value, items, _) ->
-                    pushExprs (NonEmpty.toList items)
+                    NonEmpty.iterReverse (fun item -> push (ExprNode item)) items
                     push (ExprNode value)
                 | InSubquery(value, query, _) ->
                     push (QueryNode query)
@@ -197,11 +193,11 @@ module internal RewriteAstTraversal =
                 select.Having |> Option.iter (fun value -> push (ExprNode value))
                 pushExprs select.GroupBy
                 select.Where |> Option.iter (fun value -> push (ExprNode value))
-                let projections = select.ProjectionItems |> NonEmpty.toList |> List.toArray
-                for index = projections.Length - 1 downto 0 do
-                    push (ExprNode projections.[index].Expression)
+                NonEmpty.iterReverse (fun item ->
+                    push (ExprNode item.Expression)) select.ProjectionItems
                 match select.DistinctMode with
-                | SelectDistinct.DistinctOn values -> pushExprs (NonEmpty.toList values)
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (fun value -> push (ExprNode value)) values
                 | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
                 select.From |> Option.iter (fun value -> push (SourceNode value))
             | SourceNode source ->
