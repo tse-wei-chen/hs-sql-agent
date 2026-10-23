@@ -95,13 +95,66 @@ module internal RewriteLexer =
     let private isIdentifierStart c = Char.IsLetter(c) || c = '_'
     let private isIdentifierPart c = Char.IsLetterOrDigit(c) || c = '_' || c = '$'
 
+    // Conservative hard input budgets: guard memory/lexical work before parsing,
+    // regardless of dialect or optional schema validation. Deep AST recursion
+    // remains a separate resource gate.
+    [<Literal>]
+    let MaxSqlSourceLength = 4194304 // UTF-16 code units (4 Mi characters)
+
+    [<Literal>]
+    let MaxTokens = 131072 // non-End lexical tokens
+
     let tokenizeWith semantics (sql: string) =
         if Object.ReferenceEquals(sql, null) then nullArg "sql"
         let length = sql.Length
         let tokens = ResizeArray<Token>()
         let mutable i = 0
+        let mutable groupingDepth = 0
+        let mutable outermostOpen = -1
+
+        let lexicalError code message start spanLength : 'T =
+            let spanLength = max 1 spanLength
+            let detail = message + " Position " + string start + "."
+            raise (
+                SqlParseException(
+                    detail,
+                    SqlDiagnostic(
+                        code,
+                        SqlDiagnosticStage.Lexical,
+                        SqlDiagnosticCategory.Syntax,
+                        detail,
+                        SqlDiagnosticSpan(start, spanLength))))
+
+        if length > MaxSqlSourceLength then
+            lexicalError
+                "SQL_LEXICAL_INPUT_LIMIT"
+                ("SQL text exceeds the maximum " + string MaxSqlSourceLength
+                 + " UTF-16 code units.")
+                MaxSqlSourceLength 1
 
         let add kind start finish =
+            if tokens.Count >= MaxTokens then
+                lexicalError
+                    "SQL_LEXICAL_TOKEN_LIMIT"
+                    ("SQL text exceeds the maximum " + string MaxTokens + " lexical tokens.")
+                    start (finish - start)
+
+            // A malformed input with tens of thousands of unmatched open
+            // parentheses must never enter recursive-descent parsing.
+            // This is a grammatical balance check, not a depth limit.
+            match kind with
+            | Symbol '(' ->
+                if groupingDepth = 0 then outermostOpen <- start
+                groupingDepth <- groupingDepth + 1
+            | Symbol ')' ->
+                if groupingDepth = 0 then
+                    lexicalError
+                        "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
+                        "Unexpected closing parenthesis without a matching opening parenthesis."
+                        start (finish - start)
+                groupingDepth <- groupingDepth - 1
+            | _ -> ()
+
             tokens.Add({ Kind = kind; Start = start; Length = finish - start })
 
         let parseError message start spanLength : 'T =
@@ -495,6 +548,12 @@ module internal RewriteLexer =
                 | '(' | ')' | ',' | '.' | ';' -> add (Symbol c) i (i + 1)
                 | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                 i <- i + 1
+
+        if groupingDepth <> 0 then
+            lexicalError
+                "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
+                "SQL text ends with an opening parenthesis that has no matching closing parenthesis."
+                outermostOpen 1
 
         tokens.Add({ Kind = End; Start = length; Length = 0 })
         tokens |> Seq.toList

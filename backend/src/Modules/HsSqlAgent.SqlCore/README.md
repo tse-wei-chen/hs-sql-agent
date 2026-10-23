@@ -101,6 +101,87 @@ Oracle 26 joined DELETE participates in the PostgreSQL/SQL Server joined-delete 
 Oracle documents duplicate source matches as deleting each target row once. RETURNING/OUTPUT remains
 independently capability-gated.
 
+
+## Opt-in metadata-backed column validation
+
+The compiler accepts an immutable, version-labelled, **host-provided** `SqlSchemaSnapshot`.
+It checks physical table existence, qualified/unqualified column references, join predicates,
+ambiguous columns, CTE/derived projections, correlated subqueries, and ordinary
+INSERT/UPDATE/DELETE target columns against that snapshot.
+
+```csharp
+using HsSqlAgent.SqlCore.Core.Pipeline;
+
+var schema = new SqlSchemaSnapshot(
+    SqlAgentToolType.Postgres,
+    "catalog-snapshot-2026-10",
+    new[] {
+        new SqlSchemaTable("public.users", new[] { "id", "name", "active" })
+    });
+var context = new SqlPlanValidationContext("app-policy-v2")
+    .WithSchemaSnapshot(schema);
+var command = SqlCoreFacade.CompileQuery(
+    "SELECT id, name FROM public.users WHERE active = true",
+    SqlAgentToolType.Postgres,
+    SqlAgentToolType.Postgres,
+    context,
+    new SqlExecutionPlanPolicy(100));
+```
+
+Without a snapshot, prior compilation behavior is unchanged. With a snapshot, unverifiable
+shapes (currently recursive CTEs, NATURAL JOIN, MERGE and UPSERT conflict clauses) **fail
+closed**, using typed Binding-stage diagnostics. Missing tables and columns, ambiguous columns
+and unprovable projected column names also fail closed. The input snapshot must use actual
+provider-catalog identifier spelling, including PostgreSQL and Oracle case rules.
+
+This first stage establishes **name-existence** proofs, not a complete type checker:
+function overloads, SQL expression types, NULL behavior, collations, generated columns,
+uniqueness, metadata freshness and execution-time catalog drift are not yet proven.
+The host is responsible for capturing trustworthy catalog metadata and versioning it.
+Do not treat schema validation as a replacement for runtime DML approval, access control
+or transaction-row verification.
+
+
+### Optional portable type-family proofs
+
+Typed metadata is an additional opt-in contract. Existing `new SqlSchemaTable(name, string[])`
+remains name-only (`Unknown` type family). To validate proven type conflicts:
+
+```csharp
+var typed = SqlSchemaTable.WithTypes(
+    "users",
+    new[] {
+        new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+        new SqlSchemaColumn("name", SqlSchemaValueKind.Text)
+    });
+var typedContext = new SqlPlanValidationContext("strict-v1")
+    .WithSchemaSnapshot(new SqlSchemaSnapshot(
+        SqlAgentToolType.Postgres, "catalog-v1", new[] { typed }));
+```
+
+In typed snapshot mode, the compiler rejects **provably incompatible** comparisons,
+numeric arithmetic, LIKE operands and literal INSERT/UPDATE assignments with
+`SQL_SCHEMA_TYPE_MISMATCH` at `SemanticValidation`.
+Explicitly `Unknown` columns, casts, function results, unproven CTE/derived output types
+and provider-specific implicit coercions are not claimed as proven. This is
+*not* a provider-exact type checker or NULL/collation/overload solver.
+Typed metadata is part of compilation fingerprint and evidence identity.
+
+## DML predicate safety
+
+With the default DML policy, UPDATE and DELETE require a WHERE clause. The compiler now also
+rejects WHERE conditions **provably TRUE for every row**, such as `WHERE 1 = 1`,
+`WHERE 1 = 1 OR id = 5`, and `WHERE NOT (1 = 0)`.
+These denials carry stable Policy-stage diagnostic codes
+`SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE` and
+`SQL_POLICY_DELETE_UNBOUNDED_PREDICATE`. Explicit full-table DML authorization bypasses
+this restriction, while missing-WHERE diagnostics remain unchanged.
+
+This is a conservative proof, **not a completeness claim**: column-dependent tautologies,
+unknown functions, implicit type conversions and collation-sensitive expressions are not
+treated as known constants. Enforcement of per-request DML row counts, previews, approvals,
+permissions, and query resource limits remains the responsibility of the hosting runtime.
+
 ## Package boundaries
 
 - Use `HsSqlAgent.Provider.*` when you also need an ADO.NET driver, metadata discovery and

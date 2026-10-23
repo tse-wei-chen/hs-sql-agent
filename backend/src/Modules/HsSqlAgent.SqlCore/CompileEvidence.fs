@@ -143,7 +143,8 @@ module internal CompileEvidenceBuilder =
 
     let private assuranceEvidence
         (conflictTargetAssurance: DmlConflictTargetAssurance | null)
-        (resultRowAssurance: DmlResultRowAssurance | null) =
+        (resultRowAssurance: DmlResultRowAssurance | null)
+        (schemaDigest: string option) =
 
         [
             match conflictTargetAssurance with
@@ -152,6 +153,12 @@ module internal CompileEvidenceBuilder =
             match resultRowAssurance with
             | Null -> ()
             | NonNull value -> yield resultRowAssuranceEvidence value
+            match schemaDigest with
+            | Some digest ->
+                yield SqlCompileAssuranceEvidence(
+                    "sqlcore.schema_snapshot",
+                    settings [ "sha256", digest ])
+            | None -> ()
         ]
         |> Seq.sortBy (fun evidence -> evidence.Kind)
         |> ImmutableArray.CreateRange
@@ -167,7 +174,8 @@ module internal CompileEvidenceBuilder =
         queryMaxRows
         requireUpdatePredicate
         requireDeletePredicate
-        (allowedTables: string list option) =
+        (allowedTables: string list option)
+        (schemaDigest: string option) =
 
         let allowed =
             match allowedTables with
@@ -188,7 +196,7 @@ module internal CompileEvidenceBuilder =
                 requireDeletePredicate,
                 allowed)
           Assurances =
-            assuranceEvidence conflictTargetAssurance resultRowAssurance }
+            assuranceEvidence conflictTargetAssurance resultRowAssurance schemaDigest }
 
     type private Utf8HashWriter(hash: IncrementalHash) =
         let pool = ArrayPool<byte>.Shared

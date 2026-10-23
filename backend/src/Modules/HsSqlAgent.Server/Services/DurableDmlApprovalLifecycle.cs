@@ -15,6 +15,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SqlAgent.Service.Factories;
+using SqlAgent.Service.Core.Execution;
 
 namespace HsSqlAgent.Server.Services;
 
@@ -54,6 +55,21 @@ internal sealed class DurableDmlApprovalLifecycle(
     private const string Stale = "Stale";
     private const string Expired = "Expired";
     private const string Failed = "Failed";
+    private const string OutcomeUnknown = "OutcomeUnknown";
+    // A failed ROLLBACK is not evidence of an actual rollback. This state
+    // remains consumed and intentionally distinct from a lost COMMIT reply.
+    private const string RollbackOutcomeUnknown = "RollbackOutcomeUnknown";
+    // Distinct, persisted Admin Store uncertainty. Fits the existing 24-character Status column.
+    private const string ApprovalStateUnknown = "ApprovalStateUnknown";
+    // The target COMMIT was acknowledged, but the separate Admin Store write
+    // could not be confirmed. Keep the human explanation separate from the
+    // machine-readable Status so editing Reason never changes the error code.
+    private const string ConfirmedCommitStateUnknownReason =
+        "Target database COMMIT succeeded, but the Admin Store completion status could not be confirmed. " +
+        "The approval is already consumed. Reconcile database and approval state; do not retry this approval.";
+    private const string ApprovalStateUnknownCode = "dml.approval_state_unknown";
+    internal const string TargetFenceProtocol = "target-fence-v1";
+    internal const int AdminStoreAdmissionProtocolVersion = 1;
 
     public async Task PersistPendingAsync(
         DmlApprovalRequest request,
@@ -80,7 +96,10 @@ internal sealed class DurableDmlApprovalLifecycle(
         if (durableUntil <= now)
             throw new InvalidOperationException("DML approval durable completion deadline has already expired.");
 
-        var payload = new ProtectedResumePayload(
+        if (runtime.HasTargetExecutionFence && !runtime.HasTargetCommitWitness)
+            throw new InvalidOperationException("Target execution fencing requires target commit witness to be configured.");
+
+        var payload = new DurableDmlResumePayload(
             resumeContext.Sql,
             resumeContext.RequiredToolName,
             resumeContext.AccessKeyId,
@@ -88,8 +107,10 @@ internal sealed class DurableDmlApprovalLifecycle(
             resumeContext.SourceDialect,
             resumeContext.CustomToolId,
             resumeContext.CustomToolRevisionId,
-            ComputeConnectionFingerprint(connectionString, secret));
-        var protectedPayload = crypto.EncryptText(JsonSerializer.Serialize(payload), secret)
+            ComputeConnectionFingerprint(connectionString, secret),
+            runtime.HasTargetExecutionFence ? TargetFenceProtocol : null,
+            RequiresCommitWitness: runtime.HasTargetCommitWitness);
+        var protectedPayload = crypto.EncryptText(DurableDmlResumePayloadCodec.Serialize(payload), secret)
                                ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
 
         context.DmlApprovalRequests.Add(new DmlApprovalRequestState
@@ -98,6 +119,7 @@ internal sealed class DurableDmlApprovalLifecycle(
             ApprovalFingerprint = request.ApprovalFingerprint,
             EvidenceFingerprint = evidenceFingerprint,
             Status = Pending,
+            AdmissionProtocolVersion = AdminStoreAdmissionProtocolVersion,
             ProtectedExecutionPayload = protectedPayload,
             RequesterIdentity = request.RequesterIdentity,
             TargetIdentity = request.TargetIdentity,
@@ -155,11 +177,34 @@ internal sealed class DurableDmlApprovalLifecycle(
 
         if (!string.Equals(state.Status, Pending, StringComparison.Ordinal))
         {
+            // Read legacy OutcomeUnknown records distinguished by Reason text,
+            // but new Admin Store failures persist a dedicated machine state.
+            var approvalStateUnknown = HasConfirmedTargetCommit(state);
+            var commitOutcomeUnknown = string.Equals(state.Status, OutcomeUnknown, StringComparison.Ordinal)
+                && !approvalStateUnknown;
+            var rollbackOutcomeUnknown = string.Equals(state.Status, RollbackOutcomeUnknown, StringComparison.Ordinal);
+
             return new DmlApprovalCompletionResult(
                 string.Equals(state.Status, Executing, StringComparison.Ordinal)
                     ? DmlApprovalCompletionStatus.AlreadyProcessing
-                    : DmlApprovalCompletionStatus.AlreadyCompleted,
-                $"DML approval request is already in terminal or processing state '{state.Status}'.");
+                    : approvalStateUnknown || commitOutcomeUnknown || rollbackOutcomeUnknown
+                        ? DmlApprovalCompletionStatus.OutcomeUnknown
+                        : DmlApprovalCompletionStatus.AlreadyCompleted,
+                approvalStateUnknown
+                    ? ConfirmedCommitStateUnknownReason
+                    : commitOutcomeUnknown
+                        ? "DML commit outcome remains unknown. Approval is consumed; verify the database state. Do not retry this approval."
+                        : rollbackOutcomeUnknown
+                            ? "DML rollback could not be confirmed. Approval is consumed; inspect the target database. Do not retry this approval."
+                        : string.Equals(state.Status, Executing, StringComparison.Ordinal)
+                            ? "DML approval is already executing or requires reconciliation. Do not retry; inspect the target database state."
+                            : $"DML approval request is already in terminal state '{state.Status}'.")
+            {
+                ErrorCode = approvalStateUnknown
+                    ? ApprovalStateUnknownCode
+                    : commitOutcomeUnknown ? "dml.commit_outcome_unknown"
+                    : rollbackOutcomeUnknown ? "dml.rollback_outcome_unknown" : null
+            };
         }
 
         if (DateTime.UtcNow >= state.ExpiresAt)
@@ -175,6 +220,18 @@ internal sealed class DurableDmlApprovalLifecycle(
             await AuditCompletionAsync(state, "cancelled", "declined", reason, null, cancellationToken);
             return new DmlApprovalCompletionResult(DmlApprovalCompletionStatus.Rejected, reason);
         }
+
+        // Never interpret a future or absent Admin Store admission protocol
+        // as v3 consent. An upgraded reader may support it later, but this
+        // worker must not transition the Pending row into Executing.
+        if (state.AdmissionProtocolVersion != AdminStoreAdmissionProtocolVersion)
+            return new DmlApprovalCompletionResult(
+                DmlApprovalCompletionStatus.ConfigurationError,
+                "Durable DML approval admission protocol is incompatible with this worker. " +
+                "Do not execute or replay this approval; use a compatible worker or re-preview.")
+            {
+                ErrorCode = "dml.admission_protocol_incompatible"
+            };
 
         state.Status = Executing;
         state.ApproverIdentity = completion.ApproverIdentity;
@@ -205,16 +262,114 @@ internal sealed class DurableDmlApprovalLifecycle(
             state.Status = terminalStatus;
             state.Reason = execution.Message;
             state.UpdatedAt = DateTime.UtcNow;
-            await context.SaveChangesAsync(cancellationToken);
+            if (execution.Status == DmlApprovalCompletionStatus.Executed)
+            {
+                try
+                {
+                    await context.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception persistenceFailure)
+                {
+                    // A confirmed target COMMIT precedes this separate Admin
+                    // Store save. Never fall into the generic Failed handler:
+                    // the primary operation was already physically committed.
+                    return await HandleConfirmedCommitStateFailureAsync(
+                        context, state, execution, persistenceFailure);
+                }
+            }
+            else
+            {
+                await context.SaveChangesAsync(cancellationToken);
+            }
 
-            await AuditCompletionAsync(
-                state,
-                execution.Status == DmlApprovalCompletionStatus.Executed ? "success" : "failed",
-                execution.Status == DmlApprovalCompletionStatus.Executed ? "approved" : terminalStatus.ToLowerInvariant(),
-                execution.Message,
-                execution.AffectedRows,
-                cancellationToken);
+            // The target DB has already committed for Executed. Audit I/O is
+            // secondary and must never rewrite a committed approval as Failed.
+            // The terminal state was persisted before attempting this audit.
+            try
+            {
+                using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await AuditCompletionAsync(
+                    state,
+                    execution.Status == DmlApprovalCompletionStatus.Executed ? "success" : "failed",
+                    execution.Status == DmlApprovalCompletionStatus.Executed ? "approved" : terminalStatus.ToLowerInvariant(),
+                    execution.Message,
+                    execution.AffectedRows,
+                    auditTimeout.Token);
+            }
+            catch (Exception)
+            {
+                // Preserve the persisted terminal result; audit transport
+                // failures cannot undo an already committed target transaction.
+            }
             return execution;
+        }
+        catch (DmlCommitOutcomeUnknownException ex)
+        {
+            // This is NOT a definitive failure. COMMIT may have succeeded.
+            // Persist a separate terminal state, and never reopen Pending.
+            // Failure to persist still leaves Executing (also non-retryable).
+            state.Status = OutcomeUnknown;
+            state.Reason = ex.Message;
+            state.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await context.SaveChangesAsync(cleanup.Token);
+            }
+            catch (Exception)
+            {
+                // The ambiguous physical commit must not be masked by audit DB I/O.
+            }
+
+            try
+            {
+                using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await AuditCompletionAsync(state, "outcome_unknown", "outcome_unknown",
+                    ex.Message, null, auditTimeout.Token);
+            }
+            catch (Exception)
+            {
+                // The completion response is more important than a secondary audit failure.
+            }
+
+            return new DmlApprovalCompletionResult(
+                DmlApprovalCompletionStatus.OutcomeUnknown, ex.Message)
+            {
+                ErrorCode = "dml.commit_outcome_unknown"
+            };
+        }
+        catch (DmlRollbackOutcomeUnknownException ex)
+        {
+            // A mutation failed, then rollback could not be confirmed.
+            // Treat this as target-state uncertainty, not definite Failed.
+            state.Status = RollbackOutcomeUnknown;
+            state.Reason = ex.Message;
+            state.UpdatedAt = DateTime.UtcNow;
+            try
+            {
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await context.SaveChangesAsync(cleanup.Token);
+            }
+            catch (Exception)
+            {
+                // The durably claimed Executing state is also non-replayable.
+            }
+
+            try
+            {
+                using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await AuditCompletionAsync(state, "outcome_unknown", "rollback_outcome_unknown",
+                    ex.Message, null, auditTimeout.Token);
+            }
+            catch (Exception)
+            {
+                // Secondary audit failure never changes the target outcome.
+            }
+
+            return new DmlApprovalCompletionResult(DmlApprovalCompletionStatus.OutcomeUnknown, ex.Message)
+            {
+                ErrorCode = "dml.rollback_outcome_unknown"
+            };
         }
         catch (DmlApprovalStaleException ex)
         {
@@ -240,6 +395,70 @@ internal sealed class DurableDmlApprovalLifecycle(
         }
     }
 
+    /// <summary>
+    /// Acknowledged target COMMIT is durable evidence, independent of the
+    /// Admin Store terminal-write acknowledgement. Older versions persisted
+    /// these records as OutcomeUnknown with a known, exact reason prefix.
+    /// Never allow reconciliation to contradict this confirmed COMMIT.
+    /// </summary>
+    internal static bool HasConfirmedTargetCommit(DmlApprovalRequestState state) =>
+        HasConfirmedTargetCommit(state.Status, state.Reason);
+
+    // Reconciliation inventory projects only these two status/evidence fields
+    // rather than loading the encrypted SQL resume payload for every row.
+    internal static bool HasConfirmedTargetCommit(string status, string? reason) =>
+        string.Equals(status, ApprovalStateUnknown, StringComparison.Ordinal)
+        || (string.Equals(status, OutcomeUnknown, StringComparison.Ordinal)
+            && reason?.StartsWith(ConfirmedCommitStateUnknownReason, StringComparison.Ordinal) == true);
+
+    private async Task<DmlApprovalCompletionResult> HandleConfirmedCommitStateFailureAsync(
+        IAdminContext context,
+        DmlApprovalRequestState state,
+        DmlApprovalCompletionResult confirmedCommit,
+        Exception persistenceFailure)
+    {
+        // A failed SaveChanges acknowledgement may mean the Admin Store
+        // already persisted Executed; if not, Executing is durably claimed.
+        // A best-effort separate write can mark ApprovalStateUnknown, but
+        // must never make the request Pending, Failed, or executable again.
+        state.Status = ApprovalStateUnknown;
+        state.Reason = ConfirmedCommitStateUnknownReason;
+        state.UpdatedAt = DateTime.UtcNow;
+        try
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await context.SaveChangesAsync(cleanup.Token);
+        }
+        catch (Exception)
+        {
+            // At least the earlier Executing claim remains non-replayable.
+            // Do not infer that the target database transaction rolled back.
+        }
+
+        try
+        {
+            using var auditTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await AuditCompletionAsync(
+                state, "admin_state_unknown", "outcome_unknown",
+                ConfirmedCommitStateUnknownReason + " Admin error: " +
+                    persistenceFailure.GetType().Name,
+                confirmedCommit.AffectedRows, auditTimeout.Token);
+        }
+        catch (Exception)
+        {
+            // Failure to record diagnostics must not hide the confirmed
+            // physical write or imply that retrying the approval is safe.
+        }
+
+        return new DmlApprovalCompletionResult(
+            DmlApprovalCompletionStatus.OutcomeUnknown,
+            ConfirmedCommitStateUnknownReason,
+            confirmedCommit.AffectedRows)
+        {
+            ErrorCode = ApprovalStateUnknownCode
+        };
+    }
+
     private async Task<DmlApprovalCompletionResult> ExecuteApprovedAsync(
         IAdminContext context,
         DmlApprovalRequestState state,
@@ -248,8 +467,28 @@ internal sealed class DurableDmlApprovalLifecycle(
         var secret = RequireHmacSecret();
         var payloadJson = RequireCrypto().DecryptText(state.ProtectedExecutionPayload, secret)
                           ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
-        var payload = JsonSerializer.Deserialize<ProtectedResumePayload>(payloadJson)
-                      ?? throw new InvalidOperationException("Durable DML approval payload is invalid.");
+        var payload = DurableDmlResumePayloadCodec.Deserialize(payloadJson);
+        if (payload.RequiresCommitWitness && !runtime.HasTargetCommitWitness)
+            throw new InvalidOperationException(
+                "The durable approval requires a target-enlisted COMMIT witness, but this runtime has no witness writer. " +
+                "Do not downgrade this approval to a witness-free execution.");
+        if (payload.FenceProtocol is not null &&
+            (payload.FenceProtocol != TargetFenceProtocol
+             || !runtime.HasTargetExecutionFence || !runtime.HasTargetCommitWitness))
+            throw new InvalidOperationException(
+                "Versioned target execution fencing is required by this approval but is unavailable. " +
+                "Do not downgrade to an unfenced execution.");
+        // A fence-enabled runtime must not execute a historical Pending request
+        // which was created before admission fencing was enrolled. Treating a
+        // missing protocol as permission to bypass admission would silently
+        // downgrade precisely the fleet whose operator opted into fencing.
+        // Upgrade rollout must drain/reject these requests and re-preview
+        // with a fresh, versioned human authorization instead.
+        if (runtime.HasTargetExecutionFence && payload.FenceProtocol != TargetFenceProtocol)
+            throw new InvalidOperationException(
+                "Legacy durable DML approval predates target execution fencing. " +
+                "Request a new fenced preview and approval after draining older workers; " +
+                "never execute the legacy approval without target admission.");
 
         var current = await ResolveCurrentExecutionAsync(context, state, payload, secret, cancellationToken);
         var parsedBatch = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
@@ -302,7 +541,11 @@ internal sealed class DurableDmlApprovalLifecycle(
             currentPolicy,
             commitCurrent.AllowedTables,
             approvalContext,
-            cancellationToken);
+            cancellationToken,
+            runtime.HasTargetCommitWitness
+                ? new DmlTargetCommitWitnessEvidence(state.RequestId, state.EvidenceFingerprint)
+                : null,
+            requireExecutionFence: payload.FenceProtocol == TargetFenceProtocol);
         if (!commit.Committed)
             throw new DmlApprovalStaleException(
                 "Approved DML could not be committed because commit-time evidence revalidation no longer matched.");
@@ -316,7 +559,7 @@ internal sealed class DurableDmlApprovalLifecycle(
     private async Task<CurrentExecution> ResolveCurrentExecutionAsync(
         IAdminContext context,
         DmlApprovalRequestState state,
-        ProtectedResumePayload payload,
+        DurableDmlResumePayload payload,
         byte[] secret,
         CancellationToken cancellationToken)
     {
@@ -467,16 +710,6 @@ internal sealed class DurableDmlApprovalLifecycle(
         return leftBytes.Length == rightBytes.Length
                && CryptographicOperations.FixedTimeEquals(leftBytes, rightBytes);
     }
-
-    private sealed record ProtectedResumePayload(
-        string Sql,
-        string RequiredToolName,
-        int AccessKeyId,
-        int DbManagementId,
-        SqlAgentToolType SourceDialect,
-        int? CustomToolId,
-        int? CustomToolRevisionId,
-        string ConnectionFingerprint);
 
     private sealed record CurrentExecution(
         SqlAgentToolType ProviderType,

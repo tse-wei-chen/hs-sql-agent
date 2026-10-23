@@ -10,6 +10,59 @@ namespace HsSqlAgent.Server.Test.Extensions;
 public class ComposableRegistrationTests
 {
     [Fact]
+    public void SeparateCoreBuilders_ReuseOneRuntimeRegistration()
+    {
+        var services = new ServiceCollection();
+        var first = services.AddHsSqlAgentCore();
+        first.AddHsSqlAgentRuntime();
+        var descriptorsAfterFirst = services.Count;
+
+        // A second package can call AddHsSqlAgentCore independently without
+        // installing duplicate runtimes, options, policies or hosted services.
+        var second = services.AddHsSqlAgentCore();
+        second.AddHsSqlAgentRuntime();
+        Assert.Equal(descriptorsAfterFirst, services.Count);
+        Assert.Single(services, d => d.ServiceType == typeof(HsSqlAgentRuntimeOptions));
+    }
+
+    [Fact]
+    public void SeparateCoreBuilders_CannotOverrideAlreadyConfiguredRuntime()
+    {
+        var services = new ServiceCollection();
+        services.AddHsSqlAgentCore()
+            .AddHsSqlAgentRuntime(o => o.DmlApprovalStore.Provider = "Memory");
+
+        var second = services.AddHsSqlAgentCore();
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            second.AddHsSqlAgentRuntime(o => o.DmlApprovalStore.Provider = "Redis"));
+        Assert.Contains("already registered", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SeparateCoreBuilders_CannotMixBuiltInAndHostAuthorization()
+    {
+        var services = new ServiceCollection();
+        services.AddHsSqlAgentCore()
+            .AddHsSqlAgentHostAuthorization("Host.Agent");
+
+        var anotherModule = services.AddHsSqlAgentCore();
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            anotherModule.AddHsSqlAgentBuiltInAuth());
+        Assert.Contains("mutually exclusive", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AddHsSqlAgentCore_RejectsConflictingLegacyOptionsFromIndependentModule()
+    {
+        var services = new ServiceCollection();
+        services.AddHsSqlAgentCore(CreateOptions()).AddHsSqlAgentRuntime();
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            services.AddHsSqlAgentCore(CreateOptions()));
+        Assert.Contains("already configured", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void AddHsSqlAgentCore_DoesNotInstallOptionalModules()
     {
         var services = new ServiceCollection();

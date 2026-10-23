@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 
 namespace SqlAgent.Service.Core.Execution;
 
@@ -31,7 +32,8 @@ public sealed record ValidatedDmlPlan(
     TimeSpan ApprovalTtl,
     int MaxAffectedRows = 0,
     DmlApprovalMode ApprovalMode = DmlApprovalMode.RowSetMutation,
-    ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default);
+    ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default,
+    SqlSchemaSnapshot? SchemaSnapshot = null);
 
 public sealed record DmlPreview(
     DmlOperation Operation,
@@ -48,7 +50,15 @@ public sealed record DmlApprovalChallenge(
     string ApprovalContextFingerprint,
     DateTimeOffset IssuedAt,
     DateTimeOffset ExpiresAt,
-    string Nonce);
+    string Nonce)
+{
+    /// <summary>
+    /// Canonical binding of the complete approved plan, including match SQL,
+    /// row identity and preview payload. Legacy challenges lacking this field
+    /// are no longer executable and must be previewed again.
+    /// </summary>
+    public string? ApprovalPlanBinding { get; init; }
+}
 
 public sealed record DmlCommitResult(
     bool Committed,

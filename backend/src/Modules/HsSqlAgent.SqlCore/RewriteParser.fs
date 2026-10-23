@@ -115,7 +115,47 @@ module internal RewriteParser =
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
         let mutable index = 0
+
+        // Pair delimiters once, in linear time and with an explicit heap stack.
+        // Used only to elide redundant grouping parentheses, never to change
+        // SELECT subquery, function-call or operator precedence semantics.
+        // Most SQL never needs grouping-chain analysis. Build the delimiter
+        // index lazily so ordinary SELECT/DML hot paths avoid the extra
+        // O(token count) pass and matching-table allocations entirely.
+        let matchingClose = lazy (
+            let positions = Array.create data.Length -1
+            let pending = System.Collections.Generic.Stack<int>()
+            for position = 0 to data.Length - 1 do
+                match data[position].Kind with
+                | Symbol '(' -> pending.Push(position)
+                | Symbol ')' when pending.Count > 0 ->
+                    positions[pending.Pop()] <- position
+                | _ -> ()
+            positions)
+
         member _.Current = data[index]
+
+        member _.RedundantGroupingPrefixLength() =
+            let mutable count = 0
+            let mutable previousClose = -1
+            let mutable scanning = true
+            while scanning && index + count < data.Length do
+                let opening = index + count
+                let next = min (data.Length - 1) (opening + 1)
+                let subquery =
+                    match data[next].Kind with
+                    | Keyword "SELECT" | Keyword "WITH" -> true
+                    | _ -> false
+                let close = matchingClose.Value[opening]
+                if data[opening].Kind <> Symbol '('
+                   || subquery
+                   || close < 0
+                   || (count > 0 && close <> previousClose - 1) then
+                    scanning <- false
+                else
+                    count <- count + 1
+                    previousClose <- close
+            count
         member _.Peek(offset: int) = data[min (data.Length - 1) (index + offset)]
         member _.Advance() = if index < data.Length - 1 then index <- index + 1
         member _.Take() =
@@ -642,7 +682,9 @@ module internal RewriteParser =
             | _ -> fail cursor.Current "Invalid local DATETIME literal in CAST"
         | _ -> Cast(expression, target)
 
-    let rec private parseExpression (cursor: Cursor) : Expr = parseOr cursor
+    let rec private parseExpression (cursor: Cursor) : Expr =
+        RewriteStackSafety.parse cursor.Current.Start
+        parseOr cursor
 
     and private parseOr (cursor: Cursor) =
         let start = cursor.Current.Start
@@ -658,10 +700,18 @@ module internal RewriteParser =
 
     and private parseNot (cursor: Cursor) =
         let start = cursor.Current.Start
-        if acceptKeyword "NOT" cursor then
-            Unary(UnaryOperator.Not, parseNot cursor) |> markExpr start cursor
-        else
-            parseComparison cursor
+        let mutable negations = 0
+        while acceptKeyword "NOT" cursor do
+            negations <- negations + 1
+
+        let predicate = parseComparison cursor
+        // SQL three-valued logic obeys NOT (NOT x) = x, including UNKNOWN.
+        // Collapsing an even prefix chain avoids both recursive parser calls
+        // and an arbitrarily deep Unary AST that Binder/Renderer must traverse.
+        // Preserve the complete source span for diagnostics and inspection.
+        if negations = 0 then predicate
+        elif negations % 2 = 0 then markExpr start cursor predicate
+        else Unary(UnaryOperator.Not, predicate) |> markExpr start cursor
 
     and private parseComparison (cursor: Cursor) =
         let start = cursor.Current.Start
@@ -1354,7 +1404,23 @@ module internal RewriteParser =
             Exists(query, false)
         | Symbol '(' when isKeyword "SELECT" (cursor.Peek 1) || isKeyword "WITH" (cursor.Peek 1) ->
             cursor.Advance(); let query = parseQuery cursor in expectSymbol ')' cursor; ScalarSubquery query
-        | Symbol '(' -> cursor.Advance(); let expression = parseExpression cursor in expectSymbol ')' cursor; expression
+        | Symbol '(' ->
+            let groupingCount = cursor.RedundantGroupingPrefixLength()
+            if groupingCount = 0 then
+                // Preserve the original parser error and source span for
+                // unmatched grouping parentheses.
+                cursor.Advance()
+                let expression = parseExpression cursor
+                expectSymbol ')' cursor
+                expression
+            else
+                // A chain of structurally redundant parentheses is not AST
+                // depth. Consume the whole wrapper chain iteratively, then
+                // parse the contained expression only once.
+                for _ = 1 to groupingCount do cursor.Advance()
+                let expression = parseExpression cursor
+                for _ = 1 to groupingCount do expectSymbol ')' cursor
+                expression
         | Identifier(value, false) when cursor.Dialect = SourceDialect.Oracle && value.Equals("SYSDATE", StringComparison.OrdinalIgnoreCase) ->
             cursor.Advance()
             if isSymbol '(' cursor.Current then
@@ -1897,6 +1963,7 @@ module internal RewriteParser =
         orderBy, limit, offset, fetchPercent, fetchWithTies
 
     and private parseQuery cursor =
+        RewriteStackSafety.parse cursor.Current.Start
         let start = cursor.Current.Start
         let ctes = parseCtes cursor
         let head, top = parseSelectWithCtes cursor ctes

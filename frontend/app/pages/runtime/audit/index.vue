@@ -28,6 +28,8 @@ import {
 import {
   buildAuditExecutionSummary,
   formatAuditDefinition,
+  isAuditCommitOutcomeUnknown,
+  auditOutcomeLabel,
 } from "@/lib/auditPresentation";
 import { parseAuditDrillDownQuery } from "@/lib/auditNavigation";
 
@@ -117,10 +119,12 @@ const formatTime = (value?: string | null) => {
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 };
 
-const resultClass = (result: string) =>
-  result.toLowerCase() === "success"
-    ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
-    : "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200";
+const resultClass = (item: AuditItem) =>
+  isAuditCommitOutcomeUnknown(item)
+    ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+    : item.result.toLowerCase() === "success"
+      ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+      : "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200";
 
 const executionSummary = (item: AuditItem) =>
   buildAuditExecutionSummary(item);
@@ -228,7 +232,7 @@ onMounted(async () => {
         <div class="mb-4 grid gap-2 md:grid-cols-3 xl:grid-cols-5">
           <Input v-model="action" placeholder="Filter action" />
           <Input v-model="keyword" placeholder="Keyword" />
-          <Input v-model="resultFilter" placeholder="Result (success/failed)" />
+          <Input v-model="resultFilter" placeholder="Result (success/failed/outcome_unknown)" />
           <Input v-model="actor" placeholder="Actor ID or type" />
           <Input v-model="toolName" placeholder="Tool name" />
           <Input v-model.number="accessKeyId" type="number" min="1" placeholder="Access Key ID" />
@@ -284,8 +288,8 @@ onMounted(async () => {
             <div class="min-w-0 flex-1 space-y-2">
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-medium">{{ item.action }}</span>
-                <Badge variant="outline" :class="resultClass(item.result)">
-                  {{ item.result }}
+                <Badge variant="outline" :class="resultClass(item)">
+                  {{ auditOutcomeLabel(item) }}
                 </Badge>
                 <Badge v-if="item.errorCategory" variant="outline" class="border-rose-300 text-rose-700">
                   {{ item.errorCategory }}
@@ -296,6 +300,9 @@ onMounted(async () => {
               <div class="truncate text-sm text-muted-foreground">
                 {{ item.target }} · {{ item.actorType }}<template v-if="item.actorId"> / {{ item.actorId }}</template>
               </div>
+              <p v-if="isAuditCommitOutcomeUnknown(item)" class="text-sm font-medium text-amber-700 dark:text-amber-300">
+                Database COMMIT may have succeeded. Verify actual records before any new approval; do not replay this request.
+              </p>
 
               <div class="flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <span v-if="item.toolName" class="rounded bg-muted px-2 py-1">Tool: {{ item.toolName }}</span>
@@ -333,8 +340,8 @@ onMounted(async () => {
           <SheetHeader class="pr-8">
             <div class="flex flex-wrap items-center gap-2">
               <SheetTitle>{{ selectedItem.action }}</SheetTitle>
-              <Badge variant="outline" :class="resultClass(selectedItem.result)">
-                {{ selectedItem.result }}
+              <Badge variant="outline" :class="resultClass(selectedItem)">
+                {{ auditOutcomeLabel(selectedItem) }}
               </Badge>
             </div>
             <SheetDescription>
@@ -343,6 +350,15 @@ onMounted(async () => {
           </SheetHeader>
 
           <div class="space-y-5 px-4 pb-6">
+            <section v-if="isAuditCommitOutcomeUnknown(selectedItem)"
+              class="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
+              <h3 class="font-semibold text-amber-900 dark:text-amber-200">Commit outcome unknown</h3>
+              <p class="mt-2 text-amber-800 dark:text-amber-200">
+                The database may have committed even though its acknowledgement was lost.
+                The approval was consumed and must not be replayed. Reconcile the actual
+                database rows using the event trace before creating another preview.
+              </p>
+            </section>
             <section class="rounded-lg border p-4">
               <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Identity

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Data.Common;
+using System.Runtime.ExceptionServices;
 using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -15,10 +16,16 @@ public sealed class DmlCoordinator(
     TimeProvider? timeProvider = null,
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
-    IDmlPreviewTransactionFactory? previewTransactionFactory = null) : IDmlCoordinator
+    IDmlPreviewTransactionFactory? previewTransactionFactory = null,
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
+    IDmlTargetCommitWitness? targetCommitWitness = null,
+    IDmlTargetExecutionFence? targetExecutionFence = null) : IDmlCoordinator
 {
     private const int PreviewRowLimit = 20;
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+    private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
+    private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
+    private readonly IDmlTargetExecutionFence? _targetExecutionFence = targetExecutionFence;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IDmlApprovalChallengeStore _challengeStore =
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
@@ -101,14 +108,30 @@ public sealed class DmlCoordinator(
         throw new InvalidOperationException(
             "Verified runtime server-version identity is required for DML commit.");
 
+    public Task<DmlCommitResult> CommitAsync(
+        string connectionString,
+        ValidatedDmlPlan plan,
+        DmlApprovalChallenge approvedChallenge,
+        string approvalContextFingerprint,
+        CancellationToken cancellationToken,
+        string expectedServerVersionIdentity) =>
+        CommitAsync(connectionString, plan, approvedChallenge, approvalContextFingerprint,
+            cancellationToken, expectedServerVersionIdentity, witnessEvidence: null);
+
     public async Task<DmlCommitResult> CommitAsync(
         string connectionString,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
         string approvalContextFingerprint,
         CancellationToken cancellationToken,
-        string expectedServerVersionIdentity)
+        string expectedServerVersionIdentity,
+        DmlTargetCommitWitnessEvidence? witnessEvidence,
+        bool requireExecutionFence = false)
     {
+        if (requireExecutionFence && (witnessEvidence is null || _targetExecutionFence is null))
+            throw new InvalidOperationException("Versioned target fencing requires both durable evidence and a configured admission writer.");
+        if (witnessEvidence is not null && _targetCommitWitness is null)
+            throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
@@ -121,23 +144,66 @@ public sealed class DmlCoordinator(
                 "DML approval challenge is unknown, modified, expired, or has already been consumed.");
         }
 
+        DmlCommitResult? acknowledgedCommit = null;
+        ExceptionDispatchInfo? primaryFailure = null;
+        try
+        {
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
         RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
+        if (requireExecutionFence)
+        {
+            // An opt-in target fence must prove its actual schema, unique
+            // keys, witness and transactional rollback on the same physical
+            // DML identity before starting the approved mutation. A manually
+            // run, possibly stale deployment probe is not sufficient.
+            if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
+                || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
+                throw new InvalidOperationException(
+                    "Production target-fenced DML requires the built-in verified relational " +
+                    "fence and witness implementations; custom components need a separate " +
+                    "audited readiness capability.");
+
+            await new DmlTargetFenceReadinessProbe().VerifyAsync(
+                connection, plan.MutationCommand.TargetProvider, cancellationToken);
+        }
+
         await using var transaction = await connection.BeginTransactionAsync(
             _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
             cancellationToken);
 
         try
         {
+            // Catalog verification must finish before durable admission.
+            // Oracle may invalidate an earlier uncommitted target admission
+            // while reading dictionary metadata. Revocation still races the
+            // INSERT below, before any business DML is permitted.
+            await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                _schemaFreshnessVerifier, cancellationToken);
+
+            if (requireExecutionFence)
+            {
+                await _targetExecutionFence!.AdmitAsync(connection, transaction,
+                    plan.MutationCommand.TargetProvider, witnessEvidence!, cancellationToken);
+                await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                    connection, transaction, plan.MutationCommand.TargetProvider,
+                    witnessEvidence!, cancellationToken);
+            }
+
             if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             {
-                return await CommitInsertValuesAsync(
+                var insertResult = await CommitInsertValuesAsync(
                     connection,
                     transaction,
                     plan,
                     approvedChallenge,
-                    cancellationToken);
+                    cancellationToken,
+                    witnessEvidence,
+                    requireExecutionFence);
+                if (insertResult.Committed)
+                    acknowledgedCommit = insertResult;
+                return insertResult;
             }
 
             var matchCommand = RequireMatchCommand(plan);
@@ -187,18 +253,53 @@ public sealed class DmlCoordinator(
                     $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
             }
 
-            await transaction.CommitAsync(cancellationToken);
-            return new DmlCommitResult(
+            await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
+                witnessEvidence, cancellationToken);
+            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+            if (requireExecutionFence)
+                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                    connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
+                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
+            acknowledgedCommit = new DmlCommitResult(
                 true,
                 execution.AffectedRows,
                 "DML operation committed after approval and row-set revalidation.")
             {
                 ReturnedRows = execution.ReturnedRows
             };
+            return acknowledgedCommit;
         }
-        catch
+        catch (Exception failure)
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+            try
+            {
+                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            }
+            catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+            {
+                primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                throw;
+            }
+
+            primaryFailure = ExceptionDispatchInfo.Capture(failure);
+            throw;
+        }
+        }
+        catch (Exception) when (acknowledgedCommit is not null)
+        {
+            // Acknowledged target COMMIT is irreversible: a later transaction
+            // or connection DisposeAsync failure cannot turn it into a
+            // Failed approval or cause an operator to repeat the mutation.
+            return acknowledgedCommit;
+        }
+        catch (Exception cleanupFailure)
+            when (primaryFailure is not null &&
+                  !ReferenceEquals(cleanupFailure, primaryFailure.SourceException))
+        {
+            // An unrelated provider DisposeAsync failure cannot hide the
+            // primary SQL error or typed uncertain transaction outcome.
+            primaryFailure.Throw();
             throw;
         }
     }
@@ -233,12 +334,14 @@ public sealed class DmlCoordinator(
             challenge);
     }
 
-    private static async Task<DmlCommitResult> CommitInsertValuesAsync(
+    private async Task<DmlCommitResult> CommitInsertValuesAsync(
         DbConnection connection,
         DbTransaction transaction,
         ValidatedDmlPlan plan,
         DmlApprovalChallenge approvedChallenge,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DmlTargetCommitWitnessEvidence? witnessEvidence,
+        bool requireExecutionFence)
     {
         var execution = await ExecuteMutationAsync(
             connection,
@@ -256,7 +359,13 @@ public sealed class DmlCoordinator(
                 $"(approved={approvedChallenge.AffectedRows}, executed={execution.AffectedRows}).");
         }
 
-        await transaction.CommitAsync(cancellationToken);
+        await WriteWitnessAsync(connection, transaction, plan.MutationCommand.TargetProvider,
+            witnessEvidence, cancellationToken);
+        await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+        if (requireExecutionFence)
+            await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                connection, plan.MutationCommand.TargetProvider, witnessEvidence!,
+                _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
         return new DmlCommitResult(
             true,
             execution.AffectedRows,
@@ -265,6 +374,12 @@ public sealed class DmlCoordinator(
             ReturnedRows = execution.ReturnedRows
         };
     }
+
+    private Task WriteWitnessAsync(
+        DbConnection connection, DbTransaction transaction, SqlAgentToolType provider,
+        DmlTargetCommitWitnessEvidence? evidence, CancellationToken cancellationToken) =>
+        evidence is null ? Task.CompletedTask
+        : _targetCommitWitness!.WriteAsync(connection, transaction, provider, evidence, cancellationToken);
 
     private DmlApprovalChallenge CreateChallenge(
         ValidatedDmlPlan plan,
@@ -284,7 +399,10 @@ public sealed class DmlCoordinator(
             approvalContextFingerprint,
             now,
             now.Add(ttl),
-            Guid.NewGuid().ToString("N"));
+            Guid.NewGuid().ToString("N"))
+        {
+            ApprovalPlanBinding = DmlApprovalPlanBinding.Compute(plan)
+        };
     }
 
     private void ValidateChallenge(
@@ -304,6 +422,11 @@ public sealed class DmlCoordinator(
             throw new InvalidOperationException("DML policy changed after approval.");
         if (!string.Equals(plan.PlanFingerprint, challenge.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("DML plan changed after approval.");
+        if (string.IsNullOrWhiteSpace(challenge.ApprovalPlanBinding)
+            || !string.Equals(challenge.ApprovalPlanBinding,
+                DmlApprovalPlanBinding.Compute(plan), StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "DML approval plan binding changed after preview; request a new approval.");
         if (!string.Equals(
                 challenge.ApprovalContextFingerprint,
                 approvalContextFingerprint,
@@ -332,7 +455,8 @@ public sealed class DmlCoordinator(
         }
     }
 
-    private static void ValidatePlan(ValidatedDmlPlan plan)
+    // Single and atomic DML must share the exact same fail-closed plan rules.
+    internal static void ValidatePlan(ValidatedDmlPlan plan)
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentException.ThrowIfNullOrWhiteSpace(plan.TableName);

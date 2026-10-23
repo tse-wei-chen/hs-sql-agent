@@ -53,7 +53,39 @@ type DmlFingerprintService private () =
         DmlFingerprintService.Append(hash, mutationCommand.Kind.ToString())
         DmlFingerprintService.Append(hash, if mutationCommand.ReturnsRows then "returnsRows:true" else "returnsRows:false")
         DmlFingerprintService.Append(hash, mutationCommand.Sql)
-        DmlFingerprintService.Append(hash, policyVersion)
+
+        // DML preview/commit recomputes this fingerprint from the final compiled command.
+        // Carry the same immutable schema proof used by SqlCore compilation; otherwise
+        // compiler and DML coordinator would disagree on schema-bound approval identity.
+        let schemaDigest =
+            match mutationCommand.CompileEvidence with
+            | null -> None
+            | evidence ->
+                evidence.Assurances
+                |> Seq.filter (fun item ->
+                    String.Equals(item.Kind, "sqlcore.schema_snapshot", StringComparison.Ordinal))
+                |> Seq.toList
+                |> function
+                    | [] -> None
+                    | [ item ] ->
+                        item.Details
+                        |> Seq.filter (fun detail ->
+                            String.Equals(detail.Name, "sha256", StringComparison.Ordinal))
+                        |> Seq.toList
+                        |> function
+                            | [ detail ] -> Some detail.Value
+                            | _ -> invalidArg "mutationCommand" "Schema evidence requires exactly one SHA-256 digest."
+                    | _ -> invalidArg "mutationCommand" "Duplicate schema proof evidence is not allowed."
+
+        let effectivePolicyVersion =
+            match schemaDigest with
+            | None -> policyVersion
+            | Some digest ->
+                if digest.Length <> 64 || (digest |> Seq.exists (fun ch -> not (Uri.IsHexDigit ch))) then
+                    invalidArg "mutationCommand" "Schema proof SHA-256 must be 64 hex characters."
+                policyVersion + "|schema-sha256=" + digest.ToLowerInvariant()
+
+        DmlFingerprintService.Append(hash, effectivePolicyVersion)
         for parameter in mutationCommand.Parameters do
             DmlFingerprintService.Append(hash, parameter.Name)
             DmlFingerprintService.Append(hash, DmlFingerprintService.CanonicalValue(parameter.Value))

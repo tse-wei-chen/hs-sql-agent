@@ -1,3 +1,7 @@
+using System.Data;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.SqlParsing;
+using SqlAgent.Service.Core.Execution;
 using Microsoft.Data.SqlClient;
 using Testcontainers.MsSql;
 using Xunit;
@@ -84,6 +88,71 @@ public class MsSqlServerStrategyTests(MsSqlFixture fixture) : BaseStrategyTests<
 
     protected override string TableNotFoundErrorCode => "208";
     protected override string ColumnNotFoundErrorCode => "207";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeSchemaFreshness_SqlServerTransactionHeldTableLockBlocksDdl(bool withRow)
+    {
+        // The strict native mode holds a table S lock until commit/rollback,
+        // which conflicts with ALTER's Sch-M even when the table is empty.
+        var token = TestContext.Current.CancellationToken;
+        var table = "HSLOCK_" + Guid.NewGuid().ToString("N")[..12].ToUpperInvariant();
+        var full = $"[dbo].[{table}]";
+        await using var guarded = new SqlConnection(Fixture.ConnectionString);
+        await using var ddl = new SqlConnection(Fixture.ConnectionString);
+        await guarded.OpenAsync(token);
+        await ddl.OpenAsync(token);
+
+        async Task ExecuteAsync(SqlConnection connection, string sql)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        await ExecuteAsync(ddl, $"CREATE TABLE {full} (ID INT PRIMARY KEY, NAME NVARCHAR(50))");
+        try
+        {
+            if (withRow)
+                await ExecuteAsync(ddl, $"INSERT INTO {full} (ID, NAME) VALUES (1, 'Alice')");
+
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO {full} (ID, NAME) VALUES (2, 'Bob')", SqlAgentToolType.MsSqlServer);
+            var native = new NativeDmlSchemaSnapshotService();
+            var snapshot = await native.CaptureAsync(
+                guarded, SqlAgentToolType.MsSqlServer, parsed, token);
+            Assert.NotNull(snapshot);
+
+            await using (var transaction = await guarded.BeginTransactionAsync(
+                IsolationLevel.Serializable, token))
+            {
+                Assert.Equal(snapshot.Sha256, await native.ReadCurrentSchemaDigestAsync(
+                    guarded, transaction, SqlAgentToolType.MsSqlServer, snapshot, token));
+
+                await ExecuteAsync(ddl, "SET LOCK_TIMEOUT 1000");
+                await using var blocked = ddl.CreateCommand();
+                blocked.CommandText = $"ALTER TABLE {full} ADD FENCED INT";
+                var error = await Assert.ThrowsAsync<SqlException>(() =>
+                    blocked.ExecuteNonQueryAsync(token));
+                Assert.Equal(1222, error.Number);
+                await transaction.RollbackAsync(token);
+            }
+
+            await ExecuteAsync(ddl, $"ALTER TABLE {full} ADD FENCED INT");
+            await using var changedTransaction = await guarded.BeginTransactionAsync(
+                IsolationLevel.Serializable, token);
+            var changed = await native.ReadCurrentSchemaDigestAsync(
+                guarded, changedTransaction, SqlAgentToolType.MsSqlServer, snapshot, token);
+            Assert.NotEqual(snapshot.Sha256, changed);
+            await changedTransaction.RollbackAsync(token);
+        }
+        finally
+        {
+            await ExecuteAsync(ddl, $"DROP TABLE {full}");
+        }
+    }
+
 
     [Fact]
     public override async Task GetColumnsAsync_ShouldReturnColumnTypes()

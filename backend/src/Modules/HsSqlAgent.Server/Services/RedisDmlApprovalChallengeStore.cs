@@ -24,6 +24,32 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         return value
         """;
 
+    // One Lua operation transitions every child into a single aggregate key.
+    // All keys share a Redis Cluster hash slot, so no partial child deletion or
+    // split-brain promotion is possible even with concurrent server instances.
+    private const string PromoteScript = """
+        local count = tonumber(ARGV[1])
+        if redis.call('EXISTS', KEYS[count + 1]) == 1 then
+            return 0
+        end
+        for i = 1, count do
+            if redis.call('GET', KEYS[i]) ~= ARGV[i + 1] then
+                return 0
+            end
+        end
+        -- Redis Lua returns a status reply table ({ ok = 'OK' }) for SET.
+        -- A plain string comparison always fails and must not be used here.
+        local registered = redis.call('SET',
+            KEYS[count + 1], ARGV[count + 2], 'PX', ARGV[count + 3], 'NX')
+        if not registered or registered['ok'] ~= 'OK' then
+            return 0
+        end
+        for i = 1, count do
+            redis.call('DEL', KEYS[i])
+        end
+        return 1
+        """;
+
     private readonly RedisDmlApprovalChallengeOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly Lazy<Task<ConnectionMultiplexer>>? _connection;
@@ -60,7 +86,7 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
             throw new InvalidOperationException("Cannot register an expired DML approval challenge.");
 
         var database = await GetDatabaseAsync(cancellationToken);
-        var payload = JsonSerializer.Serialize(challenge);
+        var payload = RedisDmlApprovalChallengePayloadCodec.Serialize(challenge);
         var registered = await database.StringSetAsync(
                 Key(challenge.Nonce),
                 payload,
@@ -88,6 +114,11 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         if (result.IsNull)
             return false;
 
+        // A challenge must not become executable after its absolute expiry,
+        // even when a delayed Redis response returns a previously stored value.
+        if (challenge.ExpiresAt <= _timeProvider.GetUtcNow())
+            return false;
+
         var payload = result.ToString();
         if (string.IsNullOrWhiteSpace(payload))
             return false;
@@ -95,7 +126,7 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         DmlApprovalChallenge? registered;
         try
         {
-            registered = JsonSerializer.Deserialize<DmlApprovalChallenge>(payload);
+            registered = RedisDmlApprovalChallengePayloadCodec.Deserialize(payload);
         }
         catch (JsonException exception)
         {
@@ -103,7 +134,52 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
                 "Stored DML approval challenge payload is invalid.",
                 exception);
         }
-        return registered == challenge;
+        // Compare the frozen v1 wire semantics, not evolving C# record
+        // equality: adding an unrelated CLR property in v3.x must not
+        // invalidate an already stored one-time challenge.
+        return RedisDmlApprovalChallengePayloadCodec.MatchesV1(registered, challenge);
+    }
+
+    public async ValueTask<bool> TryPromoteAsync(
+        IReadOnlyList<DmlApprovalChallenge> children,
+        DmlApprovalChallenge aggregate,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(children);
+        ValidateChallenge(aggregate);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (children.Count == 0)
+            throw new InvalidOperationException("Cannot promote an empty DML approval batch.");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal) { aggregate.Nonce };
+        foreach (var child in children)
+        {
+            ValidateChallenge(child);
+            if (!seen.Add(child.Nonce))
+                throw new InvalidOperationException("Atomic DML approval promotion requires distinct nonces.");
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        if (aggregate.ExpiresAt <= now || children.Any(x => x.ExpiresAt <= now))
+            return false;
+
+        var lifetimeMs = (long)Math.Ceiling((aggregate.ExpiresAt - now).TotalMilliseconds);
+        if (lifetimeMs <= 0)
+            return false;
+        var keys = children.Select(x => Key(x.Nonce))
+            .Append(Key(aggregate.Nonce)).ToArray();
+        var args = new RedisValue[children.Count + 3];
+        args[0] = children.Count;
+        for (var i = 0; i < children.Count; i++)
+            args[i + 1] = RedisDmlApprovalChallengePayloadCodec.Serialize(children[i]);
+        args[children.Count + 1] = RedisDmlApprovalChallengePayloadCodec.Serialize(aggregate);
+        args[children.Count + 2] = lifetimeMs;
+
+        var database = await GetDatabaseAsync(cancellationToken);
+        var result = await database.ScriptEvaluateAsync(
+                PromoteScript, keys, args, CommandFlags.None)
+            .WaitAsync(cancellationToken);
+        return result.ToString() == "1";
     }
 
     public async ValueTask DisposeAsync()
@@ -130,7 +206,10 @@ public sealed class RedisDmlApprovalChallengeStore : IDmlApprovalChallengeStore,
         return connection.GetDatabase();
     }
 
-    private RedisKey Key(string nonce) => _options.KeyPrefix + nonce;
+    // Redis Cluster requires every key touched by one Lua script to share
+    // a hash slot. Prefix still isolates deployments; the fixed hash tag
+    // deliberately scopes atomic approval transfers to one Redis shard.
+    private RedisKey Key(string nonce) => _options.KeyPrefix + "{dml-approval}:" + nonce;
 
     private static RedisDmlApprovalChallengeOptions ValidateOptions(
         RedisDmlApprovalChallengeOptions options)

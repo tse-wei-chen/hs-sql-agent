@@ -153,6 +153,99 @@ public sealed class DmlInsertApprovalCoordinatorTests
         Assert.Equal(0, factory.CreateCount);
     }
 
+    [Theory]
+    [InlineData("table")]
+    [InlineData("max-rows")]
+    [InlineData("ttl")]
+    [InlineData("preview-payload")]
+    [InlineData("unbound-challenge")]
+    public async Task Commit_InsertValues_BindsFullApprovalPlanBeforeAnyDatabaseAccess(string tampering)
+    {
+        var factory = new ThrowingConnectionFactory();
+        var coordinator = new DmlCoordinator(factory);
+        var plan = CreatePlan();
+        var preview = await coordinator.PreviewAsync(
+            "not-opened", plan, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, TestServerVersionIdentity);
+        Assert.False(string.IsNullOrWhiteSpace(preview.Challenge.ApprovalPlanBinding));
+
+        var altered = tampering switch
+        {
+            "table" => plan with { TableName = "other_users" },
+            "max-rows" => plan with { MaxAffectedRows = 3 },
+            "ttl" => plan with { ApprovalTtl = TimeSpan.FromMinutes(4) },
+            "preview-payload" => plan with
+            {
+                InsertRows = plan.InsertRows.SetItem(0,
+                    plan.InsertRows[0].SetItem("name", "Mallory"))
+            },
+            "unbound-challenge" => plan,
+            _ => throw new ArgumentOutOfRangeException(nameof(tampering))
+        };
+        var challenge = tampering == "unbound-challenge"
+            ? preview.Challenge with { ApprovalPlanBinding = null }
+            : preview.Challenge;
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.CommitAsync("not-opened", altered, challenge,
+                ApprovalContextFingerprint, TestContext.Current.CancellationToken,
+                TestServerVersionIdentity));
+
+        Assert.Contains("plan binding", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, factory.CreateCount);
+    }
+
+    [Fact]
+    public async Task FailedMutation_RollsBackWithoutAllowingConsumedApprovalToReplay()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(), $"hs-sql-agent-dml-replay-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={databasePath};Pooling=False";
+        try
+        {
+            string serverVersion;
+            await using (var setup = new SqliteConnection(connectionString))
+            {
+                await setup.OpenAsync(TestContext.Current.CancellationToken);
+                serverVersion = setup.ServerVersion.Trim();
+                await using var command = setup.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+                    INSERT INTO users (id, name) VALUES (1, 'already-exists');
+                    """;
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            var coordinator = new DmlCoordinator(new SqliteConnectionFactory());
+            var plan = CreatePlan();
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, ApprovalContextFingerprint,
+                TestContext.Current.CancellationToken, serverVersion);
+
+            var originalError = await Assert.ThrowsAsync<SqliteException>(() =>
+                coordinator.CommitAsync(
+                    connectionString, plan, preview.Challenge, ApprovalContextFingerprint,
+                    TestContext.Current.CancellationToken, serverVersion));
+            Assert.Equal(19, originalError.SqliteErrorCode);
+
+            var replay = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                coordinator.CommitAsync(
+                    connectionString, plan, preview.Challenge, ApprovalContextFingerprint,
+                    TestContext.Current.CancellationToken, serverVersion));
+            Assert.Contains("already been consumed", replay.Message, StringComparison.OrdinalIgnoreCase);
+
+            await using var verification = new SqliteConnection(connectionString);
+            await verification.OpenAsync(TestContext.Current.CancellationToken);
+            await using var check = verification.CreateCommand();
+            check.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(1L, (long)(await check.ExecuteScalarAsync(TestContext.Current.CancellationToken))!);
+        }
+        finally
+        {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
     private static ValidatedDmlPlan CreatePlan()
     {
         const string policyVersion = "policy-insert-v1";

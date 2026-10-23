@@ -567,6 +567,9 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                     b.Property<int>("AccessKeyId")
                         .HasColumnType("integer");
 
+                    b.Property<int>("AdmissionProtocolVersion")
+                        .HasColumnType("integer");
+
                     b.Property<string>("ApprovalFingerprint")
                         .IsRequired()
                         .HasMaxLength(64)

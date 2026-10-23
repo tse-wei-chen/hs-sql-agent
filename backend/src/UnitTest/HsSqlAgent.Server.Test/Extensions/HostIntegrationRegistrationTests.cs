@@ -15,6 +15,36 @@ namespace HsSqlAgent.Server.Test.Extensions;
 public class HostIntegrationRegistrationTests
 {
     [Fact]
+    public void AddHsSqlAgentAdminStore_BuildsFromMinimalHostWithoutMissingHttpContextAccessor()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        // A WebApplicationBuilder supplies IConfiguration. Model that normal
+        // host-owned service without bootstrapping a standalone HsSqlAgent app.
+        services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentAdminStore();
+
+        using var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+        Assert.NotNull(provider.GetRequiredService<IHttpContextAccessor>());
+    }
+
+    [Fact]
+    public void AddHsSqlAgentAdminStore_PreservesExistingHostHttpContextAccessor()
+    {
+        var services = new ServiceCollection();
+        var hostAccessor = new HttpContextAccessor();
+        services.AddSingleton<IHttpContextAccessor>(hostAccessor);
+        services.AddHsSqlAgentCore(CreateOptions())
+            .AddHsSqlAgentAdminStore();
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Same(hostAccessor, provider.GetRequiredService<IHttpContextAccessor>());
+    }
+
+    [Fact]
     public void AddHsSqlAgentBuiltInAuth_PreservesHostDefaultsPolicyProviderAndDataProtection()
     {
         var services = new ServiceCollection();

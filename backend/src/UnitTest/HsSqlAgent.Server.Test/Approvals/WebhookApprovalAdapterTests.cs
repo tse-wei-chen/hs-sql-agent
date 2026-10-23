@@ -114,6 +114,34 @@ public sealed class WebhookApprovalAdapterTests
     }
 
     [Fact]
+    public async Task Callback_UnknownCommitOutcome_IsConflictWithStableCode_NotSuccessOrRetryAuthorization()
+    {
+        var options = CreateOptions();
+        var payload = new WebhookApprovalCompletionPayload(
+            "req-unknown",
+            new string('b', 64),
+            WebhookApprovalDecision.Approved);
+        var body = JsonSerializer.SerializeToUtf8Bytes(payload,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var context = CreateCallbackContext(body, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), options);
+        var sink = new RecordingCompletionSink(new DmlApprovalCompletionResult(
+            DmlApprovalCompletionStatus.OutcomeUnknown,
+            "Database COMMIT may have succeeded; reconcile physical state.")
+        {
+            ErrorCode = "dml.commit_outcome_unknown"
+        });
+
+        var response = await WebhookApprovalEndpointRouteBuilderExtensions.HandleCallbackAsync(
+            context.Request, sink, Options.Create(options),
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(sink.Completion);
+        Assert.Equal(StatusCodes.Status409Conflict,
+            Assert.IsAssignableFrom<IStatusCodeHttpResult>(response).StatusCode);
+        Assert.Equal(DmlApprovalDecision.Approved, sink.Completion.Decision);
+    }
+
+    [Fact]
     public async Task Callback_ExpiredTimestamp_IsRejectedBeforeCompletionSink()
     {
         var options = CreateOptions();

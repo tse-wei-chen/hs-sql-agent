@@ -91,6 +91,23 @@ public interface IProviderConnectionDmlPlanningMetadataReader
         CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Transaction-bound variant of the existing six-provider DML planning catalog read.
+/// Queries MUST enlist in the caller's active commit transaction so live schema
+/// revalidation cannot silently use a different pooled connection or transaction.
+/// </summary>
+public interface IProviderTransactionDmlPlanningMetadataReader
+{
+    Task<IReadOnlyList<DatabaseDmlPlanningMetadata>> GetDmlPlanningMetadataInTransactionAsync(
+        DbConnection connection,
+        DbTransaction transaction,
+        string? schema,
+        string table,
+        bool includeColumns,
+        DmlOperation? triggerOperation = null,
+        CancellationToken cancellationToken = default);
+}
+
 public interface IProviderMetadataReader
 {
     Task<IReadOnlyList<string>> GetSchemasAsync(string connectionString, CancellationToken cancellationToken = default);

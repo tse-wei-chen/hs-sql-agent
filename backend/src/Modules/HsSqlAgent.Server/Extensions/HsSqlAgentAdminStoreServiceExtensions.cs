@@ -26,6 +26,11 @@ public static class HsSqlAgentAdminStoreServiceExtensions
             throw new InvalidOperationException("AdminStore ConnectionString is required.");
 
         var services = builder.Services;
+        // AuditService depends on IHttpContextAccessor even when Admin Store is
+        // embedded without built-in authentication or the standalone host.
+        // AddHttpContextAccessor uses TryAddSingleton, preserving an existing
+        // host-provided implementation and keeping the module self-contained.
+        services.AddHttpContextAccessor();
         services.AddAdminDatabase(options.Provider, options.ConnectionString);
         services.AddScoped<ISecurityPolicyService, SecurityPolicyService>();
         services.AddScoped<IMcpAccessKeyService, McpAccessKeyService>();

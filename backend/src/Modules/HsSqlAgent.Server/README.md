@@ -29,6 +29,21 @@ The current public HTTP contracts are intentionally fixed:
 
 Canonical permission paths such as `/auth/role` and `/runtime/db-management` are authorization resource identifiers, not HTTP mount paths. Changing a page or API URL must not silently change its permission identity.
 
+## Cross-module registration consistency
+
+`AddHsSqlAgentCore()` is safe to call from multiple modules using the
+**same** `IServiceCollection`. They share the registered feature and
+capability-option state, so a second registration does not duplicate Runtime,
+Admin Store, filters or middleware configuration. Configuration is only
+accepted on the **first** registration of each capability; a later attempt
+to override it fails with a clear error. Built-in identity and host
+authorization remain mutually exclusive even when they come from different
+NuGet integration modules. A second *legacy aggregate-options* initialization
+with a different object is rejected rather than silently changing settings.
+
+This registration identity is scoped to `IServiceCollection`, not global to
+the process. Independently configured ASP.NET Core hosts remain isolated.
+
 ## Existing ASP.NET Core host with its own login and permissions
 
 A host can omit the HsSqlAgent frontend and built-in identity entirely. The host keeps ownership of authentication, authorization, exception handling, telemetry, and controller endpoint mapping.

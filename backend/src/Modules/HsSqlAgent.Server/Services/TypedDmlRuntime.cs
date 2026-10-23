@@ -16,7 +16,11 @@ public sealed class TypedDmlRuntime(
     TimeProvider? timeProvider = null,
     IDmlApprovalChallengeStore? challengeStore = null,
     IDmlPreviewTransactionFactory? previewTransactionFactory = null,
-    ISqlCompileEvidenceObserver? compileEvidenceObserver = null)
+    ISqlCompileEvidenceObserver? compileEvidenceObserver = null,
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
+    IDmlSchemaSnapshotSource? schemaSnapshotSource = null,
+    IDmlTargetCommitWitness? targetCommitWitness = null,
+    IDmlTargetExecutionFence? targetExecutionFence = null)
 {
     private const int MaxStatementsPerTransaction = 16;
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
@@ -27,6 +31,13 @@ public sealed class TypedDmlRuntime(
         challengeStore ?? new InMemoryDmlApprovalChallengeStore(timeProvider);
     private readonly IDmlPreviewTransactionFactory? _previewTransactionFactory = previewTransactionFactory;
     private readonly ISqlCompileEvidenceObserver? _compileEvidenceObserver = compileEvidenceObserver;
+    private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
+    private readonly IDmlSchemaSnapshotSource? _schemaSnapshotSource = schemaSnapshotSource;
+    private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
+    private readonly IDmlTargetExecutionFence? _targetExecutionFence = targetExecutionFence;
+
+    internal bool HasTargetCommitWitness => _targetCommitWitness is not null;
+    internal bool HasTargetExecutionFence => _targetExecutionFence is not null;
 
     public async Task<ParsedStatement> ParseDmlWithVerifiedRuntimeProfileAsync(
         ISqlProvider provider,
@@ -87,6 +98,9 @@ public sealed class TypedDmlRuntime(
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
         var approvalContextFingerprint = ComputeApprovalContextFingerprint(approvalContext);
+        if (_schemaSnapshotSource is not null && _schemaFreshnessVerifier is null)
+            throw new InvalidOperationException(
+                "Strict DML schema snapshot compilation requires a live schema freshness verifier; preview rejected.");
 
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
@@ -106,6 +120,17 @@ public sealed class TypedDmlRuntime(
 
             try
             {
+                if (_schemaSnapshotSource is not null)
+                {
+                    var snapshot = await _schemaSnapshotSource.CaptureAsync(
+                        verificationConnection, provider.Type, parsedMutation, cancellationToken)
+                        ?? throw new InvalidOperationException(
+                            "Live DML schema snapshot could not be captured; preview rejected.");
+                    if (snapshot.Provider != parsedMutation.SourceDialect)
+                        throw new InvalidOperationException(
+                            "Captured DML schema snapshot dialect does not match the parsed SQL source; preview rejected.");
+                    validationContext = validationContext.WithSchemaSnapshot(snapshot);
+                }
                 plan = await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
                     verificationConnection,
                     connectionString,
@@ -130,7 +155,8 @@ public sealed class TypedDmlRuntime(
             provider.Connections,
             _timeProvider,
             _challengeStore,
-            previewTransactionFactory: ResolvePreviewTransactions(provider));
+            previewTransactionFactory: ResolvePreviewTransactions(provider),
+            schemaFreshnessVerifier: _schemaFreshnessVerifier);
         var preview = await coordinator.PreviewAsync(
             connectionString,
             plan,
@@ -175,21 +201,21 @@ public sealed class TypedDmlRuntime(
         }
         catch
         {
-            await ConsumeChildChallengesAsync(builder, cancellationToken);
+            await CleanupChildChallengesBestEffortAsync(builder);
             throw;
         }
 
+        try
+        {
         var statements = builder.ToImmutable();
         var totalLong = statements.Sum(x => (long)x.Preview.AffectedRows);
         if (totalLong > int.MaxValue)
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new UnauthorizedAccessException("DML transaction affected row count exceeds the supported integer range.");
         }
         var total = (int)totalLong;
         if (policy.DmlMaxAffectedRows > 0 && total > policy.DmlMaxAffectedRows)
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new UnauthorizedAccessException(
                 $"Security policy denied DML transaction: affectedRows={total} exceeds maximum {policy.DmlMaxAffectedRows}.");
         }
@@ -197,7 +223,6 @@ public sealed class TypedDmlRuntime(
         var policyVersion = statements[0].Plan.PolicyVersion;
         if (statements.Any(x => !string.Equals(x.Plan.PolicyVersion, policyVersion, StringComparison.Ordinal)))
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new InvalidOperationException("DML transaction statements were compiled under different security policy versions.");
         }
 
@@ -205,7 +230,6 @@ public sealed class TypedDmlRuntime(
         if (string.IsNullOrWhiteSpace(serverVersion)
             || statements.Any(x => !string.Equals(x.VerifiedServerVersionIdentity, serverVersion, StringComparison.Ordinal)))
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new InvalidOperationException("DML transaction statements were previewed against different runtime server versions.");
         }
 
@@ -216,11 +240,9 @@ public sealed class TypedDmlRuntime(
         var expiresAt = statements.Min(x => x.Preview.Challenge.ExpiresAt);
         if (expiresAt <= now)
         {
-            await ConsumeChildChallengesAsync(statements, cancellationToken);
             throw new InvalidOperationException("DML transaction approval expired during preview.");
         }
 
-        await ConsumeChildChallengesRequiredAsync(statements, cancellationToken);
         var challenge = new DmlApprovalChallenge(
             planFingerprint,
             evidenceFingerprint,
@@ -230,8 +252,24 @@ public sealed class TypedDmlRuntime(
             now,
             expiresAt,
             Guid.NewGuid().ToString("N"));
-        await _challengeStore.RegisterAsync(challenge, cancellationToken);
+        // Redis and in-memory stores atomically swap all child approvals for
+        // this aggregate. A failed promotion must never expose a usable batch
+        // or partially consume its child challenges.
+        if (!await _challengeStore.TryPromoteAsync(
+                statements.Select(x => x.Preview.Challenge).ToArray(),
+                challenge,
+                cancellationToken))
+            throw new InvalidOperationException(
+                "DML transaction approval promotion failed: a child was changed, consumed or expired, or the aggregate nonce was already registered.");
         return new TypedDmlTransactionApprovalSession(statements, challenge);
+        }
+        catch
+        {
+            // Cleanup must not inherit the caller's cancelled token. These
+            // child approvals were never returned as a usable batch.
+            await CleanupChildChallengesBestEffortAsync(builder);
+            throw;
+        }
     }
 
     public async Task<DmlCommitResult> CommitAsync(
@@ -241,12 +279,21 @@ public sealed class TypedDmlRuntime(
         SecurityPolicyModel currentPolicy,
         IReadOnlySet<string>? currentAllowedTables,
         DmlApprovalExecutionContext currentApprovalContext,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null,
+        bool requireExecutionFence = false)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(currentPolicy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        // Strict mode must also be enforced at commit. An approval session
+        // created before this host enabled native schema capture (or supplied
+        // from another runtime) must never silently run as legacy DML.
+        if (_schemaSnapshotSource is not null && session.Plan.SchemaSnapshot is null)
+            throw new InvalidOperationException(
+                "Strict DML schema freshness requires a schema-attested approval; request a new preview.");
 
         var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
         if (!string.Equals(currentPolicyVersion, session.Plan.PolicyVersion, StringComparison.Ordinal))
@@ -274,14 +321,19 @@ public sealed class TypedDmlRuntime(
             provider.Connections,
             _timeProvider,
             _challengeStore,
-            previewTransactionFactory: ResolvePreviewTransactions(provider));
+            previewTransactionFactory: ResolvePreviewTransactions(provider),
+            schemaFreshnessVerifier: _schemaFreshnessVerifier,
+            targetCommitWitness: _targetCommitWitness,
+            targetExecutionFence: _targetExecutionFence);
         return await coordinator.CommitAsync(
             connectionString,
             session.Plan,
             session.Preview.Challenge,
             currentApprovalContextFingerprint,
             cancellationToken,
-            session.VerifiedServerVersionIdentity);
+            session.VerifiedServerVersionIdentity,
+            witnessEvidence,
+            requireExecutionFence);
     }
 
     public async Task<DmlCommitResult> CommitTransactionAsync(
@@ -291,13 +343,23 @@ public sealed class TypedDmlRuntime(
         SecurityPolicyModel currentPolicy,
         IReadOnlySet<string>? currentAllowedTables,
         DmlApprovalExecutionContext currentApprovalContext,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null,
+        bool requireExecutionFence = false)
     {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(currentPolicy);
         if (session.Statements.IsDefaultOrEmpty)
             throw new InvalidOperationException("DML transaction approval session is empty.");
+
+        // Mixed proof/legacy batches cannot downgrade the newly enabled
+        // snapshot policy. Validate every statement before consuming the
+        // aggregate approval or opening a database transaction.
+        if (_schemaSnapshotSource is not null
+            && session.Statements.Any(x => x.Plan.SchemaSnapshot is null))
+            throw new InvalidOperationException(
+                "Strict DML schema freshness requires every transaction statement to carry a schema-attested approval; request a new preview.");
 
         var currentPolicyVersion = ComputePolicyVersion(currentPolicy, currentAllowedTables);
         if (!string.Equals(currentPolicyVersion, session.Challenge.PolicyVersion, StringComparison.Ordinal))
@@ -338,30 +400,39 @@ public sealed class TypedDmlRuntime(
             throw new InvalidOperationException(
                 "DML transaction approval challenge is unknown, modified, expired, or has already been consumed.");
 
-        var coordinator = new DmlAtomicTransactionCoordinator(provider.Connections);
+        var coordinator = new DmlAtomicTransactionCoordinator(
+            provider.Connections,
+            schemaFreshnessVerifier: _schemaFreshnessVerifier,
+            targetCommitWitness: _targetCommitWitness,
+            targetExecutionFence: _targetExecutionFence);
         return await coordinator.CommitAsync(
             connectionString,
             session.Statements.Select(x => x.Plan).ToArray(),
             session.Statements.Select(x => x.Preview).ToArray(),
             cancellationToken,
-            serverVersion);
+            serverVersion,
+            witnessEvidence,
+            requireExecutionFence);
     }
 
-    private async Task ConsumeChildChallengesRequiredAsync(
-        IEnumerable<TypedDmlApprovalSession> statements,
-        CancellationToken cancellationToken)
+    private async Task CleanupChildChallengesBestEffortAsync(
+        IEnumerable<TypedDmlApprovalSession> statements)
     {
+        // Cancellation and store timeouts must not mask the original preview
+        // error. If Redis is unavailable, remaining child keys still expire
+        // by TTL and no aggregate approval is ever exposed to the caller.
         foreach (var statement in statements)
-            if (!await _challengeStore.TryConsumeAsync(statement.Preview.Challenge, cancellationToken))
-                throw new InvalidOperationException("Unable to consolidate one-time DML statement challenges into transaction approval.");
-    }
-
-    private async Task ConsumeChildChallengesAsync(
-        IEnumerable<TypedDmlApprovalSession> statements,
-        CancellationToken cancellationToken)
-    {
-        foreach (var statement in statements)
-            await _challengeStore.TryConsumeAsync(statement.Preview.Challenge, cancellationToken);
+        {
+            try
+            {
+                await _challengeStore.TryConsumeAsync(
+                    statement.Preview.Challenge, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // Best effort only; the promotion itself remains atomic.
+            }
+        }
     }
 
     private static string ComputeTransactionPlanFingerprint(IReadOnlyList<TypedDmlApprovalSession> statements)
@@ -381,7 +452,8 @@ public sealed class TypedDmlRuntime(
             material.Append('|').Append(i)
                 .Append(':').Append(preview.AffectedRows)
                 .Append(':').Append(preview.Challenge.RowSetFingerprint ?? "-")
-                .Append(':').Append(statements[i].Plan.PlanFingerprint);
+                .Append(':').Append(statements[i].Plan.PlanFingerprint)
+                .Append(':').Append(preview.Challenge.ApprovalPlanBinding ?? "missing-plan-binding");
         }
         return ComputeHash(material.ToString());
     }

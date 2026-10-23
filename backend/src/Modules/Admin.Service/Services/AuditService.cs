@@ -7,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
 using Common.Models;
-using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -362,8 +361,6 @@ public class AuditService(
             try
             {
                 await _context.SaveChangesAsync(cancellationToken);
-                _deliverySignal?.Notify();
-                return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -374,7 +371,16 @@ public class AuditService(
                 lastException = exception;
                 if (attempt < maxAttempts)
                     await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), cancellationToken);
+                continue;
             }
+
+            // Outbound signal delivery is a local wake-up hint. The durable
+            // AuditLog and OutboundDelivery rows are already committed.
+            // Signal failures must never trigger another persistence attempt
+            // or a false fallback log after an acknowledged Admin Store save.
+            try { _deliverySignal?.Notify(); }
+            catch (Exception) { /* Scheduled outbox processing remains available. */ }
+            return;
         }
 
         await PersistFallbackAsync(item, lastException!, cancellationToken);
@@ -407,20 +413,5 @@ public class AuditService(
         }
     }
 
-    private static string? Redact(string? value)
-    {
-        if (string.IsNullOrEmpty(value))
-            return value;
-
-        var redacted = Regex.Replace(
-            value,
-            @"(?i)\b(password|pwd|token|api[_-]?key|secret)\s*[=:]\s*[^;\s]+",
-            "$1=[REDACTED]",
-            RegexOptions.CultureInvariant);
-        return Regex.Replace(
-            redacted,
-            @"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+",
-            "Bearer [REDACTED]",
-            RegexOptions.CultureInvariant);
-    }
+    private static string? Redact(string? value) => AuditTextRedactor.Redact(value);
 }

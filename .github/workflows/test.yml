@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
+      - run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
 
   auth-test:
     runs-on: ubuntu-latest
@@ -37,7 +37,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/Auth.Test/Auth.Test.csproj
+      - run: dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj
 
   admin-test:
     runs-on: ubuntu-latest
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/Admin.Test/Admin.Test.csproj
+      - run: dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
 
   server-test:
     runs-on: ubuntu-latest
@@ -63,7 +63,39 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+      - name: Verify released v2.0.6 Admin Store migration baseline is immutable
+        shell: bash
+        run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
+      - name: Run server unit tests (excluding explicit Redis integration suite)
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests'
+
+  redis-approval-integration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify real Redis and run cross-instance approval races
+        run: |
+          test -n "${HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION:?Redis service is required}"
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests'
+        env:
+          HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION: "localhost:6379,abortConnect=true,connectTimeout=5000"
 
   sqlagent-syntax-matrix:
     runs-on: ubuntu-latest
@@ -77,7 +109,64 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Run generated SQL grammar matrices
-        run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
+      - name: Validate SQL compiler benchmark harness (smoke only)
+        run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
+      - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
+        run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
+      - name: Record all-dialect deep SQL behavior (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres,MySQL,Sqlite,MsSqlServer,Oracle,Firebird
+          --depths 128,512,2048
+          --output artifacts/sqlcore-depth-pr.json
+      - name: Print high-depth SQL allocation and crash evidence
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-depth-pr.json; then
+            echo "Depth report missing; preceding step failed." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-depth-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"Depth probe: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              status = "ok" if worker.get("success") else "FAILED"
+              print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} elapsedUs={worker.get('elapsedMicroseconds')} exitCode={item['processExitCode']}")
+          PY
+      - name: Measure constrained-stack SQL compilation (observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres,MsSqlServer,Oracle,Firebird
+          --shapes nested-scalar-subquery,left-deep-and
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-small-stack-pr.json
+      - name: Summarize constrained-stack resource diagnostics
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-small-stack-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"Constrained-stack: samples={report['samples']} expectedResourceRejections={report['resourceRejections']} unexpectedFailures={report['unexpectedFailures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} exit={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
+          PY
+      - name: Upload isolated SQL nesting report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sqlcore-depth-pr
+          path: |
+            artifacts/sqlcore-depth-pr.json
+            artifacts/sqlcore-small-stack-pr.json
+          if-no-files-found: warn
 
   sqlagent-test:
     runs-on: ubuntu-latest
@@ -107,7 +196,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Run remaining SQL service tests
-        run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -140,10 +229,40 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services'
+      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+
+  sqlagent-fence-sqlserver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "Strong_Password_123!"
+          MSSQL_PID: "Developer"
+        ports:
+          - 1433:1433
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify actual SQL Server admission, COMMIT witness and revocation races
+        # Dedicated service job to keep the regular SQL test shards lightweight.
+        # Missing/unready SQL Server is a hard failure in CI, never a skip.
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
   sqlagent-package-smoke:
     runs-on: ubuntu-latest

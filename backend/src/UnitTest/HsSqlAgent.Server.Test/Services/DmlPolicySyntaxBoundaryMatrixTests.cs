@@ -24,6 +24,22 @@ public sealed class DmlPolicySyntaxBoundaryMatrixTests
                 "DELETE FROM users",
                 "SQL_POLICY_DELETE_REQUIRES_WHERE"
             ];
+
+            yield return
+            [
+                dialect,
+                "update-always-true-where",
+                "UPDATE users SET name = 'Blocked' WHERE 1 = 1",
+                "SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE"
+            ];
+
+            yield return
+            [
+                dialect,
+                "delete-always-true-where",
+                "DELETE FROM users WHERE 1 = 1",
+                "SQL_POLICY_DELETE_UNBOUNDED_PREDICATE"
+            ];
         }
     }
 
@@ -32,11 +48,11 @@ public sealed class DmlPolicySyntaxBoundaryMatrixTests
     {
         var cases = SixDialectDmlPolicyBoundaryMatrix().ToArray();
 
-        Assert.Equal(12, cases.Length);
+        Assert.Equal(24, cases.Length);
         foreach (var dialect in Enum.GetValues<SqlAgentToolType>())
         {
             Assert.Equal(
-                2,
+                4,
                 cases.Count(item => Equals(item[0], dialect)));
         }
     }

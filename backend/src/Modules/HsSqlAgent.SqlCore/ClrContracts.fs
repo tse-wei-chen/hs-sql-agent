@@ -96,6 +96,7 @@ type SqlDiagnosticCategory =
     | Semantic = 4
     | Policy = 5
     | Invariant = 6
+    | Resource = 7
 
 [<Sealed>]
 type SqlDiagnosticSpan(start: int, length: int) =
@@ -527,6 +528,8 @@ open System
 open System.Collections.Generic
 open System.Collections.Immutable
 open System.Data.Common
+open System.Security.Cryptography
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 open HsSqlAgent.SqlCore.Enums
@@ -624,25 +627,131 @@ type DmlResultRowAssurance private (targetTable: string, operation: DmlOperation
             invalidArg "targetTable" "DML result-row assurance requires a non-empty target table."
         DmlResultRowAssurance(targetTable.Trim(), operation)
 
+/// Portable, opt-in type families, never provider-native SQL type declarations.
+/// Unknown is intentional: name-only catalogs preserve earlier checking behavior.
+type SqlSchemaValueKind =
+    | Unknown = 0
+    | Boolean = 1
+    | Numeric = 2
+    | Text = 3
+    | Temporal = 4
+    | Binary = 5
+    | Json = 6
+
+[<Sealed>]
+type SqlSchemaColumn(name: string, kind: SqlSchemaValueKind) =
+    do
+        if String.IsNullOrWhiteSpace(name) || name <> name.Trim() then
+            invalidArg "name" "Schema column names must be non-empty and trimmed."
+        if not (Enum.IsDefined(kind)) then
+            invalidArg "kind" "Unknown schema value-kind enum value."
+    member _.Name = name
+    member _.Kind = kind
+
+/// Host-provided immutable catalog table; both typed and legacy name-only paths
+/// take defensive copies, so callers cannot mutate a compilation's proof inputs.
+[<Sealed>]
+type SqlSchemaTable private (name: string, definitions: ImmutableArray<SqlSchemaColumn>) =
+    do ArgumentException.ThrowIfNullOrWhiteSpace(name)
+    do
+        if name.Split('.') |> Array.exists String.IsNullOrWhiteSpace then
+            invalidArg "name" "Table identifier parts must be non-empty."
+        if definitions.IsDefaultOrEmpty then
+            invalidArg "columns" "Schema tables require at least one column."
+        if definitions |> Seq.exists (fun c -> Object.ReferenceEquals(c, null)) then
+            invalidArg "columns" "Schema columns cannot be null."
+        if (definitions |> Seq.map (fun c -> c.Name) |> Seq.distinct |> Seq.length) <> definitions.Length then
+            invalidArg "columns" "Schema tables may not declare duplicate column names."
+
+    let names =
+        definitions |> Seq.map (fun c -> c.Name) |> ImmutableArray.CreateRange<string>
+
+    new(name: string, columns: IEnumerable<string>) =
+        SqlSchemaTable(
+            name,
+            if isNull (box columns) then nullArg "columns"
+            else
+                columns
+                |> Seq.map (fun column -> SqlSchemaColumn(column, SqlSchemaValueKind.Unknown))
+                |> ImmutableArray.CreateRange<SqlSchemaColumn>)
+
+    static member WithTypes(name: string, columns: IEnumerable<SqlSchemaColumn>) =
+        ArgumentNullException.ThrowIfNull(columns)
+        SqlSchemaTable(name, ImmutableArray.CreateRange<SqlSchemaColumn>(columns))
+
+    member _.Name = name
+    member _.Columns : IReadOnlyList<string> = names
+    member _.TypedColumns : IReadOnlyList<SqlSchemaColumn> = definitions
+
+/// Metadata is copied on construction. Version identifies the supplied snapshot;
+/// it does not imply catalog freshness or transaction-level execution guarantees.
+[<Sealed>]
+type SqlSchemaSnapshot(provider: SqlAgentToolType, version: string, tables: IEnumerable<SqlSchemaTable>) =
+    do ArgumentException.ThrowIfNullOrWhiteSpace(version)
+    do ArgumentNullException.ThrowIfNull(tables)
+    let copies =
+        tables
+        |> Seq.map (fun item ->
+            ArgumentNullException.ThrowIfNull(item)
+            item)
+        |> ImmutableArray.CreateRange<SqlSchemaTable>
+    do
+        if copies.IsEmpty then invalidArg "tables" "Schema snapshots must contain at least one table."
+        if (copies |> Seq.map (fun item -> item.Name) |> Seq.distinct |> Seq.length) <> copies.Length then
+            invalidArg "tables" "Schema snapshots may not declare duplicate table names."
+    member _.Provider = provider
+    member _.Version = version
+    member _.Tables : IReadOnlyList<SqlSchemaTable> = copies
+
+    /// Exact immutable catalog proof identity, shared by compilation and runtime hosts.
+    member _.Sha256 =
+        let builder = StringBuilder()
+        let append (text: string) =
+            builder.Append(text.Length).Append(':').Append(text).Append(';') |> ignore
+        append "sqlcore-schema-v1"
+        append (string provider)
+        append version
+        copies
+        |> Seq.sortWith (fun a b -> StringComparer.Ordinal.Compare(a.Name, b.Name))
+        |> Seq.iter (fun table ->
+            append table.Name
+            append (string table.Columns.Count)
+            table.TypedColumns
+            |> Seq.sortWith (fun left right -> StringComparer.Ordinal.Compare(left.Name, right.Name))
+            |> Seq.iter (fun column ->
+                append column.Name
+                append (string (int column.Kind))))
+        builder.ToString()
+        |> Encoding.UTF8.GetBytes
+        |> SHA256.HashData
+        |> Convert.ToHexString
+        |> fun digest -> digest.ToLowerInvariant()
+
 [<Sealed>]
 type SqlPlanValidationContext private (
     policyVersion: string,
     allowedTables: IReadOnlySet<string> | null,
-    dmlResultRowAssurance: DmlResultRowAssurance | null) =
+    dmlResultRowAssurance: DmlResultRowAssurance | null,
+    schemaSnapshot: SqlSchemaSnapshot | null) =
 
     new(policyVersion: string) =
-        SqlPlanValidationContext(policyVersion, null, null)
+        SqlPlanValidationContext(policyVersion, null, null, null)
 
     new(policyVersion: string, allowedTables: IReadOnlySet<string> | null) =
-        SqlPlanValidationContext(policyVersion, allowedTables, null)
+        SqlPlanValidationContext(policyVersion, allowedTables, null, null)
 
     member _.PolicyVersion = policyVersion
     member _.AllowedTables = allowedTables
     member _.DmlResultRowAssurance = dmlResultRowAssurance
+    member _.SchemaSnapshot = schemaSnapshot
 
     member _.WithDmlResultRowAssurance(assurance: DmlResultRowAssurance) =
         ArgumentNullException.ThrowIfNull(assurance)
-        SqlPlanValidationContext(policyVersion, allowedTables, assurance)
+        SqlPlanValidationContext(policyVersion, allowedTables, assurance, schemaSnapshot)
+
+    member _.WithSchemaSnapshot(snapshot: SqlSchemaSnapshot) =
+        ArgumentNullException.ThrowIfNull(snapshot)
+        SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance, snapshot)
 
 [<Sealed>]
 type SqlExecutionPlanPolicy(queryMaxRows: int) =

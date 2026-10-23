@@ -471,6 +471,7 @@ module internal RewriteStages =
                 AggregateSeparator = None }
 
     let rec private normalizeExpr source target expression =
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         match expression with
         | Spanned(span, inner) -> normalizeExpr source target inner |> Expr.withSpan span
         | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
@@ -909,6 +910,7 @@ module internal RewriteStages =
             Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
 
     and private normalizeQuery sourceDialect target (query: Query) =
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         { query with
             Head = normalizeSelect sourceDialect target query.Head
             SetOperations =
@@ -1671,6 +1673,7 @@ module internal RewriteStages =
                 + string projection.Length + "."))
 
     let rec private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         match context with
         | ProjectionClause -> validateBooleanScalar targetRuntime "expression.boolean_select" expression
         | AssignmentClause -> validateBooleanScalar targetRuntime "dml.update.boolean_assignment" expression
@@ -1853,6 +1856,7 @@ module internal RewriteStages =
                     + "' is ambiguous in the combined output projection; use an output position."))
 
     and private validateSemanticQuery targetRuntime query =
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         validateSemanticSelect targetRuntime query.Head
         let expectedWidth =
             if query.Head.Projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None

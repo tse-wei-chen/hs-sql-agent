@@ -44,6 +44,7 @@
     <Compile Include="RuntimeContracts.fs" />
     <Compile Include="RewriteCoreModel.fs" />
     <Compile Include="RewriteTypestate.fs" />
+    <Compile Include="RewriteStackSafety.fs" />
     <Compile Include="RewriteCapabilityProvenance.fs" />
     <Compile Include="RewriteLegacyAstAdapter.fs" />
     <Compile Include="RewriteLexer.fs" />
@@ -55,6 +56,8 @@
     <Compile Include="RewriteStructuralValidation.fs" />
     <Compile Include="RewriteCompatibilityAstAdapter.fs" />
     <Compile Include="RewriteBinder.fs" />
+    <Compile Include="RewriteSchemaValidation.fs" />
+    <Compile Include="RewriteSchemaTypeValidation.fs" />
     <Compile Include="RewriteInspection.fs" />
     <Compile Include="RewriteStages.fs" />
     <Compile Include="RewritePolicy.fs" />

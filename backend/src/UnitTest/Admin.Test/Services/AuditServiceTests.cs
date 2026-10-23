@@ -165,6 +165,33 @@ public class AuditServiceTests
             x.Category == "siem" && x.TargetUrl == "https://siem.example/events" && x.Status == "pending")), Times.Once);
     }
 
+    [Fact]
+    public async Task WriteAsync_AfterSuccessfulAdminStoreSave_IgnoresOutboundWakeupFailure()
+    {
+        _contextMock.Setup(c => c.OutboundDeliveries).ReturnsDbSet(new List<OutboundDelivery>());
+        var signal = new Mock<IOutboundDeliverySignal>();
+        signal.Setup(x => x.Notify()).Throws(new IOException("Outbox worker is restarting"));
+        var service = new AuditService(
+            _contextMock.Object,
+            _httpContextAccessorMock.Object,
+            Options.Create(new OperabilitySettings
+            {
+                SiemWebhookUrl = "https://siem.example/events",
+                AuditFallbackPath = "data/audit-fallback-unused.jsonl"
+            }),
+            deliverySignal: signal.Object);
+
+        await service.WriteAsync("dml.approval.reconciled", "request-1", "reconciled",
+            "Operator attested physical state", cancellationToken: TestContext.Current.CancellationToken);
+
+        _contextMock.Verify(c => c.SaveChangesAsync(TestContext.Current.CancellationToken), Times.Once);
+        _contextMock.Verify(c => c.AuditLogs.Add(It.Is<AuditLog>(
+            x => x.Action == "dml.approval.reconciled")), Times.Once);
+        _contextMock.Verify(c => c.OutboundDeliveries.Add(It.Is<OutboundDelivery>(
+            x => x.Category == "siem" && x.Status == "pending")), Times.Once);
+        signal.Verify(x => x.Notify(), Times.Once);
+    }
+
     #region WriteLogAsync Tests
 
     [Fact]

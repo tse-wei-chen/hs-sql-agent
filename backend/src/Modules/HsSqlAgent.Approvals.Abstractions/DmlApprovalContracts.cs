@@ -141,10 +141,27 @@ public enum DmlApprovalCompletionStatus
     AlreadyProcessing,
     InvalidApproval,
     ConfigurationError,
-    Failed
+    Failed,
+    /// <summary>
+    /// The approval must not be replayed: either target COMMIT confirmation
+    /// was lost, or target COMMIT succeeded but the independent durable
+    /// approval-state write could not be confirmed. ErrorCode distinguishes
+    /// these two cases so clients never infer an ordinary failed write.
+    /// </summary>
+    OutcomeUnknown
 }
 
 public sealed record DmlApprovalCompletionResult(
     DmlApprovalCompletionStatus Status,
     string Message,
-    int? AffectedRows = null);
+    int? AffectedRows = null)
+{
+    /// <summary>
+    /// Stable error classification, including dml.commit_outcome_unknown
+    /// and dml.approval_state_unknown; the latter means the target commit
+    /// succeeded but Admin Store terminal persistence was not confirmed.
+    /// </summary>
+    public string? ErrorCode { get; init; }
+    /// <summary>Retrying the same approval is never allowed for OutcomeUnknown.</summary>
+    public bool Retryable { get; init; } = false;
+}

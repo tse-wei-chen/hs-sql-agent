@@ -46,7 +46,7 @@ public static class HsSqlAgentServiceExtensions
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentCore(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-        return new HsSqlAgentRegistrationBuilder(services);
+        return GetOrCreateCoreBuilder(services, null);
     }
 
     /// <summary>
@@ -71,6 +71,32 @@ public static class HsSqlAgentServiceExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
-        return new HsSqlAgentRegistrationBuilder(services, options);
+        return GetOrCreateCoreBuilder(services, options);
+    }
+
+    private static HsSqlAgentRegistrationBuilder GetOrCreateCoreBuilder(
+        IServiceCollection services,
+        HsSqlAgentServiceOptions? legacyOptions)
+    {
+        // Module registration can be spread across different NuGet libraries.
+        // The dependency-injection collection is the unit of composition:
+        // independent fluent builder instances must share the same state.
+        var state = services
+            .LastOrDefault(d => d.ServiceType == typeof(HsSqlAgentRegistrationState))
+            ?.ImplementationInstance as HsSqlAgentRegistrationState;
+        if (state is null)
+        {
+            state = new HsSqlAgentRegistrationState(legacyOptions);
+            services.AddSingleton(state);
+        }
+        else if (legacyOptions is not null && !ReferenceEquals(state.LegacyOptions, legacyOptions))
+        {
+            throw new InvalidOperationException(
+                "HsSqlAgent is already configured for this IServiceCollection. " +
+                "Do not reinitialize legacy options from a different module; " +
+                "reuse the existing AddHsSqlAgentCore() registration.");
+        }
+
+        return new HsSqlAgentRegistrationBuilder(services, state);
     }
 }

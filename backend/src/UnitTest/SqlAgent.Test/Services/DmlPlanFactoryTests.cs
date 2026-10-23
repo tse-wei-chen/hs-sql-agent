@@ -54,6 +54,42 @@ public class DmlPlanFactoryTests
     }
 
     [Fact]
+    public async Task ApprovalPlanBinding_TracksMatchQueryAndRowIdentityWithoutChangingMutationSql()
+    {
+        var metadata = new StubMetadataReader(
+        [
+            new DatabaseColumnMetadata("public", "users", "id", "integer", true, 1),
+            new DatabaseColumnMetadata("public", "users", "status", "text", false)
+        ]);
+        var parsed = CoreSqlTextParser.ParseDml(
+            "UPDATE public.users SET status = 'disabled' WHERE id = 7",
+            SqlAgentToolType.Postgres);
+        var plan = await new DmlPlanFactory(metadata).CreateAsync(
+            "connection", parsed, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("approval-binding-policy-v1"),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var match = Assert.IsType<CompiledSqlCommand>(plan.MatchQueryCommand);
+        var baseline = DmlApprovalPlanBinding.Compute(plan);
+        var changedMatch = new CompiledSqlCommand(
+            "SELECT id FROM public.users WHERE id = 99",
+            match.Parameters, match.Kind, match.PlanFingerprint, match.TargetProvider);
+
+        Assert.Equal(plan.PlanFingerprint,
+            (plan with { MatchQueryCommand = changedMatch }).PlanFingerprint);
+        Assert.NotEqual(baseline, DmlApprovalPlanBinding.Compute(
+            plan with { MatchQueryCommand = changedMatch }));
+        Assert.NotEqual(baseline, DmlApprovalPlanBinding.Compute(
+            plan with { RowIdentityColumns = plan.RowIdentityColumns.SetItem(0, "status") }));
+        Assert.NotEqual(baseline, DmlApprovalPlanBinding.Compute(
+            plan with { RowIdentityAssurance = DmlRowIdentityAssurance.CountOnly }));
+        Assert.NotEqual(baseline, DmlApprovalPlanBinding.Compute(
+            plan with { MaxAffectedRows = plan.MaxAffectedRows + 1 }));
+        Assert.NotEqual(baseline, DmlApprovalPlanBinding.Compute(
+            plan with { TableName = "public.other_users" }));
+    }
+
+    [Fact]
     public async Task CreateAsync_UnqualifiedTarget_UsesResolvedQualifiedTableForBothCommands()
     {
         var metadata = new StubMetadataReader(

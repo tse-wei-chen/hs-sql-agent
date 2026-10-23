@@ -154,7 +154,7 @@ public sealed class DmlPlanFactory(
                     cancellationToken);
         }
         var resolvedTarget = new NamedTableSource(
-            MetadataIdentifier(identity.Schema, identity.Table),
+            ExecutionTargetIdentifier(targetProvider, identity.Schema, identity.Table),
             target.Alias,
             target.Span);
         var resolvedStatement = ReplaceTarget(parsedMutation.Statement, resolvedTarget);
@@ -243,7 +243,8 @@ public sealed class DmlPlanFactory(
             fingerprint,
             validationContext.PolicyVersion,
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
-            maxAffectedRows);
+            maxAffectedRows,
+            SchemaSnapshot: validationContext.SchemaSnapshot);
     }
 
     private async Task<ValidatedDmlPlan> CreateInsertValuesPlanAsync(
@@ -306,7 +307,7 @@ public sealed class DmlPlanFactory(
                     cancellationToken);
         }
         var resolvedTarget = new NamedTableSource(
-            MetadataIdentifier(targetResolution.Schema, targetResolution.Table),
+            ExecutionTargetIdentifier(targetProvider, targetResolution.Schema, targetResolution.Table),
             insert.Target.Alias,
             insert.Target.Span);
         var resolvedInsert = (InsertStatement)ReplaceTarget(insert, resolvedTarget);
@@ -354,7 +355,8 @@ public sealed class DmlPlanFactory(
             ApprovalTtl: approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             MaxAffectedRows: maxAffectedRows,
             ApprovalMode: DmlApprovalMode.InsertValues,
-            InsertRows: previewRows);
+            InsertRows: previewRows,
+            SchemaSnapshot: validationContext.SchemaSnapshot);
     }
 
     private async Task<SqlPlanValidationContext> PrepareResultRowValidationContextAsync(
@@ -415,11 +417,8 @@ public sealed class DmlPlanFactory(
                 $"SQL Server OUTPUT without INTO remains fail-closed because resolved target '{schema}.{table}' has an enabled {operation.ToString().ToUpperInvariant()} trigger.");
         }
 
-        var metadataBackedContext = new SqlPlanValidationContext(
-            validationContext.PolicyVersion,
-            validationContext.AllowedTables);
-
-        return metadataBackedContext.WithDmlResultRowAssurance(
+        // Preserve the same immutable schema proof while adding SQL Server trigger assurance.
+        return validationContext.WithDmlResultRowAssurance(
             DmlResultRowAssurance.NoEnabledTriggers(
                 $"{schema}.{table}",
                 operation));
@@ -683,6 +682,16 @@ public sealed class DmlPlanFactory(
                     $"Statement '{statement.GetType().Name}' is not a supported DML mutation.");
         }
     }
+
+    // Firebird has no SQL schema namespace. 'Default' is a metadata-only
+    // pseudo-schema, not an executable SQL qualifier. Retain that identity
+    // for audit/authorization but render only the physical relation name.
+    private static SqlIdentifier ExecutionTargetIdentifier(
+        SqlAgentToolType provider, string schema, string table) =>
+        provider == SqlAgentToolType.Firebird
+            && string.Equals(schema, "Default", StringComparison.OrdinalIgnoreCase)
+                ? MetadataIdentifier(table)
+                : MetadataIdentifier(schema, table);
 
     private static SqlIdentifier MetadataIdentifier(params string[] parts) =>
         new(

@@ -12,6 +12,8 @@ Every published tool still runs through the same fail-closed SQL compiler, per-k
 
 It supports **PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird** and can run as the complete first-party server with its Admin UI or be embedded into an existing ASP.NET Core application.
 
+> **Upgrading from v2.x?** See the [v3.0 migration guide](docs/v3-migration.md) for breaking approval-store contracts, Redis key changes, Pending approvals and safe deployment requirements.
+
 ## Publish SQL as an MCP tool
 
 Instead of teaching the model to regenerate the same query every time, define the SQL shape once:

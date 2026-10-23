@@ -20,6 +20,8 @@ public static class HsSqlAgentAdminApiServiceExtensions
         var services = builder.Services;
         services.TryAddScoped<IHsSqlAgentPermissionAuthorizer, MissingHsSqlAgentPermissionAuthorizer>();
         services.AddScoped<IManagementApiKeyService, ManagementApiKeyService>();
+        services.AddScoped<DurableDmlReconciliationService>();
+        services.AddScoped<DurableDmlWitnessVerificationService>();
         services.AddScoped<HsSqlAgentValidationFilter>();
         services.AddScoped<HsSqlAgentExceptionFilter>();
         services.AddControllers()

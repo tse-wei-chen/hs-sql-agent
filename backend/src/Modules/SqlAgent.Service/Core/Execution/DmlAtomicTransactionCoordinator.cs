@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Data.Common;
+using System.Runtime.ExceptionServices;
 using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -13,9 +14,15 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 internal sealed class DmlAtomicTransactionCoordinator(
     IDbConnectionFactory connectionFactory,
-    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null)
+    IDmlTransactionIsolationPolicy? transactionIsolationPolicy = null,
+    IDmlSchemaSnapshotFreshnessVerifier? schemaFreshnessVerifier = null,
+    IDmlTargetCommitWitness? targetCommitWitness = null,
+    IDmlTargetExecutionFence? targetExecutionFence = null)
 {
     private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+    private readonly IDmlSchemaSnapshotFreshnessVerifier? _schemaFreshnessVerifier = schemaFreshnessVerifier;
+    private readonly IDmlTargetCommitWitness? _targetCommitWitness = targetCommitWitness;
+    private readonly IDmlTargetExecutionFence? _targetExecutionFence = targetExecutionFence;
     private readonly IDmlTransactionIsolationPolicy _transactionIsolationPolicy =
         transactionIsolationPolicy ?? new StrictDmlTransactionIsolationPolicy();
 
@@ -24,8 +31,14 @@ internal sealed class DmlAtomicTransactionCoordinator(
         IReadOnlyList<ValidatedDmlPlan> plans,
         IReadOnlyList<DmlPreview> approvedPreviews,
         CancellationToken cancellationToken,
-        string expectedServerVersionIdentity)
+        string expectedServerVersionIdentity,
+        DmlTargetCommitWitnessEvidence? witnessEvidence = null,
+        bool requireExecutionFence = false)
     {
+        if (requireExecutionFence && (witnessEvidence is null || _targetExecutionFence is null))
+            throw new InvalidOperationException("Versioned target fencing requires both durable evidence and a configured admission writer.");
+        if (witnessEvidence is not null && _targetCommitWitness is null)
+            throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentNullException.ThrowIfNull(plans);
         ArgumentNullException.ThrowIfNull(approvedPreviews);
@@ -33,16 +46,41 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (plans.Count == 0 || plans.Count != approvedPreviews.Count)
             throw new InvalidOperationException("Atomic DML transaction requires matching non-empty plan and preview sets.");
 
-        foreach (var plan in plans)
-            ValidatePlan(plan);
+        // Shared plan rules, plus child approval binding, before touching the DB.
+        for (var index = 0; index < plans.Count; index++)
+        {
+            DmlCoordinator.ValidatePlan(plans[index]);
+            ValidateChildPreview(plans[index], approvedPreviews[index]);
+        }
 
         var provider = plans[0].MutationCommand.TargetProvider;
         if (plans.Any(x => x.MutationCommand.TargetProvider != provider))
             throw new InvalidOperationException("Atomic DML transaction cannot span providers.");
 
+        DmlCommitResult? acknowledgedCommit = null;
+        ExceptionDispatchInfo? primaryFailure = null;
+        try
+        {
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
         RuntimeServerProfileVerifier.EnsureMatches(connection, expectedServerVersionIdentity);
+        if (requireExecutionFence)
+        {
+            // An opt-in target fence must prove its actual schema, unique
+            // keys, witness and transactional rollback on the same physical
+            // DML identity before starting the approved mutation. A manually
+            // run, possibly stale deployment probe is not sufficient.
+            if (_targetExecutionFence is not RelationalDmlTargetExecutionFence
+                || _targetCommitWitness is not RelationalDmlTargetCommitWitness)
+                throw new InvalidOperationException(
+                    "Production target-fenced DML requires the built-in verified relational " +
+                    "fence and witness implementations; custom components need a separate " +
+                    "audited readiness capability.");
+
+            await new DmlTargetFenceReadinessProbe().VerifyAsync(
+                connection, provider, cancellationToken);
+        }
+
         await using var transaction = await connection.BeginTransactionAsync(
             _transactionIsolationPolicy.CommitIsolation(provider),
             cancellationToken);
@@ -51,10 +89,47 @@ internal sealed class DmlAtomicTransactionCoordinator(
         var returnedRows = ImmutableArray.CreateBuilder<IReadOnlyDictionary<string, object?>>();
         try
         {
+            // Oracle dictionary reads during native Schema Freshness can
+            // invalidate earlier uncommitted application DML OR admission.
+            // For all Oracle batches, verify the full immutable plan set
+            // before any application mutation or fencing admission.
+            // Other dialects retain per-step schema revalidation.
+            // Oracle native metadata reads can disrupt an earlier
+            // uncommitted transaction even without a target fence. The
+            // atomic-batch contract must never allow a second statement's
+            // schema proof to invalidate the first statement's DML.
+            var oraclePrevalidated = provider == SqlAgentToolType.Oracle;
+            if (oraclePrevalidated)
+            {
+                foreach (var plan in plans)
+                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                        connection, transaction, plan.MutationCommand,
+                        plan.SchemaSnapshot, _schemaFreshnessVerifier, cancellationToken);
+            }
+
+            if (requireExecutionFence)
+                await _targetExecutionFence!.AdmitAsync(
+                    connection, transaction, provider, witnessEvidence!, cancellationToken);
+
             for (var index = 0; index < plans.Count; index++)
             {
                 var plan = plans[index];
                 var approved = approvedPreviews[index];
+
+                // Revalidate each proof after earlier statements in the same atomic
+                // transaction. A changed or unreadable schema aborts the whole batch.
+                // Oracle was schema-attested for the whole immutable batch
+                // immediately before admission. Re-reading Oracle catalogs
+                // after admission could erase that admission; fail closed
+                // rather than silently downgrade the target fence.
+                if (!oraclePrevalidated)
+                    await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                        connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                        _schemaFreshnessVerifier, cancellationToken);
+
+                if (requireExecutionFence)
+                    await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
+                        connection, transaction, provider, witnessEvidence!, cancellationToken);
 
                 if (approved.AffectedRows < 0)
                     throw new InvalidOperationException("Approved DML affected row count cannot be negative.");
@@ -97,18 +172,52 @@ internal sealed class DmlAtomicTransactionCoordinator(
                 returnedRows.AddRange(execution.ReturnedRows);
             }
 
-            await transaction.CommitAsync(cancellationToken);
-            return new DmlCommitResult(
+            if (witnessEvidence is not null)
+                await _targetCommitWitness!.WriteAsync(connection, transaction, provider,
+                    witnessEvidence, cancellationToken);
+            await DmlTransactionFailureRecovery.CommitAsync(transaction, cancellationToken);
+            if (requireExecutionFence)
+                await DmlTargetCommitEvidenceVerifier.EnsureConfirmedAsync(
+                    connection, provider, witnessEvidence!,
+                    _targetExecutionFence!, _targetCommitWitness!, cancellationToken);
+            acknowledgedCommit = new DmlCommitResult(
                 true,
                 totalAffected,
                 "DML transaction committed atomically after per-statement approval revalidation.")
             {
                 ReturnedRows = returnedRows.ToImmutable()
             };
+            return acknowledgedCommit;
         }
-        catch
+        catch (Exception failure)
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
+            try
+            {
+                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(failure);
+            }
+            catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+            {
+                primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+                throw;
+            }
+
+            primaryFailure = ExceptionDispatchInfo.Capture(failure);
+            throw;
+        }
+        }
+        catch (Exception) when (acknowledgedCommit is not null)
+        {
+            // The physical target COMMIT already returned successfully.
+            // Cleanup errors must not overwrite that confirmed result.
+            return acknowledgedCommit;
+        }
+        catch (Exception cleanupFailure)
+            when (primaryFailure is not null &&
+                  !ReferenceEquals(cleanupFailure, primaryFailure.SourceException))
+        {
+            // Preserve the primary transaction failure across cleanup errors.
+            primaryFailure.Throw();
             throw;
         }
     }
@@ -126,32 +235,36 @@ internal sealed class DmlAtomicTransactionCoordinator(
             $"DML transaction cancelled at statement {zeroBasedIndex + 1}: {reason}. Entire transaction rolled back.");
     }
 
-    private static void ValidatePlan(ValidatedDmlPlan plan)
+    private static void ValidateChildPreview(ValidatedDmlPlan plan, DmlPreview preview)
     {
-        ArgumentNullException.ThrowIfNull(plan);
-        ArgumentException.ThrowIfNullOrWhiteSpace(plan.TableName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(plan.PolicyVersion);
-        if (plan.MutationCommand.Kind is not (
-            SqlStatementKind.Insert or SqlStatementKind.Update or SqlStatementKind.Delete))
-            throw new InvalidOperationException($"Invalid DML mutation command kind {plan.MutationCommand.Kind}.");
+        ArgumentNullException.ThrowIfNull(preview);
+        var challenge = preview.Challenge
+            ?? throw new InvalidOperationException("Atomic DML statement preview has no approval challenge.");
 
-        var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(
-            plan.MutationCommand,
-            plan.PolicyVersion);
-        if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
-            throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
+        if (preview.Operation != plan.Operation
+            || !string.Equals(preview.TableName, plan.TableName, StringComparison.Ordinal)
+            || !string.Equals(challenge.PlanFingerprint, plan.PlanFingerprint, StringComparison.Ordinal)
+            || string.IsNullOrWhiteSpace(challenge.ApprovalPlanBinding)
+            || !string.Equals(challenge.ApprovalPlanBinding,
+                DmlApprovalPlanBinding.Compute(plan), StringComparison.Ordinal)
+            || !string.Equals(challenge.PolicyVersion, plan.PolicyVersion, StringComparison.Ordinal)
+            || challenge.AffectedRows != preview.AffectedRows
+            || challenge.AffectedRows < 0
+            || string.IsNullOrWhiteSpace(challenge.Nonce))
+            throw new InvalidOperationException(
+                "Atomic DML statement preview and approval challenge do not match its compiled plan.");
 
-        if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
-        {
-            if (plan.InsertRows.IsDefaultOrEmpty)
-                throw new InvalidOperationException("INSERT VALUES approval requires immutable preview rows.");
-            return;
-        }
+        if (plan.ApprovalMode == DmlApprovalMode.InsertValues
+            && (challenge.RowSetFingerprint is not null
+                || challenge.AffectedRows != plan.InsertRows.Length))
+            throw new InvalidOperationException(
+                "Atomic INSERT statement approval does not match the immutable approved payload.");
 
-        if (plan.MatchQueryCommand is null || plan.MatchQueryCommand.Kind != SqlStatementKind.Select)
-            throw new InvalidOperationException("Row-set DML approval requires a SELECT match command.");
-        if (plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict && plan.RowIdentityColumns.IsDefaultOrEmpty)
-            throw new InvalidOperationException("Strict DML approval requires row identity columns.");
+        if (plan.ApprovalMode != DmlApprovalMode.InsertValues
+            && plan.RowIdentityAssurance == DmlRowIdentityAssurance.Strict
+            && string.IsNullOrWhiteSpace(challenge.RowSetFingerprint))
+            throw new InvalidOperationException(
+                "Atomic row-set DML approval requires a valid row identity fingerprint.");
     }
 
     private static string? ComputeRowSetFingerprint(

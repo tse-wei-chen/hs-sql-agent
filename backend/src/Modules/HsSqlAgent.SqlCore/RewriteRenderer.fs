@@ -255,6 +255,7 @@ module internal RewriteRenderer =
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
     let rec private renderExpr (ctx: RenderContext) expression =
+        RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
         | Expr.Spanned(_, inner) -> renderExpr ctx inner
         | Expr.Column identifier
@@ -354,6 +355,8 @@ module internal RewriteRenderer =
         | Expr.Unary(UnaryOperator.Not, operand) -> "NOT (" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Negate, operand) -> "(-" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
+        | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
+            renderLeftDeepBoolean ctx renderExpr chain
         | Expr.Binary(operator, left, right) ->
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
@@ -458,7 +461,49 @@ module internal RewriteRenderer =
             + renderSubquery ctx query + "))"
         | Expr.Between(value, lower, upper, negated) -> "(" + renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper + ")"
         | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
-        | Expr.ScalarSubquery query -> "(" + renderSubquery ctx query + ")"
+        | Expr.ScalarSubquery query ->
+            // Materializing the entire inner SELECT at every level was O(n^2)
+            // in SQL-string allocations for a pure nested scalar SELECT chain.
+            // Preserve provider-specific dummy FROM and bind the innermost
+            // literal exactly once, without changing any expression order.
+            let mutable current = query
+            let mutable wrappers = 0
+            let mutable scanning = true
+            while scanning do
+                let head = current.Head
+                let simple =
+                    head.Ctes.IsEmpty
+                    && head.DistinctMode = SelectDistinct.AllRows
+                    && head.From.IsNone && head.Joins.IsEmpty
+                    && head.Where.IsNone && head.GroupBy.IsEmpty
+                    && head.Having.IsNone
+                    && current.SetOperations.IsEmpty && not (hasTail current)
+                if not simple then scanning <- false
+                else
+                    match head.Projection with
+                    | [ { Alias = None; Expression = value } ] ->
+                        match Expr.unspan value with
+                        | Expr.ScalarSubquery child ->
+                            wrappers <- wrappers + 1
+                            current <- child
+                        | _ -> scanning <- false
+                    | _ -> scanning <- false
+
+            if wrappers = 0 then "(" + renderSubquery ctx query + ")"
+            else
+                let dummySource =
+                    match ctx.Provider with
+                    | Oracle -> " FROM DUAL"
+                    | Firebird -> " FROM RDB$DATABASE"
+                    | _ -> ""
+                let builder = StringBuilder()
+                builder.Append('(') |> ignore
+                for _ in 1 .. wrappers do builder.Append("SELECT (") |> ignore
+                builder.Append(renderSubquery ctx current) |> ignore
+                for _ in 1 .. wrappers do
+                    builder.Append(')').Append(dummySource) |> ignore
+                builder.Append(')') |> ignore
+                builder.ToString()
         | Expr.Exists(query, negated) ->
             (if negated then "NOT EXISTS (" else "EXISTS (") + renderSubquery ctx query + ")"
 
@@ -471,10 +516,8 @@ module internal RewriteRenderer =
             | Literal(ScalarValue.Boolean false) -> "(1 = 0)"
             | Unary(UnaryOperator.Not, operand) ->
                 "NOT (" + renderPredicate ctx operand + ")"
-            | Binary(BinaryOperator.And, left, right) ->
-                "(" + renderPredicate ctx left + " AND " + renderPredicate ctx right + ")"
-            | Binary(BinaryOperator.Or, left, right) ->
-                "(" + renderPredicate ctx left + " OR " + renderPredicate ctx right + ")"
+            | Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
+                renderLeftDeepBoolean ctx renderPredicate chain
             | SimpleCase(input, branches, fallback) when isBooleanExpression expression ->
                 let cases =
                     branches
@@ -504,6 +547,34 @@ module internal RewriteRenderer =
             | _ -> renderExpr ctx expression
         | PostgreSql | MySql | SQLite | Firebird ->
             renderExpr ctx expression
+
+    // Preserve every original parenthesis and operand's left-to-right
+    // parameter-binding order, but avoid building each intermediate prefix
+    // string on long left-deep AND/OR chains. This is a rendering traversal
+    // optimization, not boolean reassociation or AST canonicalization.
+    and private renderLeftDeepBoolean
+        (ctx: RenderContext)
+        (renderLeaf: RenderContext -> Expr -> string)
+        expression =
+        let operations = ResizeArray<BinaryOperator * Expr>()
+        let mutable current = expression
+        let mutable descending = true
+        while descending do
+            match Expr.unspan current with
+            | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
+                operations.Add(op, right)
+                current <- left
+            | _ -> descending <- false
+
+        let builder = StringBuilder()
+        for _ in 1 .. operations.Count do
+            builder.Append('(') |> ignore
+        builder.Append(renderLeaf ctx current) |> ignore
+        for index = operations.Count - 1 downto 0 do
+            let op, right = operations[index]
+            builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
+            builder.Append(renderLeaf ctx right).Append(')') |> ignore
+        builder.ToString()
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
@@ -1260,6 +1331,7 @@ module internal RewriteRenderer =
             prefix + renderPaging ctx query ordered
 
     and private renderQueryCore (ctx: RenderContext) (query: Query) =
+        RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         if isSetQuery query && hasTail query then renderSetTailWrapper ctx query
         elif ctx.Provider = SqlServer
              && query.Offset |> Option.exists (fun value -> NonNegativeRowCount.value value > 0)

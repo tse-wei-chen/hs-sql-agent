@@ -16,11 +16,11 @@ cp backend/src/ToolBox/appsettings.Example.json backend/src/ToolBox/appsettings.
 dotnet run --project backend/src/ToolBox
 
 # Run all tests (requires Docker for Testcontainers)
-dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-dotnet test backend/src/UnitTest/Admin.Test/Admin.Test.csproj
+dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
 
 # Run single test
-dotnet test backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter "FullyQualifiedName~SqliteStrategyTests"
+dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter "FullyQualifiedName~SqliteStrategyTests"
 ```
 
 ### Frontend

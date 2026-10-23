@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildAuditExecutionSummary,
   formatAuditDefinition,
+  isAuditCommitOutcomeUnknown,
+  auditOutcomeLabel,
 } from "./auditPresentation";
 
 describe("audit presentation helpers", () => {
@@ -11,6 +13,19 @@ describe("audit presentation helpers", () => {
     );
     expect(formatAuditDefinition("SELECT 1")).toBe("SELECT 1");
     expect(formatAuditDefinition(null)).toBe("");
+  });
+
+  it("separates uncertain DML commits from ordinary failed audits", () => {
+    expect(isAuditCommitOutcomeUnknown({ result: "outcome_unknown" })).toBe(true);
+    expect(isAuditCommitOutcomeUnknown({
+      result: "failed",
+      errorCategory: "DmlCommitOutcomeUnknownException",
+    })).toBe(true);
+    expect(isAuditCommitOutcomeUnknown({ result: "failed" })).toBe(false);
+    expect(auditOutcomeLabel({ result: "outcome_unknown" })).toBe(
+      "Commit outcome unknown",
+    );
+    expect(auditOutcomeLabel({ result: "success" })).toBe("success");
   });
 
   it("builds a compact execution summary without placeholder noise", () => {

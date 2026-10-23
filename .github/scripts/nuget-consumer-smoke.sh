@@ -70,7 +70,11 @@ dotnet add "$consumer_dir" package HsSqlAgent.Hosting --version "$version" --sou
 cat > "$consumer_dir/Program.cs" <<'EOF'
 using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Reflection;
+using System.Security.Claims;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Linq;
 using System.Text;
 using HsSqlAgent.Approvals;
@@ -81,6 +85,18 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
+using SqlAgent.Service.Core.Execution;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -181,6 +197,187 @@ if (command.Sql.Contains("= 1", StringComparison.Ordinal))
 
 Console.WriteLine($"Compiled public SqlCore query via packed Hosting dependency: {command.Sql}");
 
+// An external ASP.NET Core project must be able to use the modular v3 package
+// without inheriting the standalone host's identity, MVC or exception policy.
+var modularBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    EnvironmentName = Environments.Development
+});
+// Bind only a loopback ephemeral port; this must never depend on the
+// machine's pre-existing listeners or hard-coded CI port availability.
+modularBuilder.WebHost.UseUrls("http://127.0.0.1:0");
+modularBuilder.Services.AddAuthentication(authentication =>
+{
+    authentication.DefaultScheme = "Host.Primary";
+    authentication.DefaultAuthenticateScheme = "Host.Primary";
+    authentication.DefaultChallengeScheme = "Host.Challenge";
+})
+.AddScheme<AuthenticationSchemeOptions, SmokeHostAuthenticationHandler>("Host.Primary", _ => { })
+.AddScheme<AuthenticationSchemeOptions, SmokeHostAuthenticationHandler>("Host.Challenge", _ => { });
+var hostPolicy = new AuthorizationPolicyBuilder()
+    .RequireAuthenticatedUser()
+    .RequireClaim("host-admin", "true")
+    .Build();
+modularBuilder.Services.AddAuthorization(options =>
+{
+    options.DefaultPolicy = hostPolicy;
+    options.AddPolicy("Host.SqlAgentAdmin", hostPolicy);
+});
+modularBuilder.Services.AddControllers().AddJsonOptions(options =>
+{
+    // Deliberately unlike HsSqlAgent's own wire serialization.
+    options.JsonSerializerOptions.PropertyNamingPolicy = null;
+    options.JsonSerializerOptions.DictionaryKeyPolicy = null;
+    options.JsonSerializerOptions.PropertyNameCaseInsensitive = false;
+});
+
+var hs = modularBuilder.Services.AddHsSqlAgentCore();
+hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentAdminStore(options =>
+{
+    options.Provider = "Sqlite";
+    options.ConnectionString = "Data Source=modular-host-consumer-smoke.db";
+});
+hs.AddHsSqlAgentHostAuthorization("Host.SqlAgentAdmin");
+hs.AddHsSqlAgentAdminApi();
+
+// A separately installed integration package may begin its own builder;
+// capabilities remain one registration per IServiceCollection.
+var descriptorsBeforeSecondModule = modularBuilder.Services.Count;
+modularBuilder.Services.AddHsSqlAgentCore().AddHsSqlAgentRuntime()
+    .AddHsSqlAgentAdminApi();
+if (modularBuilder.Services.Count != descriptorsBeforeSecondModule)
+    throw new InvalidOperationException(
+        "Second modular NuGet integration duplicated HsSqlAgent registrations.");
+
+await using var modularApp = modularBuilder.Build();
+modularApp.UseAuthentication();
+modularApp.UseAuthorization();
+modularApp.UseHsSqlAgentAdminApi();
+modularApp.MapControllers();
+modularApp.MapGet("/host/probe", () => "host-ok").RequireAuthorization();
+
+var authentication = modularApp.Services
+    .GetRequiredService<IOptions<AuthenticationOptions>>().Value;
+if (authentication.DefaultScheme != "Host.Primary"
+    || authentication.DefaultAuthenticateScheme != "Host.Primary"
+    || authentication.DefaultChallengeScheme != "Host.Challenge")
+    throw new InvalidOperationException("Modular NuGet mount replaced the host authentication defaults.");
+
+var authorization = modularApp.Services
+    .GetRequiredService<IOptions<AuthorizationOptions>>().Value;
+if (!ReferenceEquals(hostPolicy, authorization.DefaultPolicy))
+    throw new InvalidOperationException("Modular NuGet mount replaced the host authorization policy.");
+
+var jsonOptions = modularApp.Services.GetRequiredService<IOptions<JsonOptions>>()
+    .Value.JsonSerializerOptions;
+if (jsonOptions.PropertyNamingPolicy is not null
+    || jsonOptions.DictionaryKeyPolicy is not null
+    || jsonOptions.PropertyNameCaseInsensitive)
+    throw new InvalidOperationException("Modular NuGet mount overwrote the host MVC JSON defaults.");
+
+var apiDescriptors = modularApp.Services
+    .GetRequiredService<IActionDescriptorCollectionProvider>()
+    .ActionDescriptors.Items.OfType<ControllerActionDescriptor>();
+if (!apiDescriptors.Any(descriptor =>
+        descriptor.ControllerTypeInfo.AsType().FullName == "HsSqlAgent.Server.Controllers.DbManagementController"))
+    throw new InvalidOperationException("Modular NuGet mount did not publish the HsSqlAgent Admin API.");
+
+var hostRoutes = ((IEndpointRouteBuilder)modularApp).DataSources
+    .SelectMany(source => source.Endpoints)
+    .OfType<RouteEndpoint>();
+if (!hostRoutes.Any(endpoint => endpoint.RoutePattern.RawText == "/host/probe"))
+    throw new InvalidOperationException("Modular NuGet mount lost the host application's own endpoint.");
+
+// A descriptor-only smoke misses auth and route-mount failures. Execute real
+// HTTP requests against the packed NuGet consumer with its host-owned schemes.
+await modularApp.StartAsync();
+try
+{
+    var server = modularApp.Services.GetRequiredService<IServer>();
+    var addresses = server.Features.Get<IServerAddressesFeature>()
+        ?? throw new InvalidOperationException("Test host did not expose its bound listener address.");
+    var address = addresses.Addresses.Single(value =>
+        value.StartsWith("http://127.0.0.1:", StringComparison.Ordinal)
+        && !value.EndsWith(":0", StringComparison.Ordinal));
+    using var client = new HttpClient { BaseAddress = new Uri(address) };
+
+    using var unauthenticatedHost = await client.GetAsync("/host/probe");
+    if (unauthenticatedHost.StatusCode != HttpStatusCode.Unauthorized)
+        throw new InvalidOperationException(
+            $"Host policy was bypassed: unauthenticated host endpoint returned {(int)unauthenticatedHost.StatusCode}.");
+
+    using var unauthenticatedAdmin = await client.GetAsync("/api/runtime/dml-approvals/reconciliation");
+    if (unauthenticatedAdmin.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden))
+        throw new InvalidOperationException(
+            $"Modular Admin authorization was bypassed or misconfigured: status {(int)unauthenticatedAdmin.StatusCode}.");
+
+    client.DefaultRequestHeaders.Add("X-Smoke-Host-User", "allow");
+    using var authorizedHost = await client.GetAsync("/host/probe");
+    if (authorizedHost.StatusCode != HttpStatusCode.OK
+        || await authorizedHost.Content.ReadAsStringAsync() != "host-ok")
+        throw new InvalidOperationException("Host-authenticated endpoint is no longer accessible after modular mount.");
+
+    using var authorizedAdmin = await client.GetAsync("/api/runtime/dml-approvals/reconciliation?limit=2");
+    if (authorizedAdmin.StatusCode != HttpStatusCode.OK)
+        throw new InvalidOperationException(
+            $"Host-authorized modular Admin API returned {(int)authorizedAdmin.StatusCode}.");
+    using var payload = JsonDocument.Parse(await authorizedAdmin.Content.ReadAsStringAsync());
+    if (payload.RootElement.ValueKind != JsonValueKind.Array)
+        throw new InvalidOperationException("The mounted Admin API returned an unexpected JSON contract.");
+
+    Console.WriteLine("Packed external ASP.NET Core host HTTP/auth/Admin API integration smoke passed.");
+}
+finally
+{
+    await modularApp.StopAsync();
+}
+
+var customStore = new SmokeCustomChallengeStore();
+_ = customStore.TryPromoteAsync(Array.Empty<DmlApprovalChallenge>(),
+    new DmlApprovalChallenge("plan", null, 0, "policy", "context",
+        DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(1), "aggregate"));
+Console.WriteLine("Packed modular HsSqlAgent.Server host and v3 custom approval store smoke passed.");
+
+sealed class SmokeHostAuthenticationHandler(
+    IOptionsMonitor<AuthenticationSchemeOptions> options,
+    ILoggerFactory logger,
+    UrlEncoder encoder)
+    : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+{
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
+    {
+        if (!Request.Headers.TryGetValue("X-Smoke-Host-User", out var marker)
+            || !string.Equals(marker.ToString(), "allow", StringComparison.Ordinal))
+            return Task.FromResult(AuthenticateResult.NoResult());
+
+        var identity = new ClaimsIdentity(
+        [
+            new Claim(ClaimTypes.NameIdentifier, "smoke-host-user"),
+            new Claim("host-admin", "true")
+        ], Scheme.Name);
+        var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
+        return Task.FromResult(AuthenticateResult.Success(ticket));
+    }
+}
+
+sealed class SmokeCustomChallengeStore : IDmlApprovalChallengeStore
+{
+    public ValueTask RegisterAsync(
+        DmlApprovalChallenge challenge, CancellationToken cancellationToken = default) =>
+        ValueTask.CompletedTask;
+
+    public ValueTask<bool> TryConsumeAsync(
+        DmlApprovalChallenge challenge, CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(false);
+
+    public ValueTask<bool> TryPromoteAsync(
+        IReadOnlyList<DmlApprovalChallenge> children,
+        DmlApprovalChallenge aggregate,
+        CancellationToken cancellationToken = default) =>
+        ValueTask.FromResult(false);
+}
+
 sealed class SmokeApprovalProvider : IDmlApprovalProvider
 {
     public ValueTask<DmlApprovalResult> RequestApprovalAsync(
@@ -193,3 +390,7 @@ EOF
 dotnet restore "$consumer_dir" --configfile "$consumer_dir/NuGet.Config" --no-cache
 dotnet build "$consumer_dir" --configuration Release --no-restore
 dotnet run --project "$consumer_dir" --configuration Release --no-build
+
+# From 3.0.1 onward (including prereleases), the already-published 3.0.0
+# NuGet packages are the non-breaking baseline for every packed public API.
+bash .github/scripts/verify-v3-package-abi.sh "$package_source" "$version"

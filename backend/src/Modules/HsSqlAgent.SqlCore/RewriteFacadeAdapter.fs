@@ -638,13 +638,26 @@ module internal RewriteFacadeAdapter =
             (targetNullOrdering target)
             (targetDmlProofs source target targetProfile resultRowAssurance)
 
-    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed =
+    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed schemaSnapshot =
         RewritePipeline.createOptions
             (verifiedSource source semantics sourceProfile)
             (verifiedTarget source target targetProfile resultRowAssurance)
             (conflictProofs source target targetProfile conflictTargetAssurance)
             policy
             allowed
+            schemaSnapshot
+
+
+    // Consume the same canonical digest host verifiers obtain from the snapshot.
+    let private schemaDigest (snapshot: SqlSchemaSnapshot | null) =
+        match snapshot with
+        | null -> None
+        | value -> Some value.Sha256
+
+    let private fingerprintPolicyVersion policyVersion schema =
+        match schemaDigest schema with
+        | None -> policyVersion
+        | Some digest -> policyVersion + "|schema-sha256=" + digest
 
     let private compileEvidenceContext
         source
@@ -655,7 +668,8 @@ module internal RewriteFacadeAdapter =
         resultRowAssurance
         policyVersion
         (policy: RewritePolicy.ExecutionPolicy)
-        allowed =
+        allowed
+        schemaSnapshot =
 
         CompileEvidenceBuilder.create
             source
@@ -669,6 +683,7 @@ module internal RewriteFacadeAdapter =
             (not policy.AllowUnboundedUpdate)
             (not policy.AllowUnboundedDelete)
             allowed
+            (schemaDigest schemaSnapshot)
 
     let private run (options: RewritePipeline.CompileOptions) (sql: string) =
         try
@@ -694,12 +709,12 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private buildTranslatedCommand evidenceContext target policyVersion (parsed: ParsedSql) (rendered: RenderedCommand) =
+    let private buildTranslatedCommand evidenceContext target policyVersion schemaSnapshot (parsed: ParsedSql) (rendered: RenderedCommand) =
         let parameterValues = parameters target rendered.Parameters
         let kind = RewriteCompatibilityAstAdapter.kind parsed
         let command =
             CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+        let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, fingerprintPolicyVersion policyVersion schemaSnapshot)
         let evidence =
             CompileEvidenceBuilder.build
                 evidenceContext
@@ -709,7 +724,7 @@ module internal RewriteFacadeAdapter =
                 fingerprint
         CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows, evidence)
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let evidenceContext =
             compileEvidenceContext
@@ -722,6 +737,7 @@ module internal RewriteFacadeAdapter =
                 policyVersion
                 policy
                 allowed
+                schemaSnapshot
         try
             let parsed, rendered =
                 run
@@ -734,9 +750,10 @@ module internal RewriteFacadeAdapter =
                         conflictTargetAssurance
                         resultRowAssurance
                         policy
-                        allowed)
+                        allowed
+                        schemaSnapshot)
                     sql
-            buildTranslatedCommand evidenceContext target policyVersion parsed rendered
+            buildTranslatedCommand evidenceContext target policyVersion schemaSnapshot parsed rendered
         with ex ->
             attachRejectedEvidence evidenceContext ex
             reraise()
@@ -745,7 +762,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) sql
+        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot sql
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
             attachReclassifiedEvidence
@@ -764,14 +781,14 @@ module internal RewriteFacadeAdapter =
         let queryExecutionPolicy = queryPolicy executionPolicy.QueryMaxRows
         let allowed = allowedTables validationContext.AllowedTables
         let evidenceContext =
-            compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed
+            compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed validationContext.SchemaSnapshot
         try
             let parsed, facts, rendered =
                 runWithQueryFacts
-                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed)
+                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed validationContext.SchemaSnapshot)
                     sql
             let command =
-                buildTranslatedCommand evidenceContext target validationContext.PolicyVersion parsed rendered
+                buildTranslatedCommand evidenceContext target validationContext.PolicyVersion validationContext.SchemaSnapshot parsed rendered
             if command.Kind <> SqlStatementKind.Query then
                 let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
                 attachReclassifiedEvidence command SqlCompileDecisionBoundary.InputValidation "SQL_API_STATEMENT_KIND_MISMATCH" error
@@ -788,7 +805,7 @@ module internal RewriteFacadeAdapter =
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
             try
-                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) sql
+                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance validationContext.PolicyVersion (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot sql
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
@@ -829,7 +846,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed =
+    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot =
         let source = parsed.SourceDialect
         let evidenceContext =
             compileEvidenceContext
@@ -842,6 +859,7 @@ module internal RewriteFacadeAdapter =
                 policyVersion
                 policy
                 allowed
+                schemaSnapshot
         try
             if parsed.EnforceSourceDialectSyntax then
                 match parsed.RawSql with
@@ -864,12 +882,13 @@ module internal RewriteFacadeAdapter =
                         conflictTargetAssurance
                         resultRowAssurance
                         policy
-                        allowed)
+                        allowed
+                        schemaSnapshot)
                     (RewriteLegacyAstAdapter.toParsed parsed.Statement)
             let kind = legacyKind parsed.Statement
             let parameterValues = parameters target rendered.Parameters
             let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, policyVersion)
+            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, fingerprintPolicyVersion policyVersion schemaSnapshot)
             let evidence =
                 CompileEvidenceBuilder.build
                     evidenceContext
@@ -904,6 +923,7 @@ module internal RewriteFacadeAdapter =
                 validationContext.PolicyVersion
                 (queryPolicy executionPolicy.QueryMaxRows)
                 (allowedTables validationContext.AllowedTables)
+                validationContext.SchemaSnapshot
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "parsed")
             attachReclassifiedEvidence
@@ -929,6 +949,7 @@ module internal RewriteFacadeAdapter =
                     validationContext.PolicyVersion
                     (dmlPolicy policy)
                     (allowedTables validationContext.AllowedTables)
+                    validationContext.SchemaSnapshot
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
