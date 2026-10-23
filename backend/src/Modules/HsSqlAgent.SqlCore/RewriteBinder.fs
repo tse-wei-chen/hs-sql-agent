@@ -279,71 +279,25 @@ module internal RewriteBinder =
         | BindUnary of operation: UnaryOperator
 
     let rec private bindExpr (scope: Scope) (expression: Expr) : Expr =
-        RewriteStackSafety.compile SqlDiagnosticStage.Binding
-        match expression with
-        | Spanned _ | Unary _ ->
-            // The original binder called itself once per Span/Unary wrapper.
-            // Keep exactly the same wrapping order using a heap work stack.
-            let frames = ResizeArray<BindPrefixFrame>()
-            let mutable tail = expression
-            let mutable peeling = true
-            while peeling do
-                match tail with
-                | Spanned(span, inner) ->
-                    frames.Add(BindSpan span)
-                    tail <- inner
-                | Unary(op, inner) ->
-                    frames.Add(BindUnary op)
-                    tail <- inner
-                | _ -> peeling <- false
-            let mutable result = bindExpr scope tail
-            for index = frames.Count - 1 downto 0 do
-                result <-
-                    match frames.[index] with
-                    | BindSpan span -> Expr.withSpan span result
-                    | BindUnary op -> Unary(op, result)
-            result
-        | Column identifier -> bindColumn scope identifier
-        | BoundColumn _ -> expression
-        | Wildcard(Some identifier) ->
-            let qualifier = identifierText identifier
-            ensureQualifier
-                scope
-                (identifierKey scope.Dialect identifier)
-                qualifier
-                ("Wildcard '" + qualifier + ".*'")
+        // One explicit enter/exit frame per scalar Expr, regardless of
+        // branching, CASE, window arguments or binary-tree depth. Query
+        // callbacks keep their existing nested correlation/CTE scopes.
+        RewriteAstTraversal.mapPostOrder
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.Binding)
+            (fun value ->
+                match value with
+                | Column identifier -> bindColumn scope identifier
+                | Wildcard(Some identifier) ->
+                    let qualifier = identifierText identifier
+                    ensureQualifier
+                        scope
+                        (identifierKey scope.Dialect identifier)
+                        qualifier
+                        ("Wildcard '" + qualifier + ".*'")
+                    value
+                | _ -> value)
+            (bindQuery scope.Dialect (Some scope) scope.VisibleCtes)
             expression
-        | Wildcard None | OrderOrdinal _ | Literal _ | Interval _ -> expression
-        | DateAdd(unit, amount, value) -> DateAdd(unit, bindExpr scope amount, bindExpr scope value)
-        | DateDiff(unit, startValue, finishValue) -> DateDiff(unit, bindExpr scope startValue, bindExpr scope finishValue)
-        | Binary(op, left, right) -> Binary(op, bindExpr scope left, bindExpr scope right)
-        | Like(value, pattern, escape, negated, caseInsensitive) ->
-            Like(bindExpr scope value, bindExpr scope pattern, escape, negated, caseInsensitive)
-        | RawRegexCall(arguments, isDistinct) ->
-            RawRegexCall(arguments |> List.map (bindExpr scope), isDistinct)
-        | RegexMatch(value, pattern) ->
-            RegexMatch(bindExpr scope value, bindExpr scope pattern)
-        | PostgresJsonAccess(value, selector, resultKind) ->
-            PostgresJsonAccess(bindExpr scope value, selector, resultKind)
-        | FunctionCall call ->
-            FunctionCall
-                { call with
-                    Arguments = call.Arguments |> List.map (bindExpr scope)
-                    AggregateOrderBy = call.AggregateOrderBy |> List.map (bindOrderBy scope []) }
-        | FilteredAggregate(value, predicate) -> FilteredAggregate(bindExpr scope value, bindExpr scope predicate)
-        | Windowed(value, window) -> Windowed(bindExpr scope value, bindWindow scope window)
-        | Cast(value, targetType) -> Cast(bindExpr scope value, targetType)
-        | Extract(field, value) -> Extract(field, bindExpr scope value)
-        | SimpleCase(input, branches, fallback) ->
-            SimpleCase(bindExpr scope input, branches |> NonEmpty.map (fun (branch: SimpleCaseBranch) -> { Match = bindExpr scope branch.Match; Result = bindExpr scope branch.Result }), fallback |> Option.map (bindExpr scope))
-        | SearchedCase(branches, fallback) ->
-            SearchedCase(branches |> NonEmpty.map (fun (branch: SearchedCaseBranch) -> { Condition = bindExpr scope branch.Condition; Result = bindExpr scope branch.Result }), fallback |> Option.map (bindExpr scope))
-        | InList(value, items, negated) -> InList(bindExpr scope value, items |> NonEmpty.map (bindExpr scope), negated)
-        | InSubquery(value, query, negated) -> InSubquery(bindExpr scope value, bindQuery scope.Dialect (Some scope) scope.VisibleCtes query, negated)
-        | Between(value, lower, upper, negated) -> Between(bindExpr scope value, bindExpr scope lower, bindExpr scope upper, negated)
-        | IsNull(value, negated) -> IsNull(bindExpr scope value, negated)
-        | ScalarSubquery query -> ScalarSubquery(bindQuery scope.Dialect (Some scope) scope.VisibleCtes query)
-        | Exists(query, negated) -> Exists(bindQuery scope.Dialect (Some scope) scope.VisibleCtes query, negated)
 
     and private bindOrderBy (scope: Scope) projectionAliases (orderBy: OrderBy) : OrderBy =
         let sourceSpan = Expr.span orderBy.Expression
