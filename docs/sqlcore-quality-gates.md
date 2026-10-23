@@ -346,6 +346,13 @@ published as measured percentages or silently set to 100.
       short-circuiting and original provider-aware predicate rules.
       Deep 16/32 CASE regressions preserve PostgreSQL acceptance,
       Oracle boolean projection rejection and numeric-CASE acceptance.
+- [x] Replace source-dialect raw function, operator, NULL ordering and
+      REGEXP capability graph recursion with one explicit SourceWalkFrame
+      machine. Preserve raw REGEXP capability checks *after* its arguments,
+      source function/operator checks *before* children, CTE-before-SELECT,
+      and legacy aggregate-local ORDER BY regex-proof boundaries.
+      Six-provider nested COALESCE positives, deep wrong-source-function
+      negatives, and nested NULLS FIRST rejection are regression gates.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
