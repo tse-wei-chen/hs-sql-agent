@@ -329,6 +329,13 @@ published as measured percentages or silently set to 100.
       lateral source, JSON selector, FETCH and aggregate-ordering fail-closed
       checks and the stage's original diagnostic precedence. Regression cases
       cover 16/64 nested scalar functions inside cross-dialect STRING_AGG order.
+- [x] Replace Binder recursive CTE self-reference counting and forbidden
+      recursive-member scans with a struct-frame iterative expression/source/
+      select/query proof walker. Preserve direct-vs-nested self-reference,
+      alias, aggregate/window and anchor/UNION restrictions. Existing 128
+      positive and 23 negative four-dialect grammar cases remain required;
+      extra regressions verify deep scalar nesting and hidden duplicate
+      subquery references without weakening any binding diagnostics.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

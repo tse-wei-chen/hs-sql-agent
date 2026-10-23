@@ -64,6 +64,58 @@ public sealed class CoreRecursiveCteCapabilityTests
         Assert.Contains("exactly one direct self-reference", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(64)]
+    [InlineData(128)]
+    public void Compile_RecursiveMemberWithDeepScalarExpression_KeepsDirectSelfReferenceProof(int depth)
+    {
+        // Count the one direct FROM x despite deep AST nesting. A parser
+        // depth-limit workaround must not turn a legal recursive term into a
+        // false self-reference rejection or a dropped expression.
+        var nested = string.Concat(Enumerable.Repeat("ABS(", depth))
+            + "n + 1" + new string(')', depth);
+        var sql = "WITH RECURSIVE x(n) AS (SELECT 1 UNION ALL SELECT "
+            + nested + " FROM x WHERE n < 3) SELECT n FROM x";
+
+        var command = Compile(
+            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres),
+            SqlAgentToolType.Postgres);
+
+        Assert.Contains("WITH RECURSIVE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ABS(", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static IEnumerable<object[]> SupportedRecursiveCteDialects()
+    {
+        yield return [SqlAgentToolType.Postgres, Profile(SqlAgentToolType.Postgres, 16, 0)];
+        yield return [SqlAgentToolType.MySQL, Profile(SqlAgentToolType.MySQL, 8, 4, 0)];
+        yield return [SqlAgentToolType.Sqlite, Profile(SqlAgentToolType.Sqlite, 3, 44, 0)];
+        yield return [SqlAgentToolType.Firebird, Profile(SqlAgentToolType.Firebird, 5, 0, 0)];
+    }
+
+    [Theory]
+    [MemberData(nameof(SupportedRecursiveCteDialects))]
+    public void Compile_RecursiveMemberWithNestedSecondSelfReference_StillFailsClosed(
+        SqlAgentToolType dialect,
+        SqlProviderCapabilityProfile profile)
+    {
+        var anchor = dialect == SqlAgentToolType.Firebird
+            ? "SELECT 1 FROM RDB$DATABASE"
+            : "SELECT 1";
+        var sql = "WITH RECURSIVE x(n) AS (" + anchor
+            + " UNION ALL SELECT n + 1 FROM x "
+            + "WHERE n < 3 AND EXISTS (SELECT 1 FROM x)) SELECT n FROM x";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect, profile);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(parsed, dialect, profile));
+
+        Assert.Contains("exactly one direct self-reference", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Parse_Postgres83RecursiveCte_FailsAtSourceBoundary()
     {
