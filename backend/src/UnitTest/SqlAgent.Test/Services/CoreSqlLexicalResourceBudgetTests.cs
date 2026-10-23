@@ -136,6 +136,20 @@ public sealed class CoreSqlLexicalResourceBudgetTests
     }
 
     [Fact]
+    public void QueryInspection_CannotBypassParsedAstWorkBudget()
+    {
+        // Inspection used to enter Binder directly, independently of the
+        // public compilation pipeline. Both must share the same budget.
+        var sql = "SELECT id" +
+            string.Concat(Enumerable.Repeat(" + id", 40_000)) +
+            " FROM users";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreInspection.GetQueryFacts(sql, SqlAgentToolType.Postgres));
+        Assert.Equal("SQL_COMPILER_AST_NODE_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+    }
+
+    [Fact]
     public void NormalSql_IsNotAffectedByResourceBudgets()
     {
         var command = SqlCoreFacade.CompileQuery(
