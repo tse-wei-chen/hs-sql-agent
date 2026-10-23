@@ -37,12 +37,17 @@ public sealed class CoreCompilerResourceTelemetryTests
 
             List<object> captured;
             lock (samples) captured = samples.ToList();
-            var stages = captured.Select(x => Get(x, "Stage") as string).ToHashSet();
+            // DiagnosticListener is process-wide: parallel xUnit cases can
+            // publish unsuccessful stage events concurrently. Assert on the
+            // successful stage sample without assuming global isolation.
+            var successful = captured
+                .Where(x => Equals(Get(x, "Success"), true)).ToList();
+            var stages = successful.Select(x => Get(x, "Stage") as string).ToHashSet();
             foreach (var name in new[] { "Parsing", "Binding", "Normalization",
                         "Validation", "Policy", "Rendering" })
                 Assert.Contains(name, stages);
 
-            foreach (var data in captured)
+            foreach (var data in successful)
             {
                 Assert.True(Convert.ToInt64(Get(data, "ElapsedMicroseconds")) >= 0);
                 Assert.True(Convert.ToInt64(Get(data, "AllocatedBytes")) >= 0);
