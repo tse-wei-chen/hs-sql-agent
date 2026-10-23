@@ -126,6 +126,7 @@ module internal RewriteParser =
             let positions = Array.create data.Length -1
             let pending = System.Collections.Generic.Stack<int>()
             for position = 0 to data.Length - 1 do
+                RewriteResourceBudget.checkpoint ()
                 match data[position].Kind with
                 | Symbol '(' -> pending.Push(position)
                 | Symbol ')' when pending.Count > 0 ->
@@ -140,6 +141,7 @@ module internal RewriteParser =
             let mutable previousClose = -1
             let mutable scanning = true
             while scanning && index + count < data.Length do
+                RewriteResourceBudget.checkpoint ()
                 let opening = index + count
                 let next = min (data.Length - 1) (opening + 1)
                 let subquery =
@@ -157,8 +159,11 @@ module internal RewriteParser =
                     previousClose <- close
             count
         member _.Peek(offset: int) = data[min (data.Length - 1) (index + offset)]
-        member _.Advance() = if index < data.Length - 1 then index <- index + 1
+        member _.Advance() =
+            RewriteResourceBudget.checkpoint ()
+            if index < data.Length - 1 then index <- index + 1
         member _.Take() =
+            RewriteResourceBudget.checkpoint ()
             let token = data[index]
             if index < data.Length - 1 then index <- index + 1
             token

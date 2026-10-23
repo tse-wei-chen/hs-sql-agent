@@ -1049,3 +1049,14 @@ on their existing provider-specific fallback. JOIN/GROUP/DISTINCT/SET/CTE
 still use the full Query renderer. New six-provider WHERE-chain and
 PostgreSQL paged-chain cases verify exact innermost-first parameter
 ordering, not merely emitted SQL length.
+
+### Parser work accounting and observability isolation
+
+Every parser token consumption (Cursor.Advance/Take), lazy parenthesis-pair
+index visit and grouping-chain inspection now charges a parsing work unit.
+Previously only lexical token emission and selected recursive entries were
+metered. Nested compilation sessions reuse the enclosing quota rather than
+resetting the total deadline. DiagnosticListener notifications are best-effort:
+a throwing telemetry subscriber can no longer mask the compiler's typed
+resource or SQL validation diagnostic. These changes introduce no public
+configuration or SQL semantics changes.

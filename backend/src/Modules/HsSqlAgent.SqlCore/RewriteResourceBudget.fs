@@ -93,18 +93,27 @@ module internal RewriteResourceBudget =
                 let elapsed = Stopwatch.GetElapsedTime(phase.Started)
                 let allocated = max 0L (GC.GetAllocatedBytesForCurrentThread() - phase.AllocatedAtStart)
                 session.Current <- previous
-                if events.IsEnabled("StageCompleted") then
-                    events.Write("StageCompleted",
-                        {| Stage = phase.Name
-                           ElapsedMicroseconds = int64 elapsed.TotalMicroseconds
-                           AllocatedBytes = allocated
-                           WorkUnits = phase.Work
-                           Success = succeeded |})
+                // Observability must never replace the compiler's real
+                // validation/resource diagnostic, even if an application
+                // registers a faulty DiagnosticListener subscriber.
+                try
+                    if events.IsEnabled("StageCompleted") then
+                        events.Write("StageCompleted",
+                            {| Stage = phase.Name
+                               ElapsedMicroseconds = int64 elapsed.TotalMicroseconds
+                               AllocatedBytes = allocated
+                               WorkUnits = phase.Work
+                               Success = succeeded |})
+                with _ -> ()
 
     /// Restores an enclosing session on every path; no quota can leak between
     /// parallel requests, C# facade calls or inspection paths.
     let withCompilation action =
-        let previous = ambient.Value
-        ambient.Value <- Some(Session())
-        try action ()
-        finally ambient.Value <- previous
+        // Nested facade/inspection calls must share the same deadline,
+        // instead of silently acquiring a fresh 90-second allowance.
+        match ambient.Value with
+        | Some _ -> action ()
+        | None ->
+            ambient.Value <- Some(Session())
+            try action ()
+            finally ambient.Value <- None
