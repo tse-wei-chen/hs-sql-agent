@@ -369,6 +369,9 @@ module internal RewriteRenderer =
         | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
         | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
             renderLeftDeepBoolean ctx renderExpr chain
+        | Expr.Binary((BinaryOperator.Add | BinaryOperator.Subtract
+                       | BinaryOperator.Multiply | BinaryOperator.Divide), _, _) as chain ->
+            renderLeftDeepArithmetic ctx chain
         | Expr.Binary(operator, left, right) ->
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
@@ -588,6 +591,34 @@ module internal RewriteRenderer =
             builder.Append(renderLeaf ctx right).Append(')') |> ignore
         builder.ToString()
 
+    // Preserve exact nested parentheses and left-to-right parameter
+    // binding while avoiding depth-proportional recursion and intermediate
+    // SQL prefixes for left-deep arithmetic trees. Complex operators (e.g.
+    // MOD, CONCAT, IS DISTINCT FROM) continue through their dialect-aware
+    // renderer instead of being incorrectly treated as infix arithmetic.
+    and private renderLeftDeepArithmetic (ctx: RenderContext) expression =
+        let operations = ResizeArray<BinaryOperator * Expr>()
+        let mutable current = expression
+        let mutable descending = true
+        while descending do
+            match Expr.unspan current with
+            | Binary((BinaryOperator.Add | BinaryOperator.Subtract
+                      | BinaryOperator.Multiply | BinaryOperator.Divide as op), left, right) ->
+                RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                operations.Add(op, right)
+                current <- left
+            | _ -> descending <- false
+
+        let builder = StringBuilder()
+        for _ in 1 .. operations.Count do
+            builder.Append('(') |> ignore
+        builder.Append(renderExpr ctx current) |> ignore
+        for index = operations.Count - 1 downto 0 do
+            let op, right = operations[index]
+            builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
+            builder.Append(renderExpr ctx right).Append(')') |> ignore
+        builder.ToString()
+
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
         let dispatchName =
@@ -601,9 +632,8 @@ module internal RewriteRenderer =
             if call.Arguments.Length <> count then
                 fail ("Canonical function '" + name + "' requires " + string count + " argument(s).")
 
-        let rec literalText label expression =
-            match expression with
-            | Spanned(_, inner) -> literalText label inner
+        let literalText label expression =
+            match Expr.unspan expression with
             | Literal(ScalarValue.Text value) -> value
             | _ -> fail (label + " must be a string literal.")
 
