@@ -159,12 +159,12 @@ module internal RewritePipeline =
         let expr value = traverse (RewriteAstTraversal.ExprNode value)
         let query value = traverse (RewriteAstTraversal.QueryNode value)
         let source value = traverse (RewriteAstTraversal.SourceNode value)
-        let returning items =
+        let returning (items: ReturningItem list) =
             for item in items do expr item.Expression
-        let assignments values =
+        let assignments (values: Assignment list) =
             for value in values do expr value.Value
         let conflict (value: ConflictValue) =
-            let pending = System.Collections.Generic.ResizeArray<ConflictValue>()
+            let pending = ResizeArray<ConflictValue>()
             pending.Add value
             while pending.Count > 0 do
                 let last = pending.Count - 1
@@ -193,7 +193,7 @@ module internal RewritePipeline =
                 match conflictClause.Action with
                 | DoNothing -> ()
                 | UpdateProposedValues entries ->
-                    NonEmpty.iter (fun entry -> conflict entry.Value) entries
+                    NonEmpty.iter (fun (entry: ConflictAssignment) -> conflict entry.Value) entries
             | None -> ()
             returning value.Returning
         | UpdateStatement value ->
@@ -210,7 +210,7 @@ module internal RewritePipeline =
             expr value.MatchPredicate
             match value.Matched with
             | Some(MergeUpdate fields) ->
-                NonEmpty.iter (fun field -> expr field.Value) fields
+                NonEmpty.iter (fun (field: Assignment) -> expr field.Value) fields
             | Some MergeDelete | None -> ()
             value.NotMatched
             |> Option.iter (fun action ->
