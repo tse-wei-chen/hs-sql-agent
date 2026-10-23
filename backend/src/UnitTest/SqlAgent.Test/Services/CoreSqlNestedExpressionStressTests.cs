@@ -371,6 +371,121 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void MixedBinderGraph_CorrelatedInAndExistsAcrossDerivedSetBranches(
+        SqlAgentToolType dialect)
+    {
+        // A source-aware Binder must carry the outer row scope through IN,
+        // derived UNION branches, JOIN-like row sources and EXISTS without
+        // a recursive Expr -> Query callback.
+        var sql = "SELECT u.id FROM users AS u WHERE u.id IN ("
+            + "SELECT d.id FROM (SELECT id FROM archived WHERE id = 1 "
+            + "UNION ALL SELECT id FROM old_archive WHERE id = 2) AS d "
+            + "WHERE d.id = u.id) AND EXISTS ("
+            + "SELECT a.id FROM accounts AS a WHERE a.id = u.id) "
+            + "AND u.id > 3";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXISTS", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 1, 2, 3 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MixedBinderGraph_CteVisibilityAndCorrelatedNestedPredicate(
+        SqlAgentToolType dialect)
+    {
+        var sql = "WITH scoped AS (SELECT id FROM users WHERE id = 11) "
+            + "SELECT s.id FROM scoped AS s WHERE EXISTS ("
+            + "SELECT o.id FROM orders AS o WHERE o.id = s.id)";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("WITH", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(command.Parameters);
+        Assert.Equal(11L, Convert.ToInt64(command.Parameters[0].Value));
+    }
+
+    [Fact]
+    public void MixedBinderGraph_LateralJoinOnlySeesPrecedingSources()
+    {
+        var sql = "SELECT u.id, q.id, r.id FROM users AS u "
+            + "CROSS JOIN LATERAL (SELECT u.id AS id) AS q "
+            + "LEFT JOIN LATERAL (SELECT q.id AS id) AS r ON r.id = q.id";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("CROSS JOIN LATERAL", command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LEFT JOIN LATERAL", command.Sql,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MixedBinderGraph_NonLateralSourceCannotSeePrecedingJoin()
+    {
+        var sql = "SELECT u.id FROM users AS u "
+            + "CROSS JOIN LATERAL (SELECT u.id AS id) AS q "
+            + "CROSS JOIN (SELECT q.id AS id) AS r";
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("unknown table/alias qualifier", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("q", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+    }
+
+    [Fact]
+    public void MixedBinderGraph_FirstInvalidQualifierInProjectionWins()
+    {
+        var sql = "SELECT missing_outer.id, "
+            + "(SELECT missing_inner.id FROM archived) FROM users AS u";
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("missing_outer", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("missing_inner", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void MixedBinderGraph_InvalidQualifierInsideEarlierSubqueryWins()
+    {
+        var sql = "SELECT (SELECT missing_inner.id FROM archived), "
+            + "missing_outer.id FROM users AS u";
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("scope-aware-mixed-binder-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("missing_inner", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("missing_outer", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {
