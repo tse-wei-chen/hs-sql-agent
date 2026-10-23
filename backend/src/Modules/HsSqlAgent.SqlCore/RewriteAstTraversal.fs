@@ -88,9 +88,12 @@ module internal RewriteAstTraversal =
     let iter (visit: Expr -> unit) (root: Expr) =
         exists true (fun node -> visit node; false) root |> ignore
 
+    /// Struct DU frames avoid one managed object per nested SQL node.
+    /// Explicit work capacity grows with nesting, not the CLR call stack.
     /// Explicit continuation frames for policy traversal across queries,
     /// sources and expressions. The two After* phases retain the previous
     /// recursive validator's precise ordering of policy errors.
+    [<Struct>]
     type Frame =
         | ExprNode of Expr
         | QueryNode of Query
@@ -109,7 +112,14 @@ module internal RewriteAstTraversal =
             let buffer = List.toArray items
             for index = buffer.Length - 1 downto 0 do
                 push buffer.[index]
-        let pushExprs expressions = pushReverse (expressions |> List.map ExprNode)
+        let pushExprs (expressions: Expr list) =
+            let buffer = List.toArray expressions
+            for index = buffer.Length - 1 downto 0 do
+                push (ExprNode buffer.[index])
+        let pushOrderBy (items: OrderBy list) =
+            let buffer = List.toArray items
+            for index = buffer.Length - 1 downto 0 do
+                push (ExprNode buffer.[index].Expression)
 
         push root
         while pending.Count > 0 do
@@ -136,10 +146,10 @@ module internal RewriteAstTraversal =
                     push (ExprNode left)
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | FunctionCall call ->
-                    pushExprs (call.AggregateOrderBy |> List.map (fun order -> order.Expression))
+                    pushOrderBy call.AggregateOrderBy
                     pushExprs call.Arguments
                 | Windowed(value, window) ->
-                    pushExprs (window.OrderBy |> List.map (fun order -> order.Expression))
+                    pushOrderBy window.OrderBy
                     pushExprs window.PartitionBy
                     push (ExprNode value)
                 | SimpleCase(input, branches, fallback) ->
@@ -173,23 +183,27 @@ module internal RewriteAstTraversal =
                 push (SelectNode query.Head)
             | SelectNode select ->
                 push (AfterCtes select)
-                pushReverse (select.Ctes |> List.map (fun cte -> QueryNode cte.Query))
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (QueryNode ctes.[index].Query)
             | AfterCtes select ->
                 // Previous validator: FROM, DISTINCT ON, projections, WHERE,
                 // GROUP BY, HAVING, then JOIN sources and ON predicates.
-                let joins =
-                    select.Joins
-                    |> List.collect (function
-                        | OnJoin(_, source, predicate) ->
-                            [ SourceNode source; ExprNode predicate ]
-                        | CrossJoin source
-                        | NaturalJoin(_, source)
-                        | UsingJoin(_, source, _) -> [ SourceNode source ])
-                pushReverse joins
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index] with
+                    | OnJoin(_, source, predicate) ->
+                        push (ExprNode predicate)
+                        push (SourceNode source)
+                    | CrossJoin source
+                    | NaturalJoin(_, source)
+                    | UsingJoin(_, source, _) -> push (SourceNode source)
                 select.Having |> Option.iter (fun value -> push (ExprNode value))
                 pushExprs select.GroupBy
                 select.Where |> Option.iter (fun value -> push (ExprNode value))
-                pushExprs (select.ProjectionItems |> NonEmpty.toList |> List.map (fun item -> item.Expression))
+                let projections = select.ProjectionItems |> NonEmpty.toList |> List.toArray
+                for index = projections.Length - 1 downto 0 do
+                    push (ExprNode projections.[index].Expression)
                 match select.DistinctMode with
                 | SelectDistinct.DistinctOn values -> pushExprs (NonEmpty.toList values)
                 | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
@@ -200,5 +214,7 @@ module internal RewriteAstTraversal =
                 | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
                     push (QueryNode query)
             | AfterQueryHead query ->
-                pushExprs (query.OrderBy |> List.map (fun item -> item.Expression))
-                pushReverse (query.SetOperations |> List.map (fun item -> QueryNode item.Query))
+                pushOrderBy query.OrderBy
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (QueryNode branches.[index].Query)
