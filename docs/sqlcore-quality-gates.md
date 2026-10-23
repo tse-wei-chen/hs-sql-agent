@@ -379,6 +379,13 @@ published as measured percentages or silently set to 100.
       IN/BETWEEN, etc.) are rebuilt iteratively; nested Query still uses its
       existing CTE/correlation-scope boundary. Six-dialect 256-node arithmetic
       and mixed CASE/IN/BETWEEN parameter-order regressions guard parity.
+- [x] Replace Semantic Validation's mutually recursive expression/query/
+      SELECT/source traversal with typed continuation frames. The graph
+      handles CTEs, scalar/IN/EXISTS subqueries, derived tables, set branches,
+      nested aggregates/windows and ORDER BY without managed recursion;
+      preserving clause context, projection-width checks and error order.
+      Six-provider nested scalar + set-width fail-closed tests and aggregate
+      placement regressions are required for acceptance.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

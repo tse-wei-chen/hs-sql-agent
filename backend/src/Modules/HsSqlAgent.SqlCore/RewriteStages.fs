@@ -1731,8 +1731,7 @@ module internal RewriteStages =
                 | PostgresJsonAccess(operand, _, _)
                 | Cast(operand, _) | Extract(_, operand)
                 | IsNull(operand, _) -> visit operand
-                | RawRegexCall argumentsAndDistinct ->
-                    let (arguments, _) = argumentsAndDistinct
+                | RawRegexCall(arguments, _) ->
                     pushExprs context insideSetFunction withinWindow arguments
                 | FunctionCall call ->
                     validateCanonicalFunction targetRuntime withinWindow call
