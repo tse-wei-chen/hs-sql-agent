@@ -65,6 +65,20 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
 
     [Theory]
     [MemberData(nameof(Providers))]
+    public void DeepSingleCteChain_UsesExplicitTypeProofContinuations(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 256; depth++)
+            sql = $"WITH c AS ({sql}) SELECT id FROM c";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect, typed: true),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
     public void NestedDerivedQueries_KeepTypedNumericProjectionProof(
         SqlAgentToolType dialect)
     {

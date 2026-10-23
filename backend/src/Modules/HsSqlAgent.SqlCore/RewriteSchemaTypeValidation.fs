@@ -405,10 +405,46 @@ module internal RewriteSchemaTypeValidation =
                 name |> Option.map (fun value -> value, kind))
             |> sourceAlias catalog alias
 
+    // Preserve exact inner-to-outer type proof order for linear CTE chains.
+    // Every continuation restores its own inherited CTE visibility and
+    // correlation parent. Complex mixed Query graphs still use the guarded
+    // recursive fallback.
     and private queryTypes catalog inheritedCtes parent (query: Query) =
-        // Type proofs recurse through derived/CTE/SET Query graphs even
-        // when they contain no recursive Expr shape. Fail closed before
-        // CLR stack exhaustion; iterative schema traversal is still pending.
+        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+        let pending =
+            ResizeArray<struct (
+                Map<string, (string * SqlSchemaValueKind option) list>
+                * Scope option * Query * Cte)>()
+        let mutable current = query
+        let mutable currentParent = parent
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            match current.Head.Ctes, current.SetOperations with
+            | [ cte ], [] when not cte.RecursiveScope ->
+                pending.Add(struct (inheritedCtes, currentParent, current, cte))
+                current <- cte.Query
+                currentParent <- None
+            | _ -> scanning <- false
+
+        let mutable projected = queryTypesOne catalog inheritedCtes currentParent current
+        for index = pending.Count - 1 downto 0 do
+            RewriteResourceBudget.checkpoint ()
+            let struct (inherited, originalParent, outer, cte) = pending.[index]
+            let names =
+                if cte.ColumnAliases.IsEmpty then projected |> List.map fst
+                else cte.ColumnAliases
+                     |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+            let typed =
+                List.zip names (projected |> List.map snd)
+                |> List.choose (fun (name, kind) ->
+                    name |> Option.map (fun value -> value, kind))
+            let visible = Map.add (keyPart catalog.Dialect cte.Name) typed inherited
+            let stripped = { outer with Head = { outer.Head with Ctes = [] } }
+            projected <- queryTypesOne catalog visible originalParent stripped
+        projected
+
+    and private queryTypesOne catalog inheritedCtes parent (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let mutable ctes = inheritedCtes
         // Sequential visibility follows the already validated CTE lexical scope.

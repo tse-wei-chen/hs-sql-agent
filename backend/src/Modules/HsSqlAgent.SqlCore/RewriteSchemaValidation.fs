@@ -332,10 +332,48 @@ module internal RewriteSchemaValidation =
                 | _ -> [ String.Empty ])
         current, ctes, output
 
+    // A single-CTE nesting chain has post-order projection dependencies
+    // but no lateral/correlated dependency between its query bodies.
+    // Unwind with heap continuations rather than consuming CLR call stack.
+    // Multi-CTE, SET and derived-source shapes use the full proof path.
     and private queryColumns catalog ctes parent (query: Query) =
-        // Guard Query -> CTE/derived/set -> Query transitions as well as
-        // Expr recursion. A leaf-only deeply nested source may never enter
-        // the expression visitor's existing stack-reserve check.
+        RewriteStackSafety.compile SqlDiagnosticStage.Binding
+        let pending = ResizeArray<struct (Map<string, string list> * Scope option * Query * Cte)>()
+        let mutable current = query
+        let mutable currentParent = parent
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            match current.Head.Ctes, current.SetOperations with
+            | [ cte ], [] when not cte.RecursiveScope ->
+                pending.Add(struct (ctes, currentParent, current, cte))
+                current <- cte.Query
+                // A CTE body does not inherit the caller's correlated scope.
+                currentParent <- None
+            | _ -> scanning <- false
+
+        let mutable projected = queryColumnsSingle catalog ctes currentParent current
+        for index = pending.Count - 1 downto 0 do
+            RewriteResourceBudget.checkpoint ()
+            let struct (inherited, originalParent, outer, cte) = pending.[index]
+            let names =
+                match cte.ColumnAliases with
+                | [] -> requireNamedProjection cte.Span projected
+                | aliases when aliases.Length = projected.Length ->
+                    aliases |> List.map (keyPart catalog.Dialect)
+                | _ ->
+                    reject "SQL_SCHEMA_SHAPE_UNPROVABLE" cte.Span
+                        "CTE projection and column-alias widths differ."
+            let visible = Map.add (keyPart catalog.Dialect cte.Name) names inherited
+            let withoutCte = { outer.Head with Ctes = [] }
+            let scope, afterCtes, columns =
+                selectColumns catalog visible originalParent withoutCte
+            outer.OrderBy |> List.iter (fun item ->
+                expression catalog afterCtes scope Span.unknown item.Expression)
+            projected <- columns
+        projected
+
+    and private queryColumnsSingle catalog ctes parent (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.Binding
         let scope, visibleCtes, output = selectColumns catalog ctes parent query.Head
         query.SetOperations |> List.iter (fun branch ->

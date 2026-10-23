@@ -56,6 +56,19 @@ public sealed class CoreSchemaSnapshotBindingTests
 
     [Theory]
     [MemberData(nameof(SixDialects))]
+    public void DeepSingleCteChain_UsesExplicitSchemaProjectionContinuations(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 256; depth++)
+            sql = $"WITH c AS ({sql}) SELECT id FROM c";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
     public void NestedDerivedQueries_KeepSchemaBindingAndProjectionNames(
         SqlAgentToolType dialect)
     {
