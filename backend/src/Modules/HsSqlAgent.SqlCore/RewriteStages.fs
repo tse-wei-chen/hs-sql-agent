@@ -1616,142 +1616,7 @@ module internal RewriteStages =
                 "Scalar subquery must project exactly one expression; projected "
                 + string projection.Length + "."))
 
-    let rec private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        match context with
-        | ProjectionClause -> validateBooleanScalar targetRuntime "expression.boolean_select" expression
-        | AssignmentClause -> validateBooleanScalar targetRuntime "dml.update.boolean_assignment" expression
-        | InsertValueClause -> validateBooleanScalar targetRuntime "dml.insert.boolean_value" expression
-        | _ -> ()
-
-        match expression with
-        | Spanned(_, inner) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow amount
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | Unary(_, operand) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow operand
-        | Binary(_, left, right) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow left
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow right
-        | Like(value, pattern, _, _, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | RegexMatch(value, pattern) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | FunctionCall call ->
-            validateCanonicalFunction targetRuntime withinWindow call
-            let name, isAggregate, isWindowFunction = canonicalFunctionKind call
-            if isAggregate then
-                let allowed =
-                    if withinWindow then
-                        context = ProjectionClause || context = OrderByClause
-                    else
-                        context = ProjectionClause
-                        || context = HavingClause
-                        || context = OrderByClause
-                        || (context = WindowSpecificationClause
-                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(TargetRuntime.provider targetRuntime))
-                if not allowed then
-                    raise (SqlCompilationException(
-                        "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
-                if insideSetFunction then
-                    raise (SqlCompilationException(
-                        "Aggregate function '" + name + "' cannot be nested inside another aggregate or window function."))
-            if isWindowFunction then
-                if context <> ProjectionClause && context <> OrderByClause then
-                    raise (SqlCompilationException(
-                        "Window function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
-                if insideSetFunction then
-                    raise (SqlCompilationException(
-                        "Window function '" + name + "' cannot be nested inside another aggregate or window function."))
-            let nested = insideSetFunction || isAggregate || isWindowFunction
-            call.Arguments |> List.iter (validateSemanticExpr targetRuntime context nested false)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                validateSemanticExpr targetRuntime OrderByClause nested false order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateFilterTarget value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime PredicateClause false false predicate
-        | Windowed(value, window) ->
-            validateWindowTarget targetRuntime value window
-            if context <> ProjectionClause && context <> OrderByClause then
-                raise (SqlCompilationException(
-                    "Window expressions are not allowed in SQL clause '" + clauseName context + "'."))
-            if insideSetFunction then
-                raise (SqlCompilationException("Window functions cannot be nested inside aggregate or window functions."))
-            validateSemanticExpr targetRuntime context false true value
-            window.PartitionBy
-            |> List.iter (validateSemanticExpr targetRuntime WindowSpecificationClause false false)
-            window.OrderBy
-            |> List.iter (fun order ->
-                validateSemanticExpr targetRuntime WindowSpecificationClause false false order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | SimpleCase(input, branches, fallback) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow input
-            branches |> NonEmpty.iter (fun branch ->
-                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Match
-                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Result)
-            fallback |> Option.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateSemanticExpr targetRuntime PredicateClause false false branch.Condition
-                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Result)
-            fallback |> Option.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | InList(value, items, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            items |> NonEmpty.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | InSubquery(value, query, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateScalarSubqueryShape query
-            validateSemanticQuery targetRuntime query
-        | Between(value, lower, upper, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow lower
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow upper
-        | IsNull(value, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | ScalarSubquery query ->
-            validateScalarSubqueryShape query
-            validateSemanticQuery targetRuntime query
-        | Exists(query, _) ->
-            validateSemanticQuery targetRuntime query
-
-    and private validateSemanticTable targetRuntime source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> validateSemanticQuery targetRuntime query
-
-    and private validateSemanticSelect targetRuntime select =
-        select.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
-        select.From |> Option.iter (validateSemanticTable targetRuntime)
-        select.Joins |> List.iter (fun join ->
-            validateSemanticTable targetRuntime join.Source
-            join.Predicate
-            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false))
-        iterDistinctOn (validateSemanticExpr targetRuntime ProjectionClause false false) select
-        select.Projection
-        |> List.iter (fun item ->
-            validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
-        select.Where
-        |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
-        select.GroupBy
-        |> List.iter (validateSemanticExpr targetRuntime GroupByClause false false)
-        select.Having
-        |> Option.iter (validateSemanticExpr targetRuntime HavingClause false false)
-
-    and private identifierPartEquivalent targetRuntime (left: IdentifierPart) (right: IdentifierPart) =
+    let private identifierPartEquivalent targetRuntime (left: IdentifierPart) (right: IdentifierPart) =
         let normalize (part: IdentifierPart) =
             if part.WasQuoted || part.PreserveSpelling then
                 part.Value
@@ -1767,7 +1632,7 @@ module internal RewriteStages =
             | _ -> StringComparer.OrdinalIgnoreCase
         comparer.Equals(normalize left, normalize right)
 
-    and private projectionOutputNames (select: Select) =
+    let private projectionOutputNames (select: Select) =
         let names =
             select.Projection
             |> List.map (fun item ->
@@ -1779,7 +1644,7 @@ module internal RewriteStages =
         if names |> List.exists Option.isNone then None
         else Some(names |> List.choose id)
 
-    and private validateSetOrderReference targetRuntime outputNames identifier =
+    let private validateSetOrderReference targetRuntime outputNames identifier =
         let parts = Identifier.parts identifier
         if parts.Length <> 1 then
             raise (SqlCompilationException(
@@ -1799,66 +1664,244 @@ module internal RewriteStages =
                     "Set-operation ORDER BY reference '" + reference.Value
                     + "' is ambiguous in the combined output projection; use an output position."))
 
-    and private validateSemanticQuery targetRuntime query =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        validateSemanticSelect targetRuntime query.Head
-        let expectedWidth =
-            if query.Head.Projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None
-            else Some query.Head.Projection.Length
-        query.SetOperations
-        |> List.iter (fun branch ->
-            validateSemanticQuery targetRuntime branch.Query
-            match expectedWidth with
-            | Some expected ->
-                let actual =
-                    if branch.Query.Head.Projection
-                       |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None
-                    else Some branch.Query.Head.Projection.Length
-                match actual with
-                | Some value when value <> expected ->
-                    raise (SqlCompilationException(
-                        "Set operation projection width " + string value
-                        + " does not match head projection width " + string expected + "."))
-                | _ -> ()
-            | None -> ())
-        let headHasWildcard =
-            query.Head.Projection
-            |> List.exists (fun item ->
+    // One explicit frame machine validates Expr, Query, Select and source
+    // subgraphs. In particular, a scalar subquery no longer recursively
+    // enters validateSemanticQuery -> validateSemanticSelect -> Expr.
+    // Continuation frames preserve the old diagnostic-first order.
+    [<Struct>]
+    type private SemanticFrame =
+        | SemanticExpr of clause: ClauseContext * inSet: bool * inWindow: bool * expression: Expr
+        | SemanticTable of tableSource: TableSource
+        | SemanticSelect of selectBody: Select
+        | SemanticAfterCtes of selectTail: Select
+        | SemanticQuery of queryBody: Query
+        | SemanticAfterHead of queryTail: Query
+        | SemanticAfterBranch of expectedWidth: int option * branchQuery: Query
+        | SemanticAfterBranches of queryTail: Query
+        | SemanticOrder of orderQuery: Query * outputNames: IdentifierPart list option * headHasWildcard: bool * order: OrderBy
+        | SemanticInSubquery of queryBody: Query
+
+    let private validateSemanticWalk targetRuntime (root: SemanticFrame) =
+        let pending = ResizeArray<SemanticFrame>()
+        let inline push frame = pending.Add frame
+        let inline pushExpr context inSet inWindow expression =
+            push (SemanticExpr(context, inSet, inWindow, expression))
+        let pushExprs context inSet inWindow (values: Expr list) =
+            let ordered = List.toArray values
+            for index = ordered.Length - 1 downto 0 do
+                pushExpr context inSet inWindow ordered.[index]
+        let pushOrders context inSet inWindow (orders: OrderBy list) =
+            let ordered = List.toArray orders
+            for index = ordered.Length - 1 downto 0 do
+                pushExpr context inSet inWindow ordered.[index].Expression
+        let hasWildcard (select: Select) =
+            select.Projection |> List.exists (fun item ->
                 match Expr.unspan item.Expression with
                 | Wildcard _ -> true
                 | _ -> false)
-        let outputNames = projectionOutputNames query.Head
-        query.OrderBy
-        |> List.iter (fun order ->
-            match Expr.unspan order.Expression with
-            | OrderOrdinal ordinal
-                when not headHasWildcard
-                     && PositiveRowCount.value ordinal > query.Head.Projection.Length ->
-                raise (SqlCompilationException(
-                    "ORDER BY output position " + string (PositiveRowCount.value ordinal)
-                    + " exceeds projection width " + string query.Head.Projection.Length + "."))
-            | BoundColumn(identifier, ColumnBinding.ProjectionAlias)
-                when not query.SetOperations.IsEmpty ->
-                validateSetOrderReference targetRuntime outputNames identifier
-            | BoundColumn(identifier, ColumnBinding.ProjectionAlias) ->
-                let aliases = query.Head.Projection |> List.choose (fun item -> item.Alias)
-                match Identifier.parts identifier |> List.tryHead with
-                | Some reference when aliases |> List.exists (identifierPartEquivalent targetRuntime reference) -> ()
-                | Some reference when query.Head.From.IsNone ->
-                    raise (SqlCompilationException(
-                        "Column reference '" + reference.Value
-                        + "' requires a FROM source in the portable Core query model."))
-                | Some reference ->
-                    raise (SqlCompilationException(
-                        "ORDER BY projection alias '" + reference.Value
-                        + "' does not resolve under target identifier semantics."))
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | SemanticExpr(context, insideSetFunction, withinWindow, expression) ->
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                match context with
+                | ProjectionClause ->
+                    validateBooleanScalar targetRuntime "expression.boolean_select" expression
+                | AssignmentClause ->
+                    validateBooleanScalar targetRuntime "dml.update.boolean_assignment" expression
+                | InsertValueClause ->
+                    validateBooleanScalar targetRuntime "dml.insert.boolean_value" expression
+                | _ -> ()
+                let inline visit expr = pushExpr context insideSetFunction withinWindow expr
+                match expression with
+                | Spanned(_, inner) -> visit inner
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+                | DateAdd(_, amount, value)
+                | DateDiff(_, amount, value)
+                | Binary(_, amount, value)
+                | Like(amount, value, _, _, _)
+                | RegexMatch(amount, value) ->
+                    visit value
+                    visit amount
+                | Unary(_, operand)
+                | PostgresJsonAccess(operand, _, _)
+                | Cast(operand, _) | Extract(_, operand)
+                | IsNull(operand, _) -> visit operand
+                | RawRegexCall argumentsAndDistinct ->
+                    let (arguments, _) = argumentsAndDistinct
+                    pushExprs context insideSetFunction withinWindow arguments
+                | FunctionCall call ->
+                    validateCanonicalFunction targetRuntime withinWindow call
+                    let name, isAggregate, isWindowFunction = canonicalFunctionKind call
+                    if isAggregate then
+                        let allowed =
+                            if withinWindow then
+                                context = ProjectionClause || context = OrderByClause
+                            else
+                                context = ProjectionClause
+                                || context = HavingClause
+                                || context = OrderByClause
+                                || (context = WindowSpecificationClause
+                                    && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(TargetRuntime.provider targetRuntime))
+                        if not allowed then
+                            raise (SqlCompilationException(
+                                "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
+                        if insideSetFunction then
+                            raise (SqlCompilationException(
+                                "Aggregate function '" + name + "' cannot be nested inside another aggregate or window function."))
+                    if isWindowFunction then
+                        if context <> ProjectionClause && context <> OrderByClause then
+                            raise (SqlCompilationException(
+                                "Window function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
+                        if insideSetFunction then
+                            raise (SqlCompilationException(
+                                "Window function '" + name + "' cannot be nested inside another aggregate or window function."))
+                    let nested = insideSetFunction || isAggregate || isWindowFunction
+                    pushOrders OrderByClause nested false call.AggregateOrderBy
+                    pushExprs context nested false call.Arguments
+                | FilteredAggregate(value, predicate) ->
+                    validateFilterTarget value
+                    pushExpr PredicateClause false false predicate
+                    visit value
+                | Windowed(value, window) ->
+                    validateWindowTarget targetRuntime value window
+                    if context <> ProjectionClause && context <> OrderByClause then
+                        raise (SqlCompilationException(
+                            "Window expressions are not allowed in SQL clause '" + clauseName context + "'."))
+                    if insideSetFunction then
+                        raise (SqlCompilationException("Window functions cannot be nested inside aggregate or window functions."))
+                    pushOrders WindowSpecificationClause false false window.OrderBy
+                    pushExprs WindowSpecificationClause false false window.PartitionBy
+                    pushExpr context false true value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter visit
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        visit branch.Result
+                        visit branch.Match) branches
+                    visit input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter visit
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        visit branch.Result
+                        pushExpr PredicateClause false false branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse visit items
+                    visit value
+                | InSubquery(value, query, _) ->
+                    push (SemanticInSubquery query)
+                    visit value
+                | Between(value, lower, upper, _) ->
+                    visit upper
+                    visit lower
+                    visit value
+                | ScalarSubquery query ->
+                    validateScalarSubqueryShape query
+                    push (SemanticQuery query)
+                | Exists(query, _) -> push (SemanticQuery query)
+            | SemanticInSubquery query ->
+                validateScalarSubqueryShape query
+                push (SemanticQuery query)
+            | SemanticTable source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (SemanticQuery query)
+            | SemanticSelect select ->
+                push (SemanticAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (SemanticQuery ctes.[index].Query)
+            | SemanticAfterCtes select ->
+                // FROM, JOIN source/predicate, DISTINCT, projection, WHERE,
+                // GROUP, HAVING -- identical order to original validator.
+                select.Having |> Option.iter (pushExpr HavingClause false false)
+                pushExprs GroupByClause false false select.GroupBy
+                select.Where |> Option.iter (pushExpr PredicateClause false false)
+                NonEmpty.iterReverse (fun item ->
+                    pushExpr ProjectionClause false false item.Expression) select.ProjectionItems
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (pushExpr ProjectionClause false false) values
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> pushExpr PredicateClause false false predicate
+                    | None -> ()
+                    push (SemanticTable joins.[index].Source)
+                select.From |> Option.iter (fun source -> push (SemanticTable source))
+            | SemanticQuery query ->
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                push (SemanticAfterHead query)
+                push (SemanticSelect query.Head)
+            | SemanticAfterHead query ->
+                let width =
+                    if hasWildcard query.Head then None
+                    else Some query.Head.Projection.Length
+                push (SemanticAfterBranches query)
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (SemanticAfterBranch(width, branches.[index].Query))
+                    push (SemanticQuery branches.[index].Query)
+            | SemanticAfterBranch(expectedWidth, query) ->
+                match expectedWidth with
+                | Some expected ->
+                    if not (hasWildcard query.Head)
+                       && query.Head.Projection.Length <> expected then
+                        raise (SqlCompilationException(
+                            "Set operation projection width " + string query.Head.Projection.Length
+                            + " does not match head projection width " + string expected + "."))
                 | None -> ()
-            | Column identifier
-            | BoundColumn(identifier, _)
-                when not query.SetOperations.IsEmpty ->
-                validateSetOrderReference targetRuntime outputNames identifier
-            | _ -> ()
-            validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
+            | SemanticAfterBranches query ->
+                let headWildcard = hasWildcard query.Head
+                let names = projectionOutputNames query.Head
+                let orders = List.toArray query.OrderBy
+                for index = orders.Length - 1 downto 0 do
+                    push (SemanticOrder(query, names, headWildcard, orders.[index]))
+            | SemanticOrder(query, outputNames, headHasWildcard, order) ->
+                match Expr.unspan order.Expression with
+                | OrderOrdinal ordinal
+                    when not headHasWildcard
+                         && PositiveRowCount.value ordinal > query.Head.Projection.Length ->
+                    raise (SqlCompilationException(
+                        "ORDER BY output position " + string (PositiveRowCount.value ordinal)
+                        + " exceeds projection width " + string query.Head.Projection.Length + "."))
+                | BoundColumn(identifier, ColumnBinding.ProjectionAlias)
+                    when not query.SetOperations.IsEmpty ->
+                    validateSetOrderReference targetRuntime outputNames identifier
+                | BoundColumn(identifier, ColumnBinding.ProjectionAlias) ->
+                    let aliases = query.Head.Projection |> List.choose (fun item -> item.Alias)
+                    match Identifier.parts identifier |> List.tryHead with
+                    | Some reference when aliases |> List.exists (identifierPartEquivalent targetRuntime reference) -> ()
+                    | Some reference when query.Head.From.IsNone ->
+                        raise (SqlCompilationException(
+                            "Column reference '" + reference.Value
+                            + "' requires a FROM source in the portable Core query model."))
+                    | Some reference ->
+                        raise (SqlCompilationException(
+                            "ORDER BY projection alias '" + reference.Value
+                            + "' does not resolve under target identifier semantics."))
+                    | None -> ()
+                | Column identifier
+                | BoundColumn(identifier, _)
+                    when not query.SetOperations.IsEmpty ->
+                    validateSetOrderReference targetRuntime outputNames identifier
+                | _ -> ()
+                pushExpr OrderByClause false false order.Expression
+
+    let private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
+        validateSemanticWalk targetRuntime
+            (SemanticExpr(context, insideSetFunction, withinWindow, expression))
+
+    let private validateSemanticTable targetRuntime source =
+        validateSemanticWalk targetRuntime (SemanticTable source)
+
+    let private validateSemanticQuery targetRuntime query =
+        validateSemanticWalk targetRuntime (SemanticQuery query)
 
     // The EXISTS-style traversal short-circuits at the first known volatile
     // function. As before, scalar-subquery bodies are not inspected here.
