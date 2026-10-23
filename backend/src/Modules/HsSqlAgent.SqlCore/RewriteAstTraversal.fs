@@ -317,7 +317,7 @@ module internal RewriteAstTraversal =
 
             enter root
             while pending.Count > 0 do
-            RewriteResourceBudget.checkpoint ()
+                RewriteResourceBudget.checkpoint ()
                 let last = pending.Count - 1
                 let frame = pending.[last]
                 pending.RemoveAt last
