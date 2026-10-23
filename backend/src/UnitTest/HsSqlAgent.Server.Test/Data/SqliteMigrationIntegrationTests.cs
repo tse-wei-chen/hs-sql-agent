@@ -94,7 +94,7 @@ public sealed class SqliteMigrationIntegrationTests
                     Name = "v2.0.6 preserved operator key",
                     KeyPrefix = "v2_legacy",
                     KeyHash = new string('A', 64),
-                    PermissionsJson = "[\\"runtime.read\\"]",
+                    PermissionsJson = "[\"runtime.read\"]",
                     CreatedBy = "v2-operator",
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddYears(1)
@@ -138,7 +138,7 @@ public sealed class SqliteMigrationIntegrationTests
                     .SingleAsync(x => x.Id == originalKeyId, cancellationToken);
                 Assert.Equal("v2_legacy", preservedKey.KeyPrefix);
                 Assert.Equal(new string('A', 64), preservedKey.KeyHash);
-                Assert.Equal("[\\"runtime.read\\"]", preservedKey.PermissionsJson);
+                Assert.Equal("[\"runtime.read\"]", preservedKey.PermissionsJson);
                 Assert.Equal("v2-operator", preservedKey.CreatedBy);
                 Assert.Equal("OutcomeUnknown", preserved.Status);
                 Assert.Equal(consumed.EvidenceFingerprint, preserved.EvidenceFingerprint);
