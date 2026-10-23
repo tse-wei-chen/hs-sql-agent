@@ -1978,6 +1978,29 @@ module internal RewriteRenderer =
                     " ON CONFLICT" + targetClause + " DO UPDATE SET " + values
             | _ -> invalidOp "Portable INSERT conflict lowering is not supported by the target provider."
 
+    // Row-major VALUES rendering must not allocate one intermediate SQL
+    // string per row and a second aggregate concatenation. All writes check
+    // the bound before StringBuilder growth, including conflict/RETURNING.
+    let private appendValues (ctx: RenderContext) (output: RenderBuffer) rows =
+        rows
+        |> NonEmpty.toList
+        |> List.iteri (fun rowIndex row ->
+            if rowIndex > 0 then output.Append(", ") |> ignore
+            output.Append('(') |> ignore
+            row
+            |> NonEmpty.toList
+            |> List.iteri (fun columnIndex value ->
+                if columnIndex > 0 then output.Append(", ") |> ignore
+                output.Append(renderExpr ctx value) |> ignore)
+            output.Append(')') |> ignore)
+
+    let private renderInsertValues (ctx: RenderContext) (prefix: string) rows conflict returning =
+        let result = RenderBuffer(ctx, prefix)
+        result.Append(" VALUES ") |> ignore
+        appendValues ctx result rows
+        result.Append(renderConflict ctx conflict)
+              .Append(renderTrailingReturning ctx returning).ToString()
+
     let private renderInsert (ctx: RenderContext) insert =
         let columns = if insert.Columns.IsEmpty then "" else " (" + (insert.Columns |> List.map (renderAlias ctx.Provider) |> String.concat ", ") + ")"
         match ctx.Provider, insert.Conflict with
@@ -2056,51 +2079,44 @@ module internal RewriteRenderer =
             match insert.Input with
             | Values rows when NonEmpty.length rows > 1 ->
                 let table = renderIdentifier ctx.Provider insert.Target
-                let parts =
-                    rows
-                    |> NonEmpty.toList
-                    |> List.map (fun row ->
-                        " INTO " + table + columns + " VALUES ("
-                        + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
-                        + ")")
-                    |> String.concat ""
-                "INSERT ALL" + parts + " SELECT 1 FROM DUAL" + renderTrailingReturning ctx insert.Returning
+                let result = RenderBuffer(ctx, "INSERT ALL")
+                rows |> NonEmpty.toList |> List.iter (fun row ->
+                    result.Append(" INTO ").Append(table).Append(columns)
+                          .Append(" VALUES (") |> ignore
+                    row |> NonEmpty.toList |> List.iteri (fun index value ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderExpr ctx value) |> ignore)
+                    result.Append(')') |> ignore)
+                result.Append(" SELECT 1 FROM DUAL")
+                      .Append(renderTrailingReturning ctx insert.Returning).ToString()
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
                 prefix + " " + withClause + source + renderTrailingReturning ctx insert.Returning
             | QuerySource query -> prefix + " " + renderQuery ctx query + renderTrailingReturning ctx insert.Returning
             | Values rows ->
-                prefix + " VALUES "
-                + (rows |> NonEmpty.toList |> List.map (fun row ->
-                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
-                   |> String.concat ", ")
-                + renderTrailingReturning ctx insert.Returning
+                renderInsertValues ctx prefix rows None insert.Returning
             | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | Firebird, None ->
             let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
             match insert.Input with
             | Values rows when NonEmpty.length rows > 1 ->
-                prefix + " "
-                + (rows
-                   |> NonEmpty.toList
-                   |> List.map (fun row ->
-                       "SELECT "
-                       + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
-                       + " FROM RDB$DATABASE")
-                   |> String.concat " UNION ALL ")
-                + renderTrailingReturning ctx insert.Returning
+                let result = RenderBuffer(ctx, prefix + " ")
+                rows |> NonEmpty.toList |> List.iteri (fun rowIndex row ->
+                    if rowIndex > 0 then result.Append(" UNION ALL ") |> ignore
+                    result.Append("SELECT ") |> ignore
+                    row |> NonEmpty.toList |> List.iteri (fun index value ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderExpr ctx value) |> ignore)
+                    result.Append(" FROM RDB$DATABASE") |> ignore)
+                result.Append(renderTrailingReturning ctx insert.Returning).ToString()
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
                 prefix + " " + withClause + source + renderTrailingReturning ctx insert.Returning
             | QuerySource query -> prefix + " " + renderQuery ctx query + renderTrailingReturning ctx insert.Returning
             | Values rows ->
-                prefix + " VALUES "
-                + (rows |> NonEmpty.toList |> List.map (fun row ->
-                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
-                   |> String.concat ", ")
-                + renderTrailingReturning ctx insert.Returning
+                renderInsertValues ctx prefix rows None insert.Returning
             | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | _ ->
             let prefix =
@@ -2128,11 +2144,7 @@ module internal RewriteRenderer =
                 prefix + " " + renderQuery ctx query
                 + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
             | Values rows ->
-                prefix + " VALUES "
-                + (rows |> NonEmpty.toList |> List.map (fun row ->
-                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
-                   |> String.concat ", ")
-                + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
+                renderInsertValues ctx prefix rows insert.Conflict insert.Returning
             | DefaultValues ->
                 prefix + " DEFAULT VALUES"
                 + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning

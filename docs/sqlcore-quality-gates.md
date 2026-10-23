@@ -1060,3 +1060,12 @@ resetting the total deadline. DiagnosticListener notifications are best-effort:
 a throwing telemetry subscriber can no longer mask the compiler's typed
 resource or SQL validation diagnostic. These changes introduce no public
 configuration or SQL semantics changes.
+
+### Bounded INSERT VALUES materialization
+
+Ordinary INSERT VALUES (including PostgreSQL, SQL Server, MySQL, SQLite,
+Oracle and Firebird), Oracle multi-row INSERT ALL and Firebird multi-row
+UNION ALL are now emitted row-major into a checked RenderBuffer without
+allocating a second list of row SQL strings. Conflict and RETURNING
+clauses are appended in original order. A six-provider 64-row positive
+regression compares the entire parameter sequence, not just output text.
