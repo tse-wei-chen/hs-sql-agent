@@ -633,41 +633,72 @@ module internal CoreModel =
             | [ part ] -> Some(Identifier.create [ part ])
             | _ -> None
 
-        let rec tryOfExpression expression =
-            match expression with
-            | Spanned(_, inner) -> tryOfExpression inner
-            | Column identifier ->
-                match Identifier.parts identifier with
-                | [ part ] -> Ok(ConflictTargetColumn(Identifier.create [ part ]))
-                | [ qualifier; part ]
-                    when not qualifier.WasQuoted
-                         && StringComparer.OrdinalIgnoreCase.Equals(qualifier.Value, "EXCLUDED") ->
-                    Ok(ConflictProposedColumn(Identifier.create [ part ]))
-                | _ -> Error error
-            | Literal value -> Ok(ConflictLiteral value)
-            | Unary(UnaryOperator.Positive, operand) -> tryOfExpression operand
-            | Unary(UnaryOperator.Negate, operand) ->
-                tryOfExpression operand |> Result.map ConflictNegate
-            | Binary(operator, left, right) ->
-                let mapped =
+        // The conflict grammar is deliberately closed and much narrower
+        // than general Expr. Convert it post-order using explicit frames
+        // rather than nested CLR calls for deep deterministic arithmetic.
+        // Struct tuple frames and result stacks avoid recursive DU copying.
+        let tryOfExpression expression =
+            let pending = ResizeArray<struct (Expr * bool)>()
+            let completed = ResizeArray<ConflictValue>()
+            let mutable rejected = false
+            let pop () =
+                let last = completed.Count - 1
+                if last < 0 then
+                    invalidOp "Conflict expression conversion results underflow."
+                let value = completed.[last]
+                completed.RemoveAt(last)
+                value
+            pending.Add(struct (expression, false))
+            while pending.Count > 0 && not rejected do
+                let last = pending.Count - 1
+                let struct (node, finish) = pending.[last]
+                pending.RemoveAt(last)
+                match node, finish with
+                | Spanned(_, inner), false
+                | Unary(UnaryOperator.Positive, inner), false ->
+                    pending.Add(struct (inner, false))
+                | Column identifier, false ->
+                    match Identifier.parts identifier with
+                    | [ part ] ->
+                        completed.Add(ConflictTargetColumn(Identifier.create [ part ]))
+                    | [ qualifier; part ]
+                        when not qualifier.WasQuoted
+                             && StringComparer.OrdinalIgnoreCase.Equals(qualifier.Value, "EXCLUDED") ->
+                        completed.Add(ConflictProposedColumn(Identifier.create [ part ]))
+                    | _ -> rejected <- true
+                | Literal value, false -> completed.Add(ConflictLiteral value)
+                | Unary(UnaryOperator.Negate, operand), false ->
+                    pending.Add(struct (node, true))
+                    pending.Add(struct (operand, false))
+                | Unary(UnaryOperator.Negate, _), true ->
+                    completed.Add(ConflictNegate(pop ()))
+                | Binary(operator, left, right), false ->
                     match operator with
-                    | BinaryOperator.Add -> Some ConflictAdd
-                    | BinaryOperator.Subtract -> Some ConflictSubtract
-                    | BinaryOperator.Multiply -> Some ConflictMultiply
-                    | BinaryOperator.Divide -> Some ConflictDivide
-                    | BinaryOperator.Modulo -> Some ConflictModulo
-                    | _ -> None
-                match mapped with
-                | None -> Error error
-                | Some conflictOperator ->
-                    match tryOfExpression left, tryOfExpression right with
-                    | Ok leftValue, Ok rightValue ->
-                        Ok(ConflictBinary(conflictOperator, leftValue, rightValue))
-                    | Error message, _
-                    | _, Error message -> Error message
-            | _ -> Error error
+                    | BinaryOperator.Add | BinaryOperator.Subtract
+                    | BinaryOperator.Multiply | BinaryOperator.Divide
+                    | BinaryOperator.Modulo ->
+                        pending.Add(struct (node, true))
+                        pending.Add(struct (right, false))
+                        pending.Add(struct (left, false))
+                    | _ -> rejected <- true
+                | Binary(operator, _, _), true ->
+                    let conflictOperator =
+                        match operator with
+                        | BinaryOperator.Add -> ConflictAdd
+                        | BinaryOperator.Subtract -> ConflictSubtract
+                        | BinaryOperator.Multiply -> ConflictMultiply
+                        | BinaryOperator.Divide -> ConflictDivide
+                        | BinaryOperator.Modulo -> ConflictModulo
+                        | _ -> invalidOp "Non-arithmetic conflict continuation was scheduled."
+                    let right = pop ()
+                    let left = pop ()
+                    completed.Add(ConflictBinary(conflictOperator, left, right))
+                | _ -> rejected <- true
+            if rejected then Error error
+            elif completed.Count = 1 then Ok completed.[0]
+            else invalidOp "Conflict expression conversion did not produce one value."
 
-        let rec toExpression value =
+        let toExpression value =
             let proposedIdentifier identifier =
                 match singlePart identifier with
                 | None -> invalidOp "Conflict proposed-row identifiers must contain exactly one part."
@@ -678,20 +709,50 @@ module internal CoreModel =
                           PreserveSpelling = false
                           Span = Span.unknown }
                     Identifier.create [ excluded; Identifier.parts column |> List.head ]
-            match value with
-            | ConflictProposedColumn identifier -> Column(proposedIdentifier identifier)
-            | ConflictTargetColumn identifier -> Column identifier
-            | ConflictLiteral scalar -> Literal scalar
-            | ConflictNegate operand -> Unary(UnaryOperator.Negate, toExpression operand)
-            | ConflictBinary(operator, left, right) ->
-                let binaryOperator =
-                    match operator with
-                    | ConflictAdd -> BinaryOperator.Add
-                    | ConflictSubtract -> BinaryOperator.Subtract
-                    | ConflictMultiply -> BinaryOperator.Multiply
-                    | ConflictDivide -> BinaryOperator.Divide
-                    | ConflictModulo -> BinaryOperator.Modulo
-                Binary(binaryOperator, toExpression left, toExpression right)
+            let binaryOperator = function
+                | ConflictAdd -> BinaryOperator.Add
+                | ConflictSubtract -> BinaryOperator.Subtract
+                | ConflictMultiply -> BinaryOperator.Multiply
+                | ConflictDivide -> BinaryOperator.Divide
+                | ConflictModulo -> BinaryOperator.Modulo
+            let pending = ResizeArray<struct (ConflictValue * bool)>()
+            let completed = ResizeArray<Expr>()
+            let pop () =
+                let last = completed.Count - 1
+                if last < 0 then
+                    invalidOp "Conflict AST conversion results underflow."
+                let expression = completed.[last]
+                completed.RemoveAt(last)
+                expression
+            pending.Add(struct (value, false))
+            while pending.Count > 0 do
+                let last = pending.Count - 1
+                let struct (node, finish) = pending.[last]
+                pending.RemoveAt(last)
+                match node, finish with
+                | ConflictProposedColumn identifier, false ->
+                    completed.Add(Column(proposedIdentifier identifier))
+                | ConflictTargetColumn identifier, false ->
+                    completed.Add(Column identifier)
+                | ConflictLiteral scalar, false -> completed.Add(Literal scalar)
+                | ConflictNegate operand, false ->
+                    pending.Add(struct (node, true))
+                    pending.Add(struct (operand, false))
+                | ConflictNegate _, true ->
+                    completed.Add(Unary(UnaryOperator.Negate, pop ()))
+                | ConflictBinary(_, left, right), false ->
+                    pending.Add(struct (node, true))
+                    pending.Add(struct (right, false))
+                    pending.Add(struct (left, false))
+                | ConflictBinary(operator, _, _), true ->
+                    let right = pop ()
+                    let left = pop ()
+                    completed.Add(Binary(binaryOperator operator, left, right))
+                | _ ->
+                    invalidOp "Unexpected conflict AST conversion continuation frame."
+            if completed.Count <> 1 then
+                invalidOp "Conflict AST conversion did not reconstruct one expression."
+            completed.[0]
 
         let trySimpleProposed = function
             | ConflictProposedColumn identifier -> Some identifier
