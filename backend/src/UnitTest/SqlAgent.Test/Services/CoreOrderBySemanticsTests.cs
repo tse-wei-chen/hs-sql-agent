@@ -116,6 +116,19 @@ public class CoreOrderBySemanticsTests
     }
 
     [Fact]
+    public void Compile_SetTail_CannotResolveAliasOnlyDeclaredInLaterBranch()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            "SELECT id AS output_id FROM users "
+            + "UNION ALL SELECT id AS branch_only FROM admins "
+            + "ORDER BY branch_only",
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("not present", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("combined output", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Compile_SetOperationOrderByUnprojectedColumn_IsRejected()
     {
         var ex = Assert.Throws<SqlCompilationException>(() =>

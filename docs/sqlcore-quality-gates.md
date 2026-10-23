@@ -393,6 +393,13 @@ published as measured percentages or silently set to 100.
       vs aggregate/window-local NULL ordering checks and existing error
       precedence. Positive six-dialect deep-predicate and negative nested
       computed NULLS ordering tests cover this new boundary.
+- [x] Rebuild Binder set-operation Query branches with explicit
+      BindQueryEnter/BindQueryComplete continuations. Each branch inherits
+      exactly the parent's correlation scope and the head's visible CTEs;
+      bind order stays head → branches left-to-right → tail ORDER BY. Wide
+      24-branch six-provider CTE/parameter ordering and wrong-branch-alias
+      negative tests guard these contracts. Scalar/derived-subquery binding
+      still crosses a recursive Query callback and is not yet stack independent.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
