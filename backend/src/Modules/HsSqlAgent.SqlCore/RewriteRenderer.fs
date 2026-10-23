@@ -1161,7 +1161,7 @@ module internal RewriteRenderer =
                     [ "CASE WHEN (" + expression + " IS NULL) THEN " + nullRankSql + " ELSE " + nonNullRankSql + " END ASC"; expression + direction ]
                 | _ -> invalidOp (capabilityError ctx.Provider "ordering.nulls")
 
-    and private renderCtes (ctx: RenderContext) ctes =
+    and private renderCtes (ctx: RenderContext) (ctes: Cte list) =
         if List.isEmpty ctes then ""
         else
             let recursiveScope = ctes |> List.exists (fun cte -> cte.RecursiveScope)
