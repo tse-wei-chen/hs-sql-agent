@@ -1155,3 +1155,16 @@ These specific shapes are gated; this does NOT prove that all multi-CTE,
 correlated LATERAL, provider-specific nested SET or paging shapes are
 stack-independent. The larger compiler resource-protection acceptance
 contract remains open.
+
+### Public parser and DML batch quota coverage
+
+The public CLR `CoreSqlTextParser.ParseQuery/ParseDml` entrypoints now
+own a compilation scope, an isolated Parsing stage, and a
+CompatibilityProjection stage. The public `CoreDmlBatchTextParser.ParseDmlBatch`
+entrypoint meters both the batch-wide token scan and the per-statement
+native parser/projection, reusing the same ambient compilation session.
+A separate **32,000,000-unit aggregate compilation work budget**
+(`SQL_COMPILER_TOTAL_WORK_LIMIT`, Resource) prevents multi-statement
+batches or nested inspections from resetting the total quota even when
+each phase stays under its independent 8,000,000-unit limit. No publicly
+configurable bypass or provider semantics change was added.

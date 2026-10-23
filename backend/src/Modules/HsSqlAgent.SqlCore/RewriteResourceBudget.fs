@@ -13,6 +13,8 @@ module internal RewriteResourceBudget =
     [<Literal>]
     let MaxStageWork = 8000000L
     [<Literal>]
+    let MaxCompilationWork = 32000000L
+    [<Literal>]
     let MaxStageElapsedSeconds = 30L
     [<Literal>]
     let MaxCompilationElapsedSeconds = 90L
@@ -31,6 +33,7 @@ module internal RewriteResourceBudget =
     type private Session() =
         let started = Stopwatch.GetTimestamp()
         member _.Started = started
+        member val TotalWork = 0L with get, set
         member val Current: Phase option = None with get, set
 
     let private ambient = AsyncLocal<Session option>()
@@ -50,6 +53,9 @@ module internal RewriteResourceBudget =
         if phase.Work > MaxStageWork then
             fail "SQL_COMPILER_STAGE_WORK_LIMIT" phase.DiagnosticStage
                 ("Compiler stage " + phase.Name + " exceeded its deterministic work-unit budget.")
+        if session.TotalWork > MaxCompilationWork then
+            fail "SQL_COMPILER_TOTAL_WORK_LIMIT" phase.DiagnosticStage
+                ("Compilation exceeded its aggregate deterministic work-unit budget.")
         if GC.GetAllocatedBytesForCurrentThread() - phase.AllocatedAtStart > MaxStageAllocatedBytes then
             fail "SQL_COMPILER_STAGE_ALLOCATION_LIMIT" phase.DiagnosticStage
                 ("Compiler stage " + phase.Name + " exceeded its cumulative managed-allocation budget.")
@@ -66,8 +72,12 @@ module internal RewriteResourceBudget =
         | Some session ->
             match session.Current with
             | Some phase ->
+                if units < 0L then invalidArg "units" "Compiler work units must be nonnegative."
                 phase.Work <- phase.Work + units
-                if phase.Work > MaxStageWork || (phase.Work &&& 255L) = 0L then
+                session.TotalWork <- session.TotalWork + units
+                if phase.Work > MaxStageWork
+                   || session.TotalWork > MaxCompilationWork
+                   || (phase.Work &&& 255L) = 0L then
                     enforce session phase
             | None -> ()
         | None -> ()
