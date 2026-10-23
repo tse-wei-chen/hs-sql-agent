@@ -431,14 +431,30 @@ module internal RewriteBinder =
             visible <- visible @ [ cteKey ]
         bound |> Seq.toList, visible
 
-    and private bindJoin (scope: Scope) (join: Join) : Join * Scope =
+    and private bindJoin
+        (scope: Scope)
+        (aliasDisplays: System.Collections.Generic.Dictionary<string, string>)
+        (join: Join) : Join * Scope =
         let correlationScope =
             match join.Source with
             | LateralDerivedTable _ -> Some scope
             | _ -> scope.Parent
         let source = bindTableSource scope.Dialect correlationScope scope.VisibleCtes join.Source
-        let extended = { scope with Sources = scope.Sources @ [ sourceBinding scope.Dialect source ] }
-        ensureDistinctAliases extended
+        let binding = sourceBinding scope.Dialect source
+        match binding.AliasKey with
+        | Some key ->
+            match aliasDisplays.TryGetValue key with
+            | true, firstDisplay ->
+                // Match the former first-alias diagnostic, including casing.
+                invalidOp ("Duplicate table alias '" + firstDisplay + "' in SQL scope " + string scope.Id + ".")
+            | false, _ ->
+                aliasDisplays.Add(key, binding.Alias |> Option.defaultValue key)
+        | None -> ()
+        // Sources are only queried for existence/qualified lookups. Prepend
+        // to the persistent list rather than copying every earlier join.
+        // The accumulating dictionary enforces original source-order alias
+        // uniqueness without rescanning the entire prefix at every join.
+        let extended = { scope with Sources = binding :: scope.Sources }
         let boundJoin =
             match join with
             | CrossJoin _ -> CrossJoin source
@@ -458,12 +474,17 @@ module internal RewriteBinder =
               VisibleCtes = visibleCtes
               Dialect = dialect }
         ensureDistinctAliases initialScope
-        // Maintain the sequential correlation scope of each join, but avoid
-        // O(n²) list append on wide joins.
+        let aliases = System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal)
+        for binding in initialSources do
+            match binding.AliasKey with
+            | Some key -> aliases.Add(key, binding.Alias |> Option.defaultValue key)
+            | None -> ()
+        // Every join receives a scope containing all preceding row sources,
+        // including lateral correlation, without rebuilding that prefix.
         let reverseJoins, scope =
             (([], initialScope), select.Joins)
             ||> List.fold (fun (boundJoins: Join list, currentScope: Scope) join ->
-                let boundJoin, nextScope = bindJoin currentScope join
+                let boundJoin, nextScope = bindJoin currentScope aliases join
                 boundJoin :: boundJoins, nextScope)
         let joins = List.rev reverseJoins
         let projectionItems = select.ProjectionItems |> NonEmpty.map (fun (item: SelectItem) -> { item with Expression = bindExpr scope item.Expression })
