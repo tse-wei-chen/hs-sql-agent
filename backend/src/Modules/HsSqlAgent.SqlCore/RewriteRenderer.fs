@@ -1514,8 +1514,8 @@ module internal RewriteRenderer =
 
     [<Struct>]
     type private ConflictRenderFrame =
-        | ConflictNode of ConflictValue
-        | ConflictText of string
+        | ConflictNode of conflictValue: ConflictValue
+        | ConflictText of emittedText: string
 
     let private renderConflictValue (ctx: RenderContext) proposedQualifier value =
         // Explicit preorder emission preserves left-to-right parameter
