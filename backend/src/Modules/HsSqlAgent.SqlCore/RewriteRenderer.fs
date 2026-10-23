@@ -1422,13 +1422,13 @@ module internal RewriteRenderer =
                      && not branchNoTail.SetOperations.IsEmpty then
                     // Preserve the full WITH/SET contract for the uncommon
                     // CTE-bearing branch; do not lower away capability proof.
-                    sql.Append("(").Append(renderQueryCore ctx branchNoTail)
+                    sql.Append("(").Append((renderQueryCore ctx branchNoTail) : string)
                        .Append(')') |> ignore
                 elif branchNoTail.Head.Ctes.IsEmpty then
-                    sql.Append(renderQueryCore ctx branchNoTail) |> ignore
+                    sql.Append((renderQueryCore ctx branchNoTail) : string) |> ignore
                 else
                     sql.Append("SELECT * FROM (")
-                       .Append(renderQueryCore ctx branchNoTail)
+                       .Append((renderQueryCore ctx branchNoTail) : string)
                        .Append(") AS ")
                        .Append(renderAlias ctx.Provider
                            { Value = "_set_branch"
