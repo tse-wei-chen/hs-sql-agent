@@ -20,7 +20,33 @@ internal static class SqlCoreDepthProbe
     // than only repeating an inert scalar projection. Keep the historic
     // default 72-case CI depth floor intact; use --shapes to measure this
     // additional resource class in an isolated subprocess.
-    private static readonly string[] OptionalShapes = ["mixed-query-graph"];
+    private static readonly string[] OptionalShapes = ["mixed-query-graph", "nested-derived-source", "nested-cte"];
+
+    private sealed record StageSample(string Stage, long ElapsedMicroseconds,
+        long AllocatedBytes, long WorkUnits, bool Success);
+
+    private sealed class Observer<T>(Action<T> onNext) : IObserver<T>
+    {
+        public void OnNext(T item) => onNext(item);
+        public void OnCompleted() { }
+        public void OnError(Exception _) { }
+    }
+
+    private static string NestDerived(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT d.id FROM (" + sql + ") d";
+        return sql;
+    }
+
+    private static string NestCte(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+        return sql;
+    }
 
     public static bool TryRun(string[] args)
     {
@@ -77,6 +103,8 @@ internal static class SqlCoreDepthProbe
                 "SELECT u.id FROM users u WHERE EXISTS (" +
                 string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth)) +
                 "SELECT u.id" + new string(')', depth + 1),
+            "nested-derived-source" => NestDerived(depth),
+            "nested-cte" => NestCte(depth),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
 
@@ -84,6 +112,28 @@ internal static class SqlCoreDepthProbe
         var exitCode = 0;
         void CompileOnThisThread()
         {
+            var stages = new List<StageSample>();
+            var subscriptions = new List<IDisposable>();
+            using var all = DiagnosticListener.AllListeners.Subscribe(
+                new Observer<DiagnosticListener>(source =>
+                {
+                    if (source.Name != "HsSqlAgent.SqlCore.Compiler") return;
+                    subscriptions.Add(source.Subscribe(
+                        new Observer<KeyValuePair<string, object?>>(measurement =>
+                        {
+                            if (measurement.Key != "StageCompleted" || measurement.Value is null)
+                                return;
+                            var value = measurement.Value;
+                            object? Prop(string property) =>
+                                value.GetType().GetProperty(property)?.GetValue(value);
+                            stages.Add(new StageSample(
+                                (string?)Prop("Stage") ?? "Unknown",
+                                Convert.ToInt64(Prop("ElapsedMicroseconds")),
+                                Convert.ToInt64(Prop("AllocatedBytes")),
+                                Convert.ToInt64(Prop("WorkUnits")),
+                                Convert.ToBoolean(Prop("Success"))));
+                        })));
+                }));
             var stopwatch = Stopwatch.StartNew();
             var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
             try
@@ -104,6 +154,7 @@ internal static class SqlCoreDepthProbe
                     elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
                     allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
                     renderedChars = compiled.Sql.Length,
+                    stageMetrics = stages,
                     diagnosticCode = (string?)null,
                     error = (string?)null
                 });
@@ -129,10 +180,15 @@ internal static class SqlCoreDepthProbe
                     elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
                     allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
                     renderedChars = 0,
+                    stageMetrics = stages,
                     diagnosticCode,
                     error = error.GetType().Name + ": " +
                         error.Message[..Math.Min(250, error.Message.Length)]
                 });
+            }
+            finally
+            {
+                foreach (var subscription in subscriptions) subscription.Dispose();
             }
         }
 
