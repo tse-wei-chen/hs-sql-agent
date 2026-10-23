@@ -489,11 +489,6 @@ module internal RewriteStages =
                 AggregateOrderSyntax = AggregateOrderSyntax.NoAggregateOrder
                 AggregateSeparator = None }
 
-    [<Struct>]
-    type private NormalizePrefixFrame =
-        | NormalizeSpan of span: Span
-        | NormalizeUnary of operation: UnaryOperator
-
     // A set-operation tree is reconstructed in two stages, preserving the
     // original Head -> set branches (left-to-right) -> ORDER BY failure order.
     [<Struct>]
@@ -502,104 +497,36 @@ module internal RewriteStages =
         | CompleteQuery of originalQuery: Query * normalizedHead: Select
 
     let rec private normalizeExpr source target expression =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        match expression with
-        | Spanned _ | Unary _ ->
-            // Consume nested unary operators and SourceSpans iteratively.
-            // Unary Positive disappears during normalization as before.
-            let frames = ResizeArray<NormalizePrefixFrame>()
-            let mutable tail = expression
-            let mutable peeling = true
-            while peeling do
-                match tail with
-                | Spanned(span, inner) ->
-                    frames.Add(NormalizeSpan span)
-                    tail <- inner
-                | Unary(op, inner) ->
-                    frames.Add(NormalizeUnary op)
-                    tail <- inner
-                | _ -> peeling <- false
-            let mutable result = normalizeExpr source target tail
-            for index = frames.Count - 1 downto 0 do
-                result <-
-                    match frames.[index] with
-                    | NormalizeSpan span -> Expr.withSpan span result
-                    | NormalizeUnary Positive -> result
-                    | NormalizeUnary op -> Unary(op, result)
-            result
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
-        | DateAdd(unit, amount, value) ->
-            DateAdd(unit, normalizeExpr source target amount, normalizeExpr source target value)
-        | DateDiff(unit, startValue, finishValue) ->
-            DateDiff(unit, normalizeExpr source target startValue, normalizeExpr source target finishValue)
-        | Binary(op, left, right) -> Binary(op, normalizeExpr source target left, normalizeExpr source target right)
-        | Like(value, pattern, escape, negated, insensitive) ->
-            Like(normalizeExpr source target value, normalizeExpr source target pattern, escape, negated, insensitive)
-        | RawRegexCall(arguments, _) ->
-            let normalized = arguments |> List.map (normalizeExpr source target)
-            match normalized with
-            | [ value; pattern ] -> RegexMatch(value, pattern)
-            | values ->
-                compilationError (
-                    "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
-                    + string values.Length
-                    + ".")
-        | RegexMatch(value, pattern) ->
-            RegexMatch(normalizeExpr source target value, normalizeExpr source target pattern)
-        | PostgresJsonAccess(value, selector, resultKind) ->
-            PostgresJsonAccess(normalizeExpr source target value, selector, resultKind)
-        | FunctionCall call ->
-            normalizeFunction source target call
-        | FilteredAggregate(value, predicate) ->
-            FilteredAggregate(normalizeExpr source target value, normalizeExpr source target predicate)
-        | Windowed(value, window) ->
-            Windowed(normalizeExpr source target value, normalizeWindow source target window)
-        | Cast(value, targetType) ->
-            Cast(
-                normalizeExpr source target value,
-                RewriteCastTypes.normalize (sourceProvider source) (TargetRuntime.provider target) targetType)
-        | Extract(field, value) -> Extract(field, normalizeExpr source target value)
-        | SimpleCase(input, branches, fallback) ->
-            SimpleCase(
-                normalizeExpr source target input,
-                branches
-                |> NonEmpty.map (fun (branch: SimpleCaseBranch) ->
-                    { Match = normalizeExpr source target branch.Match
-                      Result = normalizeExpr source target branch.Result }),
-                fallback |> Option.map (normalizeExpr source target))
-        | SearchedCase(branches, fallback) ->
-            SearchedCase(
-                branches
-                |> NonEmpty.map (fun (branch: SearchedCaseBranch) ->
-                    { Condition = normalizeExpr source target branch.Condition
-                      Result = normalizeExpr source target branch.Result }),
-                fallback |> Option.map (normalizeExpr source target))
-        | InList(value, items, negated) ->
-            InList(
-                normalizeExpr source target value,
-                items |> NonEmpty.map (normalizeExpr source target),
-                negated)
-        | InSubquery(value, query, negated) ->
-            InSubquery(
-                normalizeExpr source target value,
-                normalizeQuery source target query,
-                negated)
-        | Between(value, lower, upper, negated) ->
-            Between(
-                normalizeExpr source target value,
-                normalizeExpr source target lower,
-                normalizeExpr source target upper,
-                negated)
-        | IsNull(value, negated) -> IsNull(normalizeExpr source target value, negated)
-        | ScalarSubquery query -> ScalarSubquery(normalizeQuery source target query)
-        | Exists(query, negated) -> Exists(normalizeQuery source target query, negated)
+        RewriteAstTraversal.mapPostOrder
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            (fun rebuilt ->
+                match rebuilt with
+                | Unary(Positive, operand) -> operand
+                | RawRegexCall(arguments, _) ->
+                    match arguments with
+                    | [ value; pattern ] -> RegexMatch(value, pattern)
+                    | values ->
+                        compilationError (
+                            "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
+                            + string values.Length + ".")
+                | FunctionCall call -> normalizeFunctionPrepared source target call
+                | Cast(value, targetType) ->
+                    Cast(
+                        value,
+                        RewriteCastTypes.normalize
+                            (sourceProvider source)
+                            (TargetRuntime.provider target)
+                            targetType)
+                | _ -> rebuilt)
+            (normalizeQuery source target)
+            expression
 
-    and private normalizeFunction source target (call: FunctionCall) =
+    and private normalizeFunctionPrepared source target (call: FunctionCall) =
+        // Child arguments and aggregate ORDER BY are already normalized by
+        // the shared post-order walker, in the original source order.
         let sourceTool = sourceProvider source
         let targetTool = TargetRuntime.provider target
-        let arguments = call.Arguments |> List.map (normalizeExpr source target)
-        let orderBy = call.AggregateOrderBy |> List.map (normalizeOrderBy source target)
-        let call = { call with Arguments = arguments; AggregateOrderBy = orderBy }
+        let arguments = call.Arguments
         let sourceName = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
         let sourceRegistryName =
             let postgresCatalogPrefix = "PG_CATALOG."
