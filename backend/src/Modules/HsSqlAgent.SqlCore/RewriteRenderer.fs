@@ -1171,24 +1171,79 @@ module internal RewriteRenderer =
                     raise (SqlCompilationException(
                         "SQL capability 'select.recursive_cte' is not supported by target provider "
                         + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
-            "WITH "
-            + (if recursiveScope then "RECURSIVE " else "")
-            + (ctes
-               |> List.map (fun cte -> renderAlias ctx.Provider cte.Name + " AS (" + renderCteQuery ctx cte.Query + ")")
-               |> String.concat ", ")
-            + " "
+            let result = RenderBuffer(ctx, "WITH ")
+            if recursiveScope then result.Append("RECURSIVE ") |> ignore
+            ctes
+            |> List.iteri (fun index cte ->
+                if index > 0 then result.Append(", ") |> ignore
+                result.Append(renderAlias ctx.Provider cte.Name)
+                      .Append(" AS (")
+                      .Append(renderCteQuery ctx cte.Query)
+                      .Append(')') |> ignore)
+            result.Append(' ').ToString()
 
     and private renderSource (ctx: RenderContext) source =
         match source with
         | TableSource.NamedTable(identifier, alias) | TableSource.CteTable(identifier, alias) ->
             renderIdentifier ctx.Provider identifier + (alias |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx.Provider value) |> Option.defaultValue "")
         | TableSource.DerivedTable(query, alias) ->
-            "(" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+            renderDerivedSourceChain ctx query alias false
         | TableSource.LateralDerivedTable(query, alias) ->
             match SqlLateralDerivedTableCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
-            | null ->
-                "LATERAL (" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+            | null -> renderDerivedSourceChain ctx query alias true
             | message -> raise (SqlCompilationException(message))
+
+    // Outside-in emission preserves projection binding and provider alias
+    // syntax without recursively allocating a string at every nested Query.
+    and private renderDerivedSourceChain (ctx: RenderContext) query alias lateral =
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || not head.Joins.IsEmpty || head.Where.IsSome
+               || not head.GroupBy.IsEmpty || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then
+                None
+            else
+                match head.From with
+                | Some (TableSource.DerivedTable(inner, innerAlias)) ->
+                    Some(head.Projection, inner, innerAlias)
+                | _ -> None
+        match tryWrapper query with
+        | None ->
+            (if lateral then "LATERAL (" else "(")
+            + renderQuery ctx query + ")"
+            + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+        | Some _ ->
+            let result = RenderBuffer(ctx, if lateral then "LATERAL (" else "(")
+            let aliases = ResizeArray<IdentifierPart>()
+            let mutable current = query
+            let mutable scanning = true
+            while scanning do
+                RewriteResourceBudget.checkpoint ()
+                match tryWrapper current with
+                | None -> scanning <- false
+                | Some(projection, inner, childAlias) ->
+                    result.Append("SELECT ") |> ignore
+                    projection
+                    |> List.iteri (fun index item ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderExpr ctx item.Expression) |> ignore
+                        item.Alias
+                        |> Option.iter (fun itemAlias ->
+                            result.Append(" AS ").Append(renderAlias ctx.Provider itemAlias) |> ignore))
+                    result.Append(" FROM (") |> ignore
+                    aliases.Add(childAlias)
+                    current <- inner
+            result.Append(renderQuery ctx current) |> ignore
+            for index = aliases.Count - 1 downto 0 do
+                result.Append(')')
+                      .Append(tableAliasPrefix ctx.Provider)
+                      .Append(renderAlias ctx.Provider aliases.[index]) |> ignore
+            result.Append(')')
+                  .Append(tableAliasPrefix ctx.Provider)
+                  .Append(renderAlias ctx.Provider alias)
+                  .ToString()
 
     and private renderSelectBody (ctx: RenderContext) (select: Select) =
         let groupScope expression =

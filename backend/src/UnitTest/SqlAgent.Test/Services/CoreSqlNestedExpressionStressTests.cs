@@ -601,6 +601,24 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DerivedTableChain_StreamsWithoutRecursiveQueryMaterialization(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 128;
+        var query = "SELECT id FROM users";
+        for (var i = 0; i < depth; i++)
+            query = $"SELECT d.id FROM ({query}) d";
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect,
+            new SqlPlanValidationContext("derived-render-chain-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+        Assert.Equal(depth,
+            compiled.Sql.Split(" FROM (", StringSplitOptions.None).Length - 1);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {

@@ -974,3 +974,12 @@ traversal loops charge individual frames; render append buffers charge
 individual writes. A dedicated test subscribes to stage telemetry and
 checks the required six pipeline stages, non-negative timings/allocations
 and a fixed privacy-safe metric property set.
+
+### Nested derived-table SQL emission
+
+Simple `SELECT projection FROM (SELECT ...)` derived-table chains now
+stream outer-to-inner through one checked render buffer. The fast path
+is restricted to no-CTE, no-JOIN, no-WHERE, no-GROUP, no-SET,
+no-pagination wrappers. Rich Query shapes retain the full renderer.
+Six-provider 128-level derived-chain regression exercises this case.
+Complex CTE/LATERAL/SET/ORDER/paging graphs still need convergence.
