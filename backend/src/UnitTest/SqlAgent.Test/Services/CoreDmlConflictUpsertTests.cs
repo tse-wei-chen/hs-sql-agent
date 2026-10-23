@@ -52,6 +52,28 @@ public sealed class CoreDmlConflictUpsertTests
         Assert.DoesNotContain(" * 2", command.Sql, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_DeepConflictArithmetic_PreservesLeftToRightParameterOrder(
+        SqlAgentToolType provider)
+    {
+        var arithmetic = "quantity"
+            + string.Concat(Enumerable.Range(1, 48).Select(i => $" + {i}"));
+        var sql = "INSERT INTO inventory (id, quantity) VALUES (1, 3) "
+            + "ON CONFLICT (id) DO UPDATE SET quantity = " + arithmetic;
+        var profile = provider == SqlAgentToolType.Sqlite
+            ? new SqlProviderCapabilityProfile(provider, ServerVersion: new Version(3, 24))
+            : null;
+        var command = CompileRaw(sql, provider, provider, profile, profile);
+
+        Assert.Contains("ON CONFLICT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(50, command.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, 48).Select(x => (long)x),
+            command.Parameters.Skip(2).Select(p => Convert.ToInt64(p.Value)));
+    }
+
     [Fact]
     public void Compile_SqliteConflictUpdate_DeterministicArithmetic_RequiresNativeVersionProof()
     {
