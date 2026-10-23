@@ -536,7 +536,7 @@ module internal RewriteBinder =
         // Most scalar and DML subqueries have no set branches. Avoid two
         // heap-backed work stacks for the overwhelmingly common case,
         // while using the same lexical scope and alias-binding rules.
-        if query.SetOperations.IsEmpty then
+        elif query.SetOperations.IsEmpty then
             RewriteStackSafety.compile SqlDiagnosticStage.Binding
             let head, headScope, _ =
                 bindSelect dialect parentScope inheritedCtes query.Head
