@@ -1038,3 +1038,14 @@ benchmark measured **474,123,528 rendering-stage allocated bytes**
 (**505,890,832 total**), compared with **28,678,992 total** for simple
 2,048 nested derived queries; the new optimization must be checked against
 the exact same before/after benchmark before promoting a CI ceiling.
+
+### WHERE and tail-bearing derived Query streams
+
+The derived-table continuation now preserves WHERE predicates and
+ORDER BY/paging tails on the same append-before-allocation buffer. For
+PostgreSQL/MySQL/SQLite/Oracle, suffix-only pagination is emitted after
+the inner derived source; SQL Server TOP and Firebird FIRST/SKIP remain
+on their existing provider-specific fallback. JOIN/GROUP/DISTINCT/SET/CTE
+still use the full Query renderer. New six-provider WHERE-chain and
+PostgreSQL paged-chain cases verify exact innermost-first parameter
+ordering, not merely emitted SQL length.

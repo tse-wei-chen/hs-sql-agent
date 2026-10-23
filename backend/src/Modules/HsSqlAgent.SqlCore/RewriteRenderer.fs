@@ -1224,11 +1224,18 @@ module internal RewriteRenderer =
     and private renderDerivedSourceChain (ctx: RenderContext) query alias lateral =
         let tryWrapper (current: Query) =
             let head = current.Head
+            // TOP/FIRST/SKIP need prefix rewriting; PostgreSQL, MySQL,
+            // SQLite and Oracle tails are suffixes and can stream safely.
+            let tailIsSuffix =
+                not (hasTail current)
+                || match ctx.Provider with
+                   | PostgreSql | MySql | SQLite | Oracle -> true
+                   | SqlServer | Firebird -> false
             if not head.Ctes.IsEmpty
                || head.DistinctMode <> SelectDistinct.AllRows
-               || not head.Joins.IsEmpty || head.Where.IsSome
+               || not head.Joins.IsEmpty
                || not head.GroupBy.IsEmpty || head.Having.IsSome
-               || not current.SetOperations.IsEmpty || hasTail current then
+               || not current.SetOperations.IsEmpty || not tailIsSuffix then
                 None
             else
                 match head.From with
@@ -1242,7 +1249,7 @@ module internal RewriteRenderer =
             + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
         | Some _ ->
             let result = RenderBuffer(ctx, if lateral then "LATERAL (" else "(")
-            let aliases = ResizeArray<IdentifierPart>()
+            let wrappers = ResizeArray<struct (IdentifierPart * Query)>()
             let mutable current = query
             let mutable scanning = true
             while scanning do
@@ -1259,13 +1266,22 @@ module internal RewriteRenderer =
                         |> Option.iter (fun itemAlias ->
                             result.Append(" AS ").Append(renderAlias ctx.Provider itemAlias) |> ignore))
                     result.Append(" FROM (") |> ignore
-                    aliases.Add(childAlias)
+                    wrappers.Add(struct (childAlias, current))
                     current <- inner
             result.Append(renderQuery ctx current) |> ignore
-            for index = aliases.Count - 1 downto 0 do
+            for index = wrappers.Count - 1 downto 0 do
+                let struct (childAlias, wrapper) = wrappers.[index]
                 result.Append(')')
                       .Append(tableAliasPrefix ctx.Provider)
-                      .Append(renderAlias ctx.Provider aliases.[index]) |> ignore
+                      .Append(renderAlias ctx.Provider childAlias) |> ignore
+                wrapper.Head.Where
+                |> Option.iter (fun predicate ->
+                    result.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+                result.Append(renderOrderClause ctx false wrapper.OrderBy) |> ignore
+                if hasTail wrapper then
+                    // Only providers with a suffix-only paging contract
+                    // can reach here; passing "" avoids copying a prefix.
+                    result.Append(renderPaging ctx wrapper "") |> ignore
             result.Append(')')
                   .Append(tableAliasPrefix ctx.Provider)
                   .Append(renderAlias ctx.Provider alias)

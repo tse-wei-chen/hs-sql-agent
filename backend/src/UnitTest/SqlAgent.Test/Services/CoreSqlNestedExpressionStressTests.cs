@@ -615,6 +615,40 @@ public sealed class CoreSqlNestedExpressionStressTests
             command.Parameters.Select(item => Convert.ToInt64(item.Value)).ToArray());
     }
 
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void DerivedSourceWithWhere_StreamsWithInnermostFirstBindings(
+        SqlAgentToolType dialect)
+    {
+        var query = "SELECT id FROM users";
+        for (var i = 1; i <= 64; i++)
+            query = $"SELECT d.id FROM ({query}) d WHERE d.id > {i}";
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect,
+            new SqlPlanValidationContext("derived-where-stream-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Equal(64, compiled.Sql.Split(" WHERE ", StringSplitOptions.None).Length - 1);
+        Assert.Equal(Enumerable.Range(1, 64).Select(i => (long)i),
+            compiled.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+    }
+
+    [Fact]
+    public void PostgresDerivedPagingChain_StreamsSuffixesInParameterOrder()
+    {
+        var query = "SELECT id FROM users";
+        for (var i = 1; i <= 32; i++)
+            query = $"SELECT d.id FROM ({query}) d WHERE d.id >= {i} " +
+                    $"ORDER BY d.id LIMIT {i + 1}";
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("derived-paging-stream-v1"),
+            new SqlExecutionPlanPolicy());
+        var expected = Enumerable.Range(1, 32)
+            .SelectMany(i => new long[] { i, i + 1 });
+        Assert.Equal(expected, compiled.Parameters.Select(x => Convert.ToInt64(x.Value)));
+        Assert.Equal(32, compiled.Sql.Split(" LIMIT ", StringSplitOptions.None).Length - 1);
+    }
+
     [Fact]
     public void DeepNestedCte_StreamsIntoSingleBoundedEmitter()
     {
