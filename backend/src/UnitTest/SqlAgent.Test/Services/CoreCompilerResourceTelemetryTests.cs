@@ -2,6 +2,7 @@ using System.Diagnostics;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -60,6 +61,51 @@ public sealed class CoreCompilerResourceTelemetryTests
                 Assert.Equal(new[] { "AllocatedBytes", "ElapsedMicroseconds",
                     "Stage", "Success", "WorkUnits" }, props);
             }
+        }
+        finally
+        {
+            foreach (var subscription in subscriptions) subscription.Dispose();
+        }
+    }
+
+    [Fact]
+    public void FailingTelemetryObserver_NeverOverridesSqlValidationDiagnostic()
+    {
+        var ownerThread = Environment.CurrentManagedThreadId;
+        var callbackInvocations = 0;
+        var subscriptions = new List<IDisposable>();
+        using var listener = DiagnosticListener.AllListeners.Subscribe(
+            new Observer<DiagnosticListener>(source =>
+            {
+                if (source.Name != "HsSqlAgent.SqlCore.Compiler") return;
+                subscriptions.Add(source.Subscribe(
+                    new Observer<KeyValuePair<string, object?>>(measurement =>
+                    {
+                        if (measurement.Key == "StageCompleted"
+                            && Environment.CurrentManagedThreadId == ownerThread)
+                        {
+                            Interlocked.Increment(ref callbackInvocations);
+                            throw new InvalidOperationException("telemetry subscriber failed");
+                        }
+                    })));
+            }));
+        try
+        {
+            var result = SqlCoreFacade.CompileQuery(
+                "SELECT 12 AS result",
+                SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("telemetry-should-not-change-sql"),
+                new SqlExecutionPlanPolicy());
+            Assert.NotEmpty(result.Sql);
+
+            var failure = Assert.Throws<SqlParseException>(() =>
+                SqlCoreFacade.CompileQuery(
+                    "SELECT (",
+                    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                    new SqlPlanValidationContext("telemetry-should-not-change-error"),
+                    new SqlExecutionPlanPolicy()));
+            Assert.NotNull(failure.Diagnostic);
+            Assert.True(callbackInvocations > 0);
         }
         finally
         {
