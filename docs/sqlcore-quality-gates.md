@@ -1076,8 +1076,10 @@ Both metadata validators now use post-order heap continuation frames
 for single, nonrecursive CTE Query chains without set operations.
 The original nested CTE body is proven before constructing the caller's
 visible alias map and checking its SELECT/ORDER expressions. Each frame
-carries the original correlation parent and CTE scope. Six-provider
-256-level regressions exercise both name and type snapshot validation.
+carries the original correlation parent and CTE scope. The three dialects with declared nested-WITH native target capability
+(PostgreSQL, MySQL and SQLite) exercise 256-level positive strict-schema
+regressions for both name and typed snapshots. SQL Server, Oracle and
+Firebird retain explicit fail-closed negative target-capability tests.
 Mixed multi-CTE, derived/LATERAL/SET and rich expression Query graphs
 continue through stack-reserve fallbacks and are NOT yet globally
 stack-independent.

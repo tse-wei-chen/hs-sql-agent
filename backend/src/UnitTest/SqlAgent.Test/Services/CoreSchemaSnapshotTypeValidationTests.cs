@@ -64,7 +64,9 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
     }
 
     [Theory]
-    [MemberData(nameof(Providers))]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
     public void DeepSingleCteChain_UsesExplicitTypeProofContinuations(
         SqlAgentToolType dialect)
     {
@@ -75,6 +77,22 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
             sql, dialect, dialect, Context(dialect, typed: true),
             new SqlExecutionPlanPolicy());
         Assert.NotEmpty(result.Sql);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void NestedCte_UnsupportedNativeTargetRemainsFailClosed(
+        SqlAgentToolType dialect)
+    {
+        var sql = "WITH c AS (WITH inner_c AS (SELECT id FROM users) " +
+                  "SELECT id FROM inner_c) SELECT id FROM c";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, Context(dialect, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Contains("select.cte_scope", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
