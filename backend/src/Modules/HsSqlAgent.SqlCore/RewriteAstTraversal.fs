@@ -248,12 +248,13 @@ module internal RewriteAstTraversal =
             for index = items.Length - 1 downto 0 do
                 enter items.[index]
         let enterOrders (values: OrderBy list) =
-            let items = List.toArray values
+            let items: OrderBy array = List.toArray values
             for index = items.Length - 1 downto 0 do
                 enter items.[index].Expression
-        let rebuildOrders (values: OrderBy list) =
+        let rebuildOrders (values: OrderBy list) : OrderBy list =
             let mapped = popList (List.length values)
-            List.map2 (fun order expr -> { order with Expression = expr }) values mapped
+            List.map2 (fun (order: OrderBy) (expr: Expr) ->
+                { order with Expression = expr }) values mapped
 
         enter root
         while pending.Count > 0 do
