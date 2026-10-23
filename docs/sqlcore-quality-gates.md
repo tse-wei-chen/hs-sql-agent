@@ -407,6 +407,13 @@ published as measured percentages or silently set to 100.
       gates, and fail-closed rejection of aggregates and subqueries.
       Deep 32/128 arithmetic, 64-predicate CASE and hidden aggregate
       negative regression tests exercise the previously recursive paths.
+- [x] Avoid binder continuation allocations for the overwhelmingly common
+      non-set Query. The new Query/SetBranch frames are used only when a
+      set-operation tree exists; direct queries reuse original head/scope/
+      projection-alias behavior. The previous 2,048-deep scalar probe grew
+      from ~14.99 MB to ~15.87 MB on the first Binder query-frame version;
+      run the same six-provider depth benchmark before accepting this fast
+      path as a performance fix.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

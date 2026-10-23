@@ -485,60 +485,74 @@ module internal RewriteBinder =
             Having = select.Having |> Option.map (bindExpr scope) }, scope, visibleCtes
 
     and private bindQuery dialect parentScope inheritedCtes (query: Query) : Query =
-        // Set-operation branches form their own Query tree. Bind each head
-        // before its branches, then rebuild branches and ORDER BY on exit:
-        // equivalent to the recursive order, but without a CLR frame per
-        // nested set Query.
-        let pending = ResizeArray<BindQueryFrame>()
-        let results = ResizeArray<Query>()
-        pending.Add(BindQueryEnter(query, parentScope, inheritedCtes))
-        while pending.Count > 0 do
-            let last = pending.Count - 1
-            let frame = pending.[last]
-            pending.RemoveAt(last)
-            match frame with
-            | BindQueryEnter(current, parent, visible) ->
-                RewriteStackSafety.compile SqlDiagnosticStage.Binding
-                let head, headScope, headCtes =
-                    bindSelect dialect parent visible current.Head
-                pending.Add(BindQueryComplete(current, head, headScope, headCtes))
-                // A UNION/INTERSECT/EXCEPT branch inherits the original
-                // parent's correlation scope and the head's visible CTEs,
-                // never the head's local row-source scope.
-                let branches = List.toArray current.SetOperations
-                for index = branches.Length - 1 downto 0 do
-                    pending.Add(BindQueryEnter(branches.[index].Query, parent, headCtes))
-            | BindQueryComplete(current, head, headScope, _) ->
-                let branches = List.toArray current.SetOperations
-                let rebuilt = Array.zeroCreate<SetBranch> branches.Length
-                for index = branches.Length - 1 downto 0 do
-                    let resultIndex = results.Count - 1
-                    if resultIndex < 0 then
-                        invalidOp "Binder query continuation results underflow."
-                    let child = results.[resultIndex]
-                    results.RemoveAt(resultIndex)
-                    rebuilt.[index] <- { branches.[index] with Query = child }
-                let explicitAliases =
-                    head.Projection |> List.choose (fun item -> item.Alias)
-                let setOutputNames =
-                    head.Projection
-                    |> List.choose (fun item ->
-                        match item.Alias, Expr.unspan item.Expression with
-                        | Some alias, _ -> Some alias
-                        | None, Column identifier
-                        | None, BoundColumn(identifier, _) ->
-                            Identifier.parts identifier |> List.tryLast
-                        | _ -> None)
-                let orderAliases =
-                    if branches.Length = 0 then explicitAliases else setOutputNames
-                results.Add
-                    { current with
-                        Head = head
-                        SetOperations = List.ofArray rebuilt
-                        OrderBy = current.OrderBy |> List.map (bindOrderBy headScope orderAliases) }
-        if results.Count <> 1 then
-            invalidOp "Binder query continuation frames did not reconstruct one query root."
-        results.[0]
+        // Most scalar and DML subqueries have no set branches. Avoid two
+        // heap-backed work stacks for the overwhelmingly common case,
+        // while using the same lexical scope and alias-binding rules.
+        if query.SetOperations.IsEmpty then
+            RewriteStackSafety.compile SqlDiagnosticStage.Binding
+            let head, headScope, _ =
+                bindSelect dialect parentScope inheritedCtes query.Head
+            let explicitAliases =
+                head.Projection |> List.choose (fun item -> item.Alias)
+            { query with
+                Head = head
+                OrderBy =
+                    query.OrderBy |> List.map (bindOrderBy headScope explicitAliases) }
+        else
+            // Set-operation branches form their own Query tree. Bind each head
+            // before its branches, then rebuild branches and ORDER BY on exit:
+            // equivalent to the recursive order, but without a CLR frame per
+            // nested set Query.
+            let pending = ResizeArray<BindQueryFrame>()
+            let results = ResizeArray<Query>()
+            pending.Add(BindQueryEnter(query, parentScope, inheritedCtes))
+            while pending.Count > 0 do
+                let last = pending.Count - 1
+                let frame = pending.[last]
+                pending.RemoveAt(last)
+                match frame with
+                | BindQueryEnter(current, parent, visible) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.Binding
+                    let head, headScope, headCtes =
+                        bindSelect dialect parent visible current.Head
+                    pending.Add(BindQueryComplete(current, head, headScope, headCtes))
+                    // A UNION/INTERSECT/EXCEPT branch inherits the original
+                    // parent's correlation scope and the head's visible CTEs,
+                    // never the head's local row-source scope.
+                    let branches = List.toArray current.SetOperations
+                    for index = branches.Length - 1 downto 0 do
+                        pending.Add(BindQueryEnter(branches.[index].Query, parent, headCtes))
+                | BindQueryComplete(current, head, headScope, _) ->
+                    let branches = List.toArray current.SetOperations
+                    let rebuilt = Array.zeroCreate<SetBranch> branches.Length
+                    for index = branches.Length - 1 downto 0 do
+                        let resultIndex = results.Count - 1
+                        if resultIndex < 0 then
+                            invalidOp "Binder query continuation results underflow."
+                        let child = results.[resultIndex]
+                        results.RemoveAt(resultIndex)
+                        rebuilt.[index] <- { branches.[index] with Query = child }
+                    let explicitAliases =
+                        head.Projection |> List.choose (fun item -> item.Alias)
+                    let setOutputNames =
+                        head.Projection
+                        |> List.choose (fun item ->
+                            match item.Alias, Expr.unspan item.Expression with
+                            | Some alias, _ -> Some alias
+                            | None, Column identifier
+                            | None, BoundColumn(identifier, _) ->
+                                Identifier.parts identifier |> List.tryLast
+                            | _ -> None)
+                    let orderAliases =
+                        if branches.Length = 0 then explicitAliases else setOutputNames
+                    results.Add
+                        { current with
+                            Head = head
+                            SetOperations = List.ofArray rebuilt
+                            OrderBy = current.OrderBy |> List.map (bindOrderBy headScope orderAliases) }
+            if results.Count <> 1 then
+                invalidOp "Binder query continuation frames did not reconstruct one query root."
+            results.[0]
 
     let private extendScopeWithSources (scope: Scope) sources =
         (([], scope), sources)
