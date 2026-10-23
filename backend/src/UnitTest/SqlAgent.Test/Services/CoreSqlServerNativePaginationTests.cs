@@ -67,6 +67,29 @@ public sealed class CoreSqlServerNativePaginationTests
     [Theory]
     [InlineData(16)]
     [InlineData(64)]
+    public void Compile_OffsetPagination_WideJoin_PreservesJoinOrderAndPaging(int joinCount)
+    {
+        // OFFSET uses an additional SQL Server SELECT wrapper. Ensure the
+        // bounded emitter keeps every join in order, without prefix copies.
+        var joins = string.Concat(Enumerable.Range(1, joinCount).Select(index =>
+            $" LEFT JOIN users AS j{index} ON u.id = j{index}.id"));
+        var sql = "SELECT u.id FROM users AS u" + joins +
+                  " WHERE u.id = 41 ORDER BY u.id LIMIT 10 OFFSET 5";
+
+        var command = Compile(sql);
+
+        Assert.Equal(joinCount,
+            command.Sql.Split(" LEFT JOIN ", StringSplitOptions.None).Length - 1);
+        Assert.Contains("ROW_NUMBER()", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ORDER BY [results_wrapper].[_core_page_row] ASC",
+            command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.True(command.Sql.IndexOf("[j1]", StringComparison.OrdinalIgnoreCase)
+            < command.Sql.IndexOf($"[j{joinCount}]", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(64)]
     [InlineData(128)]
     public void Compile_DeepIdenticalExpressions_KeepDistinctPagingProof(int depth)
     {

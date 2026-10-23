@@ -20,11 +20,33 @@ module internal RewriteRenderer =
     [<Literal>]
     let private MaxRenderedSqlLength = 16777216 // UTF-16 code units
 
-    type private RenderContext(provider: Provider, targetRuntime: TargetRuntime) =
+    // Guard transient SQL-emitter copies independently of final SQL size.
+    // This is a conservative work ceiling, NOT an absolute process RSS cap.
+    [<Literal>]
+    let private MaxRenderedSqlWorkLength = 134217728L // aggregate appended UTF-16 units
+
+    type private RenderContext(provider: Provider, targetRuntime: TargetRuntime, sourceSpan: Span) =
         let parameters = ResizeArray<obj | null>()
         let sharedParameters = Dictionary<string, string * (obj | null)>(StringComparer.Ordinal)
         let mutable sharedScope: string option = None
         let mutable sharedOrdinal = 0
+        let mutable appendedWork = 0L
+
+        let failBudget code detail : 'T =
+            let location =
+                if sourceSpan.Start >= 0 && sourceSpan.Length >= 0 then
+                    SqlDiagnosticSpan(sourceSpan.Start, sourceSpan.Length)
+                else
+                    Unchecked.defaultof<SqlDiagnosticSpan>
+            raise (
+                SqlCompilationException(
+                    detail,
+                    SqlDiagnostic(
+                        code,
+                        SqlDiagnosticStage.RenderingInvariant,
+                        SqlDiagnosticCategory.Resource,
+                        detail,
+                        location)))
 
         let parameterName index =
             match provider with Oracle -> ":p" + string index | _ -> "@p" + string index
@@ -67,6 +89,42 @@ module internal RewriteRenderer =
                 sharedOrdinal <- previousOrdinal
 
         member _.Parameters = parameters |> Seq.toList
+
+        // The limit is checked BEFORE StringBuilder grows, so a huge
+        // intermediate buffer cannot allocate above the rendered-SQL cap.
+        // Aggregate emitted work also bounds repeated text-copy paths.
+        member _.CheckAppend(existingLength: int, addedLength: int) =
+            if int64 existingLength + int64 addedLength > int64 MaxRenderedSqlLength then
+                failBudget
+                    "SQL_COMPILER_RENDERED_OUTPUT_LIMIT"
+                    ("Rendered SQL exceeds the maximum "
+                     + string MaxRenderedSqlLength + " UTF-16 code units.")
+            if appendedWork + int64 addedLength > MaxRenderedSqlWorkLength then
+                failBudget
+                    "SQL_COMPILER_RENDER_WORK_LIMIT"
+                    ("SQL rendering exceeds the maximum "
+                     + string MaxRenderedSqlWorkLength + " appended UTF-16 code units.")
+            appendedWork <- appendedWork + int64 addedLength
+
+    // Check each write before allocation instead of rejecting only after
+    // materializing a full (possibly transient) SQL fragment.
+    type private RenderBuffer(ctx: RenderContext, initial: string) =
+        let output = StringBuilder()
+        do
+            ctx.CheckAppend(0, initial.Length)
+            output.Append(initial) |> ignore
+
+        member this.Append(value: string) =
+            ctx.CheckAppend(output.Length, value.Length)
+            output.Append(value) |> ignore
+            this
+
+        member this.Append(value: char) =
+            ctx.CheckAppend(output.Length, 1)
+            output.Append(value) |> ignore
+            this
+
+        override _.ToString() = output.ToString()
 
     let private quotePart provider (part: IdentifierPart) =
         let raw =
@@ -501,7 +559,7 @@ module internal RewriteRenderer =
                     | Oracle -> " FROM DUAL"
                     | Firebird -> " FROM RDB$DATABASE"
                     | _ -> ""
-                let builder = StringBuilder()
+                let builder = RenderBuffer(ctx, )
                 builder.Append('(') |> ignore
                 for _ in 1 .. wrappers do builder.Append("SELECT (") |> ignore
                 builder.Append(renderSubquery ctx current) |> ignore
@@ -554,7 +612,7 @@ module internal RewriteRenderer =
             let mutable currentNegated = negated
             let mutable wrapping = true
             let mutable levels = 0
-            let output = StringBuilder()
+            let output = RenderBuffer(ctx, )
             while wrapping do
                 match tryWrapper current with
                 | Some(projected, child, innerNegated) ->
@@ -625,7 +683,7 @@ module internal RewriteRenderer =
         (renderLeaf: RenderContext -> Expr -> string)
         expression =
         let pending = ResizeArray<struct (BinaryOperator * Expr * bool)>()
-        let builder = StringBuilder()
+        let builder = RenderBuffer(ctx, )
         let mutable current = expression
         let mutable visiting = true
         while visiting || pending.Count > 0 do
@@ -665,7 +723,7 @@ module internal RewriteRenderer =
     // MOD/CONCAT/NULL-safe forms and left-to-right parameter binding.
     and private renderScalarGraph (ctx: RenderContext) root =
         let pending = ResizeArray<ScalarRenderFrame>()
-        let output = StringBuilder()
+        let output = RenderBuffer(ctx, )
         let inline node value = pending.Add(ScalarNode value)
         let inline text (value: string) = pending.Add(ScalarText value)
         let append (value: string) = output.Append(value) |> ignore
@@ -1170,7 +1228,7 @@ module internal RewriteRenderer =
         // Projection and DISTINCT ON expressions bind before FROM/JOIN
         // exactly as before. Build the text once instead of copying the
         // complete SELECT prefix for every JOIN, WHERE, GROUP and HAVING.
-        let sql = StringBuilder("SELECT ")
+        let sql = RenderBuffer(ctx, "SELECT ")
         sql.Append(distinctSql).Append(projection) |> ignore
         select.From
         |> Option.iter (fun source ->
@@ -1227,7 +1285,7 @@ module internal RewriteRenderer =
 
     and private renderSetBody (ctx: RenderContext) (query: Query) =
         let headNoCtes = { query.Head with Ctes = [] }
-        let sql = StringBuilder(renderSelectBody ctx headNoCtes)
+        let sql = RenderBuffer(ctx, renderSelectBody ctx headNoCtes)
         for branch in query.SetOperations do
             let branchNoTail =
                 { branch.Query with
@@ -1382,25 +1440,34 @@ module internal RewriteRenderer =
                         invalidOp "SQL Server DISTINCT OFFSET pagination requires every ORDER BY expression to resolve to a projected output."
                 renderAlias ctx.Provider orderAlias + (if order.Descending then " DESC" else " ASC"))
 
-        let mutable baseSql =
-            "SELECT "
-            + (if query.Head.Distinct then "DISTINCT " else "")
-            + (baseProjection |> Seq.toList |> String.concat ", ")
-        query.Head.From |> Option.iter (fun source -> baseSql <- baseSql + " FROM " + renderSource ctx source)
+        // OFFSET wrapping used to copy the entire growing SELECT prefix for
+        // every JOIN/WHERE/GROUP/HAVING. Append once, with a pre-allocation cap.
+        let baseSql = RenderBuffer(ctx, "SELECT ")
+        if query.Head.Distinct then baseSql.Append("DISTINCT ") |> ignore
+        baseSql.Append(baseProjection |> Seq.toList |> String.concat ", ") |> ignore
+        query.Head.From
+        |> Option.iter (fun source ->
+            baseSql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
         for join in query.Head.Joins do
-            baseSql <- baseSql + " " + joinText join.Kind + " " + renderSource ctx join.Source
+            baseSql.Append(" ").Append(joinText join.Kind).Append(" ")
+                   .Append(renderSource ctx join.Source) |> ignore
             match join with
             | CrossJoin _ -> ()
             | NaturalJoin _ ->
                 invalidOp "NATURAL JOIN cannot enter SQL Server pagination lowering without an explicit target capability."
             | OnJoin(_, _, predicate) ->
-                baseSql <- baseSql + " ON " + renderPredicate ctx predicate
+                baseSql.Append(" ON ").Append(renderPredicate ctx predicate) |> ignore
             | UsingJoin(_, _, _) ->
                 invalidOp "JOIN USING cannot enter SQL Server pagination lowering without an explicit target capability."
-        query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderPredicate ctx predicate)
+        query.Head.Where
+        |> Option.iter (fun predicate ->
+            baseSql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
         if not query.Head.GroupBy.IsEmpty then
-            baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
-        query.Head.Having |> Option.iter (fun predicate -> baseSql <- baseSql + " HAVING " + renderPredicate ctx predicate)
+            baseSql.Append(" GROUP BY ")
+                   .Append(query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ") |> ignore
+        query.Head.Having
+        |> Option.iter (fun predicate ->
+            baseSql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
 
         let windowOrder =
             if windowOrders.IsEmpty then "ORDER BY (SELECT 0)"
@@ -1417,7 +1484,7 @@ module internal RewriteRenderer =
             + ") AS "
             + rowAlias
             + " FROM ("
-            + baseSql
+            + baseSql.ToString()
             + ") AS "
             + baseAlias
         let outerOutputs =
@@ -1757,7 +1824,7 @@ module internal RewriteRenderer =
         // binding for nested conflict arithmetic without consuming a CLR
         // call frame for every ConflictBinary/ConflictNegate.
         let pending = ResizeArray<ConflictRenderFrame>()
-        let output = StringBuilder()
+        let output = RenderBuffer(ctx, )
         pending.Add(ConflictNode value)
         while pending.Count > 0 do
             let last = pending.Count - 1
@@ -2106,8 +2173,8 @@ module internal RewriteRenderer =
 
     let render (executable: RewritePolicy.ExecutableSql) : RenderedCommand =
         let targetRuntime = RewritePolicy.Executable.targetRuntime executable
-        let ctx = RenderContext(providerForRuntime targetRuntime, targetRuntime)
         let document = RewritePolicy.Executable.value executable
+        let ctx = RenderContext(providerForRuntime targetRuntime, targetRuntime, document.Span)
         let sql, returnsRows =
             match document.Statement with
             | Statement.QueryStatement query -> renderQuery ctx query, false

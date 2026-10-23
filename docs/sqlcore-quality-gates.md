@@ -913,3 +913,23 @@ published as measured percentages or silently set to 100.
   collations, session settings and trigger configuration.
 - Do not merge a feature expansion by shrinking a positive or negative corpus.
 - Never treat a skipped CI job as a passing CI job.
+
+### Renderer transient allocation controls (PR #300)
+
+The compiler rejects SQL output above **16,777,216 UTF-16 characters**
+(`SQL_COMPILER_RENDERED_OUTPUT_LIMIT`, RenderingInvariant/Resource).
+Major append-driven emitters now use a checked buffer: a fragment is rejected
+**before** its StringBuilder expands beyond the output limit. Independently,
+appends through these emitters share a **134,217,728 UTF-16-character cumulative
+work ceiling** per rendering operation
+(`SQL_COMPILER_RENDER_WORK_LIMIT`, RenderingInvariant/Resource). This prevents
+some pathological repeated-emission workloads even when their final output
+would fit. SQL Server OFFSET pagination also appends wide JOINs linearly rather
+than copying a growing SELECT prefix.
+
+These are intentionally distinct from peak resident memory and a complete
+compiler execution-time budget. String concatenations and unconverted
+Query/CTE/derived-table paths can still materialize intermediate strings.
+Neither threshold should be represented as a universal process-memory bound.
+Stage-isolated allocation/time profiling and remaining Query/Parser/Schema
+recursion are further merge gates.
