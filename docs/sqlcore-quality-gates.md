@@ -983,3 +983,13 @@ is restricted to no-CTE, no-JOIN, no-WHERE, no-GROUP, no-SET,
 no-pagination wrappers. Rich Query shapes retain the full renderer.
 Six-provider 128-level derived-chain regression exercises this case.
 Complex CTE/LATERAL/SET/ORDER/paging graphs still need convergence.
+
+### Stack-independent strict-schema scalar traversal
+
+Metadata-backed name validation now walks scalar Expr children with
+explicit frames rather than recursive `expression` calls. It preserves
+left-to-right first-rejected-column order and continues to validate
+subquery bodies under the enclosing schema scope. Query/Source/CTE
+evaluation still uses mutually recursive methods with a stack-reserve
+fallback; this does not satisfy the remaining Query/Schema/Type
+stack-independence merge condition.

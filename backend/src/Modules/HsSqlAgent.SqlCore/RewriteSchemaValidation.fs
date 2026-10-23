@@ -155,44 +155,75 @@ module internal RewriteSchemaValidation =
         | None -> ()
         | Some name -> qualifiedSource scope (keyIdentifier catalog.Dialect name) span |> ignore
 
+    // Visit scalar children on an explicit heap stack. Query proof still
+    // crosses through queryColumns, which has its own stack-reserve guard.
+    type private SchemaExprFrame =
+        | VisitSchemaExpr of Span * Expr
+        | VisitSchemaQuery of Query
+
     let rec private expression catalog ctes scope span expr =
-        RewriteStackSafety.compile SqlDiagnosticStage.Binding
-        let child = expression catalog ctes scope Span.unknown
-        match expr with
-        | Spanned(current, value) -> expression catalog ctes scope current value
-        | Column name -> column catalog scope span name
-        | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
-        | BoundColumn(name, _) -> column catalog scope span name
-        | Wildcard qualifier -> wildcard catalog scope span qualifier
-        | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, a, b) | DateDiff(_, a, b)
-        | Binary(_, a, b) | RegexMatch(a, b) | FilteredAggregate(a, b) ->
-            child a; child b
-        | Unary(_, a) | Cast(a, _) | Extract(_, a)
-        | PostgresJsonAccess(a, _, _) | IsNull(a, _) -> child a
-        | Like(a, b, _, _, _) -> child a; child b
-        | RawRegexCall(args, _) -> args |> List.iter child
-        | FunctionCall call ->
-            call.Arguments |> List.iter child
-            call.AggregateOrderBy |> List.iter (fun order -> child order.Expression)
-        | Windowed(value, window) ->
-            child value
-            window.PartitionBy |> List.iter child
-            window.OrderBy |> List.iter (fun order -> child order.Expression)
-        | SimpleCase(value, branches, fallback) ->
-            child value
-            branches |> NonEmpty.iter (fun branch -> child branch.Match; child branch.Result)
-            fallback |> Option.iter child
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch -> child branch.Condition; child branch.Result)
-            fallback |> Option.iter child
-        | InList(value, items, _) -> child value; items |> NonEmpty.iter child
-        | InSubquery(value, query, _) ->
-            child value
-            queryColumns catalog ctes (Some scope) query |> ignore
-        | Between(value, a, b, _) -> child value; child a; child b
-        | ScalarSubquery query | Exists(query, _) ->
-            queryColumns catalog ctes (Some scope) query |> ignore
+        let pending = ResizeArray<SchemaExprFrame>()
+        let inline push span expression = pending.Add(VisitSchemaExpr(span, expression))
+        let pushReverse values =
+            let expressions = List.toArray values
+            for index = expressions.Length - 1 downto 0 do
+                push Span.unknown expressions.[index]
+        push span expr
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let current = pending.[last]
+            pending.RemoveAt last
+            match current with
+            | VisitSchemaQuery query ->
+                queryColumns catalog ctes (Some scope) query |> ignore
+            | VisitSchemaExpr(currentSpan, expression) ->
+                match expression with
+                | Spanned(span, inner) -> push span inner
+                | Column name -> column catalog scope currentSpan name
+                | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
+                | BoundColumn(name, _) -> column catalog scope currentSpan name
+                | Wildcard qualifier -> wildcard catalog scope currentSpan qualifier
+                | OrderOrdinal _ | Literal _ | Interval _ -> ()
+                | DateAdd(_, a, b) | DateDiff(_, a, b)
+                | Binary(_, a, b) | RegexMatch(a, b) | FilteredAggregate(a, b)
+                | Like(a, b, _, _, _) ->
+                    push Span.unknown b
+                    push Span.unknown a
+                | Unary(_, a) | Cast(a, _) | Extract(_, a)
+                | PostgresJsonAccess(a, _, _) | IsNull(a, _) ->
+                    push Span.unknown a
+                | RawRegexCall(args, _) -> pushReverse args
+                | FunctionCall call ->
+                    pushReverse (call.AggregateOrderBy |> List.map (fun order -> order.Expression))
+                    pushReverse call.Arguments
+                | Windowed(value, window) ->
+                    pushReverse (window.OrderBy |> List.map (fun order -> order.Expression))
+                    pushReverse window.PartitionBy
+                    push Span.unknown value
+                | SimpleCase(value, branches, fallback) ->
+                    fallback |> Option.iter (push Span.unknown)
+                    branches |> NonEmpty.iterReverse (fun branch ->
+                        push Span.unknown branch.Result
+                        push Span.unknown branch.Match)
+                    push Span.unknown value
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (push Span.unknown)
+                    branches |> NonEmpty.iterReverse (fun branch ->
+                        push Span.unknown branch.Result
+                        push Span.unknown branch.Condition)
+                | InList(value, items, _) ->
+                    items |> NonEmpty.iterReverse (push Span.unknown)
+                    push Span.unknown value
+                | InSubquery(value, query, _) ->
+                    pending.Add(VisitSchemaQuery query)
+                    push Span.unknown value
+                | Between(value, lower, upper, _) ->
+                    push Span.unknown upper
+                    push Span.unknown lower
+                    push Span.unknown value
+                | ScalarSubquery query | Exists(query, _) ->
+                    pending.Add(VisitSchemaQuery query)
 
     and private source catalog ctes parent value =
         match value with

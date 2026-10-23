@@ -73,6 +73,24 @@ public sealed class CoreSchemaSnapshotBindingTests
 
     [Theory]
     [MemberData(nameof(SixDialects))]
+    public void DeepConjunction_UsesHeapSchemaExpressionTraversal(SqlAgentToolType dialect)
+    {
+        var conditions = string.Concat(Enumerable.Repeat(" AND id = 1", 256));
+        var query = "SELECT id FROM users WHERE id = 1" + conditions;
+        var result = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+
+        // The first unproven column must still win the left-to-right proof.
+        var invalid = "SELECT id FROM users WHERE missing = 1" + conditions;
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
     public void AllDialects_ValidateExistingQualifiedAndUnqualifiedColumns(SqlAgentToolType dialect)
     {
         var context = Context(dialect);
