@@ -288,6 +288,13 @@ published as measured percentages or silently set to 100.
       operator rendering. Six-dialect 512-term mixed-arithmetic positives
       and precedence equality/inequality regressions exercise this path.
       Renderer remains recursive for right-heavy and general Query graphs.
+- [x] Generalize Boolean rendering to a typed work stack for both left-
+      and right-deep / mixed AND/OR expression trees. Preserve original
+      parentheses and SQL three-valued logic, and render all leaf expressions
+      in source parameter order. Six-dialect 128-operand right-deep mixed
+      Boolean and precedence non-reassociation regressions cover this path.
+      Arbitrary non-Boolean right-heavy and Query rendering still recurse.
+
 
 - [x] Render narrow single-projection nested scalar SELECT wrapper chains in
       linear SQL-string space using an iterative wrapper walk and StringBuilder.

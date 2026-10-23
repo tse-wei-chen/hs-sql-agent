@@ -140,6 +140,50 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void RightDeepAndOrRendering_PreservesTreeAndEveryParameter(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 128;
+        var predicate = $"id = {depth}";
+        for (var index = depth - 1; index >= 1; index--)
+        {
+            var op = index % 2 == 0 ? " OR " : " AND ";
+            predicate = $"(id = {index}{op}{predicate})";
+        }
+
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT id FROM users WHERE " + predicate,
+            dialect, dialect,
+            new SqlPlanValidationContext("iterative-boolean-graph-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(command.Sql);
+        Assert.Equal(depth, command.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, depth).Select(value => (long)value),
+            command.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+        Assert.True(command.Sql.Count(character => character == '(') >= depth - 1);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void RightBranchBooleanRenderer_DoesNotReassociateAndOr(
+        SqlAgentToolType dialect)
+    {
+        string Compile(string predicate) =>
+            SqlCoreFacade.CompileQuery(
+                "SELECT id FROM users WHERE " + predicate,
+                dialect, dialect,
+                new SqlPlanValidationContext("iterative-boolean-graph-v1"),
+                new SqlExecutionPlanPolicy()).Sql;
+
+        Assert.NotEqual(
+            Compile("id = 1 OR (id = 2 AND id = 3)"),
+            Compile("(id = 1 OR id = 2) AND id = 3"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepArithmeticTree_PostOrderBindingPreservesEveryParameter(
         SqlAgentToolType dialect)
     {
