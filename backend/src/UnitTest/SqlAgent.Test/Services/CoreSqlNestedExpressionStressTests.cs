@@ -164,6 +164,51 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DeepMixedArithmeticRenderer_RetainsGroupingAndOrderedBindings(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 512;
+        var operators = new[] { " + ", " - ", " * ", " / " };
+        var expression = "id";
+        for (var index = 1; index <= depth; index++)
+            expression += operators[(index - 1) % operators.Length] + index;
+
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT " + expression + " FROM users",
+            dialect, dialect,
+            new SqlPlanValidationContext("iterative-arithmetic-render-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(command.Sql);
+        Assert.Equal(depth, command.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, depth).Select(x => (long)x),
+            command.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+
+        // Every arithmetic node is parenthesized, with no reassociation.
+        Assert.True(command.Sql.Count(character => character == '(') >= depth);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MixedArithmeticRenderer_DoesNotChangeOperatorPrecedence(
+        SqlAgentToolType dialect)
+    {
+        string Compile(string sql) => SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-arithmetic-render-v1"),
+            new SqlExecutionPlanPolicy()).Sql;
+
+        Assert.Equal(
+            Compile("SELECT (((id + 1) - 2) * 3) / 4 FROM users"),
+            Compile("SELECT (id + 1 - 2) * 3 / 4 FROM users"));
+        Assert.NotEqual(
+            Compile("SELECT (id + 1) * 2 FROM users"),
+            Compile("SELECT id + 1 * 2 FROM users"));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void MixedCaseInListAndBetween_PostOrderKeepsBindingOrder(
         SqlAgentToolType dialect)
     {

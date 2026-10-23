@@ -282,6 +282,13 @@ published as measured percentages or silently set to 100.
       left-spine walk. Preserve exact parentheses, source operand order, and
       parameters without boolean reassociation. Six-dialect regressions cover
       mixed operator precedence and 512-term chains.
+- [x] Eliminate quadratic SQL prefix copies and recursive render frames for
+      left-deep arithmetic (+, −, ×, ÷) without altering expression grouping,
+      source-order parameter binding or provider-specific MOD/CONCAT/NULL-safe
+      operator rendering. Six-dialect 512-term mixed-arithmetic positives
+      and precedence equality/inequality regressions exercise this path.
+      Renderer remains recursive for right-heavy and general Query graphs.
+
 - [x] Render narrow single-projection nested scalar SELECT wrapper chains in
       linear SQL-string space using an iterative wrapper walk and StringBuilder.
       Preserve parameter ordering, Oracle/Firebird dummy FROM, nontrivial
