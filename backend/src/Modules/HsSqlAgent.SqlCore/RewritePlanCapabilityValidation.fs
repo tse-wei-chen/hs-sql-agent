@@ -300,98 +300,125 @@ module internal RewritePlanCapabilityValidation =
             | BoundColumn(_, ProjectionAlias)
             | _ -> raise (nullOrderingCapabilityError targetRuntime)
 
-    let rec private proveOrderingExpr targetRuntime targetOrdering expression =
-        match expression with
-        | Spanned(_, inner) -> proveOrderingExpr targetRuntime targetOrdering inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            proveOrderingExpr targetRuntime targetOrdering amount
-            proveOrderingExpr targetRuntime targetOrdering value
-        | Unary(_, value) -> proveOrderingExpr targetRuntime targetOrdering value
-        | Binary(_, left, right) ->
-            proveOrderingExpr targetRuntime targetOrdering left
-            proveOrderingExpr targetRuntime targetOrdering right
-        | Like(value, pattern, _, _, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | RegexMatch(value, pattern) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering pattern
-        | PostgresJsonAccess(value, _, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | FunctionCall call ->
-            call.Arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
-                proveOrderingExpr targetRuntime targetOrdering order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering predicate
-        | Windowed(value, window) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            window.PartitionBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-            window.OrderBy
-            |> List.iter (fun order ->
-                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
-                proveOrderingExpr targetRuntime targetOrdering order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | SimpleCase(input, branches, fallback) ->
-            proveOrderingExpr targetRuntime targetOrdering input
-            branches |> NonEmpty.iter (fun branch ->
-                proveOrderingExpr targetRuntime targetOrdering branch.Match
-                proveOrderingExpr targetRuntime targetOrdering branch.Result)
-            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveOrderingExpr targetRuntime targetOrdering branch.Condition
-                proveOrderingExpr targetRuntime targetOrdering branch.Result)
-            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | InList(value, items, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            items |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | InSubquery(value, query, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingQuery targetRuntime targetOrdering query
-        | Between(value, lower, upper, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering lower
-            proveOrderingExpr targetRuntime targetOrdering upper
-        | IsNull(value, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | ScalarSubquery query | Exists(query, _) ->
-            proveOrderingQuery targetRuntime targetOrdering query
+    // Ordering/Paging proof is a whole-graph traversal, including window
+    // ORDER BY, aggregate-local ordering, CTEs and nested scalar queries.
+    // A deep Boolean predicate must not spend one CLR stack frame per Expr.
+    [<Struct>]
+    type private OrderingFrame =
+        | OrderingExpr of expression: Expr
+        | OrderingQuery of queryBody: Query
+        | OrderingSelect of selectBody: Select
+        | OrderingAfterCtes of selectTail: Select
+        | OrderingSource of tableSource: TableSource
+        | OrderingOrder of statementTail: bool * distinct: bool * setTail: bool * ordering: OrderBy
 
-    and private proveOrderingSource targetRuntime targetOrdering source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveOrderingQuery targetRuntime targetOrdering query
+    let private proveOrderingWalk targetRuntime targetOrdering (root: OrderingFrame) =
+        let pending = ResizeArray<OrderingFrame>()
+        let inline push frame = pending.Add frame
+        let pushExprs (values: Expr list) =
+            let entries = List.toArray values
+            for index = entries.Length - 1 downto 0 do
+                push (OrderingExpr entries.[index])
+        let pushOrders statementTail distinct setTail (orders: OrderBy list) =
+            let entries = List.toArray orders
+            for index = entries.Length - 1 downto 0 do
+                push (OrderingOrder(statementTail, distinct, setTail, entries.[index]))
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | OrderingExpr expr ->
+                match expr with
+                | Spanned(_, inner) -> push (OrderingExpr inner)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | Like(left, right, _, _, _)
+                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+                    push (OrderingExpr right)
+                    push (OrderingExpr left)
+                | Unary(_, value) | PostgresJsonAccess(value, _, _)
+                | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
+                    push (OrderingExpr value)
+                | RawRegexCall(arguments, _) -> pushExprs arguments
+                | FunctionCall call ->
+                    pushOrders false false false call.AggregateOrderBy
+                    pushExprs call.Arguments
+                | Windowed(value, window) ->
+                    pushOrders false false false window.OrderBy
+                    pushExprs window.PartitionBy
+                    push (OrderingExpr value)
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (OrderingExpr value))
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push (OrderingExpr branch.Result)
+                        push (OrderingExpr branch.Match)) branches
+                    push (OrderingExpr input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (OrderingExpr value))
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push (OrderingExpr branch.Result)
+                        push (OrderingExpr branch.Condition)) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (fun item -> push (OrderingExpr item)) items
+                    push (OrderingExpr value)
+                | InSubquery(value, query, _) ->
+                    push (OrderingQuery query)
+                    push (OrderingExpr value)
+                | Between(value, lower, upper, _) ->
+                    push (OrderingExpr upper)
+                    push (OrderingExpr lower)
+                    push (OrderingExpr value)
+                | ScalarSubquery query | Exists(query, _) -> push (OrderingQuery query)
+            | OrderingOrder(statementTail, distinct, setTail, order) ->
+                requireRewriteableNullOrdering
+                    targetRuntime targetOrdering statementTail distinct setTail order
+                push (OrderingExpr order.Expression)
+            | OrderingSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (OrderingQuery query)
+            | OrderingQuery query ->
+                pushOrders true query.Head.Distinct
+                    (not query.SetOperations.IsEmpty) query.OrderBy
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (OrderingQuery branches.[index].Query)
+                push (OrderingSelect query.Head)
+            | OrderingSelect select ->
+                push (OrderingAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (OrderingQuery ctes.[index].Query)
+            | OrderingAfterCtes select ->
+                select.Having |> Option.iter (fun value -> push (OrderingExpr value))
+                pushExprs select.GroupBy
+                select.Where |> Option.iter (fun value -> push (OrderingExpr value))
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> push (OrderingExpr predicate)
+                    | None -> ()
+                    push (OrderingSource joins.[index].Source)
+                select.From |> Option.iter (fun source -> push (OrderingSource source))
+                NonEmpty.iterReverse (fun item ->
+                    push (OrderingExpr item.Expression)) select.ProjectionItems
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (fun value -> push (OrderingExpr value)) values
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
 
-    and private proveOrderingSelect targetRuntime targetOrdering select =
-        select.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
-        iterDistinctOn (proveOrderingExpr targetRuntime targetOrdering) select
-        select.Projection |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
-        select.From |> Option.iter (proveOrderingSource targetRuntime targetOrdering)
-        select.Joins |> List.iter (fun join ->
-            proveOrderingSource targetRuntime targetOrdering join.Source
-            join.Predicate |> Option.iter (proveOrderingExpr targetRuntime targetOrdering))
-        select.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        select.GroupBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-        select.Having |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+    let private proveOrderingExpr targetRuntime targetOrdering expression =
+        proveOrderingWalk targetRuntime targetOrdering (OrderingExpr expression)
 
-    and private proveOrderingQuery targetRuntime targetOrdering query =
-        proveOrderingSelect targetRuntime targetOrdering query.Head
-        query.SetOperations |> List.iter (fun branch -> proveOrderingQuery targetRuntime targetOrdering branch.Query)
-        let isSetTail = not query.SetOperations.IsEmpty
-        query.OrderBy
-        |> List.iter (fun order ->
-            requireRewriteableNullOrdering targetRuntime targetOrdering true query.Head.Distinct isSetTail order
-            proveOrderingExpr targetRuntime targetOrdering order.Expression)
+    let private proveOrderingSource targetRuntime targetOrdering source =
+        proveOrderingWalk targetRuntime targetOrdering (OrderingSource source)
+
+    let private proveOrderingQuery targetRuntime targetOrdering query =
+        proveOrderingWalk targetRuntime targetOrdering (OrderingQuery query)
 
     let private stableProjectionNames context (query: Query) =
         query.Head.Projection
