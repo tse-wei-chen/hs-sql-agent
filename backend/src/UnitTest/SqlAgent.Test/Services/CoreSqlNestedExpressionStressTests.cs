@@ -314,6 +314,50 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DeepPureScalarChain_PreservesCorrelatedParentScopeAcrossQueries(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 96;
+        var sql = "SELECT u.id, "
+            + string.Concat(Enumerable.Repeat("(SELECT ", depth))
+            + "u.id" + new string(')', depth)
+            + " AS echoed FROM users AS u WHERE u.id = 9";
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-cross-query-scope-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(depth + 1, compiled.Sql.Split("SELECT ", StringSplitOptions.None).Length - 1);
+        Assert.Single(compiled.Parameters);
+        Assert.Equal(9L, Convert.ToInt64(compiled.Parameters[0].Value));
+        Assert.Contains("echoed", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void DeepPureScalarChain_UnknownQualifiedAncestorStillFailsClosed(
+        SqlAgentToolType dialect)
+    {
+        const int depth = 48;
+        var sql = "SELECT u.id, "
+            + string.Concat(Enumerable.Repeat("(SELECT ", depth))
+            + "missing.id" + new string(')', depth)
+            + " FROM users AS u";
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                parsed, dialect,
+                new SqlPlanValidationContext("iterative-cross-query-scope-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("unknown table/alias qualifier", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void ScalarSubqueryWrappers_PreserveProjectionAliasesAndBindingOrder(
         SqlAgentToolType dialect)
     {

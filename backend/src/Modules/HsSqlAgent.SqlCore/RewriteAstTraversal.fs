@@ -6,6 +6,39 @@ open HsSqlAgent.SqlCore.Rewrite.CoreModel
 /// Explicit, depth-independent (of the CLR call stack) pre-order traversal
 /// of scalar expression trees. The logical SQL AST stays a closed DU.
 module internal RewriteAstTraversal =
+
+    /// Narrow, semantics-free Query/Expr/Query bridge. Clauses that can
+    /// change diagnostic order, binding scope, or output shape do not enter.
+    let trySimpleScalarChain (query: Query) : (SelectItem * Query) option =
+        let select = query.Head
+        if select.Ctes.IsEmpty
+           && select.DistinctMode = SelectDistinct.AllRows
+           && select.From.IsNone && select.Joins.IsEmpty
+           && select.Where.IsNone && select.GroupBy.IsEmpty
+           && select.Having.IsNone
+           && query.SetOperations.IsEmpty && query.OrderBy.IsEmpty
+           && query.Limit.IsNone && query.Offset.IsNone
+           && query.FetchPercent.IsNone && not query.FetchWithTies then
+            match NonEmpty.toList select.ProjectionItems with
+            | [ item ] ->
+                match Expr.unspan item.Expression with
+                | ScalarSubquery child -> Some(item, child)
+                | _ -> None
+            | _ -> None
+        else None
+
+    /// Preserve the original projection alias and outermost SourceSpan, as
+    /// Expr.withSpan does when a rebuilt expression is already spanned.
+    let rebuildSimpleScalarChain (original: Query) (item: SelectItem) (child: Query) =
+        let expression =
+            match item.Expression with
+            | Spanned(span, _) -> Expr.withSpan span (ScalarSubquery child)
+            | _ -> ScalarSubquery child
+        { original with
+            Head =
+                { original.Head with
+                    ProjectionItems = NonEmpty.create { item with Expression = expression } [] } }
+
     /// Returns true when a matching node is encountered; immediately stops
     /// walking so left-to-right short-circuit semantics are preserved.
     ///

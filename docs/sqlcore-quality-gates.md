@@ -434,6 +434,15 @@ published as measured percentages or silently set to 100.
       diagnostics. JOIN source correlation and ON-predicate binding still
       see precisely the preceding sources; six-dialect 16-join parameter
       ordering and alias collision cases guard these invariants.
+- [x] Flatten pure no-FROM, single-projection Query/ScalarSubquery
+      chains in Binder and Normalizer with explicit continuation frames.
+      Binder creates every intermediate parent Scope to preserve ancestor
+      qualifier binding and lexical CTE visibility; Normalizer keeps each
+      Query's stage check, original outer SourceSpan and projection alias.
+      Clauses, CTEs, joins, multiple projections, set branches and paging
+      remain on the existing guarded path. Six-provider 96-level correlated
+      ancestor and 48-level unknown-qualifier regressions cover the boundary;
+      general mixed Query/Expr/Source continuations remain open.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

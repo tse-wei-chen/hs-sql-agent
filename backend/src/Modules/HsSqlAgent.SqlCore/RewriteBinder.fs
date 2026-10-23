@@ -506,6 +506,33 @@ module internal RewriteBinder =
             Having = select.Having |> Option.map (bindExpr scope) }, scope, visibleCtes
 
     and private bindQuery dialect parentScope inheritedCtes (query: Query) : Query =
+        // Flatten only inert no-FROM scalar SELECT wrappers. Build each
+        // intervening lexical scope explicitly, including the full parent
+        // chain needed for correlated column references.
+        if RewriteAstTraversal.trySimpleScalarChain query |> Option.isSome then
+            let frames = ResizeArray<struct (Query * SelectItem)>()
+            let mutable current = query
+            let mutable parent = parentScope
+            let mutable peeling = true
+            while peeling do
+                match RewriteAstTraversal.trySimpleScalarChain current with
+                | Some(item, child) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.Binding
+                    frames.Add(struct (current, item))
+                    let nestedScope : Scope =
+                        { Id = scopeId parent
+                          Parent = parent
+                          Sources = []
+                          VisibleCtes = inheritedCtes
+                          Dialect = dialect }
+                    parent <- Some nestedScope
+                    current <- child
+                | None -> peeling <- false
+            let mutable result = bindQuery dialect parent inheritedCtes current
+            for index = frames.Count - 1 downto 0 do
+                let struct (original, item) = frames.[index]
+                result <- RewriteAstTraversal.rebuildSimpleScalarChain original item result
+            result
         // Most scalar and DML subqueries have no set branches. Avoid two
         // heap-backed work stacks for the overwhelmingly common case,
         // while using the same lexical scope and alias-binding rules.
