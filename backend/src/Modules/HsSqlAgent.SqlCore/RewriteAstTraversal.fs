@@ -61,6 +61,7 @@ module internal RewriteAstTraversal =
 
         let mutable found = false
         while pending.Count > 0 && not found do
+            RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
             let expression = pending.[last]
             pending.RemoveAt(last)
@@ -150,6 +151,7 @@ module internal RewriteAstTraversal =
 
         push root
         while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
             let frame = pending.[last]
             pending.RemoveAt(last)
@@ -315,6 +317,7 @@ module internal RewriteAstTraversal =
 
             enter root
             while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
                 let last = pending.Count - 1
                 let frame = pending.[last]
                 pending.RemoveAt last
@@ -529,6 +532,7 @@ module internal RewriteAstTraversal =
         | SourceGraphRoot source -> pushSource source
 
         while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
             let frame = pending.[last]
             pending.RemoveAt last

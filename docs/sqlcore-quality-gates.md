@@ -965,3 +965,12 @@ Typed resource errors: `SQL_COMPILER_STAGE_WORK_LIMIT` and
 not preemptive cancellation or database execution timeouts. A CPU-bound
 loop lacking checkpoints is still a known gap. No public ABI or provider
 capability is changed.
+
+The same stage checkpoints also enforce a **512 MiB cumulative managed
+allocation ceiling** (`SQL_COMPILER_STAGE_ALLOCATION_LIMIT`,
+Resource). This is checked before and during stages, including their final
+boundary, but is not a peak resident-memory guarantee. All core AST
+traversal loops charge individual frames; render append buffers charge
+individual writes. A dedicated test subscribes to stage telemetry and
+checks the required six pipeline stages, non-negative timings/allocations
+and a fixed privacy-safe metric property set.

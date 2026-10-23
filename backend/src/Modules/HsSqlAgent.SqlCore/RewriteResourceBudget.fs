@@ -16,6 +16,8 @@ module internal RewriteResourceBudget =
     let MaxStageElapsedSeconds = 30L
     [<Literal>]
     let MaxCompilationElapsedSeconds = 90L
+    [<Literal>]
+    let MaxStageAllocatedBytes = 536870912L // cumulative managed bytes, not RSS
 
     type private Phase(name: string, diagnosticStage: SqlDiagnosticStage) =
         let start = Stopwatch.GetTimestamp()
@@ -48,6 +50,9 @@ module internal RewriteResourceBudget =
         if phase.Work > MaxStageWork then
             fail "SQL_COMPILER_STAGE_WORK_LIMIT" phase.DiagnosticStage
                 ("Compiler stage " + phase.Name + " exceeded its deterministic work-unit budget.")
+        if GC.GetAllocatedBytesForCurrentThread() - phase.AllocatedAtStart > MaxStageAllocatedBytes then
+            fail "SQL_COMPILER_STAGE_ALLOCATION_LIMIT" phase.DiagnosticStage
+                ("Compiler stage " + phase.Name + " exceeded its cumulative managed-allocation budget.")
         let now = Stopwatch.GetTimestamp()
         if Stopwatch.GetElapsedTime(session.Started, now).TotalSeconds > float MaxCompilationElapsedSeconds
            || Stopwatch.GetElapsedTime(phase.Started, now).TotalSeconds > float MaxStageElapsedSeconds then

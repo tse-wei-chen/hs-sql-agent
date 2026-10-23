@@ -94,6 +94,7 @@ module internal RewriteRenderer =
         // intermediate buffer cannot allocate above the rendered-SQL cap.
         // Aggregate emitted work also bounds repeated text-copy paths.
         member _.CheckAppend(existingLength: int, addedLength: int) =
+            RewriteResourceBudget.checkpoint ()
             if int64 existingLength + int64 addedLength > int64 MaxRenderedSqlLength then
                 failBudget
                     "SQL_COMPILER_RENDERED_OUTPUT_LIMIT"
