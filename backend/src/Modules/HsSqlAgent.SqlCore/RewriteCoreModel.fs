@@ -779,10 +779,14 @@ module internal CoreModel =
             | Spanned(value, _) -> value
             | _ -> Span.unknown
 
-        let rec unspan expression =
-            match expression with
-            | Spanned(_, inner) -> unspan inner
-            | inner -> inner
+        let unspan expression =
+            let mutable current = expression
+            let mutable doneWalking = false
+            while not doneWalking do
+                match current with
+                | Spanned(_, inner) -> current <- inner
+                | _ -> doneWalking <- true
+            current
 
         let private optionEquivalent (comparer: 'a -> 'a -> bool) (left: 'a option) (right: 'a option) =
             match left, right with

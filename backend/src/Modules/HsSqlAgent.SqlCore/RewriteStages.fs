@@ -156,44 +156,13 @@ module internal RewriteStages =
                 "SQL capability 'aggregate.string.ordering' rejects this raw aggregate-local ORDER BY source shape; "
                 + "provider-specific aggregate ordering remains fail-closed.")
 
-    let rec private expressionReferencesColumn expression =
-        match expression with
-        | Spanned(_, inner) -> expressionReferencesColumn inner
-        | Column _ | BoundColumn _ -> true
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            expressionReferencesColumn amount || expressionReferencesColumn value
-        | Unary(_, value) | Cast(value, _) | Extract(_, value) | PostgresJsonAccess(value, _, _) | IsNull(value, _) ->
-            expressionReferencesColumn value
-        | Binary(_, left, right) | RegexMatch(left, right) ->
-            expressionReferencesColumn left || expressionReferencesColumn right
-        | Like(value, pattern, _, _, _) ->
-            expressionReferencesColumn value || expressionReferencesColumn pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.exists expressionReferencesColumn
-        | FunctionCall call ->
-            call.Arguments |> List.exists expressionReferencesColumn
-        | FilteredAggregate(value, predicate) ->
-            expressionReferencesColumn value || expressionReferencesColumn predicate
-        | Windowed(value, window) ->
-            expressionReferencesColumn value
-            || (window.PartitionBy |> List.exists expressionReferencesColumn)
-            || (window.OrderBy |> List.exists (fun order -> expressionReferencesColumn order.Expression))
-        | SimpleCase(input, branches, fallback) ->
-            expressionReferencesColumn input
-            || (branches |> NonEmpty.toList |> List.exists (fun branch ->
-                expressionReferencesColumn branch.Match || expressionReferencesColumn branch.Result))
-            || (fallback |> Option.exists expressionReferencesColumn)
-        | SearchedCase(branches, fallback) ->
-            (branches |> NonEmpty.toList |> List.exists (fun branch ->
-                expressionReferencesColumn branch.Condition || expressionReferencesColumn branch.Result))
-            || (fallback |> Option.exists expressionReferencesColumn)
-        | InList(value, items, _) ->
-            expressionReferencesColumn value || (items |> NonEmpty.toList |> List.exists expressionReferencesColumn)
-        | InSubquery(value, _, _) | Between(value, _, _, _) ->
-            expressionReferencesColumn value
-        | ScalarSubquery _ | Exists _ -> true
-        | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> false
+    // Aggregate ordering asks whether an expression contains a row-column
+    // reference. As before, subquery bodies are not searched and BETWEEN
+    // only checks its value operand for this specific proof.
+    let private expressionReferencesColumn expression =
+        RewriteAstTraversal.exists false (function
+            | Column _ | BoundColumn _ | ScalarSubquery _ | Exists _ -> true
+            | _ -> false) expression
 
     let private validateAggregateCall enforceSource source sourceProfile target targetProfile (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
@@ -1059,8 +1028,8 @@ module internal RewriteStages =
                 error.Data[diagnosticDataKey] <- diagnostic
                 raise error
 
-    let rec private isWildcard = function
-        | Spanned(_, inner) -> isWildcard inner
+    let private isWildcard expression =
+        match Expr.unspan expression with
         | Wildcard _ -> true
         | _ -> false
 
@@ -1164,45 +1133,18 @@ module internal RewriteStages =
         query.SetOperations |> List.iter (fun branch -> validateQuery allowedTables branch.Query)
         query.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
 
-    let rec private validateInsertValueScope expression =
-        match expression with
-        | Spanned(_, inner) -> validateInsertValueScope inner
-        | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateInsertValueScope amount
-            validateInsertValueScope value
-        | ScalarSubquery _ | Exists _ -> ()
-        | Column identifier
-        | BoundColumn(identifier, _) ->
-            invalidOp ("INSERT VALUES scalar expression cannot reference column '" + identifierText identifier + "' outside a scalar subquery; use INSERT ... SELECT when the inserted value depends on a source row.")
-        | Wildcard _ | OrderOrdinal _ -> invalidOp "INSERT VALUES scalar expression cannot contain a wildcard or ORDER BY ordinal."
-        | Unary(_, operand) -> validateInsertValueScope operand
-        | Binary(_, left, right) -> validateInsertValueScope left; validateInsertValueScope right
-        | Like(value, pattern, _, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern
-        | RawRegexCall _ -> invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
-        | RegexMatch(value, pattern) -> validateInsertValueScope value; validateInsertValueScope pattern
-        | PostgresJsonAccess(value, _, _) -> validateInsertValueScope value
-        | FunctionCall call ->
-            call.Arguments |> List.iter validateInsertValueScope
-            call.AggregateOrderBy |> List.iter (fun order -> validateInsertValueScope order.Expression)
-        | FilteredAggregate(value, predicate) -> validateInsertValueScope value; validateInsertValueScope predicate
-        | Windowed(value, window) ->
-            validateInsertValueScope value
-            window.PartitionBy |> List.iter validateInsertValueScope
-            window.OrderBy |> List.iter (fun order -> validateInsertValueScope order.Expression)
-        | Cast(value, _) | Extract(_, value) -> validateInsertValueScope value
-        | SimpleCase(input, branches, fallback) ->
-            validateInsertValueScope input
-            branches |> NonEmpty.iter (fun branch -> validateInsertValueScope branch.Match; validateInsertValueScope branch.Result)
-            fallback |> Option.iter validateInsertValueScope
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch -> validateInsertValueScope branch.Condition; validateInsertValueScope branch.Result)
-            fallback |> Option.iter validateInsertValueScope
-        | InList(value, items, _) -> validateInsertValueScope value; items |> NonEmpty.iter validateInsertValueScope
-        | InSubquery(value, _, _) -> validateInsertValueScope value
-        | Between(value, lower, upper, _) -> validateInsertValueScope value; validateInsertValueScope lower; validateInsertValueScope upper
-        | IsNull(value, _) -> validateInsertValueScope value
+    // Use heap-backed work frames rather than consuming a CLR call frame
+    // for every nested INSERT VALUES scalar expression.
+    let private validateInsertValueScope expression =
+        RewriteAstTraversal.iter (function
+            | Column identifier
+            | BoundColumn(identifier, _) ->
+                invalidOp ("INSERT VALUES scalar expression cannot reference column '" + identifierText identifier + "' outside a scalar subquery; use INSERT ... SELECT when the inserted value depends on a source row.")
+            | Wildcard _ | OrderOrdinal _ ->
+                invalidOp "INSERT VALUES scalar expression cannot contain a wildcard or ORDER BY ordinal."
+            | RawRegexCall _ ->
+                invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
+            | _ -> ()) expression
 
     let private projectionWidth query =
         if query.Head.Projection |> List.exists (fun item -> isWildcard item.Expression) then None
@@ -1916,58 +1858,15 @@ module internal RewriteStages =
             | _ -> ()
             validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
 
-    let rec private containsVolatileRandom expression =
-        match expression with
-        | Spanned(_, inner) -> containsVolatileRandom inner
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            containsVolatileRandom amount || containsVolatileRandom value
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            let isKnownRandom =
+    // The EXISTS-style traversal short-circuits at the first known volatile
+    // function. As before, scalar-subquery bodies are not inspected here.
+    let private containsVolatileRandom expression =
+        RewriteAstTraversal.exists true (function
+            | FunctionCall call ->
+                let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
                 not (FunctionName.hasQuotedParts call.Name)
                 && (name = "RAND" || name = "RANDOM")
-            isKnownRandom
-            || (call.Arguments |> List.exists containsVolatileRandom)
-            || (call.AggregateOrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
-        | Unary(_, operand) -> containsVolatileRandom operand
-        | Binary(_, left, right) -> containsVolatileRandom left || containsVolatileRandom right
-        | Like(value, pattern, _, _, _) | RegexMatch(value, pattern) ->
-            containsVolatileRandom value || containsVolatileRandom pattern
-        | PostgresJsonAccess(value, _, _) ->
-            containsVolatileRandom value
-        | RawRegexCall(arguments, _) -> arguments |> List.exists containsVolatileRandom
-        | FilteredAggregate(value, predicate) ->
-            containsVolatileRandom value || containsVolatileRandom predicate
-        | Windowed(value, window) ->
-            containsVolatileRandom value
-            || (window.PartitionBy |> List.exists containsVolatileRandom)
-            || (window.OrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
-        | Cast(value, _) | Extract(_, value) -> containsVolatileRandom value
-        | SimpleCase(input, branches, fallback) ->
-            containsVolatileRandom input
-            || (branches
-                |> NonEmpty.toList
-                |> List.exists (fun branch ->
-                    containsVolatileRandom branch.Match || containsVolatileRandom branch.Result))
-            || (fallback |> Option.exists containsVolatileRandom)
-        | SearchedCase(branches, fallback) ->
-            (branches
-             |> NonEmpty.toList
-             |> List.exists (fun branch ->
-                 containsVolatileRandom branch.Condition || containsVolatileRandom branch.Result))
-            || (fallback |> Option.exists containsVolatileRandom)
-        | InList(value, items, _) ->
-            containsVolatileRandom value
-            || (items |> NonEmpty.toList |> List.exists containsVolatileRandom)
-        | InSubquery(value, _, _) -> containsVolatileRandom value
-        | Between(value, lower, upper, _) ->
-            containsVolatileRandom value
-            || containsVolatileRandom lower
-            || containsVolatileRandom upper
-        | IsNull(value, _) -> containsVolatileRandom value
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _
-        | ScalarSubquery _ | Exists _ -> false
+            | _ -> false) expression
 
     let private rejectVolatileMutationPredicate expression =
         if containsVolatileRandom expression then
