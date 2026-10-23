@@ -146,6 +146,16 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "RETURNING",
             true);
         yield return Case(
+            "update-from-two-sources",
+            "UPDATE users SET status = a.status FROM archived AS a, tenants AS t WHERE users.id = a.id AND a.tenant_id = t.id",
+            " FROM ",
+            false);
+        yield return Case(
+            "delete-using-two-sources",
+            "DELETE FROM inventory USING warehouse AS w, locations AS l WHERE inventory.id = w.inventory_id AND w.location_id = l.id",
+            "USING",
+            false);
+        yield return Case(
             "delete-complex-predicate",
             "DELETE FROM users WHERE (status = 'old' OR status IS NULL) AND id IN (1, 2) AND age BETWEEN 18 AND 65",
             "DELETE",
@@ -176,6 +186,18 @@ public sealed class PostgresDmlSyntaxBombardmentTests
             "update-target-alias-hides-original-name",
             "UPDATE users AS u SET name = 'Alice' WHERE users.id = 1",
             "unknown table/alias qualifier");
+        yield return Reject(
+            "update-from-duplicate-source-alias",
+            "UPDATE users SET status = a.status FROM archived AS a, tenants AS a WHERE users.id = a.id",
+            "Duplicate table alias");
+        yield return Reject(
+            "delete-using-duplicate-source-alias",
+            "DELETE FROM inventory USING warehouse AS w, locations AS w WHERE inventory.id = w.inventory_id",
+            "Duplicate table alias");
+        yield return Reject(
+            "update-from-alias-conflicts-with-target",
+            "UPDATE users AS u SET status = u.status FROM archived AS u WHERE u.id = 1",
+            "Duplicate table alias");
         yield return Reject(
             "delete-target-alias-hides-original-name",
             "DELETE FROM users AS u WHERE users.id = 1",
