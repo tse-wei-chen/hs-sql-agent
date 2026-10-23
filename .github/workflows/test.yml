@@ -249,11 +249,30 @@ jobs:
           with open("artifacts/sqlcore-nested-set-pr.json", encoding="utf-8") as source:
               report = json.load(source)
           print(f"Nested SET: samples={report['samples']} failures={report['failures']} crashOrTimeout={report['crashesOrTimeouts']}")
+          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Nested SET regression: all six subprocess probes must compile safely.")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
           for item in report["observations"]:
               worker = item.get("worker") or {}
               print(f"{item['shape']:25} depth={item['depth']:4} success={worker.get('success')} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} exit={item['processExitCode']}")
-              for phase in worker.get("stageMetrics") or []:
+              if not worker.get("success") or item["processExitCode"] != 0:
+                  raise SystemExit("Nested SET worker must compile: "
+                                   + str((item["shape"], item["depth"], worker.get("diagnosticCode"))))
+              samples = worker.get("stageMetrics") or []
+              stages = {stage["Stage"] for stage in samples if stage.get("Success")}
+              expected = required | ({"SchemaBinding", "SchemaType"} if item["shape"] == "nested-set-typed-schema" else set())
+              if not expected.issubset(stages):
+                  raise SystemExit("Nested SET compilation omitted required phase metrics.")
+              for phase in samples:
                   print(f"  {phase['Stage']:18} allocated={phase['AllocatedBytes']} elapsedUs={phase['ElapsedMicroseconds']} work={phase['WorkUnits']} ok={phase['Success']}")
+                  if any(phase[key] < 0 for key in ("AllocatedBytes", "ElapsedMicroseconds", "WorkUnits")):
+                      raise SystemExit("Negative nested SET phase resource measurement.")
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Nested SET 2048 allocation exceeded 120 MB: "
+                                   + str((item["shape"], worker.get("allocatedBytes"))))
           PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >

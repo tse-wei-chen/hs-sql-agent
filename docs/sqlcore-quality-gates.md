@@ -1143,12 +1143,15 @@ parenthesis structure and parameter order.
 
 ### Nested SET isolated resource baseline
 
-The subprocess harness now measures 128/512/2048 parenthesized
-PostgreSQL UNION Query chains, both ordinary and strict typed-schema
-modes, in `sqlcore-nested-set-pr.json`. Stage-level allocated bytes,
-work units and elapsed time are printed per sample. This new probe is
-initially **observational**: until its first results are checked, a
-resource rejection or failure is explicitly reported but not treated as
-successful SQL support. Crashes/timeouts are distinguished from typed
-fail-closed diagnostics. After profiling, the safe proven shapes can be
-promoted to a strict CI gate without weakening dialect semantics.
+The subprocess harness now enforces 128/512/2048 parenthesized
+PostgreSQL UNION Query chains in both ordinary and strict typed-schema
+modes through `sqlcore-nested-set-pr.json`. All **6/6** samples must
+compile successfully with no crash, timeout or typed resource rejection;
+required per-stage telemetry must be present and nonnegative, and each
+2,048-depth sample must allocate no more than **120 MB** in total.
+The first isolated measurements at depth 2048 were **36,960,800 bytes**
+for ordinary and **44,380,224 bytes** for typed-schema compilation.
+These specific shapes are gated; this does NOT prove that all multi-CTE,
+correlated LATERAL, provider-specific nested SET or paging shapes are
+stack-independent. The larger compiler resource-protection acceptance
+contract remains open.
