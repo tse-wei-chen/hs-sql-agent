@@ -494,13 +494,29 @@ published as measured percentages or silently set to 100.
       `Expr → EXISTS → Query → WHERE` at 128/512/2048 all compile
       (6/6, zero crashes on run 39971366954), without altering the
       original 72 normal-depth / 16 constrained-stack gates.
-- [ ] Resolve measured Query Renderer allocation growth from nested SQL
-      string materialization. At mixed depth 2048, run 39971366954
-      allocated PostgreSQL 269,330,144 bytes and Oracle 353,506,448
-      bytes despite compiling successfully. Optimize general Query/Expr
-      streaming and remeasure the *same* six isolated samples, while
-      preserving provider-specific paging/set-tail/shared parameter
-      semantics and existing CTE/render diagnostic precedence.
+- [x] Eliminate quadratic SQL string materialization for inert
+      `EXISTS (SELECT ... WHERE EXISTS (...))` query chains with one
+      provider-aware StringBuilder emission path. Preserve outer-to-inner
+      projection parameter binding, Oracle `FROM DUAL`, Firebird
+      `FROM RDB$DATABASE`, and fallback for CTE, set, paging and
+      nontrivial SELECT shapes. On the same depth-2048 Postgres/Oracle
+      mixed query corpus: 269,330,144 → 27,489,456 bytes (Postgres,
+      -89.8%) and 353,506,448 → 27,632,392 bytes (Oracle, -92.2%);
+      all six isolated samples compiled, zero crashes. Convert this
+      narrow shape into a CI regression gate at 120 MB, more than 4x
+      the optimized footprint yet below the prior quadratic result.
+      Additional six-provider tests assert 128 nested WHERE/EXISTS
+      literal binding order, dummy sources and rich inner-query fallback.
+- [x] Stream SELECT JOINs and set-operation branches through a single
+      StringBuilder rather than repeatedly copying the complete SQL prefix
+      on each additional source/UNION branch. Six-provider 32-JOIN and
+      48-UNION regression tests preserve SQL operators and left-to-right
+      parameter order.
+- [ ] Characterize allocations per compiler stage and remove remaining
+      quadratic Query/Expr output paths for more general mixed CTE,
+      lateral derived-source, paging and set-tail shapes. The improved
+      EXISTS chain is an intentionally narrow, proven streaming subset,
+      not a claim that the entire Query Renderer is non-recursive.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

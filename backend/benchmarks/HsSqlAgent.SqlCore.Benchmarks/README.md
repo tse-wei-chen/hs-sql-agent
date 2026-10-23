@@ -51,11 +51,16 @@ the same .NET/runtime/OS environment. These measurements do not justify an
 arbitrary `MaxAstDepth` constant.
 
 PR CI also records an isolated **PostgreSQL + Oracle 128/512/2048**
-mixed-query graph diagnostic report. This is an observational corpus,
-not a new source/target capability claim, and its output is kept separate
-from both the original 72-case depth floor and the constrained-stack
-safety gate. Crashes and resource rejections are printed explicitly
-rather than counted as successful SQL compilation.
+mixed-query graph diagnostic report. This is a dedicated regression
+**gate** for the supported 128/512/2048-level alternating EXISTS shape:
+all six Postgres/Oracle probes must compile without crashes, and each
+2,048-level run must allocate no more than 120,000,000 bytes. That
+allocation threshold provides more than 4x headroom over the measured
+~27.5 MB optimized baseline, yet rejects a return to the >269 MB
+quadratic renderer. It is **not** a general SQL-size or production-memory
+guarantee, does not change the original 72-case depth floor, and does
+not change the constrained-stack safety gate. Failures and resource
+rejections are still printed explicitly in the uploaded report.
 
 ## Interpretation
 

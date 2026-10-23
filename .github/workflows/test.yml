@@ -163,6 +163,23 @@ jobs:
               worker = item.get("worker") or {}
               status = "ok" if worker.get("success") else "FAILED"
               print(f"{item['dialect']:12} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} exitCode={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
+          # This guard does not claim arbitrary-depth SQL support. It
+          # locks in the measured improvement for one deterministic shape,
+          # with >4x headroom for runtime/JIT variance. The previous
+          # quadratic implementation allocated >269 MB at 2,048 layers.
+          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Mixed Query depth floor regressed: all six probes must compile.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              if not worker.get("success") or item["processExitCode"] != 0:
+                  raise SystemExit("Mixed Query probe must compile: "
+                                   + str((item["dialect"], item["depth"])))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Mixed Query 2,048-depth allocation exceeded 120 MB: "
+                                   + str((item["dialect"], worker.get("allocatedBytes"))))
           PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
