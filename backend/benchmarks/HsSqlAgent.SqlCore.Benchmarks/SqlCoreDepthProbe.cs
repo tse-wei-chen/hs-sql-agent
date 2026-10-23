@@ -21,7 +21,8 @@ internal static class SqlCoreDepthProbe
     // default 72-case CI depth floor intact; use --shapes to measure this
     // additional resource class in an isolated subprocess.
     private static readonly string[] OptionalShapes =
-        ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema"];
+        ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema",
+         "nested-set", "nested-set-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -46,6 +47,14 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+        return sql;
+    }
+
+    private static string NestSet(int depth)
+    {
+        var sql = "SELECT id FROM users WHERE id = 1";
+        for (var level = 2; level <= depth; level++)
+            sql = "SELECT id FROM users WHERE id = " + level + " UNION (" + sql + ")";
         return sql;
     }
 
@@ -107,6 +116,7 @@ internal static class SqlCoreDepthProbe
             "nested-derived-source" => NestDerived(depth),
             "nested-cte" => NestCte(depth),
             "nested-cte-typed-schema" => NestCte(depth),
+            "nested-set" or "nested-set-typed-schema" => NestSet(depth),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
 
@@ -141,7 +151,7 @@ internal static class SqlCoreDepthProbe
             try
             {
                 var context = new SqlPlanValidationContext("depth-probe-v1");
-                if (shape == "nested-cte-typed-schema")
+                if (shape is "nested-cte-typed-schema" or "nested-set-typed-schema")
                 {
                     var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
                     var table = uppercase ? "USERS" : "users";

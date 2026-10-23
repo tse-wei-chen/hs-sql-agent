@@ -1140,3 +1140,15 @@ SQL string per nesting level, preserves branch source order and existing
 binding ordinals, and continues to use the full provider-specific path
 for CTE-bearing branches. A 64-level nested UNION regression locks both
 parenthesis structure and parameter order.
+
+### Nested SET isolated resource baseline
+
+The subprocess harness now measures 128/512/2048 parenthesized
+PostgreSQL UNION Query chains, both ordinary and strict typed-schema
+modes, in `sqlcore-nested-set-pr.json`. Stage-level allocated bytes,
+work units and elapsed time are printed per sample. This new probe is
+initially **observational**: until its first results are checked, a
+resource rejection or failure is explicitly reported but not treated as
+successful SQL support. Crashes/timeouts are distinguished from typed
+fail-closed diagnostics. After profiling, the safe proven shapes can be
+promoted to a strict CI gate without weakening dialect semantics.

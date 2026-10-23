@@ -229,6 +229,32 @@ jobs:
                   raise SystemExit("Nested Query 2048 allocation exceeded 120 MB: "
                                    + str((item["shape"], worker.get("allocatedBytes"))))
           PY
+      - name: Characterize nested SET branch stack and allocations (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-set,nested-set-typed-schema --depths 128,512,2048
+          --output artifacts/sqlcore-nested-set-pr.json
+      - name: Print nested SET path diagnostics and phase budgets
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-nested-set-pr.json; then
+            echo "Nested SET probe report missing." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-nested-set-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"Nested SET: samples={report['samples']} failures={report['failures']} crashOrTimeout={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              print(f"{item['shape']:25} depth={item['depth']:4} success={worker.get('success')} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} exit={item['processExitCode']}")
+              for phase in worker.get("stageMetrics") or []:
+                  print(f"  {phase['Stage']:18} allocated={phase['AllocatedBytes']} elapsedUs={phase['ElapsedMicroseconds']} work={phase['WorkUnits']} ok={phase['Success']}")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -258,6 +284,7 @@ jobs:
             artifacts/sqlcore-small-stack-pr.json
             artifacts/sqlcore-mixed-depth-pr.json
             artifacts/sqlcore-query-phases-pr.json
+            artifacts/sqlcore-nested-set-pr.json
           if-no-files-found: warn
 
   sqlagent-test:
