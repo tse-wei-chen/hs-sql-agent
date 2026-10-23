@@ -95,12 +95,12 @@ module internal RewriteAstTraversal =
     /// recursive validator's precise ordering of policy errors.
     [<Struct>]
     type Frame =
-        | ExprNode of Expr
-        | QueryNode of Query
-        | SelectNode of Select
-        | SourceNode of TableSource
-        | AfterCtes of Select
-        | AfterQueryHead of Query
+        | ExprNode of expression: Expr
+        | QueryNode of query: Query
+        | SelectNode of selection: Select
+        | SourceNode of source: TableSource
+        | AfterCtes of selectBody: Select
+        | AfterQueryHead of queryTail: Query
 
     /// Whole-query pre-order traversal with explicit continuation phases.
     /// No recursive F# function call is needed for nested queries or
