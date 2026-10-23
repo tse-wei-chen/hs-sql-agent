@@ -54,62 +54,94 @@ module internal RewriteStructuralValidation =
                     "provider " + string (TargetRuntime.provider targetRuntime)
                     + " has no declared portable WITH-at-the-root-of-a-scalar/EXISTS-subquery contract")
 
+    // Shared scalar visitor for structural proofs. It is deliberately
+    // iterative, with explicit query boundary frames, so a left-deep
+    // boolean/arithmetic tree cannot overflow the CLR stack after Binder
+    // and Normalizer become iterative.
+    [<Struct>]
+    type private StructuralExprFrame =
+        | StructuralExpr of expression: Expr * allowCountWildcard: bool
+        | StructuralQuery of query: Query
+
+    let private walkStructuralExpression onExpr onQuery allowWildcard root =
+        let pending = ResizeArray<StructuralExprFrame>()
+        let inline pushExpr value = pending.Add(StructuralExpr(value, false))
+        let pushExprs (values: Expr list) =
+            let items = List.toArray values
+            for index = items.Length - 1 downto 0 do
+                pushExpr items.[index]
+        let pushOrders (values: OrderBy list) =
+            let items: OrderBy array = List.toArray values
+            for index = items.Length - 1 downto 0 do
+                pushExpr items.[index].Expression
+        pending.Add(StructuralExpr(root, allowWildcard))
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | StructuralQuery query -> onQuery query
+            | StructuralExpr(value, allowed) ->
+                onExpr allowed value
+                match value with
+                | Spanned(_, inner) ->
+                    pending.Add(StructuralExpr(inner, allowed))
+                | Unary(_, operand) | Cast(operand, _) | Extract(_, operand)
+                | PostgresJsonAccess(operand, _, _) | IsNull(operand, _) ->
+                    pushExpr operand
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | Like(left, right, _, _, _)
+                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+                    pushExpr right
+                    pushExpr left
+                | RawRegexCall(args, _) -> pushExprs args
+                | FunctionCall call ->
+                    pushOrders call.AggregateOrderBy
+                    let args = List.toArray call.Arguments
+                    let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+                    for index = args.Length - 1 downto 0 do
+                        let wildcard =
+                            not (FunctionName.hasQuotedParts call.Name)
+                            && name = "COUNT" && index = 0
+                            && (match Expr.unspan args.[index] with
+                                | Wildcard None -> true
+                                | _ -> false)
+                        pending.Add(StructuralExpr(args.[index], wildcard))
+                | Windowed(value, window) ->
+                    pushOrders window.OrderBy
+                    pushExprs window.PartitionBy
+                    pushExpr value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter pushExpr
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        pushExpr branch.Result
+                        pushExpr branch.Match) branches
+                    pushExpr input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter pushExpr
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        pushExpr branch.Result
+                        pushExpr branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse pushExpr items
+                    pushExpr value
+                | InSubquery(value, query, _) ->
+                    pending.Add(StructuralQuery query)
+                    pushExpr value
+                | Between(value, lower, upper, _) ->
+                    pushExpr upper
+                    pushExpr lower
+                    pushExpr value
+                | ScalarSubquery query | Exists(query, _) ->
+                    pending.Add(StructuralQuery query)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+
     let rec private validateNestedCteExpr targetRuntime expression =
-        match expression with
-        | Spanned(_, inner) -> validateNestedCteExpr targetRuntime inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateNestedCteExpr targetRuntime amount
-            validateNestedCteExpr targetRuntime value
-        | Unary(_, operand) -> validateNestedCteExpr targetRuntime operand
-        | Binary(_, left, right) ->
-            validateNestedCteExpr targetRuntime left
-            validateNestedCteExpr targetRuntime right
-        | Like(value, pattern, _, _, _) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime pattern
-        | RawRegexCall(arguments, _) -> arguments |> List.iter (validateNestedCteExpr targetRuntime)
-        | RegexMatch(value, pattern) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateNestedCteExpr targetRuntime value
-        | FunctionCall call ->
-            call.Arguments |> List.iter (validateNestedCteExpr targetRuntime)
-            call.AggregateOrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime predicate
-        | Windowed(value, window) ->
-            validateNestedCteExpr targetRuntime value
-            window.PartitionBy |> List.iter (validateNestedCteExpr targetRuntime)
-            window.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
-        | Cast(value, _) | Extract(_, value) -> validateNestedCteExpr targetRuntime value
-        | SimpleCase(input, branches, fallback) ->
-            validateNestedCteExpr targetRuntime input
-            branches |> NonEmpty.iter (fun branch ->
-                validateNestedCteExpr targetRuntime branch.Match
-                validateNestedCteExpr targetRuntime branch.Result)
-            fallback |> Option.iter (validateNestedCteExpr targetRuntime)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateNestedCteExpr targetRuntime branch.Condition
-                validateNestedCteExpr targetRuntime branch.Result)
-            fallback |> Option.iter (validateNestedCteExpr targetRuntime)
-        | InList(value, items, _) ->
-            validateNestedCteExpr targetRuntime value
-            items |> NonEmpty.iter (validateNestedCteExpr targetRuntime)
-        | InSubquery(value, query, _) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteQuery targetRuntime ScalarSubqueryPosition query
-        | Between(value, lower, upper, _) ->
-            validateNestedCteExpr targetRuntime value
-            validateNestedCteExpr targetRuntime lower
-            validateNestedCteExpr targetRuntime upper
-        | IsNull(value, _) -> validateNestedCteExpr targetRuntime value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateNestedCteQuery targetRuntime ScalarSubqueryPosition query
+        walkStructuralExpression
+            (fun _ _ -> ())
+            (validateNestedCteQuery targetRuntime ScalarSubqueryPosition)
+            false expression
 
     and private validateNestedCteTable targetRuntime source =
         match source with
@@ -194,160 +226,24 @@ module internal RewriteStructuralValidation =
             + "' requires a FROM source in the portable Core query model."))
 
     let rec private validateNoFromExpression allowWildcard expression =
-        match expression with
-        | Spanned(_, inner) -> validateNoFromExpression allowWildcard inner
-        | Literal _ | Interval _ | OrderOrdinal _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateNoFromExpression false amount
-            validateNoFromExpression false value
-        | Column identifier ->
-            noFromReferenceError identifier
-        | BoundColumn(_, ColumnBinding.OuterRowSource) ->
-            ()
-        | BoundColumn(identifier, _) ->
-            noFromReferenceError identifier
-        | Wildcard _ when allowWildcard -> ()
-        | Wildcard None ->
-            raise (SqlCompilationException(
-                "Column reference '*' requires a FROM source in the portable Core query model."))
-        | Wildcard(Some identifier) ->
-            noFromReferenceError identifier
-        | Unary(_, operand) ->
-            validateNoFromExpression false operand
-        | Binary(_, left, right) ->
-            validateNoFromExpression false left
-            validateNoFromExpression false right
-        | Like(value, pattern, _, _, _) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateNoFromExpression false)
-        | RegexMatch(value, pattern) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateNoFromExpression false value
-        | FunctionCall call ->
-            let name =
-                FunctionName.value call.Name
-                |> fun value -> value.Trim().ToUpperInvariant()
-            call.Arguments
-            |> List.iteri (fun index argument ->
-                let allowFunctionWildcard =
-                    not (FunctionName.hasQuotedParts call.Name)
-                    && name = "COUNT"
-                    && index = 0
-                    && (match Expr.unspan argument with
-                        | Wildcard None -> true
-                        | _ -> false)
-                validateNoFromExpression allowFunctionWildcard argument)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                validateNoFromExpression false order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false predicate
-        | Windowed(value, window) ->
-            validateNoFromExpression false value
-            window.PartitionBy |> List.iter (validateNoFromExpression false)
-            window.OrderBy
-            |> List.iter (fun order ->
-                validateNoFromExpression false order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            validateNoFromExpression false value
-        | SimpleCase(input, branches, fallback) ->
-            validateNoFromExpression false input
-            branches
-            |> NonEmpty.iter (fun branch ->
-                validateNoFromExpression false branch.Match
-                validateNoFromExpression false branch.Result)
-            fallback |> Option.iter (validateNoFromExpression false)
-        | SearchedCase(branches, fallback) ->
-            branches
-            |> NonEmpty.iter (fun branch ->
-                validateNoFromExpression false branch.Condition
-                validateNoFromExpression false branch.Result)
-            fallback |> Option.iter (validateNoFromExpression false)
-        | InList(value, items, _) ->
-            validateNoFromExpression false value
-            items |> NonEmpty.iter (validateNoFromExpression false)
-        | InSubquery(value, query, _) ->
-            validateNoFromExpression false value
-            validateNoFromQuery query
-        | Between(value, lower, upper, _) ->
-            validateNoFromExpression false value
-            validateNoFromExpression false lower
-            validateNoFromExpression false upper
-        | IsNull(value, _) ->
-            validateNoFromExpression false value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateNoFromQuery query
+        walkStructuralExpression
+            (fun allowed value ->
+                match value with
+                | Column identifier -> noFromReferenceError identifier
+                | BoundColumn(_, ColumnBinding.OuterRowSource) -> ()
+                | BoundColumn(identifier, _) -> noFromReferenceError identifier
+                | Wildcard _ when allowed -> ()
+                | Wildcard None ->
+                    raise (SqlCompilationException(
+                        "Column reference '*' requires a FROM source in the portable Core query model."))
+                | Wildcard(Some identifier) -> noFromReferenceError identifier
+                | _ -> ())
+            validateNoFromQuery allowWildcard expression
 
     and private visitNestedNoFromExpression expression =
-        match expression with
-        | Spanned(_, inner) -> visitNestedNoFromExpression inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            visitNestedNoFromExpression amount
-            visitNestedNoFromExpression value
-        | Unary(_, operand) ->
-            visitNestedNoFromExpression operand
-        | Binary(_, left, right) ->
-            visitNestedNoFromExpression left
-            visitNestedNoFromExpression right
-        | Like(value, pattern, _, _, _)
-        | RegexMatch(value, pattern) ->
-            visitNestedNoFromExpression value
-            visitNestedNoFromExpression pattern
-        | PostgresJsonAccess(value, _, _) ->
-            visitNestedNoFromExpression value
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter visitNestedNoFromExpression
-        | FunctionCall call ->
-            call.Arguments |> List.iter visitNestedNoFromExpression
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                visitNestedNoFromExpression order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            visitNestedNoFromExpression value
-            visitNestedNoFromExpression predicate
-        | Windowed(value, window) ->
-            visitNestedNoFromExpression value
-            window.PartitionBy |> List.iter visitNestedNoFromExpression
-            window.OrderBy
-            |> List.iter (fun order ->
-                visitNestedNoFromExpression order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            visitNestedNoFromExpression value
-        | SimpleCase(input, branches, fallback) ->
-            visitNestedNoFromExpression input
-            branches
-            |> NonEmpty.iter (fun branch ->
-                visitNestedNoFromExpression branch.Match
-                visitNestedNoFromExpression branch.Result)
-            fallback |> Option.iter visitNestedNoFromExpression
-        | SearchedCase(branches, fallback) ->
-            branches
-            |> NonEmpty.iter (fun branch ->
-                visitNestedNoFromExpression branch.Condition
-                visitNestedNoFromExpression branch.Result)
-            fallback |> Option.iter visitNestedNoFromExpression
-        | InList(value, items, _) ->
-            visitNestedNoFromExpression value
-            items |> NonEmpty.iter visitNestedNoFromExpression
-        | InSubquery(value, query, _) ->
-            visitNestedNoFromExpression value
-            validateNoFromQuery query
-        | Between(value, lower, upper, _) ->
-            visitNestedNoFromExpression value
-            visitNestedNoFromExpression lower
-            visitNestedNoFromExpression upper
-        | IsNull(value, _) ->
-            visitNestedNoFromExpression value
-        | ScalarSubquery query | Exists(query, _) ->
-            validateNoFromQuery query
+        walkStructuralExpression
+            (fun _ _ -> ())
+            validateNoFromQuery false expression
 
     and private validateNoFromSource source =
         match source with
