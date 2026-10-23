@@ -63,6 +63,30 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         Assert.Equal(SqlDiagnosticCategory.Semantic, error.Diagnostic.Category);
     }
 
+    [Fact]
+    public void NestedSetQueries_PreserveTypeFamilyDiagnostics()
+    {
+        const int depth = 48;
+        var valid = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            valid = $"SELECT id FROM users UNION ({valid})";
+        var compiled = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres, typed: true),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+
+        var invalid = "SELECT name + 2 AS id FROM users";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT id FROM users UNION ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]

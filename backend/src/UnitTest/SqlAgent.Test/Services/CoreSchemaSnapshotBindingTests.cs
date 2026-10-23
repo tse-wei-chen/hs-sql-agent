@@ -54,6 +54,28 @@ public sealed class CoreSchemaSnapshotBindingTests
         }
     }
 
+    [Fact]
+    public void NestedSetQueries_UseIterativeSchemaScopeAndPreserveFirstError()
+    {
+        const int depth = 48;
+        var valid = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            valid = $"SELECT id FROM users UNION ({valid})";
+        var result = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT id FROM users UNION ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]

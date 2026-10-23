@@ -1113,3 +1113,10 @@ for UNION/INTERSECT/EXCEPT uses the original left-to-right proof order;
 unknown family evidence does not become a speculative type. The name and
 type SET continuations are intentionally separate so name-binding errors
 still take precedence over type-family diagnostics.
+
+Positive and negative PostgreSQL 48-level parenthesized nested-SET
+regressions now exercise both strict-schema name resolution and typed
+family validation. The negative cases specifically lock the existing
+`SQL_SCHEMA_COLUMN_NOT_FOUND` and `SQL_SCHEMA_TYPE_MISMATCH`
+diagnostics deep inside a set branch, rather than asserting only that the
+compiler returned some error.
