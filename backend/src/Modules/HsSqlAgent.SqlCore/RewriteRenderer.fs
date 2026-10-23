@@ -1156,10 +1156,19 @@ module internal RewriteRenderer =
                    |> List.map (renderExpr ctx)
                    |> String.concat ", ")
                 + ") "
-        let mutable sql = "SELECT " + distinctSql + projection
-        select.From |> Option.iter (fun source -> sql <- sql + " FROM " + renderSource ctx source)
+        // Projection and DISTINCT ON expressions bind before FROM/JOIN
+        // exactly as before. Build the text once instead of copying the
+        // complete SELECT prefix for every JOIN, WHERE, GROUP and HAVING.
+        let sql = StringBuilder("SELECT ")
+        sql.Append(distinctSql).Append(projection) |> ignore
+        select.From
+        |> Option.iter (fun source ->
+            sql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
         if select.From.IsNone then
-            match ctx.Provider with Oracle -> sql <- sql + " FROM DUAL" | Firebird -> sql <- sql + " FROM RDB$DATABASE" | _ -> ()
+            match ctx.Provider with
+            | Oracle -> sql.Append(" FROM DUAL") |> ignore
+            | Firebird -> sql.Append(" FROM RDB$DATABASE") |> ignore
+            | _ -> ()
         for join in select.Joins do
             let joinSql =
                 match join with
@@ -1168,38 +1177,46 @@ module internal RewriteRenderer =
                     | null -> naturalJoinText kind
                     | message -> raise (SqlCompilationException(message))
                 | _ -> joinText join.Kind
-            sql <- sql + " " + joinSql + " " + renderSource ctx join.Source
+            sql.Append(" ").Append(joinSql).Append(" ")
+               .Append(renderSource ctx join.Source) |> ignore
             match join with
             | CrossJoin _
             | NaturalJoin _ -> ()
             | OnJoin(_, _, predicate) ->
-                sql <- sql + " ON " + renderPredicate ctx predicate
+                sql.Append(" ON ").Append(renderPredicate ctx predicate) |> ignore
             | UsingJoin(_, _, columns) ->
                 match SqlUsingJoinCapabilityRules.TargetValidationError(providerTool ctx.Provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
-                sql <-
-                    sql
-                    + " USING ("
-                    + (columns |> NonEmpty.toList |> List.map (renderAlias ctx.Provider) |> String.concat ", ")
-                    + ")"
-        select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
+                let names =
+                    columns
+                    |> NonEmpty.toList
+                    |> List.map (renderAlias ctx.Provider)
+                    |> String.concat ", "
+                sql.Append(" USING (").Append(names).Append(")") |> ignore
+        select.Where
+        |> Option.iter (fun predicate ->
+            sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
         if not select.GroupBy.IsEmpty then
             let grouped =
                 select.GroupBy
                 |> List.mapi (fun index expression ->
                     if ctx.Provider = PostgreSql then
-                        ctx.WithSharedBindings("postgres-group:" + string index, fun () -> renderExpr ctx expression)
+                        ctx.WithSharedBindings(
+                            "postgres-group:" + string index,
+                            fun () -> renderExpr ctx expression)
                     else
                         renderExpr ctx expression)
                 |> String.concat ", "
-            sql <- sql + " GROUP BY " + grouped
-        select.Having |> Option.iter (fun predicate -> sql <- sql + " HAVING " + renderPredicate ctx predicate)
-        sql
+            sql.Append(" GROUP BY ").Append(grouped) |> ignore
+        select.Having
+        |> Option.iter (fun predicate ->
+            sql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
+        sql.ToString()
 
     and private renderSetBody (ctx: RenderContext) (query: Query) =
         let headNoCtes = { query.Head with Ctes = [] }
-        let mutable sql = renderSelectBody ctx headNoCtes
+        let sql = StringBuilder(renderSelectBody ctx headNoCtes)
         for branch in query.SetOperations do
             let branchNoTail =
                 { branch.Query with
@@ -1219,8 +1236,8 @@ module internal RewriteRenderer =
                     + ") AS "
                     + renderAlias ctx.Provider
                         { Value = "_set_branch"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            sql <- sql + " " + setText branch.Operator + " " + branchSql
-        sql
+            sql.Append(" ").Append(setText branch.Operator).Append(" ").Append(branchSql) |> ignore
+        sql.ToString()
 
     and private renderOrderClause (ctx: RenderContext) setTail orderBy =
         if List.isEmpty orderBy then ""
