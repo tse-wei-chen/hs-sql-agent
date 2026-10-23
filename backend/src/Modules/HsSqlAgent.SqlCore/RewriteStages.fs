@@ -854,14 +854,97 @@ module internal RewriteStages =
                         Head = { cte.Query.Head with ProjectionItems = rewritten } } }
 
     and private normalizeQuery sourceDialect target (query: Query) =
-        // One explicit continuation stack crosses every Query/Select/Expr/
-        // CTE/Source/Join boundary, preserving diagnostic evaluation order.
-        RewriteAstTraversal.mapQueryGraphPostOrder
-            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
-            (normalizeScalarNode sourceDialect target)
-            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
-            normalizeCteAliases
-            query
+        // Deep, inert scalar wrappers were already proven safe for peeling
+        // and rebuilding; retain that optimization instead of allocating a
+        // full mixed-graph frame set at each of thousands of nested SELECTs.
+        if RewriteAstTraversal.trySimpleScalarChain query |> Option.isSome then
+            let wrappers = ResizeArray<struct (Query * SelectItem)>()
+            let mutable current = query
+            let mutable peeling = true
+            while peeling do
+                match RewriteAstTraversal.trySimpleScalarChain current with
+                | Some(item, child) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                    wrappers.Add(struct (current, item))
+                    current <- child
+                | None -> peeling <- false
+            let mutable normalized = normalizeQuery sourceDialect target current
+            for index = wrappers.Count - 1 downto 0 do
+                let struct (outer, item) = wrappers.[index]
+                normalized <- RewriteAstTraversal.rebuildSimpleScalarChain outer item normalized
+            normalized
+        else
+            let select = query.Head
+            let plainSource = function
+                | NamedTable _ | CteTable _ -> true
+                | DerivedTable _ | LateralDerivedTable _ -> false
+            let queryFree expression =
+                not (RewriteAstTraversal.exists true
+                    (function
+                     | ScalarSubquery _ | Exists _ | InSubquery _ -> true
+                     | _ -> false) expression)
+            let isFlat =
+                // This branch has no child Query anywhere, including CASE,
+                // aggregate-local ORDER BY, join ON or statement ORDER BY.
+                // Scanning AST expressions is iterative and has no semantic
+                // effects, so the old scalar fast path retains its exact
+                // source-order error and parameter behavior.
+                query.SetOperations.IsEmpty
+                && select.Ctes.IsEmpty
+                && (select.From |> Option.map plainSource |> Option.defaultValue true)
+                && (select.Joins |> List.forall (fun join ->
+                    plainSource join.Source
+                    && (join.Predicate |> Option.map queryFree |> Option.defaultValue true)))
+                && (match select.DistinctMode with
+                    | SelectDistinct.DistinctOn values ->
+                        NonEmpty.toList values |> List.forall queryFree
+                    | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> true)
+                && (NonEmpty.toList select.ProjectionItems
+                    |> List.forall (fun item -> queryFree item.Expression))
+                && (select.Where |> Option.map queryFree |> Option.defaultValue true)
+                && (select.GroupBy |> List.forall queryFree)
+                && (select.Having |> Option.map queryFree |> Option.defaultValue true)
+                && (query.OrderBy |> List.forall (fun item -> queryFree item.Expression))
+            if isFlat then
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                let head =
+                    { select with
+                        DistinctMode =
+                            select.DistinctMode
+                            |> mapDistinctOn (normalizeExpr sourceDialect target)
+                        ProjectionItems =
+                            select.ProjectionItems
+                            |> NonEmpty.map (fun item ->
+                                { item with
+                                    Expression =
+                                        normalizeExpr sourceDialect target item.Expression })
+                        Joins =
+                            select.Joins
+                            |> List.map (function
+                                | OnJoin(kind, source, predicate) ->
+                                    OnJoin(kind, source, normalizeExpr sourceDialect target predicate)
+                                | other -> other)
+                        Where = select.Where |> Option.map (normalizeExpr sourceDialect target)
+                        GroupBy = select.GroupBy |> List.map (normalizeExpr sourceDialect target)
+                        Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
+                { query with
+                    Head = head
+                    OrderBy =
+                        query.OrderBy
+                        |> List.map (fun order ->
+                            { order with
+                                Expression =
+                                    normalizeExpr sourceDialect target order.Expression }) }
+            else
+                // Mixed Query/Expr/Select/CTE/Source/Join edges are handled
+                // by one heap-backed post-order frame machine, never by a
+                // depth-proportional callback chain.
+                RewriteAstTraversal.mapQueryGraphPostOrder
+                    (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+                    (normalizeScalarNode sourceDialect target)
+                    (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+                    normalizeCteAliases
+                    query
 
     and private normalizeSource sourceDialect target (source: TableSource) =
         RewriteAstTraversal.mapSourceGraphPostOrder
