@@ -83,6 +83,25 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
 
     [Theory]
     [MemberData(nameof(Providers))]
+    public void TypedSnapshot_DeepBooleanGraph_UsesIterativeTypeProof(
+        SqlAgentToolType dialect)
+    {
+        var suffix = string.Concat(Enumerable.Repeat(" AND id = 1", 384));
+        var sql = "SELECT id FROM users WHERE id = 1" + suffix;
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect, typed: true),
+            new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT id FROM users WHERE name + 2 = 1" + suffix;
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
     public void TypedSnapshot_PreservesValidNumericAndTextPredicatesAndAssignments(
         SqlAgentToolType dialect)
     {

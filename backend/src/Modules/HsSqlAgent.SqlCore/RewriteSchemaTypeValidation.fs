@@ -203,11 +203,20 @@ module internal RewriteSchemaTypeValidation =
             Some SqlSchemaValueKind.Numeric
         | _ -> None
 
+    // The common unary/Boolean/arithmetic/type-comparison graph uses heap
+    // continuations. Complex CASE/aggregate/subquery clauses retain their
+    // existing provider-aware evaluator until the full Query graph migrates.
+    type private TypedScalarFrame =
+        | EnterTyped of Span * Expr
+        | FinishTypedUnary of Span * UnaryOperator
+        | FinishTypedBinary of Span * BinaryOperator
+
     let rec private expression catalog ctes scope span expr =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let evaluate = expression catalog ctes scope Span.unknown
         match expr with
         | Spanned(current, value) -> expression catalog ctes scope current value
+        | Unary _ | Binary _ -> evaluateTypedScalar catalog ctes scope span expr
         | BoundColumn(_, ColumnBinding.ProjectionAlias) -> None
         | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
             match scope.Parent with
@@ -315,6 +324,71 @@ module internal RewriteSchemaTypeValidation =
                 evaluate item.Result |> ignore)
             fallback |> Option.iter (fun item -> evaluate item |> ignore)
             None
+
+    // Terminal expressions use the original conservative type evaluator.
+    // Spanned children inherit their precise source location, and all
+    // arithmetic/Boolean reductions happen after left then right evaluation.
+    and private evaluateTypedScalar catalog ctes scope span root =
+        let pending = ResizeArray<TypedScalarFrame>()
+        let results = ResizeArray<SqlSchemaValueKind option>()
+        let inline enter currentSpan expr = pending.Add(EnterTyped(currentSpan, expr))
+        let pop () =
+            let index = results.Count - 1
+            let value = results.[index]
+            results.RemoveAt index
+            value
+        enter span root
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let index = pending.Count - 1
+            let frame = pending.[index]
+            pending.RemoveAt index
+            match frame with
+            | EnterTyped(currentSpan, Spanned(nextSpan, inner)) ->
+                enter nextSpan inner
+            | EnterTyped(currentSpan, Unary(op, operand)) ->
+                pending.Add(FinishTypedUnary(currentSpan, op))
+                enter Span.unknown operand
+            | EnterTyped(currentSpan, Binary(op, left, right)) ->
+                pending.Add(FinishTypedBinary(currentSpan, op))
+                enter Span.unknown right
+                enter Span.unknown left
+            | EnterTyped(currentSpan, terminal) ->
+                results.Add(expression catalog ctes scope currentSpan terminal)
+            | FinishTypedUnary(currentSpan, op) ->
+                let result = pop ()
+                match op with
+                | UnaryOperator.Not ->
+                    requireKind currentSpan SqlSchemaValueKind.Boolean result "NOT"
+                    results.Add(Some SqlSchemaValueKind.Boolean)
+                | UnaryOperator.Negate | UnaryOperator.Positive ->
+                    requireKind currentSpan SqlSchemaValueKind.Numeric result "Unary arithmetic"
+                    results.Add(result)
+            | FinishTypedBinary(currentSpan, op) ->
+                let rightKind = pop ()
+                let leftKind = pop ()
+                let result =
+                    match op with
+                    | BinaryOperator.Add | BinaryOperator.Subtract
+                    | BinaryOperator.Multiply | BinaryOperator.Divide | BinaryOperator.Modulo ->
+                        requireKind currentSpan SqlSchemaValueKind.Numeric leftKind "Arithmetic"
+                        requireKind currentSpan SqlSchemaValueKind.Numeric rightKind "Arithmetic"
+                        bothNumeric leftKind rightKind
+                    | BinaryOperator.Equal | BinaryOperator.NotEqual
+                    | BinaryOperator.GreaterThan | BinaryOperator.LessThan
+                    | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
+                    | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom ->
+                        compatible currentSpan leftKind rightKind "Comparison"
+                        Some SqlSchemaValueKind.Boolean
+                    | BinaryOperator.And | BinaryOperator.Or ->
+                        requireKind currentSpan SqlSchemaValueKind.Boolean leftKind "Boolean operator"
+                        requireKind currentSpan SqlSchemaValueKind.Boolean rightKind "Boolean operator"
+                        Some SqlSchemaValueKind.Boolean
+                    | BinaryOperator.Concat -> None
+                results.Add(result)
+        if results.Count <> 1 then
+            invalidOp "Typed scalar evaluation did not return exactly one SQL type proof."
+        results.[0]
 
     and private tableSource catalog ctes parent table =
         match table with

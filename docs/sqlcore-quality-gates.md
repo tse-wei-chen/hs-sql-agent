@@ -993,3 +993,12 @@ subquery bodies under the enclosing schema scope. Query/Source/CTE
 evaluation still uses mutually recursive methods with a stack-reserve
 fallback; this does not satisfy the remaining Query/Schema/Type
 stack-independence merge condition.
+
+### Typed scalar continuation
+
+Type-family inference now evaluates arbitrary-length unary and binary
+arithmetic/comparison/Boolean graphs with typed heap continuation frames,
+preserving left-first checks and strict proven type-family mismatch errors.
+Six-provider 384-deep Boolean regression covers valid and invalid numeric/
+text types. Rich CASE, functions, subqueries and Query/CTE/Source transitions
+are **not yet fully stack-independent** and remain on the frozen merge list.
