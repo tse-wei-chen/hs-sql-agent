@@ -341,6 +341,33 @@ module internal RewriteBinder =
         | GraphExprScan of expression: Expr * scope: Scope
         | GraphExprDone of expression: Expr * scope: Scope * queryCount: int
 
+    let private queryRequiresMixedBinding (query: Query) =
+        // Query-free SQL continues through the original fast binder. The
+        // mixed machine is needed only when a SELECT crosses a Query boundary.
+        let containsQuery expr =
+            RewriteAstTraversal.exists true
+                (function
+                 | ScalarSubquery _ | Exists _ | InSubquery _ -> true
+                 | _ -> false) expr
+        let isDerived = function
+            | DerivedTable _ | LateralDerivedTable _ -> true
+            | NamedTable _ | CteTable _ -> false
+        let select = query.Head
+        not select.Ctes.IsEmpty
+        || not query.SetOperations.IsEmpty
+        || (select.From |> Option.map isDerived |> Option.defaultValue false)
+        || (select.Joins |> List.exists (fun join ->
+            isDerived join.Source
+            || (join.Predicate |> Option.map containsQuery |> Option.defaultValue false)))
+        || (select.Projection |> List.exists (fun item -> containsQuery item.Expression))
+        || (match select.DistinctMode with
+            | SelectDistinct.DistinctOn items -> NonEmpty.toList items |> List.exists containsQuery
+            | _ -> false)
+        || (select.Where |> Option.map containsQuery |> Option.defaultValue false)
+        || (select.GroupBy |> List.exists containsQuery)
+        || (select.Having |> Option.map containsQuery |> Option.defaultValue false)
+        || (query.OrderBy |> List.exists (fun order -> containsQuery order.Expression))
+
     let private bindScalarNode (scope: Scope) (value: Expr) : Expr =
         match value with
         | Column identifier -> bindColumn scope identifier
@@ -590,6 +617,8 @@ module internal RewriteBinder =
                 let struct (original, item) = frames.[index]
                 result <- RewriteAstTraversal.rebuildSimpleScalarChain original item result
             result
+        elif queryRequiresMixedBinding query then
+            bindMixedQuery dialect parentScope inheritedCtes query
         // Most scalar and DML subqueries have no set branches. Avoid two
         // heap-backed work stacks for the overwhelmingly common case,
         // while using the same lexical scope and alias-binding rules.
@@ -658,6 +687,424 @@ module internal RewriteBinder =
             if results.Count <> 1 then
                 invalidOp "Binder query continuation frames did not reconstruct one query root."
             results.[0]
+
+    and private bindMixedQuery dialect parentScope inheritedCtes (root: Query) : Query =
+        // All mixed Query/Select/Source/Expr work is scheduled on ONE
+        // explicit stack. No onQuery callback ever enters bindQuery while
+        // the machine is executing. Parent Scope and VisibleCtes travel
+        // with each Query and Expr frame, not in ambient mutable state.
+        let pending = ResizeArray<BindGraphFrame>()
+        let queryResults = ResizeArray<Query>()
+        let sourceResults = ResizeArray<TableSource>()
+        let expressionResults = ResizeArray<Expr>()
+        let selectResults = ResizeArray<struct (Select * Scope * string list)>()
+        let inline push frame = pending.Add frame
+        let pop (values: ResizeArray<'T>) =
+            let last = values.Count - 1
+            if last < 0 then invalidOp "Binder mixed-graph result stack underflow."
+            let value = values.[last]
+            values.RemoveAt last
+            value
+        let popQuery () = pop queryResults
+        let popSource () = pop sourceResults
+        let popExpr () = pop expressionResults
+        let popQueries count =
+            let mutable mapped = []
+            for _ in 1 .. count do
+                mapped <- popQuery () :: mapped
+            mapped
+        let makeQuery (query: Query) (parent: Scope option) (visible: string list) =
+            { Original = query
+              Parent = parent
+              Inherited = visible
+              SetBranches = List.toArray query.SetOperations
+              TailOrders = List.toArray query.OrderBy
+              BoundBranches = ResizeArray<Query>()
+              BoundOrders = ResizeArray<OrderBy>()
+              BoundHead = None
+              HeadScope = None
+              HeadCtes = visible
+              OrderAliases = [] }
+        let makeSelect (select: Select) (parent: Scope option) visible =
+            { Original = select
+              Parent = parent
+              CteItems = List.toArray select.Ctes
+              JoinItems = List.toArray select.Joins
+              BoundCtes = ResizeArray<Cte>()
+              BoundJoins = ResizeArray<Join>()
+              AliasDisplays =
+                System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal)
+              VisibleCtes = visible
+              BoundFrom = None
+              Scope = None
+              Slots = [||]
+              BoundSlots = [||] }
+        let scopeOf (select: BindGraphSelectContext) =
+            match select.Scope with
+            | Some scope -> scope
+            | None -> invalidOp "Binder mixed graph reached SELECT without row-source scope."
+        let headScopeOf (query: BindGraphQueryContext) =
+            match query.HeadScope with
+            | Some scope -> scope
+            | None -> invalidOp "Binder mixed graph reached ORDER BY without head scope."
+        let pushScan scope value = push (GraphExprScan(value, scope))
+        let scanReverse scope (values: Expr list) =
+            let values = List.toArray values
+            for index = values.Length - 1 downto 0 do
+                pushScan scope values.[index]
+        let scanOrders scope (orders: OrderBy list) =
+            let orders = List.toArray orders
+            for index = orders.Length - 1 downto 0 do
+                pushScan scope orders.[index].Expression
+        push (GraphQueryEnter(makeQuery root parentScope inheritedCtes))
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | GraphQueryEnter query ->
+                RewriteStackSafety.compile SqlDiagnosticStage.Binding
+                push (GraphQueryHeadDone query)
+                push (GraphSelectCteNext(
+                    makeSelect query.Original.Head query.Parent query.Inherited, 0))
+            | GraphQueryHeadDone query ->
+                let struct (head, scope, visible) = pop selectResults
+                query.BoundHead <- Some head
+                query.HeadScope <- Some scope
+                query.HeadCtes <- visible
+                let explicitAliases =
+                    head.Projection |> List.choose (fun item -> item.Alias)
+                let outputAliases =
+                    head.Projection
+                    |> List.choose (fun item ->
+                        match item.Alias, Expr.unspan item.Expression with
+                        | Some alias, _ -> Some alias
+                        | None, Column identifier
+                        | None, BoundColumn(identifier, _) ->
+                            Identifier.parts identifier |> List.tryLast
+                        | _ -> None)
+                query.OrderAliases <-
+                    if query.SetBranches.Length = 0 then explicitAliases
+                    else outputAliases
+                push (GraphQueryBranchNext(query, 0))
+            | GraphQueryBranchNext(query, index) ->
+                if index < query.SetBranches.Length then
+                    push (GraphQueryBranchDone(query, index))
+                    push (GraphQueryEnter(
+                        makeQuery query.SetBranches.[index].Query
+                            query.Parent query.HeadCtes))
+                else
+                    push (GraphQueryOrderNext(query, 0))
+            | GraphQueryBranchDone(query, index) ->
+                query.BoundBranches.Add(popQuery ())
+                push (GraphQueryBranchNext(query, index + 1))
+            | GraphQueryOrderNext(query, index) ->
+                if index < query.TailOrders.Length then
+                    let original = query.TailOrders.[index]
+                    let scope = headScopeOf query
+                    if RewriteAstTraversal.exists true
+                           (function
+                            | ScalarSubquery _ | Exists _ | InSubquery _ -> true
+                            | _ -> false) original.Expression then
+                        push (GraphQueryOrderDone(query, index))
+                        push (GraphExprEnter(original.Expression, scope))
+                    else
+                        query.BoundOrders.Add(
+                            bindOrderBy scope query.OrderAliases original)
+                        push (GraphQueryOrderNext(query, index + 1))
+                else
+                    push (GraphQueryFinish query)
+            | GraphQueryOrderDone(query, index) ->
+                let original = query.TailOrders.[index]
+                let scope = headScopeOf query
+                let sourceSpan = Expr.span original.Expression
+                let bound = popExpr ()
+                let wrapped =
+                    if Span.isKnown sourceSpan then Expr.withSpan sourceSpan bound
+                    else bound
+                query.BoundOrders.Add({ original with Expression = wrapped })
+                push (GraphQueryOrderNext(query, index + 1))
+            | GraphQueryFinish query ->
+                let head =
+                    match query.BoundHead with
+                    | Some value -> value
+                    | None -> invalidOp "Binder mixed graph Query head was not rebuilt."
+                let branchQueries = query.BoundBranches.ToArray()
+                if branchQueries.Length <> query.SetBranches.Length then
+                    invalidOp "Binder mixed graph Query branch results are unbalanced."
+                let branches =
+                    Array.mapi (fun index (branch: SetBranch) ->
+                        { branch with Query = branchQueries.[index] }) query.SetBranches
+                    |> Array.toList
+                queryResults.Add
+                    { query.Original with
+                        Head = head
+                        SetOperations = branches
+                        OrderBy = query.BoundOrders |> Seq.toList }
+            | GraphSelectCteNext(select, index) ->
+                if index < select.CteItems.Length then
+                    let cte = select.CteItems.[index]
+                    validateRecursiveCteShape dialect cte
+                    let cteKey = partKey dialect cte.Name
+                    let visible =
+                        if cte.RecursiveScope then select.VisibleCtes @ [ cteKey ]
+                        else select.VisibleCtes
+                    push (GraphSelectCteDone(select, index))
+                    // CTEs bind in isolation; they must not inherit the
+                    // SELECT's Parent Scope.
+                    push (GraphQueryEnter(makeQuery cte.Query None visible))
+                else
+                    push (GraphSelectFrom select)
+            | GraphSelectCteDone(select, index) ->
+                let cte = select.CteItems.[index]
+                select.BoundCtes.Add({ cte with Query = popQuery () })
+                select.VisibleCtes <- select.VisibleCtes @ [ partKey dialect cte.Name ]
+                push (GraphSelectCteNext(select, index + 1))
+            | GraphSelectFrom select ->
+                push (GraphSelectFromDone select)
+                select.Original.From
+                |> Option.iter (fun source ->
+                    push (GraphSourceEnter(source, select.Parent, select.VisibleCtes)))
+            | GraphSelectFromDone select ->
+                select.BoundFrom <-
+                    select.Original.From
+                    |> Option.map (fun _ -> popSource ())
+                let sourceBindings =
+                    select.BoundFrom |> Option.map (sourceBinding dialect) |> Option.toList
+                let scope =
+                    { Id = scopeId select.Parent
+                      Parent = select.Parent
+                      Sources = sourceBindings
+                      VisibleCtes = select.VisibleCtes
+                      Dialect = dialect }
+                ensureDistinctAliases scope
+                for binding in sourceBindings do
+                    match binding.AliasKey with
+                    | Some key ->
+                        select.AliasDisplays.Add(
+                            key, binding.Alias |> Option.defaultValue key)
+                    | None -> ()
+                select.Scope <- Some scope
+                push (GraphSelectJoinNext(select, 0))
+            | GraphSelectJoinNext(select, index) ->
+                if index < select.JoinItems.Length then
+                    let join = select.JoinItems.[index]
+                    let current = scopeOf select
+                    let correlationScope =
+                        match join.Source with
+                        | LateralDerivedTable _ -> Some current
+                        | _ -> current.Parent
+                    push (GraphSelectJoinSourceDone(select, index))
+                    push (GraphSourceEnter(
+                        join.Source, correlationScope, select.VisibleCtes))
+                else
+                    let original = select.Original
+                    let projection = original.Projection |> List.map (fun item -> item.Expression)
+                    let distinct =
+                        match original.DistinctMode with
+                        | SelectDistinct.DistinctOn values -> NonEmpty.toList values
+                        | _ -> []
+                    let where =
+                        match original.Where with
+                        | Some expr -> [ expr ]
+                        | None -> []
+                    let having =
+                        match original.Having with
+                        | Some expr -> [ expr ]
+                        | None -> []
+                    select.Slots <-
+                        List.toArray (projection @ distinct @ where @ original.GroupBy @ having)
+                    select.BoundSlots <- Array.zeroCreate<Expr> select.Slots.Length
+                    push (GraphSelectSlotNext(select, 0))
+            | GraphSelectJoinSourceDone(select, index) ->
+                let original = select.JoinItems.[index]
+                let source = popSource ()
+                let binding = sourceBinding dialect source
+                let scope = scopeOf select
+                match binding.AliasKey with
+                | Some key ->
+                    match select.AliasDisplays.TryGetValue key with
+                    | true, firstDisplay ->
+                        invalidOp (
+                            "Duplicate table alias '" + firstDisplay
+                            + "' in SQL scope " + string scope.Id + ".")
+                    | false, _ ->
+                        select.AliasDisplays.Add(
+                            key, binding.Alias |> Option.defaultValue key)
+                | None -> ()
+                let extended = { scope with Sources = binding :: scope.Sources }
+                match original with
+                | OnJoin(_, _, predicate) ->
+                    push (GraphSelectJoinPredicateDone(select, index, source, extended))
+                    push (GraphExprEnter(predicate, extended))
+                | CrossJoin _ ->
+                    select.BoundJoins.Add(CrossJoin source)
+                    select.Scope <- Some extended
+                    push (GraphSelectJoinNext(select, index + 1))
+                | NaturalJoin(kind, _) ->
+                    select.BoundJoins.Add(NaturalJoin(kind, source))
+                    select.Scope <- Some extended
+                    push (GraphSelectJoinNext(select, index + 1))
+                | UsingJoin(kind, _, columns) ->
+                    select.BoundJoins.Add(UsingJoin(kind, source, columns))
+                    select.Scope <- Some extended
+                    push (GraphSelectJoinNext(select, index + 1))
+            | GraphSelectJoinPredicateDone(select, index, source, extended) ->
+                let predicate = popExpr ()
+                match select.JoinItems.[index] with
+                | OnJoin(kind, _, _) ->
+                    select.BoundJoins.Add(OnJoin(kind, source, predicate))
+                | _ -> invalidOp "Binder ON JOIN continuation lost its predicate."
+                select.Scope <- Some extended
+                push (GraphSelectJoinNext(select, index + 1))
+            | GraphSelectSlotNext(select, index) ->
+                if index < select.Slots.Length then
+                    push (GraphSelectSlotDone(select, index))
+                    push (GraphExprEnter(select.Slots.[index], scopeOf select))
+                else
+                    push (GraphSelectFinish select)
+            | GraphSelectSlotDone(select, index) ->
+                select.BoundSlots.[index] <- popExpr ()
+                push (GraphSelectSlotNext(select, index + 1))
+            | GraphSelectFinish select ->
+                let original = select.Original
+                let mutable current = 0
+                let take () =
+                    let value = select.BoundSlots.[current]
+                    current <- current + 1
+                    value
+                let projections =
+                    original.ProjectionItems
+                    |> NonEmpty.map (fun item ->
+                        { item with Expression = take () })
+                let distinct =
+                    match original.DistinctMode with
+                    | SelectDistinct.DistinctOn values ->
+                        values
+                        |> NonEmpty.map (fun _ -> take ())
+                        |> SelectDistinct.DistinctOn
+                    | mode -> mode
+                let where = original.Where |> Option.map (fun _ -> take ())
+                let groupBy = original.GroupBy |> List.map (fun _ -> take ())
+                let having = original.Having |> Option.map (fun _ -> take ())
+                if current <> select.BoundSlots.Length then
+                    invalidOp "Binder SELECT mixed-graph expression slots are unbalanced."
+                selectResults.Add
+                    (struct (
+                        { original with
+                            Ctes = select.BoundCtes |> Seq.toList
+                            From = select.BoundFrom
+                            Joins = select.BoundJoins |> Seq.toList
+                            ProjectionItems = projections
+                            DistinctMode = distinct
+                            Where = where
+                            GroupBy = groupBy
+                            Having = having },
+                        scopeOf select,
+                        select.VisibleCtes))
+            | GraphSourceEnter(source, parent, visible) ->
+                match source with
+                | NamedTable(name, alias)
+                    when containsName (identifierKey dialect name) visible ->
+                    sourceResults.Add(CteTable(name, alias))
+                | NamedTable _ | CteTable _ -> sourceResults.Add source
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (GraphSourceDone source)
+                    push (GraphQueryEnter(makeQuery query parent visible))
+            | GraphSourceDone source ->
+                let query = popQuery ()
+                match source with
+                | DerivedTable(_, alias) ->
+                    sourceResults.Add(DerivedTable(query, alias))
+                | LateralDerivedTable(_, alias) ->
+                    sourceResults.Add(LateralDerivedTable(query, alias))
+                | _ -> invalidOp "Binder source continuation has no derived Query."
+            | GraphExprEnter(expression, scope) ->
+                let mutable queryCount = 0
+                RewriteAstTraversal.iter (function
+                    | ScalarSubquery _ | Exists _ | InSubquery _ ->
+                        queryCount <- queryCount + 1
+                    | _ -> ()) expression
+                if queryCount = 0 then
+                    expressionResults.Add(bindExpr scope expression)
+                else
+                    push (GraphExprDone(expression, scope, queryCount))
+                    pushScan scope expression
+            | GraphExprScan(expression, scope) ->
+                RewriteStackSafety.compile SqlDiagnosticStage.Binding
+                // Check each scalar leaf before entering its following
+                // subquery. The exit mapper reconstructs these bindings
+                // without changing their first-diagnostic precedence.
+                match expression with
+                | Column _ | Wildcard(Some _) ->
+                    bindScalarNode scope expression |> ignore
+                | _ -> ()
+                match expression with
+                | Spanned(_, inner) | Unary(_, inner) | Cast(inner, _)
+                | Extract(_, inner) | PostgresJsonAccess(inner, _, _)
+                | IsNull(inner, _) -> pushScan scope inner
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | Like(left, right, _, _, _)
+                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+                    pushScan scope right
+                    pushScan scope left
+                | RawRegexCall(arguments, _) -> scanReverse scope arguments
+                | FunctionCall call ->
+                    scanOrders scope call.AggregateOrderBy
+                    scanReverse scope call.Arguments
+                | Windowed(value, window) ->
+                    scanOrders scope window.OrderBy
+                    scanReverse scope window.PartitionBy
+                    pushScan scope value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (pushScan scope)
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        pushScan scope branch.Result
+                        pushScan scope branch.Match) branches
+                    pushScan scope input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (pushScan scope)
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        pushScan scope branch.Result
+                        pushScan scope branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (pushScan scope) items
+                    pushScan scope value
+                | InSubquery(value, query, _) ->
+                    push (GraphQueryEnter(
+                        makeQuery query (Some scope) scope.VisibleCtes))
+                    pushScan scope value
+                | Between(value, lower, upper, _) ->
+                    pushScan scope upper
+                    pushScan scope lower
+                    pushScan scope value
+                | ScalarSubquery query | Exists(query, _) ->
+                    push (GraphQueryEnter(
+                        makeQuery query (Some scope) scope.VisibleCtes))
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+            | GraphExprDone(expression, scope, queryCount) ->
+                let queries =
+                    System.Collections.Generic.Queue<Query>(
+                        popQueries queryCount)
+                let rebuilt =
+                    RewriteAstTraversal.mapPostOrder
+                        (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.Binding)
+                        (bindScalarNode scope)
+                        (fun _ ->
+                            if queries.Count = 0 then
+                                invalidOp "Binder mixed Expression Query results underflow."
+                            queries.Dequeue())
+                        expression
+                if queries.Count <> 0 then
+                    invalidOp "Binder mixed Expression left unused Query results."
+                expressionResults.Add rebuilt
+        if queryResults.Count <> 1
+           || sourceResults.Count <> 0
+           || expressionResults.Count <> 0
+           || selectResults.Count <> 0 then
+            invalidOp "Binder mixed AST continuation frames are unbalanced."
+        queryResults.[0]
 
     let private extendScopeWithSources (scope: Scope) sources =
         // DML FROM/USING entries are bound without the accumulated scope.
