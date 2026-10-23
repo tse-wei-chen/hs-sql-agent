@@ -266,6 +266,16 @@ module internal RewriteRenderer =
             raise (SqlCompilationException(
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
+    // Most SQL predicates contain a bound column and a literal, not a
+    // recursive scalar graph. Preserve the old allocation-free leaf path
+    // instead of constructing a StringBuilder and two frame stacks for
+    // each comparison in a long AND/OR chain.
+    let private isScalarLeaf expression =
+        match Expr.unspan expression with
+        | Expr.Column _ | Expr.BoundColumn _ | Expr.Wildcard _
+        | Expr.OrderOrdinal _ | Expr.Literal _ | Expr.Interval _ -> true
+        | _ -> false
+
     // SQL fragments are emitted in source order. Text frames and Expr
     // frames share one heap-backed stack, so right-deep and alternating
     // arithmetic / unary / predicate trees do not consume CLR call frames.
@@ -391,6 +401,32 @@ module internal RewriteRenderer =
                 + " THEN 1 ELSE 0 END"
             "(" + equal
             + (if op = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
+        | Expr.Binary(operator, left, right)
+            when isScalarLeaf left && isScalarLeaf right ->
+            // The scalar leaves have no nested render graph, so the original
+            // direct binary path remains cheaper and retains the exact
+            // provider/parameter semantics.
+            let leftSql = renderExpr ctx left
+            let rightSql = renderExpr ctx right
+            match operator, ctx.Provider, ctx.TargetRuntime with
+            | BinaryOperator.Modulo, (Oracle | Firebird), _ ->
+                "MOD(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Concat, MySql, _ ->
+                "CONCAT(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven NativePipes) ->
+                "(" + leftSql + " || " + rightSql + ")"
+            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven PlusOperator) ->
+                "(" + leftSql + " + " + rightSql + ")"
+            | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Unproven message) ->
+                invalidOp (
+                    "Validated SQL reached rendering without SQL Server concat proof: "
+                    + message)
+            | BinaryOperator.NotDistinctFrom, MySql, _ ->
+                "(" + leftSql + " <=> " + rightSql + ")"
+            | BinaryOperator.DistinctFrom, MySql, _ ->
+                "NOT (" + leftSql + " <=> " + rightSql + ")"
+            | _ ->
+                "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
         | Expr.Binary _ | Expr.Like _ -> renderScalarGraph ctx expression
         | Expr.RawRegexCall _ ->
             invalidOp "Raw REGEXP_LIKE reached rendering before canonicalization."
