@@ -64,6 +64,37 @@ public sealed class CoreSqlServerNativePaginationTests
         Assert.Contains("AS [label]", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(64)]
+    [InlineData(128)]
+    public void Compile_DeepIdenticalExpressions_KeepDistinctPagingProof(int depth)
+    {
+        // The SQL Server DISTINCT/OFFSET proof uses Expr.equivalent to
+        // match the projection and ORDER BY trees, including deep function
+        // argument nodes. The iterative comparer must keep the same result.
+        string Nested(string inner) =>
+            string.Concat(Enumerable.Repeat("LOWER(", depth)) +
+            inner + new string(')', depth);
+
+        var expression = Nested("name");
+        var command = Compile(
+            $"SELECT DISTINCT {expression} AS label FROM users " +
+            $"ORDER BY {expression} LIMIT 10 OFFSET 5");
+
+        Assert.Contains("ROW_NUMBER()", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("_core_page_order_", command.Sql, StringComparison.OrdinalIgnoreCase);
+
+        // A different leaf still must fail closed. Equality is structural,
+        // not an approximate fingerprint or shape-only comparison.
+        var mismatch = Nested("other_name");
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(
+            $"SELECT DISTINCT {expression} AS label FROM users " +
+            $"ORDER BY {mismatch} LIMIT 10 OFFSET 5"));
+
+        Assert.Contains("ORDER BY", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_OffsetWildcardProjection_FailsClosedInsteadOfLeakingSyntheticColumn()
     {

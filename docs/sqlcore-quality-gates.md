@@ -307,6 +307,13 @@ published as measured percentages or silently set to 100.
       common explicit heap-backed scalar walker replaces recursive UPDATE/DELETE
       volatility inspection, INSERT VALUES scope validation and aggregate-order
       row-column checks. Expr.unspan is iterative.
+- [x] Replace `Expr.equivalent` recursive structural comparison with
+      a typed pair-stack walk: no managed recursion for Unary/Binary,
+      functions, CASE, window, list and BETWEEN expression pairs.
+      Preserve exact CTE/subquery conservatism, span-insensitivity,
+      correlation restrictions and ORDER BY expression matching.
+      SQL Server DISTINCT/OFFSET regression covers 16/64/128 nested
+      computed expression chains, both equivalent and mismatched.
 - [x] Convert query-table policy validation from mutually recursive
       expression/query/source/select functions to an explicit continuation-frame
       machine. Preserve CTE-first, FROM-first, projection/WHERE/JOIN and
