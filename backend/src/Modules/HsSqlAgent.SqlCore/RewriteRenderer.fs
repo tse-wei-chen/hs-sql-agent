@@ -266,6 +266,14 @@ module internal RewriteRenderer =
             raise (SqlCompilationException(
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
+    // Only Boolean operators are scheduled here; each non-Boolean leaf
+    // retains the original dialect-specific renderExpr/renderPredicate path.
+    [<Struct>]
+    type private BooleanRenderFrame =
+        | VisitBooleanExpr of node: Expr
+        | AppendBooleanOperator of operation: BinaryOperator
+        | CloseBooleanParenthesis
+
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
@@ -368,7 +376,7 @@ module internal RewriteRenderer =
         | Expr.Unary(UnaryOperator.Negate, operand) -> "(-" + renderExpr ctx operand + ")"
         | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
         | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
-            renderLeftDeepBoolean ctx renderExpr chain
+            renderBooleanGraph ctx renderExpr chain
         | Expr.Binary(op, _, _) as chain
             when op = BinaryOperator.Add || op = BinaryOperator.Subtract
                  || op = BinaryOperator.Multiply || op = BinaryOperator.Divide ->
@@ -533,7 +541,7 @@ module internal RewriteRenderer =
             | Unary(UnaryOperator.Not, operand) ->
                 "NOT (" + renderPredicate ctx operand + ")"
             | Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
-                renderLeftDeepBoolean ctx renderPredicate chain
+                renderBooleanGraph ctx renderPredicate chain
             | SimpleCase(input, branches, fallback) when isBooleanExpression expression ->
                 let cases =
                     branches
@@ -564,32 +572,37 @@ module internal RewriteRenderer =
         | PostgreSql | MySql | SQLite | Firebird ->
             renderExpr ctx expression
 
-    // Preserve every original parenthesis and operand's left-to-right
-    // parameter-binding order, but avoid building each intermediate prefix
-    // string on long left-deep AND/OR chains. This is a rendering traversal
-    // optimization, not boolean reassociation or AST canonicalization.
-    and private renderLeftDeepBoolean
+    // A full binary Boolean expression can be left-deep, right-deep or
+    // mixed/balanced. Emit precisely the original parentheses/operands with
+    // an explicit work stack; neither association nor SQL three-valued
+    // semantics are changed. Each leaf retains its original provider-aware
+    // rendering and parameter binding position.
+    and private renderBooleanGraph
         (ctx: RenderContext)
         (renderLeaf: RenderContext -> Expr -> string)
         expression =
-        let operations = ResizeArray<BinaryOperator * Expr>()
-        let mutable current = expression
-        let mutable descending = true
-        while descending do
-            match Expr.unspan current with
-            | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
-                operations.Add(op, right)
-                current <- left
-            | _ -> descending <- false
-
+        let pending = ResizeArray<BooleanRenderFrame>()
         let builder = StringBuilder()
-        for _ in 1 .. operations.Count do
-            builder.Append('(') |> ignore
-        builder.Append(renderLeaf ctx current) |> ignore
-        for index = operations.Count - 1 downto 0 do
-            let op, right = operations[index]
-            builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
-            builder.Append(renderLeaf ctx right).Append(')') |> ignore
+        pending.Add(VisitBooleanExpr expression)
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | VisitBooleanExpr current ->
+                match Expr.unspan current with
+                | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                    builder.Append('(') |> ignore
+                    pending.Add CloseBooleanParenthesis
+                    pending.Add(VisitBooleanExpr right)
+                    pending.Add(AppendBooleanOperator op)
+                    pending.Add(VisitBooleanExpr left)
+                | _ -> builder.Append(renderLeaf ctx current) |> ignore
+            | AppendBooleanOperator op ->
+                builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
+            | CloseBooleanParenthesis ->
+                builder.Append(')') |> ignore
         builder.ToString()
 
     // Preserve exact nested parentheses and left-to-right parameter
