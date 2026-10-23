@@ -1239,45 +1239,60 @@ module internal RewriteStages =
         | AssignmentClause -> "UPDATE SET"
         | InsertValueClause -> "UPDATE SET/INSERT VALUES"
 
-    let rec private isDefinitelyBoolean targetRuntime expression =
-        match expression with
-        | Spanned(_, inner) -> isDefinitelyBoolean targetRuntime inner
-        | Literal(ScalarValue.Boolean _) -> true
-        | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ -> true
-        | RegexMatch _ ->
-            SqlRegexCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime, null)
-        | Unary(UnaryOperator.Not, _) -> true
-        | Binary(operator, _, _) ->
-            match operator with
-            | BinaryOperator.Equal | BinaryOperator.NotEqual
-            | BinaryOperator.GreaterThan | BinaryOperator.LessThan
-            | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
-            | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom
-            | BinaryOperator.And | BinaryOperator.Or -> true
-            | _ -> false
-        | SimpleCase(_, branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+    // Boolean CASE classification only needs to inspect result expressions.
+    // Use explicit work frames rather than recursive CASE -> CASE calls. Do
+    // not inspect branch WHEN predicates: this is a result-type proof, not
+    // full semantic validation.
+    let private isDefinitelyBoolean targetRuntime expression =
+        let pending = ResizeArray<Expr>()
+        pending.Add expression
+        let mutable valid = true
+        while valid && pending.Count > 0 do
+            let last = pending.Count - 1
+            let current = Expr.unspan pending.[last]
+            pending.RemoveAt(last)
+            match current with
+            | Literal(ScalarValue.Boolean _) -> ()
+            | IsNull _ | InList _ | InSubquery _ | Between _
+            | Exists _ | Like _ -> ()
+            | RegexMatch _ ->
+                valid <- SqlRegexCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime, null)
+            | Unary(UnaryOperator.Not, _) -> ()
+            | Binary(operator, _, _) ->
+                valid <-
+                    match operator with
+                    | BinaryOperator.Equal | BinaryOperator.NotEqual
+                    | BinaryOperator.GreaterThan | BinaryOperator.LessThan
+                    | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
+                    | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom
+                    | BinaryOperator.And | BinaryOperator.Or -> true
+                    | _ -> false
+            | SimpleCase(_, branches, fallback) ->
+                let mutable nonNull = 0
+                let pushResult value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
-        | SearchedCase(branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter pushResult
+                NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                    pushResult branch.Result) branches
+                if nonNull = 0 then valid <- false
+            | SearchedCase(branches, fallback) ->
+                let mutable nonNull = 0
+                let pushResult value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
-        | _ -> false
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter pushResult
+                NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                    pushResult branch.Result) branches
+                if nonNull = 0 then valid <- false
+            | _ -> valid <- false
+        valid
 
     let private validateBooleanScalar targetRuntime capability expression =
         if isDefinitelyBoolean targetRuntime expression then

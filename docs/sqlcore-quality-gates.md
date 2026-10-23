@@ -341,6 +341,11 @@ published as measured percentages or silently set to 100.
       to loops. Preserve nearest-scope alias shadowing and ambiguity/fail-closed
       diagnostics. Nested correlated SELECT positive/negative regressions
       verify outer-scope resolution at 8/32 layers.
+- [x] Remove recursive CASE-result Boolean classification in Semantic
+      Validation: iteratively classify only non-NULL CASE results with
+      short-circuiting and original provider-aware predicate rules.
+      Deep 16/32 CASE regressions preserve PostgreSQL acceptance,
+      Oracle boolean projection rejection and numeric-CASE acceptance.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

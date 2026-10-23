@@ -77,6 +77,34 @@ public class CoreBooleanProjectionCapabilityTests
         Assert.False(string.IsNullOrWhiteSpace(command.Sql));
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(32)]
+    public void Compile_DeepBooleanCaseProjection_PreservesTargetCapabilityGate(int depth)
+    {
+        var booleanExpression = "TRUE";
+        var numericExpression = "1";
+        for (var i = 0; i < depth; i++)
+        {
+            booleanExpression = "CASE WHEN id = 1 THEN " + booleanExpression + " ELSE FALSE END";
+            numericExpression = "CASE WHEN id = 1 THEN " + numericExpression + " ELSE 0 END";
+        }
+
+        var boolSql = "SELECT " + booleanExpression + " FROM users";
+        var postgres = Compile(boolSql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+        Assert.NotEmpty(postgres.Sql);
+
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(boolSql, SqlAgentToolType.Postgres, SqlAgentToolType.Oracle));
+        Assert.Contains("expression.boolean_select", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+
+        // Non-boolean nested CASE must not be misclassified and rejected.
+        var numeric = Compile("SELECT " + numericExpression + " FROM users",
+            SqlAgentToolType.Postgres, SqlAgentToolType.Oracle);
+        Assert.NotEmpty(numeric.Sql);
+    }
+
     private static CompiledSqlCommand Compile(
         string sql,
         SqlAgentToolType sourceDialect,
