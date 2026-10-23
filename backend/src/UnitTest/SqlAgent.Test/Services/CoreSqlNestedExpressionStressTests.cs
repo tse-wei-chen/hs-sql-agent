@@ -596,6 +596,74 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DeepRightNestedArithmeticAndUnary_PreservesBindingOrder(
+        SqlAgentToolType dialect)
+    {
+        // Previously the left-spine renderer missed right-deep arithmetic
+        // and each nested unary entered renderExpr recursively. Exercise
+        // both forms together without reassociating subtraction/negation.
+        const int depth = 128;
+        var expression = $"id + {depth}";
+        for (var index = depth - 1; index >= 1; index--)
+            expression = $"id + (-({expression}) + {index})";
+
+        var result = SqlCoreFacade.CompileQuery(
+            "SELECT " + expression + " FROM users",
+            dialect, dialect,
+            new SqlPlanValidationContext("iterative-scalar-render-graph-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(depth, result.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, depth).Reverse().Select(x => (long)x),
+            result.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+        Assert.True(result.Sql.Count(character => character == '(') >= depth * 2);
+        Assert.Contains("(-", result.Sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void ScalarRenderGraph_ComposesBetweenInListAndLikeWithoutReordering(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users WHERE "
+            + "(id + 1) BETWEEN 2 AND (3 + id) "
+            + "AND id IN (4, 5 + 6) AND name LIKE 'a%'";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-scalar-render-graph-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(7, result.Parameters.Length);
+        Assert.Equal(
+            new long[] { 1, 2, 3, 4, 5, 6 },
+            result.Parameters.Take(6).Select(p => Convert.ToInt64(p.Value)));
+        Assert.Equal("a%", Convert.ToString(result.Parameters[6].Value));
+        Assert.Contains("BETWEEN", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" IN ", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIKE", result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ScalarRenderGraph_PostgresJsonSelectorBindingOrderRemainsStable()
+    {
+        // Postgres JSON selectors are bound from outer node to inner node
+        // in the existing renderer, *before* its left expression is visited.
+        var sql = "SELECT (payload -> 'root') ->> 'name' "
+            + "FROM events WHERE id = 7";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("iterative-scalar-render-graph-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Equal(
+            new[] { "name", "root", "7" },
+            result.Parameters.Select(p => Convert.ToString(p.Value)));
+        Assert.Contains("->>", result.Sql, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void MixedArithmeticGrouping_PreservesPrecedence(
         SqlAgentToolType dialect)
     {
