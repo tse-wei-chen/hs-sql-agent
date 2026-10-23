@@ -42,6 +42,13 @@ public sealed class CoreCompilerResourceTelemetryTests
             Assert.Equal(2, CoreDmlBatchTextParser.ParseDmlBatch(
                 "DELETE FROM users WHERE id = 1; DELETE FROM users WHERE id = 2",
                 SqlAgentToolType.Postgres).Count);
+            var legacyParsed = CoreSqlTextParser.ParseQuery(
+                "SELECT 17 AS result", SqlAgentToolType.Postgres);
+            var legacyCompiled = CoreSqlCompiler.CreateDefault().Compile(
+                legacyParsed, SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("legacy-stage-quota-v1"),
+                new SqlExecutionPlanPolicy());
+            Assert.NotEmpty(legacyCompiled.Sql);
 
             List<object> captured;
             lock (samples) captured = samples.ToList();
@@ -53,7 +60,8 @@ public sealed class CoreCompilerResourceTelemetryTests
             var stages = successful.Select(x => Get(x, "Stage") as string).ToHashSet();
             foreach (var name in new[] { "Parsing", "Binding", "Normalization",
                         "Validation", "Policy", "Rendering", "Inspection",
-                        "CompatibilityProjection", "BatchSplit" })
+                        "CompatibilityProjection", "BatchSplit",
+                        "LegacyConversion", "Materialization", "Fingerprint" })
                 Assert.Contains(name, stages);
 
             foreach (var data in successful)

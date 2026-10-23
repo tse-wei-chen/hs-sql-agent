@@ -1190,3 +1190,12 @@ correlation parent. Ordinary derived-table alias hiding is preserved.
 Six-provider existing positive name/type regression depths were raised
 from 64 to **256 levels**. LATERAL, JOIN, mixed SET and complex nested
 subquery graphs deliberately remain on guarded full-proof paths.
+
+The parsed-AST compiler now keeps RawSql dialect revalidation,
+compatibility AST conversion, parameter materialization and plan
+fingerprinting inside the same quota session as the closed F# pipeline.
+It emits `Parsing`, `LegacyConversion`, `Materialization` and
+`Fingerprint` stage events on their respective boundaries. A regression
+compiles through the public compatibility parser/compiler surface and
+requires all these stages to be observable; RawSql is never substituted
+for the caller's executable AST.
