@@ -626,21 +626,31 @@ module internal RewritePlanCapabilityValidation =
                 insert.Columns |> List.map (fun column -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
 
-        let rec validateValue = function
-            | ConflictProposedColumn identifier ->
-                let proposed = Identifier.text identifier
-                if not (insertColumns.Contains proposed) then
-                    raise (SqlCompilationException(
-                        "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values."))
-            | ConflictTargetColumn identifier ->
-                if Identifier.parts identifier |> List.length <> 1 then
-                    raise (SqlCompilationException(
-                        "Conflict-update target-row references must be unqualified single-part columns."))
-            | ConflictLiteral _ -> ()
-            | ConflictNegate operand -> validateValue operand
-            | ConflictBinary(_, left, right) ->
-                validateValue left
-                validateValue right
+        // Conflict values form a closed tree. A work stack keeps even
+        // very deep native ON CONFLICT arithmetic off the CLR call stack;
+        // reverse pushes retain left-first failing identifier diagnostics.
+        let validateValue (root: ConflictValue) =
+            let pending = ResizeArray<ConflictValue>()
+            pending.Add(root)
+            while pending.Count > 0 do
+                let last = pending.Count - 1
+                let value = pending.[last]
+                pending.RemoveAt(last)
+                match value with
+                | ConflictProposedColumn identifier ->
+                    let proposed = Identifier.text identifier
+                    if not (insertColumns.Contains proposed) then
+                        raise (SqlCompilationException(
+                            "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values."))
+                | ConflictTargetColumn identifier ->
+                    if Identifier.parts identifier |> List.length <> 1 then
+                        raise (SqlCompilationException(
+                            "Conflict-update target-row references must be unqualified single-part columns."))
+                | ConflictLiteral _ -> ()
+                | ConflictNegate operand -> pending.Add operand
+                | ConflictBinary(_, left, right) ->
+                    pending.Add right
+                    pending.Add left
 
         let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
         assignments
