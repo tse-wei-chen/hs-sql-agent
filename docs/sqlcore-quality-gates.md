@@ -324,6 +324,11 @@ published as measured percentages or silently set to 100.
       behavior and six-dialect 2,048-level nested scalar probes remain gates.
 - [x] Use value-type continuation frames and avoid per-node intermediate
       List.map/collect allocations to bound the new policy walk's GC cost.
+- [x] Convert aggregate function/source/query capability validation into
+      an explicit iterative continuation machine, preserving recursive CTE,
+      lateral source, JSON selector, FETCH and aggregate-ordering fail-closed
+      checks and the stage's original diagnostic precedence. Regression cases
+      cover 16/64 nested scalar functions inside cross-dialect STRING_AGG order.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.
