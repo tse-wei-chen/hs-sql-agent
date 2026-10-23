@@ -266,14 +266,6 @@ module internal RewriteRenderer =
             raise (SqlCompilationException(
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
-    // Only Boolean operators are scheduled here; each non-Boolean leaf
-    // retains the original dialect-specific renderExpr/renderPredicate path.
-    [<Struct>]
-    type private BooleanRenderFrame =
-        | VisitBooleanExpr of node: Expr
-        | AppendBooleanOperator of operation: BinaryOperator
-        | CloseBooleanParenthesis
-
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
@@ -572,37 +564,41 @@ module internal RewriteRenderer =
         | PostgreSql | MySql | SQLite | Firebird ->
             renderExpr ctx expression
 
-    // A full binary Boolean expression can be left-deep, right-deep or
-    // mixed/balanced. Emit precisely the original parentheses/operands with
-    // an explicit work stack; neither association nor SQL three-valued
-    // semantics are changed. Each leaf retains its original provider-aware
-    // rendering and parameter binding position.
+    // A Boolean subtree can be left-deep, right-deep or balanced. Each
+    // pending binary uses ONE struct frame: after rendering its left child,
+    // append its operator; after rendering its right child, close exactly
+    // that parent's parentheses. No node reordering, Boolean reassociation,
+    // per-node option allocations or managed recursion is needed.
     and private renderBooleanGraph
         (ctx: RenderContext)
         (renderLeaf: RenderContext -> Expr -> string)
         expression =
-        let pending = ResizeArray<BooleanRenderFrame>()
+        let pending = ResizeArray<struct (BinaryOperator * Expr * bool)>()
         let builder = StringBuilder()
-        pending.Add(VisitBooleanExpr expression)
-        while pending.Count > 0 do
-            let last = pending.Count - 1
-            let frame = pending.[last]
-            pending.RemoveAt last
-            match frame with
-            | VisitBooleanExpr current ->
+        let mutable current = expression
+        let mutable visiting = true
+        while visiting || pending.Count > 0 do
+            if visiting then
                 match Expr.unspan current with
                 | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
                     RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
                     builder.Append('(') |> ignore
-                    pending.Add CloseBooleanParenthesis
-                    pending.Add(VisitBooleanExpr right)
-                    pending.Add(AppendBooleanOperator op)
-                    pending.Add(VisitBooleanExpr left)
-                | _ -> builder.Append(renderLeaf ctx current) |> ignore
-            | AppendBooleanOperator op ->
-                builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
-            | CloseBooleanParenthesis ->
-                builder.Append(')') |> ignore
+                    pending.Add(struct (op, right, false))
+                    current <- left
+                | _ ->
+                    builder.Append(renderLeaf ctx current) |> ignore
+                    visiting <- false
+            else
+                let last = pending.Count - 1
+                let struct (op, right, leftFinished) = pending.[last]
+                if leftFinished then
+                    pending.RemoveAt last
+                    builder.Append(')') |> ignore
+                else
+                    pending.[last] <- struct (op, right, true)
+                    builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
+                    current <- right
+                    visiting <- true
         builder.ToString()
 
     // Preserve exact nested parentheses and left-to-right parameter
