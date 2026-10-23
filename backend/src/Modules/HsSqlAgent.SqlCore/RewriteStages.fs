@@ -192,137 +192,188 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "SQL Server STRING_AGG WITHIN GROUP ordering requires non-constant expressions; Core requires each ordering expression to reference a column."))
 
-    let rec private validateAggregateExpr enforceSource source sourceProfile target targetProfile expression =
-        match expression with
-        | Spanned(_, inner) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile inner
-        | FunctionCall call ->
-            validateAggregateCall enforceSource source sourceProfile target targetProfile call
-            call.Arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-            call.AggregateOrderBy
-            |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
-        | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-        | Binary(_, left, right) | RegexMatch(left, right) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile left
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile right
-        | PostgresJsonAccess(value, _, _) ->
-            match SqlJsonCapabilityRules.PostgresArrowSourceValidationError(source, sourceProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            match SqlJsonCapabilityRules.PostgresArrowTargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-        | Like(value, pattern, _, _, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | FilteredAggregate(value, predicate) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile predicate
-        | Windowed(value, window) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            window.PartitionBy |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-            window.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
-        | SimpleCase(input, branches, fallback) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile input
-            branches |> NonEmpty.iter (fun branch ->
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Match
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Result)
-            fallback |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Condition
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Result)
-            fallback |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | InList(value, items, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            items |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | InSubquery(value, query, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
-        | Between(value, lower, upper, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile lower
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile upper
-        | ScalarSubquery query | Exists(query, _) ->
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile amount
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+    // Aggregate capability validation must walk the complete query graph,
+    // including scalar/derived subqueries, without recursive CLR frames.
+    // This stage has a deliberately different visitation order from table
+    // policy validation. Keep that order and its first-failure diagnostics.
+    [<Struct>]
+    type private AggregateFrame =
+        | AggregateExpr of expression: Expr
+        | AggregateSource of sourceBody: TableSource
+        | AggregateQuery of queryBody: Query
+        | AggregateSelect of selectBody: Select
+        | AggregateSelectAfterCtes of selectionBody: Select
 
-    and private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
-        match table with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) ->
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
-        | LateralDerivedTable(query, _) ->
-            if enforceSource then
-                match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+    let private validateAggregateWalk enforceSource source sourceProfile target targetProfile root =
+        let pending = ResizeArray<AggregateFrame>()
+        let inline push frame = pending.Add frame
+        let pushExprs (values: Expr list) =
+            let values = List.toArray values
+            for index = values.Length - 1 downto 0 do
+                push (AggregateExpr values.[index])
+        let pushOrders (orders: OrderBy list) =
+            let orders = List.toArray orders
+            for index = orders.Length - 1 downto 0 do
+                push (AggregateExpr orders.[index].Expression)
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | AggregateExpr expression ->
+                match expression with
+                | Spanned(_, inner) -> push (AggregateExpr inner)
+                | FunctionCall call ->
+                    validateAggregateCall enforceSource source sourceProfile target targetProfile call
+                    pushOrders call.AggregateOrderBy
+                    pushExprs call.Arguments
+                | Unary(_, value)
+                | Cast(value, _)
+                | Extract(_, value)
+                | IsNull(value, _) ->
+                    push (AggregateExpr value)
+                | Binary(_, left, right)
+                | RegexMatch(left, right)
+                | Like(left, right, _, _, _)
+                | FilteredAggregate(left, right)
+                | DateAdd(_, left, right)
+                | DateDiff(_, left, right) ->
+                    push (AggregateExpr right)
+                    push (AggregateExpr left)
+                | PostgresJsonAccess(value, _, _) ->
+                    match SqlJsonCapabilityRules.PostgresArrowSourceValidationError(source, sourceProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    match SqlJsonCapabilityRules.PostgresArrowTargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    push (AggregateExpr value)
+                | RawRegexCall(arguments, _) -> pushExprs arguments
+                | Windowed(value, window) ->
+                    pushOrders window.OrderBy
+                    pushExprs window.PartitionBy
+                    push (AggregateExpr value)
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (AggregateExpr value))
+                    let branches = NonEmpty.toList branches |> List.toArray
+                    for index = branches.Length - 1 downto 0 do
+                        push (AggregateExpr branches.[index].Result)
+                        push (AggregateExpr branches.[index].Match)
+                    push (AggregateExpr input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (AggregateExpr value))
+                    let branches = NonEmpty.toList branches |> List.toArray
+                    for index = branches.Length - 1 downto 0 do
+                        push (AggregateExpr branches.[index].Result)
+                        push (AggregateExpr branches.[index].Condition)
+                | InList(value, items, _) ->
+                    pushExprs (NonEmpty.toList items)
+                    push (AggregateExpr value)
+                | InSubquery(value, query, _) ->
+                    push (AggregateQuery query)
+                    push (AggregateExpr value)
+                | Between(value, lower, upper, _) ->
+                    push (AggregateExpr upper)
+                    push (AggregateExpr lower)
+                    push (AggregateExpr value)
+                | ScalarSubquery query
+                | Exists(query, _) -> push (AggregateQuery query)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+            | AggregateSource table ->
+                match table with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) -> push (AggregateQuery query)
+                | LateralDerivedTable(query, _) ->
+                    if enforceSource then
+                        match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlLateralDerivedTableCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    push (AggregateQuery query)
+            | AggregateSelect select ->
+                if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+                    if enforceSource then
+                        match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    if source <> target then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.recursive_cte' is currently native-only; cross-provider recursive evaluation semantics are not proven. Source provider "
+                            + string source + ", target provider " + string target + "."))
+                    match SqlRecursiveCteCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                push (AggregateSelectAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (AggregateQuery ctes.[index].Query)
+            | AggregateSelectAfterCtes select ->
+                // Original visitation order: distinct, projection, FROM,
+                // JOIN source/predicate, WHERE, GROUP BY, HAVING.
+                select.Having |> Option.iter (fun value -> push (AggregateExpr value))
+                pushExprs select.GroupBy
+                select.Where |> Option.iter (fun value -> push (AggregateExpr value))
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> push (AggregateExpr predicate)
+                    | None -> ()
+                    push (AggregateSource joins.[index].Source)
+                select.From |> Option.iter (fun table -> push (AggregateSource table))
+                let projections = List.toArray select.Projection
+                for index = projections.Length - 1 downto 0 do
+                    push (AggregateExpr projections.[index].Expression)
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    pushExprs (NonEmpty.toList values)
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+            | AggregateQuery query ->
+                if query.FetchPercent.IsSome then
+                    if query.Limit.IsSome then
+                        raise (SqlCompilationException(
+                            "FETCH row count and FETCH percentage cannot coexist in one canonical Query."))
+                    if enforceSource then
+                        match SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlFetchPercentCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                if query.FetchWithTies then
+                    if query.Limit.IsNone && query.FetchPercent.IsNone then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.fetch_with_ties' requires a FETCH row count or percentage."))
+                    if query.OrderBy.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.fetch_with_ties' requires ORDER BY so tie equality has a defined sort key."))
+                    if enforceSource then
+                        match SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlFetchWithTiesCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                pushOrders query.OrderBy
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (AggregateQuery branches.[index].Query)
+                push (AggregateSelect query.Head)
 
-    and private validateAggregateSelect enforceSource source sourceProfile target targetProfile select =
-        if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            if enforceSource then
-                match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            if source <> target then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.recursive_cte' is currently native-only; cross-provider recursive evaluation semantics are not proven. Source provider "
-                    + string source + ", target provider " + string target + "."))
-            match SqlRecursiveCteCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        select.Ctes |> List.iter (fun cte -> validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
-        iterDistinctOn (validateAggregateExpr enforceSource source sourceProfile target targetProfile) select
-        select.Projection |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
-        select.From |> Option.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
-        select.Joins |> List.iter (fun join ->
-            validateAggregateSource enforceSource source sourceProfile target targetProfile join.Source
-            join.Predicate |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
-        select.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        select.GroupBy |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        select.Having |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+    let private validateAggregateExpr enforceSource source sourceProfile target targetProfile expression =
+        validateAggregateWalk enforceSource source sourceProfile target targetProfile
+            (AggregateExpr expression)
 
-    and private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
-        if query.FetchPercent.IsSome then
-            if query.Limit.IsSome then
-                raise (SqlCompilationException(
-                    "FETCH row count and FETCH percentage cannot coexist in one canonical Query."))
-            if enforceSource then
-                match SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            match SqlFetchPercentCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        if query.FetchWithTies then
-            if query.Limit.IsNone && query.FetchPercent.IsNone then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.fetch_with_ties' requires a FETCH row count or percentage."))
-            if query.OrderBy.IsEmpty then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.fetch_with_ties' requires ORDER BY so tie equality has a defined sort key."))
-            if enforceSource then
-                match SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            match SqlFetchWithTiesCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        validateAggregateSelect enforceSource source sourceProfile target targetProfile query.Head
-        query.SetOperations |> List.iter (fun branch -> validateAggregateQuery enforceSource source sourceProfile target targetProfile branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
+    let private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
+        validateAggregateWalk enforceSource source sourceProfile target targetProfile
+            (AggregateSource table)
+
+    let private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
+        validateAggregateWalk enforceSource source sourceProfile target targetProfile
+            (AggregateQuery query)
 
     let private hasRichReturning items =
         items
