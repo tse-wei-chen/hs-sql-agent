@@ -452,6 +452,18 @@ published as measured percentages or silently set to 100.
       fail-closed rejection for unsupported expressions. PostgreSQL/SQLite
       48/128-operator positives, nested unary/parentheses and 96-level
       missing-EXCLUDED-column negatives exercise these boundaries.
+- [x] Add a reusable mixed-graph Query/Select/Expr/CTE/Source/Join
+      post-order reconstruction engine and route Normalizer Query and DML
+      Source trees through it. Scalar normalization (function registry,
+      regex, unary positive, CAST) and CTE alias projection lowering run
+      only after child completion. Existing source-order diagnostics are
+      preserved: CTEs, DISTINCT, projection, FROM, JOIN, WHERE, GROUP BY,
+      HAVING; then set branches; finally trailing ORDER BY. The scalar
+      DML expression mapper still uses the existing fast path, delegating
+      nested Query bodies to this mixed graph. Six-provider mixed EXISTS/
+      derived/UNION positive, CTE alias and width fail-closed tests guard
+      the cut-over. Binder scope-aware mixed continuations and general
+      Renderer remain open.
 - [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
       recursive paths; compare SQL output, parameter order, diagnostics and
       allocations before claiming arbitrary-depth compiler support.

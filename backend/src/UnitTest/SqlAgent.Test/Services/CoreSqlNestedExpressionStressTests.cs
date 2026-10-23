@@ -293,6 +293,84 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void MixedQueryGraph_ExistsDerivedSetAndCorrelatedPredicate_KeepsParameterOrder(
+        SqlAgentToolType dialect)
+    {
+        // Exercise the full Expr -> Query -> Select -> Source -> Query ->
+        // SetOperation path, including a correlated outer-row reference.
+        var sql = "SELECT u.id FROM users AS u WHERE EXISTS ("
+            + "SELECT d.id FROM ("
+            + "SELECT id FROM archived WHERE id = 1 "
+            + "UNION ALL SELECT id FROM old_archive WHERE id = 2"
+            + ") AS d WHERE d.id = u.id) AND u.id > 3";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("EXISTS", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION ALL", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 1, 2, 3 },
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MixedQueryGraph_CteAliasIsLoweredBeforeDependentProjection(
+        SqlAgentToolType dialect)
+    {
+        var sql = "WITH scoped_rows (row_key) AS ("
+            + "SELECT id FROM archived WHERE id = 7) "
+            + "SELECT row_key FROM scoped_rows WHERE row_key > 9";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("WITH", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("row_key", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 7, 9 },
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MixedQueryGraph_SetBranchProjectionWidthMismatch_RemainsFailClosed(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users WHERE EXISTS ("
+            + "SELECT id FROM ("
+            + "SELECT id FROM archived UNION ALL "
+            + "SELECT id, name FROM old_archive) AS d)";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect,
+                new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("projection width", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MixedQueryGraph_CteAliasWidthMismatch_RemainsFailClosed(
+        SqlAgentToolType dialect)
+    {
+        var sql = "WITH scoped_rows (first_id, second_id) AS ("
+            + "SELECT id FROM archived) SELECT first_id FROM scoped_rows";
+        var error = Assert.ThrowsAny<Exception>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect,
+                new SqlPlanValidationContext("iterative-mixed-query-graph-v1"),
+                new SqlExecutionPlanPolicy()));
+
+        Assert.Contains("column alias", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepScalarSubqueryChain_PreservesEverySelectAndBinding(
         SqlAgentToolType dialect)
     {
