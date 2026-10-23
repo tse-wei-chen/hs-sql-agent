@@ -256,13 +256,13 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (AggregateExpr value))
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
                         push (AggregateExpr branch.Result)
                         push (AggregateExpr branch.Match)) branches
                     push (AggregateExpr input)
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (AggregateExpr value))
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
                         push (AggregateExpr branch.Result)
                         push (AggregateExpr branch.Condition)) branches
                 | InList(value, items, _) ->

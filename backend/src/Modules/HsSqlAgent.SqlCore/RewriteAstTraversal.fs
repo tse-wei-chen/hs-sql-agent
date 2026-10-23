@@ -59,13 +59,13 @@ module internal RewriteAstTraversal =
                     push value
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter push
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
                         push branch.Result
                         push branch.Match) branches
                     push input
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter push
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
                         push branch.Result
                         push branch.Condition) branches
                 | InList(value, items, _) ->
@@ -148,13 +148,13 @@ module internal RewriteAstTraversal =
                     push (ExprNode value)
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (ExprNode value))
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
                         push (ExprNode branch.Result)
                         push (ExprNode branch.Match)) branches
                     push (ExprNode input)
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter (fun value -> push (ExprNode value))
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
                         push (ExprNode branch.Result)
                         push (ExprNode branch.Condition)) branches
                 | InList(value, items, _) ->
