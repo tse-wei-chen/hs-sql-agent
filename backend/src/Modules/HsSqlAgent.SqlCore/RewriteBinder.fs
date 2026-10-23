@@ -555,12 +555,32 @@ module internal RewriteBinder =
             results.[0]
 
     let private extendScopeWithSources (scope: Scope) sources =
-        (([], scope), sources)
-        ||> List.fold (fun (bound: TableSource list, current: Scope) source ->
-            let value = bindTableSource current.Dialect None current.VisibleCtes source
-            let next = { current with Sources = current.Sources @ [ sourceBinding current.Dialect value ] }
-            ensureDistinctAliases next
-            bound @ [ value ], next)
+        // DML FROM/USING entries are bound without the accumulated scope.
+        // Preserve their left-to-right binding and first duplicate-alias
+        // diagnostic, but avoid repeatedly appending immutable lists.
+        let seenAliases = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        for existing in scope.Sources do
+            match existing.AliasKey with
+            | Some key -> seenAliases.Add key |> ignore
+            | None -> ()
+        let mutable reversedSources = []
+        let mutable reversedBindings = []
+        for source in sources do
+            let value = bindTableSource scope.Dialect None scope.VisibleCtes source
+            let binding = sourceBinding scope.Dialect value
+            match binding.AliasKey with
+            | Some key when not (seenAliases.Add key) ->
+                invalidOp (
+                    "Duplicate table alias '"
+                    + (binding.Alias |> Option.defaultValue key)
+                    + "' in SQL scope " + string scope.Id + ".")
+            | _ -> ()
+            reversedSources <- value :: reversedSources
+            reversedBindings <- binding :: reversedBindings
+        let bound = List.rev reversedSources
+        let next =
+            { scope with Sources = scope.Sources @ List.rev reversedBindings }
+        bound, next
 
     let private bindAssignment scope (assignment: Assignment) = { assignment with Value = bindExpr scope assignment.Value }
 
