@@ -32,35 +32,49 @@ module internal RewritePlanCapabilityValidation =
         | JoinKind.Full -> requireCapability capabilityMessage proofs.FullJoin
         | JoinKind.Inner | JoinKind.Left | JoinKind.Cross -> ()
 
-    let rec private proveJoinSource capabilityMessage proofs source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveJoinQuery capabilityMessage proofs query
+    // This pass needs only a source-ordered structural capability proof:
+    // CTE definitions, the FROM source, each JOIN kind/source, then SET
+    // branches. Heap frames cover mixed CTE/derived/LATERAL/SET graphs,
+    // not merely consecutive SET branches.
+    type private JoinProofFrame =
+        | VisitJoinQuery of Query
+        | VisitJoinSource of TableSource
+        | VisitJoinKindAndSource of Join
 
-    and private proveJoinSelect capabilityMessage proofs select =
-        select.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
-        select.From |> Option.iter (proveJoinSource capabilityMessage proofs)
-        select.Joins
-        |> List.iter (fun join ->
-            proveJoinKind capabilityMessage proofs join.Kind
-            proveJoinSource capabilityMessage proofs join.Source)
-
-    and private proveJoinQuery capabilityMessage proofs query =
-        // Pure SET chains are a depth-first Query graph. Keep SELECT
-        // join proofs ahead of branch traversal without using one
-        // recursive CLR frame per branch. CTE/derived Query crossings
-        // still use the normal scoped proof path.
-        let pending = ResizeArray<Query>()
-        pending.Add(query)
+    let private proveJoinQuery capabilityMessage proofs root =
+        let pending = ResizeArray<JoinProofFrame>()
+        pending.Add(VisitJoinQuery root)
         while pending.Count > 0 do
             RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
-            let current = pending.[last]
+            let frame = pending.[last]
             pending.RemoveAt(last)
-            proveJoinSelect capabilityMessage proofs current.Head
-            for branch in List.rev current.SetOperations do
-                pending.Add(branch.Query)
+            match frame with
+            | VisitJoinQuery query ->
+                // LIFO push order is the inverse of the original recursive
+                // SELECT-first/source-order traversal. SET children are
+                // visited only after all SELECT source proofs succeed.
+                for branch in List.rev query.SetOperations do
+                    pending.Add(VisitJoinQuery branch.Query)
+                for join in List.rev query.Head.Joins do
+                    pending.Add(VisitJoinKindAndSource join)
+                query.Head.From |> Option.iter (VisitJoinSource >> pending.Add)
+                for cte in List.rev query.Head.Ctes do
+                    pending.Add(VisitJoinQuery cte.Query)
+            | VisitJoinSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    pending.Add(VisitJoinQuery query)
+            | VisitJoinKindAndSource join ->
+                proveJoinKind capabilityMessage proofs join.Kind
+                pending.Add(VisitJoinSource join.Source)
+
+    let private proveJoinSource capabilityMessage proofs source =
+        match source with
+        | NamedTable _ | CteTable _ -> ()
+        | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+            proveJoinQuery capabilityMessage proofs query
 
     let proveJoins capabilityMessage proofs document =
         match document.Statement with

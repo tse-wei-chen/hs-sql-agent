@@ -1289,3 +1289,18 @@ enter/finish Query frames, preserving CTE → FROM-derived → JOIN-derived
 The strict small-stack probe continues to reject any unexpected crash,
 rather than accepting stack-reserve refusal or silently removing
 a provider capability check.
+
+### Mixed CTE / derived / LATERAL join capability frames
+
+`RewritePlanCapabilityValidation.proveJoinQuery` now schedules a
+**single heap worklist** for Query heads, CTE definitions, derived/LATERAL
+table sources, JOIN capability proofs and SET branches, rather than only
+iterating SET children while recursively entering each CTE and source.
+The original first-error traversal is preserved: all CTE definitions
+in lexical order, FROM, JOIN kind before source, and then SET branches.
+A PostgreSQL regression combines a CTE, correlated LATERAL JOIN,
+derived UNION ALL and ordered parameters; another alternates 96
+derived and CTE boundaries. These are *join capability proof* changes,
+not a claim that the Parser or strict Schema/Type mixed graphs are fully
+stack independent. Existing six-provider grammar parity tests remain
+required.

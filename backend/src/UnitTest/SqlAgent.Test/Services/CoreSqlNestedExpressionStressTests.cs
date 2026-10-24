@@ -440,6 +440,48 @@ public sealed class CoreSqlNestedExpressionStressTests
     }
 
     [Fact]
+    public void MixedJoinCapabilityProof_CteDerivedLateralAndSetPreserveCorrelatedBindings()
+    {
+        // Deep-enough mixed boundaries to exercise source-first JOIN proofs:
+        // CTE -> JOIN/LATERAL -> derived SET -> correlated predicate.
+        var query = "SELECT id FROM archived WHERE id = 1 UNION ALL "
+            + "SELECT id FROM old_archive WHERE id = 2";
+        var sql = "WITH scoped AS (SELECT id FROM users) "
+            + "SELECT s.id, x.id FROM scoped AS s "
+            + "CROSS JOIN LATERAL (SELECT z.id FROM (" + query
+            + ") AS z WHERE z.id = s.id) AS x "
+            + "WHERE s.id > 3";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("mixed-join-query-proof-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("LATERAL", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION ALL", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 1, 2, 3 },
+            result.Parameters.Select(value => Convert.ToInt64(value.Value)));
+    }
+
+    [Fact]
+    public void MixedJoinCapabilityProof_DeepDerivedAndCteAlternationPreservesSelection()
+    {
+        // Every nested SELECT crosses a different Query/Source edge; the
+        // JOIN capability pass must not consume a CLR call per crossing.
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 96; depth++)
+            sql = depth % 2 == 0
+                ? $"SELECT d.id FROM ({sql}) AS d"
+                : $"WITH c AS ({sql}) SELECT id FROM c";
+
+        var result = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("mixed-join-query-proof-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(result.Sql);
+    }
+
+    [Fact]
     public void MixedBinderGraph_LateralJoinOnlySeesPrecedingSources()
     {
         var sql = "SELECT u.id, q.id, r.id FROM users AS u "
