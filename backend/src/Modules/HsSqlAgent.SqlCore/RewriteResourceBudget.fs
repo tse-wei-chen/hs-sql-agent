@@ -37,7 +37,7 @@ module internal RewriteResourceBudget =
         member val Current: Phase option = None with get, set
 
     let private ambient = AsyncLocal<Session option>()
-    let private events = DiagnosticListener("HsSqlAgent.SqlCore.Compiler")
+    let private events = new DiagnosticListener("HsSqlAgent.SqlCore.Compiler")
 
     let private fail code (stage: SqlDiagnosticStage) message : 'T =
         let diagnostic =

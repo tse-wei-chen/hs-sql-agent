@@ -345,33 +345,6 @@ module internal RewriteSchemaTypeValidation =
                 columnKind catalog scope identifier
             | Literal literal -> literalKind literal
             | Wildcard _ | OrderOrdinal _ | Interval _ -> None
-            | Unary(UnaryOperator.Not, value) ->
-                requireKind span SqlSchemaValueKind.Boolean (evaluate value) "NOT"
-                Some SqlSchemaValueKind.Boolean
-            | Unary((UnaryOperator.Negate | UnaryOperator.Positive), value) ->
-                let result = evaluate value
-                requireKind span SqlSchemaValueKind.Numeric result "Unary arithmetic"
-                result
-            | Binary(op, left, right) ->
-                let leftKind = evaluate left
-                let rightKind = evaluate right
-                match op with
-                | BinaryOperator.Add | BinaryOperator.Subtract | BinaryOperator.Multiply
-                | BinaryOperator.Divide | BinaryOperator.Modulo ->
-                    requireKind span SqlSchemaValueKind.Numeric leftKind "Arithmetic"
-                    requireKind span SqlSchemaValueKind.Numeric rightKind "Arithmetic"
-                    bothNumeric leftKind rightKind
-                | BinaryOperator.Equal | BinaryOperator.NotEqual
-                | BinaryOperator.GreaterThan | BinaryOperator.LessThan
-                | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
-                | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom ->
-                    compatible span leftKind rightKind "Comparison"
-                    Some SqlSchemaValueKind.Boolean
-                | BinaryOperator.And | BinaryOperator.Or ->
-                    requireKind span SqlSchemaValueKind.Boolean leftKind "Boolean operator"
-                    requireKind span SqlSchemaValueKind.Boolean rightKind "Boolean operator"
-                    Some SqlSchemaValueKind.Boolean
-                | BinaryOperator.Concat -> None // Target-side coercion is provider-specific.
             | Like(value, pattern, _, _, _) ->
                 requireKind span SqlSchemaValueKind.Text (evaluate value) "LIKE"
                 requireKind span SqlSchemaValueKind.Text (evaluate pattern) "LIKE"
@@ -693,7 +666,8 @@ module internal RewriteSchemaTypeValidation =
             // Every child query needs its own type-intersection accumulator:
             // evaluate its entire nested SET subtree before comparing the
             // result with its parent's current output family, exactly as before.
-            let rec scheduleBranches visible parentScope parentOutput branches =
+            let rec scheduleBranches visible parentScope
+                (parentOutput: (string option * SqlSchemaValueKind option) list ref) branches =
                 for branch in List.rev branches do
                     pending.Add(fun () ->
                         let child = branch.Query
@@ -701,10 +675,10 @@ module internal RewriteSchemaTypeValidation =
                             queryTypesHead catalog visible parentScope child
                         let childOutput = ref childProjection
                         pending.Add(fun () ->
-                            let left = !parentOutput
-                            let right = !childOutput
+                            let left = parentOutput.Value
+                            let right = childOutput.Value
                             if List.length left = List.length right then
-                                parentOutput :=
+                                parentOutput.Value <-
                                     List.map2 (fun (name, leftKind) (_, rightKind) ->
                                         name, (if leftKind = rightKind then leftKind else None))
                                         left right)
@@ -717,7 +691,7 @@ module internal RewriteSchemaTypeValidation =
                 let next = pending.[last]
                 pending.RemoveAt(last)
                 next()
-            !result
+            result.Value
 
         and queryTypesHead catalog inheritedCtes parent (query: Query) =
             queryTypesHeadWithFirst catalog inheritedCtes parent query None

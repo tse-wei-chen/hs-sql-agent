@@ -125,11 +125,11 @@ module internal RewritePipeline =
         match options.SchemaSnapshot with
         | None -> bound
         | Some snapshot ->
-            let checked =
+            let schemaChecked =
                 RewriteResourceBudget.withStage "SchemaBinding" SqlDiagnosticStage.Binding (fun () ->
                     RewriteSchemaValidation.verify sourceProviderType snapshot bound)
             RewriteResourceBudget.withStage "SchemaType" SqlDiagnosticStage.SemanticValidation (fun () ->
-                RewriteSchemaTypeValidation.verify sourceProviderType snapshot checked)
+                RewriteSchemaTypeValidation.verify sourceProviderType snapshot schemaChecked)
 
     let private finishBound options bound =
         let source = options.Source
