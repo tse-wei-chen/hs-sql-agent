@@ -327,6 +327,19 @@ Store ciphertext writer in this phase. Deployment needs a coordinated
 dual-reader rollout before v2 writes are activated; a mixed-version fleet
 must not encounter v2 ciphertext on an old-only reader.
 
+### Database password dual-read preparation
+
+Every built-in database password **read** path now recognizes legacy ciphertext
+and v2 AES-GCM using the persisted Admin Store DB ID as AAD record identity.
+MCP authentication, Admin metadata, SQL tools, runtime tests, health checks,
+Durable DML resume and witness inspection are included. Missing key rings,
+wrong record identities and unknown versions fail closed.
+
+Existing Admin Store password **writers remain legacy** until old-only deployed
+instances have been upgraded. Do not manually migrate DB passwords in a mixed-
+version fleet. Re-encryption can also affect Durable DML approval connection
+evidence, so pending/executing approvals must be drained or handled first.
+
 ### Versioned secret protection (infrastructure; not active for persisted records yet)
 
 `Common.Services.VersionedSecretProtector` and `SecretKeyRing` provide an

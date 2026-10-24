@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.SqlParsing;
 using HsSqlAgent.Server.Authorization;
@@ -23,7 +24,8 @@ namespace HsSqlAgent.Server.Controllers;
 public class CustomSqlToolController(
     ICustomSqlToolService toolService,
     IAuditService auditService,
-    ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ControllerBase
+    ISqlCompileEvidenceObserver? compileEvidenceObserver = null,
+    ISecretProtector? secretProtector = null) : ControllerBase
 {
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<CustomSqlTool>), StatusCodes.Status200OK)]
@@ -333,7 +335,8 @@ public class CustomSqlToolController(
         if (definitionError != null) return BadRequest(definitionError);
 
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(dbPwd.PasswordHash, hmacSecret);
+        var password = DatabasePasswordCiphertextReader.Decrypt(
+            dbPwd.PasswordHash, dbPwd.Id, cryptoService, hmacSecret, secretProtector);
         var provider = providerFactory.GetProvider(dbType);
         var connectionString = connectionStringFactory.BuildConnectionString(dbType, new BuildDbConnectionModelBase
         {

@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -70,6 +71,7 @@ public class DbHealthMonitorService(
     {
         using var scope = scopeFactory.CreateScope();
         var crypto = scope.ServiceProvider.GetRequiredService<ICryptoService>();
+        var secretProtector = scope.ServiceProvider.GetService<ISecretProtector>();
         var keySettings = scope.ServiceProvider.GetRequiredService<IOptions<McpKeySettings>>().Value;
         var tester = scope.ServiceProvider.GetRequiredService<IDbSetterService>();
 
@@ -88,9 +90,9 @@ public class DbHealthMonitorService(
                 Host = db.Host,
                 Port = db.Port,
                 Username = db.Username,
-                Password = crypto.DecryptText(
-                    db.PasswordHash,
-                    Encoding.UTF8.GetBytes(keySettings.HmacSecretKey)),
+                Password = DatabasePasswordCiphertextReader.Decrypt(
+                    db.PasswordHash, db.Id, crypto,
+                    Encoding.UTF8.GetBytes(keySettings.HmacSecretKey), secretProtector),
                 Database = db.Database,
                 ExtraSettings = db.ExtraSettings
             }, timeout.Token);

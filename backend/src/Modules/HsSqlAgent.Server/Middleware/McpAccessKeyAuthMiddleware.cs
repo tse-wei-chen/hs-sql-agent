@@ -3,6 +3,7 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using Common.Models;
 using HsSqlAgent.Server.Background;
 using Microsoft.Extensions.Options;
@@ -18,7 +19,8 @@ public class McpAccessKeyAuthMiddleware(
     IDbSetterService dbSetterService,
     ICryptoService cryptoService,
     IOptions<McpKeySettings> mcpKeySettings,
-    ILogger<McpAccessKeyAuthMiddleware> logger) : IMiddleware
+    ILogger<McpAccessKeyAuthMiddleware> logger,
+    ISecretProtector? secretProtector = null) : IMiddleware
 {
     private const int StripedLockCount = 64;
     private static readonly SemaphoreSlim[] StripedLocks = [.. Enumerable.Range(0, StripedLockCount).Select(_ => new SemaphoreSlim(1, 1))];
@@ -81,7 +83,9 @@ public class McpAccessKeyAuthMiddleware(
                 Port = databaseConfiguration.Port,
                 Database = databaseConfiguration.Database,
                 Username = databaseConfiguration.Username,
-                Password = _cryptoService.DecryptText(databaseConfiguration.PasswordHash, _hmacSecret),
+                Password = DatabasePasswordCiphertextReader.Decrypt(
+                    databaseConfiguration.PasswordHash, validation.DbManagementId ?? 0,
+                    _cryptoService, _hmacSecret, secretProtector),
                 ExtraSettings = databaseConfiguration.ExtraSettings
             }, context.RequestAborted) ?? string.Empty;
         }

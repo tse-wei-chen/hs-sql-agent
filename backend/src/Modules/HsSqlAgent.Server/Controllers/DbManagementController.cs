@@ -2,6 +2,7 @@ using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.Server.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -13,7 +14,8 @@ namespace HsSqlAgent.Server.Controllers;
 [Route("api/[controller]")]
 public class DbManagementController(
     IDbManagementService dbManagementService,
-    IAuditService auditService) : ControllerBase
+    IAuditService auditService,
+    ISecretProtector? secretProtector = null) : ControllerBase
 {
     [HttpPost]
     [ProducesResponseType(typeof(DbManagementVM), StatusCodes.Status200OK)]
@@ -85,7 +87,7 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
-        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings, secretProtector);
         var provider = providerFactory.GetProvider(dbType);
         return Ok(await provider.Metadata.GetSchemasAsync(connectionString, cancellationToken));
     }
@@ -103,7 +105,7 @@ public class DbManagementController(
         if (await dbManagementService.GetDbByIdAsync(id, true, cancellationToken) is not DbManagementPwdVM db) return NotFound();
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
-        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings, secretProtector);
         var provider = providerFactory.GetProvider(dbType);
         return Ok(await provider.Metadata.GetTablesAsync(
             connectionString,
@@ -126,7 +128,7 @@ public class DbManagementController(
         if (!Enum.TryParse<SqlAgentToolType>(db.SqlProvider, true, out var dbType)) return BadRequest("Invalid SqlProvider");
 
         var schemaName = schema ?? string.Empty;
-        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings);
+        var connectionString = BuildConnectionString(db, dbType, connectionStringFactory, cryptoService, mcpKeySettings, secretProtector);
         var provider = providerFactory.GetProvider(dbType);
         var metadata = await provider.Metadata.GetColumnsAsync(
             connectionString,
@@ -148,10 +150,12 @@ public class DbManagementController(
         SqlAgentToolType dbType,
         ISqlConnectionStringFactory connectionStringFactory,
         ICryptoService cryptoService,
-        IOptions<McpKeySettings> mcpKeySettings)
+        IOptions<McpKeySettings> mcpKeySettings,
+        ISecretProtector? secretProtector)
     {
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
+        var password = DatabasePasswordCiphertextReader.Decrypt(
+            db.PasswordHash, db.Id, cryptoService, hmacSecret, secretProtector);
         return connectionStringFactory.BuildConnectionString(
             dbType,
             new BuildDbConnectionModelBase

@@ -3,6 +3,7 @@ using System.Text;
 using Admin.Service.Data;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.SqlCore.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -22,7 +23,8 @@ public sealed class DurableDmlWitnessVerificationService(
     IOptions<McpKeySettings> mcpKeySettings,
     ISqlProviderFactory sqlProviderFactory,
     ISqlConnectionStringFactory connectionStringFactory,
-    IDmlTargetCommitWitness? targetWitness = null)
+    IDmlTargetCommitWitness? targetWitness = null,
+    ISecretProtector? secretProtector = null)
 {
     private const string Match = "CommittedWitnessMatch";
     private const string NotObserved = "NotObserved";
@@ -83,7 +85,8 @@ public sealed class DurableDmlWitnessVerificationService(
                 || resume.SourceDialect != provider)
                 return Result(TargetChanged);
 
-            var password = cryptoService.DecryptText(db.PasswordHash, keyBytes);
+            var password = DatabasePasswordCiphertextReader.Decrypt(
+                db.PasswordHash, db.Id, cryptoService, keyBytes, secretProtector);
             connectionString = connectionStringFactory.BuildConnectionString(provider,
                 new BuildDbConnectionModelBase
                 {

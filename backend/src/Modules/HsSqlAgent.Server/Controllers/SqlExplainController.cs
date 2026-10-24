@@ -3,6 +3,7 @@ using System.Text;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Services;
@@ -17,7 +18,8 @@ namespace HsSqlAgent.Server.Controllers;
 [Route("api/runtime/security/sql-explain")]
 public sealed class SqlExplainController(
     IAuditService auditService,
-    ISqlCompileEvidenceObserver? compileEvidenceObserver = null) : ControllerBase
+    ISqlCompileEvidenceObserver? compileEvidenceObserver = null,
+    ISecretProtector? secretProtector = null) : ControllerBase
 {
     [HttpPost]
     [HasPermission("/runtime/security", "view")]
@@ -94,7 +96,8 @@ public sealed class SqlExplainController(
             targetProvider,
             connectionStringFactory,
             cryptoService,
-            mcpKeySettings);
+            mcpKeySettings,
+            secretProtector);
 
         try
         {
@@ -219,10 +222,12 @@ public sealed class SqlExplainController(
         SqlAgentToolType dbType,
         ISqlConnectionStringFactory connectionStringFactory,
         ICryptoService cryptoService,
-        IOptions<McpKeySettings> mcpKeySettings)
+        IOptions<McpKeySettings> mcpKeySettings,
+        ISecretProtector? secretProtector)
     {
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(database.PasswordHash, hmacSecret);
+        var password = DatabasePasswordCiphertextReader.Decrypt(
+            database.PasswordHash, database.Id, cryptoService, hmacSecret, secretProtector);
         return connectionStringFactory.BuildConnectionString(
             dbType,
             new BuildDbConnectionModelBase

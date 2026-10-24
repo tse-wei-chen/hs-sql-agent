@@ -5,6 +5,7 @@ using System.Text.Json;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using Common.Models;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Models;
@@ -25,7 +26,8 @@ public class RuntimeAdminController(
     IOptions<McpKeySettings> mcpKeySettings,
     IOperabilityService operabilityService,
     IAuditRetentionService auditRetentionService,
-    ICustomSqlToolService customSqlToolService) : ControllerBase
+    ICustomSqlToolService customSqlToolService,
+    ISecretProtector? secretProtector = null) : ControllerBase
 {
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
@@ -186,7 +188,8 @@ public class RuntimeAdminController(
                 Host = dbc.Host,
                 Port = dbc.Port,
                 Username = dbc.Username,
-                Password = cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, _hmacSecret),
+                Password = DatabasePasswordCiphertextReader.Decrypt(
+                    ((DbManagementPwdVM)dbc).PasswordHash, dbc.Id, cryptoService, _hmacSecret, secretProtector),
                 Database = dbc.Database,
                 ExtraSettings = dbc.ExtraSettings
             };

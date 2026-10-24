@@ -6,6 +6,7 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Server.Tools;
@@ -595,7 +596,8 @@ internal sealed class DurableDmlApprovalLifecycle(
                 throw new DmlApprovalStaleException("The Custom DML Tool changed or was disabled after approval was requested.");
         }
 
-        var password = RequireCrypto().DecryptText(db.PasswordHash, secret);
+        var password = DatabasePasswordCiphertextReader.Decrypt(
+            db.PasswordHash, db.Id, RequireCrypto(), secret, services.GetService<ISecretProtector>());
         var connectionString = connectionStringFactory.BuildConnectionString(providerType, new BuildDbConnectionModelBase
         {
             Host = db.Host,
