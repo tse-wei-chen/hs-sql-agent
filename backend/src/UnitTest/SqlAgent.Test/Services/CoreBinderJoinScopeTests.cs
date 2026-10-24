@@ -123,6 +123,41 @@ public sealed class CoreBinderJoinScopeTests
         Assert.Contains("projected", alias.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_StreamingSearchedCaseScalarQuery_PreservesParameterOrder(
+        SqlAgentToolType provider)
+    {
+        var sql = "SELECT CASE WHEN 2 = 3 THEN ("
+            + "SELECT CASE WHEN 4 = 5 THEN (SELECT 6) ELSE 7 END"
+            + ") ELSE 8 END";
+        var command = Compile(sql, provider);
+        Assert.Equal(new long[] { 2, 3, 4, 5, 6, 7, 8 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+        Assert.Contains("CASE WHEN", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_ComplexSearchedCaseProjection_PreservesExpressionAndAliasParsing()
+    {
+        var expression = Compile(
+            "SELECT CASE WHEN 1 = 1 THEN (SELECT 9) ELSE 0 END + 2",
+            SqlAgentToolType.Postgres);
+        Assert.Equal(new long[] { 1, 1, 9, 0, 2 },
+            expression.Parameters.Select(p => Convert.ToInt64(p.Value)));
+
+        var alias = Compile(
+            "SELECT CASE WHEN 1 = 1 THEN (SELECT 9) ELSE 0 END AS selected_value",
+            SqlAgentToolType.Postgres);
+        Assert.Contains("selected_value", alias.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, provider),

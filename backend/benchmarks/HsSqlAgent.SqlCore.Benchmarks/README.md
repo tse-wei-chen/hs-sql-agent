@@ -84,9 +84,11 @@ rejections are still printed explicitly in the uploaded report.
   with and without strict typed metadata at depths 128/512/2048 on a 256-KiB
   managed stack (6/6 success and complete stage metrics). Depth-2048
   budgets: 32 MB cumulative allocation and 4 MB Renderer allocation.
-  `nested-case-scalar` remains an explicitly **unclosed** Query↔CASE Parser
-  subproblem; its 6 probes may compile or fail closed with a typed stack
-  refusal, but crashes or unexpected failures are never accepted.
+  `nested-case-scalar` is also **must-compile** with and without typed
+  metadata at 128/512/2048 on 256 KiB (6/6 success). CASE depth-2048
+  budgets: 90 MB total allocation and 30 MB rendering allocation.
+  Typed schema and policy stages must complete; stack refusals do NOT
+  satisfy the gate. Other non-linear CASE/Query shapes remain unproven.
 
 - Cross-dialect translation, huge inputs, pathological nesting, type metadata, I/O,
   and database execution are **not** measured by this initial harness.

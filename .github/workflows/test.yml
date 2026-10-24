@@ -542,9 +542,10 @@ jobs:
           import json
           with open("artifacts/sqlcore-scalar-case-small-stack-pr.json", encoding="utf-8") as source:
               report = json.load(source)
-          if report["samples"] != 12 or report["crashesOrTimeouts"] or report["unexpectedFailures"]:
-              raise SystemExit("Projection-Query worker crashed or returned an untyped failure: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["unexpectedFailures"])))
+          if (report["samples"] != 12 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("CASE and scalar Query must compile all 12/12 on 256 KiB: " + str(
+                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
           scalar_success = case_success = 0
           standard_stages = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
           for item in report["observations"]:
@@ -554,31 +555,26 @@ jobs:
               typed = shape.endswith("-typed-schema")
               stage_metrics = worker.get("stageMetrics", [])
               stages = {s["Stage"] for s in stage_metrics if s.get("Success")}
+              expected = standard_stages | ({"SchemaBinding", "SchemaType"} if typed else set())
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(stages):
+                  raise SystemExit("Projection Query must compile all proof stages: " + str(
+                      (shape, item["depth"], worker.get("diagnosticCode"), stages)))
               if scalar:
-                  # Unlike CASE's still-documented fallback, this previously
-                  # recursive ScalarSubquery chain MUST compile on 256 KiB.
-                  expected = standard_stages | ({"SchemaBinding", "SchemaType"} if typed else set())
-                  if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(stages):
-                      raise SystemExit("Scalar projection lost stack-independent success: " + str(
-                          (shape, item["depth"], worker.get("diagnosticCode"), stages)))
                   scalar_success += 1
-                  if item["depth"] == 2048:
-                      render = [s for s in stage_metrics if s["Stage"] == "Rendering"]
-                      if (not isinstance(worker.get("allocatedBytes"), int)
-                          or worker["allocatedBytes"] > 32_000_000
-                          or len(render) != 1 or render[0]["AllocatedBytes"] > 4_000_000):
-                          raise SystemExit("Scalar projection 2048 allocation budget regressed: " + shape)
-              elif worker.get("success"):
+              else:
                   case_success += 1
-                  expected = standard_stages | ({"SchemaBinding", "SchemaType"} if typed else set())
-                  if item["processExitCode"] != 0 or not expected.issubset(stages):
-                      raise SystemExit("CASE projection skipped validation: " + shape)
-              elif worker.get("diagnosticCode") != "SQL_COMPILER_STACK_RESERVE":
-                  raise SystemExit("CASE projection failed without typed stack refusal: " + shape)
+              if item["depth"] == 2048:
+                  limit = 32_000_000 if scalar else 90_000_000
+                  render_limit = 4_000_000 if scalar else 30_000_000
+                  render = [s for s in stage_metrics if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > limit
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > render_limit):
+                      raise SystemExit("Projection Query 2048 allocation budget regressed: " + shape)
               print(f"  {shape:36} depth={item['depth']:4} compiled={worker.get('success')} bytes={worker.get('allocatedBytes')} code={worker.get('diagnosticCode')}")
-          if scalar_success != 6:
-              raise SystemExit("All six scalar projection probes must compile on 256 KiB")
-          print(f"Projection Query 256 KiB: scalar compiled={scalar_success}/6; CASE compiled={case_success}/6 (unclosed R2 debt)")
+          if scalar_success != 6 or case_success != 6:
+              raise SystemExit("All scalar and CASE projection probes must compile on 256 KiB")
+          print(f"Projection Query 256 KiB: scalar compiled={scalar_success}/6; CASE compiled={case_success}/6")
           PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
