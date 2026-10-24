@@ -1987,78 +1987,120 @@ module internal RewriteParser =
         orderBy, limit, offset, fetchPercent, fetchWithTies
 
     and private parseQuery cursor =
-        RewriteStackSafety.parse cursor.Current.Start
-        let start = cursor.Current.Start
-        let ctes = parseCtes cursor
-        let head, top = parseSelectWithCtes cursor ctes
+        // SET operands form a Query graph. Parenthesized branches are
+        // scheduled onto heap continuations instead of recursively calling
+        // parseQuery once per UNION/INTERSECT/EXCEPT nesting level.
+        // Query->Expr/Source/CTE nesting is a separate traversal class.
+        let pending = ResizeArray<unit -> unit>()
+        let push action = pending.Add(action)
+        let mutable parsed = Unchecked.defaultof<Query>
 
-        let parseOperand () =
+        let rec scheduleQuery (complete: Query -> unit) =
+            push (fun () ->
+                RewriteStackSafety.parse cursor.Current.Start
+                let start = cursor.Current.Start
+                let ctes = parseCtes cursor
+                let head, top = parseSelectWithCtes cursor ctes
+                let initial: Query =
+                    { Head = head
+                      SetOperations = []
+                      OrderBy = []
+                      Limit = top
+                      Offset = None
+                      FetchPercent = None
+                      FetchWithTies = false
+                      Span = head.Span }
+                let intersects = ResizeArray<SetBranch>()
+                let lowerBranches = ResizeArray<SetBranch>()
+
+                let rec scanInitialIntersects () =
+                    if isKeyword "INTERSECT" cursor.Current then
+                        match parseSetOperator cursor with
+                        | Some operator ->
+                            scheduleOperand (fun branch ->
+                                intersects.Add { Operator = operator; Query = branch }
+                                push scanInitialIntersects)
+                        | None -> push scanLowerBranches
+                    else push scanLowerBranches
+
+                and scanLowerBranches () =
+                    if isKeyword "UNION" cursor.Current
+                       || isKeyword "EXCEPT" cursor.Current then
+                        match parseSetOperator cursor with
+                        | Some operator ->
+                            scheduleOperandWithIntersects (fun branch ->
+                                lowerBranches.Add { Operator = operator; Query = branch }
+                                push scanLowerBranches)
+                        | None -> push finish
+                    else push finish
+
+                and finish () =
+                    let orderBy, tailLimit, offset, fetchPercent, fetchWithTies =
+                        parseQueryTail cursor
+                    let limit =
+                        match initial.Limit, tailLimit with
+                        | Some value, None -> Some value
+                        | None, value -> value
+                        | Some _, Some _ ->
+                            fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
+                    complete
+                        { initial with
+                            SetOperations =
+                                (intersects |> Seq.toList) @ (lowerBranches |> Seq.toList)
+                            OrderBy = orderBy
+                            Limit = limit
+                            Offset = offset
+                            FetchPercent = fetchPercent
+                            FetchWithTies = fetchWithTies
+                            Span = parsedSpan start cursor }
+
+                push scanInitialIntersects)
+
+        and scheduleOperand (complete: Query -> unit) =
             if acceptSymbol '(' cursor then
-                let query = parseQuery cursor
-                expectSymbol ')' cursor
-                query
+                scheduleQuery (fun query ->
+                    expectSymbol ')' cursor
+                    complete query)
             else
-                let branchHead, branchTop = parseSelectWithCtes cursor []
-                { Head = branchHead
-                  SetOperations = []
-                  OrderBy = []
-                  Limit = branchTop
-                  Offset = None
-                  FetchPercent = None
-                  FetchWithTies = false
-                  Span = branchHead.Span }
+                let head, top = parseSelectWithCtes cursor []
+                complete
+                    { Head = head
+                      SetOperations = []
+                      OrderBy = []
+                      Limit = top
+                      Offset = None
+                      FetchPercent = None
+                      FetchWithTies = false
+                      Span = head.Span }
 
-        let appendIntersectChain (baseQuery: Query) =
-            let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
-            let mutable scanning = true
-            while scanning && isKeyword "INTERSECT" cursor.Current do
-                match parseSetOperator cursor with
-                | Some(SetOperator.Intersect as operator)
-                | Some(SetOperator.IntersectAll as operator) ->
-                    if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
-                        fail cursor.Current "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
-                    let branchQuery = parseOperand ()
-                    branches.Add { Operator = operator; Query = branchQuery }
-                | _ -> scanning <- false
-            { baseQuery with SetOperations = branches |> Seq.toList }
+        and scheduleOperandWithIntersects (complete: Query -> unit) =
+            scheduleOperand (fun baseQuery ->
+                let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
+                let rec scanIntersects () =
+                    if isKeyword "INTERSECT" cursor.Current then
+                        match parseSetOperator cursor with
+                        | Some(SetOperator.Intersect as operator)
+                        | Some(SetOperator.IntersectAll as operator) ->
+                            if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
+                                fail cursor.Current
+                                    "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
+                            scheduleOperand (fun branch ->
+                                branches.Add { Operator = operator; Query = branch }
+                                push scanIntersects)
+                        | _ ->
+                            complete { baseQuery with SetOperations = branches |> Seq.toList }
+                    else
+                        complete { baseQuery with SetOperations = branches |> Seq.toList }
+                push scanIntersects)
 
-        let initial =
-            { Head = head
-              SetOperations = []
-              OrderBy = []
-              Limit = top
-              Offset = None
-              FetchPercent = None
-              FetchWithTies = false
-              Span = head.Span }
-            |> appendIntersectChain
-
-        let lowerBranches = ResizeArray<SetBranch>()
-        let mutable scanning = true
-        while scanning do
-            if isKeyword "UNION" cursor.Current || isKeyword "EXCEPT" cursor.Current then
-                match parseSetOperator cursor with
-                | Some operator ->
-                    let branchQuery = parseOperand () |> appendIntersectChain
-                    lowerBranches.Add { Operator = operator; Query = branchQuery }
-                | None -> scanning <- false
-            else
-                scanning <- false
-
-        let orderBy, tailLimit, offset, fetchPercent, fetchWithTies = parseQueryTail cursor
-        let limit =
-            match initial.Limit, tailLimit with
-            | Some value, None -> Some value
-            | None, value -> value
-            | Some _, Some _ -> fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
-        { initial with
-            SetOperations = initial.SetOperations @ (lowerBranches |> Seq.toList)
-            OrderBy = orderBy
-            Limit = limit
-            Offset = offset
-            FetchPercent = fetchPercent
-            FetchWithTies = fetchWithTies
-            Span = parsedSpan start cursor }
+        scheduleQuery (fun query -> parsed <- query)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let task = pending.[last]
+            pending.RemoveAt(last)
+            task ()
+        parsed
 
     and private ensureUniqueInsertColumns (cursor: Cursor) (columns: IdentifierPart list) =
         let seen = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)

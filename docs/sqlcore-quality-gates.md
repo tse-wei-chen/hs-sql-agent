@@ -1218,3 +1218,18 @@ The CLR→F# SET converter explicitly validates each branch operator
 error-precedence contract), while still resolving sibling branches in
 source order. Both conversion directions preserve the SELECT-head-first
 order and the existing capability fence.
+
+### Parenthesized SET parser heap scheduler (R2)
+
+The source parser's parenthesized SET branch graph now schedules
+`parseQuery`, operands, INTERSECT-precedence chains and query tails
+on a heap continuation work list rather than recursing once per
+parenthesized UNION/EXCEPT/INTERSECT. Each query keeps its own original
+start span, SELECT-head/TOP semantics, branch ordering and per-level
+ORDER BY/OFFSET/FETCH. Crucially a nested operand is fully parsed and
+its closing `)` consumed before the parent may attach following
+INTERSECT, matching the original precedence and first-error order.
+512-layer source parsing is checked independently for **all six dialects**,
+with a parenthesized local ORDER BY + following INTERSECT rejection.
+Mixed Parser Query→Expression, derived/LATERAL source and CTE-body
+recursion is **still open**; only nested SET operands are claimed here.

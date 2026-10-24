@@ -18,6 +18,33 @@ public sealed class CoreSqlNestedExpressionStressTests
 
     [Theory]
     [MemberData(nameof(SourceDialects))]
+    public void DeepNestedSetOperands_ParseOnHeapForAllSixSourceDialects(
+        SqlAgentToolType dialect)
+    {
+        // Parsing must no longer call parseQuery recursively for every
+        // parenthesized SET operand. Dialect target capability is a separate
+        // concern; this exercise is deliberately limited to the parser API.
+        const int depth = 512;
+        var sql = "SELECT 1";
+        for (var level = 2; level <= depth; level++)
+            sql = $"SELECT {level} UNION ({sql})";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        Assert.NotNull(parsed.Statement);
+    }
+
+    [Fact]
+    public void NestedSetOperand_RejectsLocalOrderByBeforeFollowingIntersect()
+    {
+        const string sql =
+            "SELECT 1 UNION (SELECT 2 ORDER BY 1) INTERSECT SELECT 3";
+        var error = Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres));
+        Assert.Contains("ORDER BY/OFFSET", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
     public void DeepRedundantGrouping_CompilesWithoutRecursiveDescent(
         SqlAgentToolType dialect)
     {
