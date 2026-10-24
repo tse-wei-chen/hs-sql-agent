@@ -455,8 +455,8 @@ module internal RewriteSchemaValidation =
         // Multi-CTE, SET and derived-source shapes use the full proof path.
         and queryColumns catalog ctes parent (query: Query) =
             let action () = queryColumnsCore catalog ctes parent query
-            if RewriteAstTraversal.isTerminalQuery query then
-                evaluator.EvaluateTerminal action
+            if RewriteAstTraversal.isLocalQuery query then
+                evaluator.EvaluateLocal action
             else evaluator.Evaluate(action, false)
 
         and queryColumnsCore catalog ctes parent (query: Query) =

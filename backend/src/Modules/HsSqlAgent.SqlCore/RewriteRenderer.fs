@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Collections.Generic
+open System.Collections.Immutable
 open System.Text
 open System.Text.RegularExpressions
 open HsSqlAgent.SqlCore.Core.Compilation
@@ -25,12 +26,42 @@ module internal RewriteRenderer =
     [<Literal>]
     let private MaxRenderedSqlWorkLength = 134217728L // aggregate appended UTF-16 units
 
+    type private BindingState =
+        ImmutableList<obj | null> * ImmutableDictionary<string, string * (obj | null)> * string option * int
+
+    type private RenderFrame(action: unit -> obj | null, start: BindingState) =
+        let children = ResizeArray<RenderFrame>()
+        member _.Run() = action ()
+        member _.Start = start
+        member _.Children = children
+        member val NextChild = 0 with get, set
+        member val Result: ((obj | null) * BindingState) voption = ValueNone with get, set
+
+    type private RenderSuspension(owner: obj, frame: RenderFrame) =
+        inherit Exception()
+        member _.Owner = owner
+        member _.Frame = frame
+
     type private RenderContext(provider: Provider, targetRuntime: TargetRuntime, sourceSpan: Span) =
-        let parameters = ResizeArray<obj | null>()
-        let sharedParameters = Dictionary<string, string * (obj | null)>(StringComparer.Ordinal)
+        let mutable parameters = ImmutableList<obj | null>.Empty
+        let mutable sharedParameters = ImmutableDictionary.Create<string, string * (obj | null)>(StringComparer.Ordinal)
         let mutable sharedScope: string option = None
         let mutable sharedOrdinal = 0
         let mutable appendedWork = 0L
+        let owner = obj ()
+        let mutable driving = false
+        let mutable current: RenderFrame option = None
+        let mutable inlineDepth = 0
+        let mutable localQuery: Query option = None
+        // Structural eligibility only: no SQL, scopes or bindings are cached
+        // by Query identity. Emission results remain occurrence-specific.
+        let localQueryProofs = Dictionary<Query, bool>(HashIdentity.Reference)
+        let capture () : BindingState = parameters, sharedParameters, sharedScope, sharedOrdinal
+        let restore (values, shared, scope, ordinal) =
+            parameters <- values
+            sharedParameters <- shared
+            sharedScope <- scope
+            sharedOrdinal <- ordinal
 
         let failBudget code detail : 'T =
             let location =
@@ -55,6 +86,7 @@ module internal RewriteRenderer =
         member _.TargetRuntime = targetRuntime
 
         member this.Bind(value: obj | null) =
+            RewriteResourceBudget.checkpoint ()
             match sharedScope with
             | Some scope ->
                 let key = scope + ":" + string sharedOrdinal
@@ -62,10 +94,11 @@ module internal RewriteRenderer =
                 this.BindShared(key, value)
             | None ->
                 let name = parameterName parameters.Count
-                parameters.Add(value)
+                parameters <- parameters.Add(value)
                 name
 
         member _.BindShared(key: string, value: obj | null) =
+            RewriteResourceBudget.checkpoint ()
             match sharedParameters.TryGetValue(key) with
             | true, (name, existing) ->
                 if not (Object.Equals(existing, value)) then
@@ -74,8 +107,8 @@ module internal RewriteRenderer =
                 name
             | false, _ ->
                 let name = parameterName parameters.Count
-                parameters.Add(value)
-                sharedParameters.Add(key, (name, value))
+                parameters <- parameters.Add(value)
+                sharedParameters <- sharedParameters.Add(key, (name, value))
                 name
 
         member _.WithSharedBindings(scope: string, action: unit -> 'T) : 'T =
@@ -89,6 +122,92 @@ module internal RewriteRenderer =
                 sharedOrdinal <- previousOrdinal
 
         member _.Parameters = parameters |> Seq.toList
+
+        /// Resume rendering at occurrence boundaries. Persistent binding
+        /// snapshots make retries deterministic without retaining/copying an
+        /// accumulated parameter array at every Query depth. Work/allocation
+        /// budgets are never rolled back along with semantic binding state.
+        member this.ResolveLocal(action: unit -> 'T) : 'T =
+            let previousCurrent = current
+            let previousDriving = driving
+            let previousDepth = inlineDepth
+            driving <- false
+            try this.Resolve(action, false)
+            finally
+                current <- previousCurrent
+                driving <- previousDriving
+                inlineDepth <- previousDepth
+
+        member this.ResolveQuery(query: Query, action: unit -> 'T) : 'T =
+            let isLocal () =
+                match localQueryProofs.TryGetValue query with
+                | true, value -> value
+                | _ ->
+                    let value = RewriteAstTraversal.isLocalQuery query
+                    localQueryProofs.Add(query, value)
+                    value
+            match localQuery with
+            | Some active when Object.ReferenceEquals(active, query) -> action ()
+            | _ when isLocal () ->
+                let previous = localQuery
+                localQuery <- Some query
+                try this.ResolveLocal action
+                finally localQuery <- previous
+            | _ -> this.Resolve(action, false)
+
+        member _.Resolve(action: unit -> 'T, inlineAllowed: bool) : 'T =
+            RewriteResourceBudget.checkpoint ()
+            if driving && inlineAllowed && inlineDepth < 4 then
+                inlineDepth <- inlineDepth + 1
+                try action ()
+                finally inlineDepth <- inlineDepth - 1
+            elif driving then
+                let parent = Option.get current
+                let index = parent.NextChild
+                parent.NextChild <- index + 1
+                let child =
+                    if index < parent.Children.Count then parent.Children.[index]
+                    else
+                        let frame = RenderFrame((fun () -> box (action ())), capture ())
+                        parent.Children.Add frame
+                        frame
+                match child.Result with
+                | ValueSome(value, finish) -> restore finish; unbox<'T> value
+                | ValueNone -> raise (RenderSuspension(owner, child))
+            else
+                let root = RenderFrame((fun () -> box (action ())), capture ())
+                let pending = ResizeArray<RenderFrame>()
+                pending.Add root
+                driving <- true
+                try
+                    while pending.Count > 0 do
+                        RewriteResourceBudget.checkpoint ()
+                        let last = pending.Count - 1
+                        let frame = pending.[last]
+                        current <- Some frame
+                        inlineDepth <- 0
+                        frame.NextChild <- 0
+                        restore frame.Start
+                        try
+                            let value = frame.Run()
+                            frame.Result <- ValueSome(value, capture ())
+                            pending.RemoveAt last
+                        with :? RenderSuspension as suspension
+                            when Object.ReferenceEquals(owner, suspension.Owner) ->
+                            pending.Add suspension.Frame
+                    match root.Result with
+                    | ValueSome(value, finish) -> restore finish; unbox<'T> value
+                    | ValueNone -> invalidOp "Renderer continuation did not produce a document."
+                finally
+                    current <- None
+                    driving <- false
+                    inlineDepth <- 0
+
+        member _.CheckDocumentLength(length: int64) =
+            RewriteResourceBudget.checkpoint ()
+            if length > int64 MaxRenderedSqlLength then
+                failBudget "SQL_COMPILER_RENDERED_OUTPUT_LIMIT"
+                    ("Rendered SQL exceeds the maximum " + string MaxRenderedSqlLength + " UTF-16 code units.")
 
         // The limit is checked BEFORE StringBuilder grows, so a huge
         // intermediate buffer cannot allocate above the rendered-SQL cap.
@@ -107,27 +226,111 @@ module internal RewriteRenderer =
                      + string MaxRenderedSqlWorkLength + " appended UTF-16 code units.")
             appendedWork <- appendedWork + int64 addedLength
 
-    // Check each write before allocation instead of rejecting only after
-    // materializing a full (possibly transient) SQL fragment.
-    type private RenderBuffer(ctx: RenderContext, initial: string) =
+    /// SQL documents compose by reference. No parent Query materializes a
+    /// child's complete SQL text; only the final bounded emitter copies text.
+    type private SqlDocument(ctx: RenderContext, node: SqlDocumentNode, length: int) =
+        member _.Context = ctx
+        member _.Node = node
+        member _.Length = length
+        member this.Substring(start: int) =
+            if start < 0 || start > length then invalidArg "start" "Invalid SQL document slice."
+            RewriteResourceBudget.checkpoint ()
+            SqlDocument(ctx, DocumentSlice(this, start), length - start)
+        static member ReservedText(ctx: RenderContext, value: string) =
+            ctx.CheckDocumentLength(int64 value.Length)
+            SqlDocument(ctx, DocumentText value, value.Length)
+        static member Text(ctx: RenderContext, value: string) =
+            ctx.CheckAppend(0, value.Length)
+            SqlDocument(ctx, DocumentText value, value.Length)
+        static member Sequence(ctx: RenderContext, values: SqlDocument array) =
+            let mutable length = 0L
+            for value in values do
+                length <- length + int64 value.Length
+                ctx.CheckDocumentLength length
+            SqlDocument(ctx, DocumentSequence values, int length)
+    and private SqlDocumentNode =
+        | DocumentText of string
+        | DocumentSequence of SqlDocument array
+        | DocumentSlice of SqlDocument * int
+
+    let private doc ctx value = SqlDocument.Text(ctx, value)
+    let private addDocument ctx (left: obj) (right: obj) =
+        let convert (value: obj) =
+            match value with
+            | :? SqlDocument as value -> value
+            | :? string as value -> doc ctx value
+            | _ -> invalidOp "Only SQL documents/text can be concatenated."
+        SqlDocument.Sequence(ctx, [| convert left; convert right |])
+    let private joinDocuments ctx separator (items: seq<SqlDocument>) =
+        let parts = ResizeArray<SqlDocument>()
+        for item in items do
+            if parts.Count > 0 then parts.Add(doc ctx separator)
+            parts.Add item
+        SqlDocument.Sequence(ctx, parts.ToArray())
+
+    type private RenderBuffer(ctx: RenderContext, initial: SqlDocument) =
+        let parts = ResizeArray<SqlDocument>()
+        let mutable length = 0L
+        do parts.Add initial; length <- int64 initial.Length
+        new(ctx, initial: string) = RenderBuffer(ctx, doc ctx initial)
+        member this.Append(value: SqlDocument) =
+            ctx.CheckDocumentLength(length + int64 value.Length)
+            parts.Add value
+            length <- length + int64 value.Length
+            this
+        member this.Append(value: string) = this.Append(doc ctx value)
+        member this.Append(value: char) = this.Append(doc ctx (string value))
+        member _.ToDocument() = SqlDocument.Sequence(ctx, parts.ToArray())
+
+    let private emitDocument (ctx: RenderContext) (root: SqlDocument) =
         let output = StringBuilder()
-        do
-            ctx.CheckAppend(0, initial.Length)
-            output.Append(initial) |> ignore
+        let pending = ResizeArray<struct (SqlDocument * int * int)>()
+        pending.Add(struct (root, 0, root.Length))
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let struct (current, start, length) = pending.[last]
+            pending.RemoveAt last
+            match current.Node with
+            | DocumentText value ->
+                ctx.CheckAppend(output.Length, length)
+                output.Append(value, start, length) |> ignore
+            | DocumentSlice(inner, offset) -> pending.Add(struct (inner, start + offset, length))
+            | DocumentSequence values ->
+                let mutable childEnd = current.Length
+                for index = values.Length - 1 downto 0 do
+                    let child = values.[index]
+                    let childStart = childEnd - child.Length
+                    let lower = max start childStart
+                    let upper = min (start + length) childEnd
+                    if upper > lower then pending.Add(struct (child, lower - childStart, upper - lower))
+                    childEnd <- childStart
+        ctx.CheckAppend(0, output.Length)
+        output.ToString()
 
-        member this.Append(value: string) =
-            ctx.CheckAppend(output.Length, value.Length)
-            output.Append(value) |> ignore
-            this
+    let private messageText ctx (message: obj) =
+        match message with
+        | :? string as value -> value
+        | :? SqlDocument as value -> emitDocument ctx value
+        | _ -> invalidOp "Compiler diagnostic message must be text."
 
-        member this.Append(value: char) =
-            ctx.CheckAppend(output.Length, 1)
-            output.Append(value) |> ignore
-            this
-
-        override _.ToString() = output.ToString()
-
-    let private quotePart provider (part: IdentifierPart) =
+    let private invalidDocument ctx message = invalidOp (messageText ctx message)
+    let private quotePart (ctx: RenderContext) (part: IdentifierPart) =
+        let provider = ctx.Provider
+        let value = part.Value
+        ctx.CheckDocumentLength(int64 value.Length + 2L)
+        let escaped = match provider with MySql -> '`' | SqlServer -> ']' | _ -> '"'
+        let mutable length = int64 value.Length + 2L
+        let mutable index = 0
+        while index < value.Length do
+            let finish = min value.Length (index + 256)
+            RewriteResourceBudget.charge (int64 (finish - index))
+            for position = index to finish - 1 do
+                if value.[position] = escaped then length <- length + 1L
+            ctx.CheckDocumentLength length
+            index <- finish
+        // Reserve copied identifier text before case folding / escaping.
+        ctx.CheckAppend(0, int length)
         let raw =
             if part.WasQuoted || part.PreserveSpelling then part.Value
             else
@@ -135,25 +338,59 @@ module internal RewriteRenderer =
                 | PostgreSql -> part.Value.ToLowerInvariant()
                 | Oracle | Firebird -> part.Value.ToUpperInvariant()
                 | _ -> part.Value
-        match provider with
-        | MySql -> "`" + raw.Replace("`", "``") + "`"
-        | SqlServer -> "[" + raw.Replace("]", "]]" ) + "]"
-        | _ -> "\"" + raw.Replace("\"", "\"\"") + "\""
+        let quoted =
+            match provider with
+            | MySql -> "`" + raw.Replace("`", "``") + "`"
+            | SqlServer -> "[" + raw.Replace("]", "]]" ) + "]"
+            | _ -> "\"" + raw.Replace("\"", "\"\"") + "\""
+        SqlDocument.ReservedText(ctx, quoted)
 
-    let private renderIdentifier provider identifier = identifier |> Identifier.parts |> List.map (quotePart provider) |> String.concat "."
-    let private renderAlias provider alias = quotePart provider alias
+    let private renderIdentifier ctx identifier =
+        identifier |> Identifier.parts |> List.map (quotePart ctx) |> joinDocuments ctx "."
+    let private renderAlias ctx alias = quotePart ctx alias
 
-    let private renderFunctionName provider functionName =
+    let private renderFunctionName (ctx: RenderContext) functionName =
         functionName
         |> FunctionName.parts
         |> List.map (fun part ->
-            if part.WasQuoted || part.PreserveSpelling then
-                quotePart provider part
+            if part.WasQuoted || part.PreserveSpelling then quotePart ctx part
             else
-                match provider with
-                | PostgreSql | Oracle | Firebird -> part.Value.ToUpperInvariant()
-                | MySql | SqlServer | SQLite -> part.Value)
-        |> String.concat "."
+                ctx.CheckAppend(0, part.Value.Length)
+                let value =
+                    match ctx.Provider with
+                    | PostgreSql | Oracle | Firebird -> part.Value.ToUpperInvariant()
+                    | MySql | SqlServer | SQLite -> part.Value
+                SqlDocument.ReservedText(ctx, value))
+        |> joinDocuments ctx "."
+    let private quoteSqlLiteral (ctx: RenderContext) (value: string) =
+        ctx.CheckDocumentLength(int64 value.Length + 2L)
+        let mutable quotedLength = int64 value.Length + 2L
+        let mutable needsHex = false
+        let mutable index = 0
+        while index < value.Length do
+            let finish = min value.Length (index + 256)
+            RewriteResourceBudget.charge (int64 (finish - index))
+            for position = index to finish - 1 do
+                let character = value.[position]
+                if character = '\'' then quotedLength <- quotedLength + 1L
+                if character = '\\' || Char.IsControl(character) then needsHex <- true
+            ctx.CheckDocumentLength quotedLength
+            index <- finish
+        if ctx.Provider = MySql && needsHex then
+            ctx.CheckDocumentLength(2L + 2L * int64 value.Length)
+            let byteCount = Encoding.UTF8.GetByteCount(value)
+            let length = 2L + 2L * int64 byteCount
+            ctx.CheckDocumentLength length
+            ctx.CheckAppend(0, int length - 2)
+            ctx.CheckAppend(0, int length)
+            let bytes = Encoding.UTF8.GetBytes(value)
+            SqlDocument.ReservedText(ctx, String.Concat("0x", Convert.ToHexString(bytes)))
+        else
+            if quotedLength > int64 value.Length + 2L then
+                ctx.CheckAppend(0, int quotedLength - 2)
+            ctx.CheckAppend(0, int quotedLength)
+            SqlDocument.ReservedText(ctx, String.Concat("'", value.Replace("'", "''", StringComparison.Ordinal), "'"))
+
     let private tableAliasPrefix = function Oracle -> " " | _ -> " AS "
     let private providerName = function
         | PostgreSql -> "Postgres"
@@ -370,16 +607,25 @@ module internal RewriteRenderer =
         | FinishMixedJoinedLateral of outer: Query * preceding: TableSource * alias: IdentifierPart * onPredicate: Expr
         | FinishMixedPrefixedJoinedLateral of outer: Query * preceding: TableSource * earlier: Join list * alias: IdentifierPart * onPredicate: Expr
 
-    let rec private renderExpr (ctx: RenderContext) expression =
+    let rec private renderExpr (ctx: RenderContext) expression : SqlDocument =
+        let plain = Expr.unspan expression
+        match plain with
+        | Column _ | BoundColumn _ | Literal _ | Wildcard _ | OrderOrdinal _ | Interval _ ->
+            renderExprCore ctx plain
+        | _ -> ctx.Resolve((fun () -> renderExprCore ctx plain), true)
+
+    and private renderExprCore (ctx: RenderContext) expression : SqlDocument =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
         | Expr.Spanned _ -> renderExpr ctx (Expr.unspan expression)
         | Expr.Column identifier
-        | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx.Provider identifier
-        | Expr.Wildcard None -> "*"
-        | Expr.Wildcard(Some identifier) -> renderIdentifier ctx.Provider identifier + ".*"
-        | Expr.OrderOrdinal ordinal -> string (PositiveRowCount.value ordinal)
-        | Expr.Literal value -> renderLiteral ctx value
+        | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx identifier
+        | Expr.Wildcard None -> doc ctx "*"
+        | Expr.Wildcard(Some identifier) -> renderIdentifier ctx identifier + ".*"
+        | Expr.OrderOrdinal ordinal -> doc ctx (string (PositiveRowCount.value ordinal))
+        | Expr.Literal value -> doc ctx (renderLiteral ctx value)
         | Expr.Interval literal ->
             match ctx.Provider with
             | PostgreSql -> "CAST(" + ctx.Bind(box (IntervalLiteral.value literal)) + " AS interval)"
@@ -526,16 +772,16 @@ module internal RewriteRenderer =
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
         | Expr.Cast _ | Expr.Extract _ -> renderScalarGraph ctx expression
         | Expr.SimpleCase(input, branches, fallback) ->
-            let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
-            "CASE " + renderExpr ctx input + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
+            let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> joinDocuments ctx ""
+            "CASE " + renderExpr ctx input + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue (doc ctx "")) + " END"
         | Expr.SearchedCase(branches, fallback) ->
             let cases =
                 branches
                 |> NonEmpty.toList
                 |> List.map (fun branch ->
                     " WHEN " + renderPredicate ctx branch.Condition + " THEN " + renderExpr ctx branch.Result)
-                |> String.concat ""
-            "CASE" + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
+                |> joinDocuments ctx ""
+            "CASE" + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue (doc ctx "")) + " END"
         | Expr.InList _ -> renderScalarGraph ctx expression
         | Expr.InSubquery(value, query, negated) ->
             "(" + renderExpr ctx value
@@ -566,7 +812,7 @@ module internal RewriteRenderer =
                     | [ { Alias = None; Expression = value } ] ->
                         match Expr.unspan value with
                         | Expr.ScalarSubquery child ->
-                            wrappers <- wrappers + 1
+                            wrappers <- Operators.(+) wrappers 1
                             current <- child
                         | _ -> scanning <- false
                     | _ -> scanning <- false
@@ -585,7 +831,7 @@ module internal RewriteRenderer =
                 for _ in 1 .. wrappers do
                     builder.Append(')').Append(dummySource) |> ignore
                 builder.Append(')') |> ignore
-                builder.ToString()
+                builder.ToDocument()
         | Expr.Exists(query, negated) ->
             renderExistsQueryChain ctx query negated
 
@@ -599,6 +845,8 @@ module internal RewriteRenderer =
     // set branch, paging tail, non-EXISTS predicate, or richer SELECT returns
     // to the original provider-aware renderSubquery path.
     and private renderExistsQueryChain (ctx: RenderContext) query negated =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let dummyFrom =
             match ctx.Provider with
             | Oracle -> " FROM DUAL"
@@ -641,10 +889,10 @@ module internal RewriteRenderer =
                           .Append("SELECT ")
                           .Append(renderExpr ctx projected) |> ignore
                     match source with
-                    | Some named -> output.Append(" FROM ").Append((renderSource ctx named) : string) |> ignore
+                    | Some named -> output.Append(" FROM ").Append((renderSource ctx named) : SqlDocument) |> ignore
                     | None -> output.Append(dummyFrom) |> ignore
                     output.Append(" WHERE ") |> ignore
-                    levels <- levels + 1
+                    levels <- Operators.(+) levels 1
                     current <- child
                     currentNegated <- innerNegated
                 | None -> wrapping <- false
@@ -652,15 +900,20 @@ module internal RewriteRenderer =
                   .Append(renderSubquery ctx current)
                   .Append(')') |> ignore
             for _ in 1 .. levels do output.Append(')') |> ignore
-            output.ToString()
+            output.ToDocument()
 
-    and private renderPredicate (ctx: RenderContext) expression =
+    and private renderPredicate (ctx: RenderContext) expression : SqlDocument =
+        ctx.Resolve((fun () -> renderPredicateCore ctx (Expr.unspan expression)), true)
+
+    and private renderPredicateCore (ctx: RenderContext) expression : SqlDocument =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         match ctx.Provider with
         | Oracle | SqlServer ->
             match expression with
             | Spanned(_, inner) -> renderPredicate ctx inner
-            | Literal(ScalarValue.Boolean true) -> "(1 = 1)"
-            | Literal(ScalarValue.Boolean false) -> "(1 = 0)"
+            | Literal(ScalarValue.Boolean true) -> doc ctx "(1 = 1)"
+            | Literal(ScalarValue.Boolean false) -> doc ctx "(1 = 0)"
             | Unary(UnaryOperator.Not, operand) ->
                 "NOT (" + renderPredicate ctx operand + ")"
             | Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
@@ -672,11 +925,11 @@ module internal RewriteRenderer =
                     |> List.map (fun branch ->
                         " WHEN " + renderExpr ctx branch.Match
                         + " THEN " + renderBooleanTruthValue branch.Result)
-                    |> String.concat ""
+                    |> joinDocuments ctx ""
                 let otherwise =
                     fallback
                     |> Option.map (fun value -> " ELSE " + renderBooleanTruthValue value)
-                    |> Option.defaultValue ""
+                    |> Option.defaultValue (doc ctx "")
                 "(CASE " + renderExpr ctx input + cases + otherwise + " END = 1)"
             | SearchedCase(branches, fallback) when isBooleanExpression expression ->
                 let cases =
@@ -685,11 +938,11 @@ module internal RewriteRenderer =
                     |> List.map (fun branch ->
                         " WHEN " + renderPredicate ctx branch.Condition
                         + " THEN " + renderBooleanTruthValue branch.Result)
-                    |> String.concat ""
+                    |> joinDocuments ctx ""
                 let otherwise =
                     fallback
                     |> Option.map (fun value -> " ELSE " + renderBooleanTruthValue value)
-                    |> Option.defaultValue ""
+                    |> Option.defaultValue (doc ctx "")
                 "(CASE" + cases + otherwise + " END = 1)"
             | _ -> renderExpr ctx expression
         | PostgreSql | MySql | SQLite | Firebird ->
@@ -702,7 +955,7 @@ module internal RewriteRenderer =
     // per-node option allocations or managed recursion is needed.
     and private renderBooleanGraph
         (ctx: RenderContext)
-        (renderLeaf: RenderContext -> Expr -> string)
+        (renderLeaf: RenderContext -> Expr -> SqlDocument)
         expression =
         let pending = ResizeArray<struct (BinaryOperator * Expr * bool)>()
         let builder = RenderBuffer(ctx, "")
@@ -730,7 +983,7 @@ module internal RewriteRenderer =
                     builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
                     current <- right
                     visiting <- true
-        builder.ToString()
+        builder.ToDocument()
 
     // Preserve exact nested parentheses and left-to-right parameter
     // binding while avoiding depth-proportional recursion and intermediate
@@ -798,7 +1051,7 @@ module internal RewriteRenderer =
                     when ctx.Provider = Oracle ->
                     // Oracle expands operands more than once; renderExpr
                     // caches them in the special-case branch above.
-                    append (renderExpr ctx original)
+                    output.Append(renderExpr ctx original) |> ignore
                 | Expr.Binary(op, left, right) ->
                     match op, ctx.Provider, ctx.TargetRuntime with
                     | BinaryOperator.Modulo, (Oracle | Firebird), _ ->
@@ -925,18 +1178,20 @@ module internal RewriteRenderer =
                     // Functions, CASE, windows and Query bodies still have
                     // their specialized semantic/parameter pathways. Only
                     // non-compositional leaves are delegated.
-                    append (renderExpr ctx original)
-        output.ToString()
+                    output.Append(renderExpr ctx original) |> ignore
+        output.ToDocument()
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        let nativeName = renderFunctionName ctx call.Name
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
         let dispatchName =
             if FunctionName.hasQuotedParts call.Name then String.Empty
             else name
-        let nativeName = renderFunctionName ctx.Provider call.Name
         let tool = providerTool ctx.Provider
 
-        let fail message = raise (SqlCompilationException(message))
+        let fail message = raise (SqlCompilationException(messageText ctx message))
         let requireCount count =
             if call.Arguments.Length <> count then
                 fail ("Canonical function '" + name + "' requires " + string count + " argument(s).")
@@ -954,11 +1209,7 @@ module internal RewriteRenderer =
 
         let sqlStringLiteral expression label =
             let value = literalText label expression
-            if ctx.Provider = MySql
-               && value |> Seq.exists (fun character -> character = '\\' || Char.IsControl(character)) then
-                "0x" + Convert.ToHexString(Encoding.UTF8.GetBytes(value))
-            else
-                "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'"
+            quoteSqlLiteral ctx value
 
         let renderOrdinary () =
             if dispatchName.StartsWith("CORE_", StringComparison.OrdinalIgnoreCase) then
@@ -972,7 +1223,7 @@ module internal RewriteRenderer =
                     if ctx.Provider = PostgreSql && dispatchName = "ROUND" && call.Arguments.Length = 2 && index = 0 then
                         "CAST(" + sql + " AS numeric)"
                     else sql)
-            let args = String.concat ", " rendered
+            let args = joinDocuments ctx ", " rendered
             nativeName + "(" + (if call.IsDistinct then "DISTINCT " else "") + args + ")"
 
         match dispatchName with
@@ -1002,7 +1253,7 @@ module internal RewriteRenderer =
             | message -> fail message
             let value = renderExpr ctx call.Arguments[0]
             let formatValue = literalText "date format" call.Arguments[1]
-            let format = ctx.BindShared("date-format:" + formatValue, box formatValue)
+            let format = ctx.BindShared(String.Concat("date-format:", formatValue), box formatValue)
             match ctx.Provider with
             | SqlServer -> "FORMAT(" + value + ", " + format + ")"
             | PostgreSql
@@ -1025,7 +1276,7 @@ module internal RewriteRenderer =
             | message -> fail message
             let value = renderExpr ctx call.Arguments[0]
             let formatValue = literalText "date parse format" call.Arguments[1]
-            let format = ctx.BindShared("date-parse-format:" + formatValue, box formatValue)
+            let format = ctx.BindShared(String.Concat("date-parse-format:", formatValue), box formatValue)
             match ctx.Provider with
             | MySql -> "DATE(STR_TO_DATE(" + value + ", " + format + "))"
             | PostgreSql
@@ -1072,8 +1323,8 @@ module internal RewriteRenderer =
                 | PostgreSql ->
                     let placeholders =
                         JsonPath.postgresSegments parsedPath
-                        |> List.map (fun segment -> ctx.Bind(box segment))
-                        |> String.concat ", "
+                        |> List.map (fun segment -> doc ctx (ctx.Bind(box segment)))
+                        |> joinDocuments ctx ", "
                     "JSONB_EXTRACT_PATH(CAST(" + value + " AS jsonb), " + placeholders + ")"
                 | _ -> fail "JSON_EXTRACT is not supported losslessly by this provider."
             else
@@ -1098,26 +1349,26 @@ module internal RewriteRenderer =
         | "CORE_CURRENT_DATE" ->
             requireCount 0
             if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_DATE' cannot be DISTINCT."
-            if ctx.Provider = SqlServer then "CAST(CURRENT_TIMESTAMP AS date)" else "CURRENT_DATE"
+            doc ctx (if ctx.Provider = SqlServer then "CAST(CURRENT_TIMESTAMP AS date)" else "CURRENT_DATE")
 
         | "CORE_CURRENT_TIME" ->
             requireCount 0
             if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_TIME' cannot be DISTINCT."
             if ctx.Provider = Oracle then fail "CURRENT_TIME is not supported by Oracle."
-            elif ctx.Provider = SqlServer then "CAST(CURRENT_TIMESTAMP AS time)"
-            else "CURRENT_TIME"
+            elif ctx.Provider = SqlServer then doc ctx "CAST(CURRENT_TIMESTAMP AS time)"
+            else doc ctx "CURRENT_TIME"
 
         | "CORE_CURRENT_TIMESTAMP" ->
             requireCount 0
             if call.IsDistinct then fail "Canonical current temporal function 'CORE_CURRENT_TIMESTAMP' cannot be DISTINCT."
-            "CURRENT_TIMESTAMP"
+            doc ctx "CURRENT_TIMESTAMP"
 
         | "CORE_ORACLE_SYSDATE" ->
             requireCount 0
             if call.IsDistinct then fail "Oracle SYSDATE cannot be DISTINCT."
             if ctx.Provider <> Oracle then
                 fail ("SQL capability 'function.oracle_sysdate' is native-only and cannot render for provider " + string (providerTool ctx.Provider) + ".")
-            "SYSDATE"
+            doc ctx "SYSDATE"
 
         | "CORE_STRING_AGG" ->
             requireCount 2
@@ -1125,7 +1376,7 @@ module internal RewriteRenderer =
             let value = renderExpr ctx call.Arguments[0]
             let separator =
                 if ctx.Provider = PostgreSql || ctx.Provider = SqlServer then
-                    ctx.Bind(box (literalText "string aggregate separator" call.Arguments[1]))
+                    doc ctx (ctx.Bind(box (literalText "string aggregate separator" call.Arguments[1])))
                 else
                     sqlStringLiteral call.Arguments[1] "string aggregate separator"
             let ordering =
@@ -1133,7 +1384,7 @@ module internal RewriteRenderer =
                 else
                     call.AggregateOrderBy
                     |> List.collect (renderOrderBy ctx false)
-                    |> String.concat ", "
+                    |> joinDocuments ctx ", "
                     |> fun sql -> Some("ORDER BY " + sql)
             match ordering, ctx.Provider with
             | Some order, PostgreSql -> "STRING_AGG(" + value + ", " + separator + " " + order + ")"
@@ -1152,16 +1403,20 @@ module internal RewriteRenderer =
         | _ -> renderOrdinary ()
 
     and private renderWindow (ctx: RenderContext) window =
-        let parts = ResizeArray<string>()
-        if not window.PartitionBy.IsEmpty then parts.Add("PARTITION BY " + (window.PartitionBy |> List.map (renderExpr ctx) |> String.concat ", "))
-        if not window.OrderBy.IsEmpty then parts.Add("ORDER BY " + (window.OrderBy |> List.map (renderOrderBy ctx false) |> List.collect id |> String.concat ", "))
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        let parts = ResizeArray<SqlDocument>()
+        if not window.PartitionBy.IsEmpty then parts.Add("PARTITION BY " + (window.PartitionBy |> List.map (renderExpr ctx) |> joinDocuments ctx ", "))
+        if not window.OrderBy.IsEmpty then parts.Add("ORDER BY " + (window.OrderBy |> List.map (renderOrderBy ctx false) |> List.collect id |> joinDocuments ctx ", "))
         window.Frame |> Option.iter (fun frame ->
             let unitText = match frame.Unit with WindowFrameUnit.Rows -> "ROWS" | WindowFrameUnit.Range -> "RANGE"
             let frameSql = match frame.Extent with SingleBound start -> unitText + " " + frameBoundText start | BetweenBounds(start, finish) -> unitText + " BETWEEN " + frameBoundText start + " AND " + frameBoundText finish
             parts.Add(frameSql))
-        String.concat " " parts
+        joinDocuments ctx " " parts
 
-    and private renderOrderBy (ctx: RenderContext) setTail (order: OrderBy) : string list =
+    and private renderOrderBy (ctx: RenderContext) setTail (order: OrderBy) : SqlDocument list =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let expression = renderExpr ctx order.Expression
         let direction = if order.Descending then " DESC" else " ASC"
         match order.NullOrdering, ctx.Provider with
@@ -1183,21 +1438,23 @@ module internal RewriteRenderer =
                 | _ -> invalidOp (capabilityError ctx.Provider "ordering.nulls")
 
     and private renderCtes (ctx: RenderContext) (ctes: Cte list) =
-        if List.isEmpty ctes then ""
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        if List.isEmpty ctes then doc ctx ""
         else
             let recursiveScope = ctes |> List.exists (fun cte -> cte.RecursiveScope)
             if recursiveScope then
                 let provider = providerTool ctx.Provider
                 if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
-                    raise (SqlCompilationException(
-                        "SQL capability 'select.recursive_cte' is not supported by target provider "
-                        + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
+                    raise (SqlCompilationException(String.Concat(
+                        "SQL capability 'select.recursive_cte' is not supported by target provider ",
+                        string provider, "; this provider does not use the modeled WITH RECURSIVE syntax contract.")))
             let result = RenderBuffer(ctx, "WITH ")
             if recursiveScope then result.Append("RECURSIVE ") |> ignore
             ctes
             |> List.iteri (fun index cte ->
                 if index > 0 then result.Append(", ") |> ignore
-                result.Append(renderAlias ctx.Provider cte.Name).Append(" AS (") |> ignore
+                result.Append(renderAlias ctx cte.Name).Append(" AS (") |> ignore
 
                 // Streaming one-CTE nesting is crucial: each nested CTE body
                 // used to render to a complete string before its parent,
@@ -1213,26 +1470,28 @@ module internal RewriteRenderer =
                                         && current.SetOperations.IsEmpty
                                         && not (hasTail current) ->
                         result.Append("WITH ")
-                              .Append(renderAlias ctx.Provider innerCte.Name)
+                              .Append(renderAlias ctx innerCte.Name)
                               .Append(" AS (") |> ignore
                         nested.Add(current)
                         current <- innerCte.Query
                     | _ -> walking <- false
 
-                result.Append((renderCteQuery ctx current) : string) |> ignore
+                result.Append((renderCteQuery ctx current) : SqlDocument) |> ignore
                 for nesting = nested.Count - 1 downto 0 do
                     result.Append(") ") |> ignore
                     let query = nested.[nesting]
                     result.Append(
-                        (renderSelectBody ctx { query.Head with Ctes = [] }) : string)
+                        (renderSelectBody ctx { query.Head with Ctes = [] }) : SqlDocument)
                     |> ignore
                 result.Append(')') |> ignore)
-            result.Append(' ').ToString()
+            result.Append(' ').ToDocument()
 
-    and private renderSource (ctx: RenderContext) source : string =
+    and private renderSource (ctx: RenderContext) source : SqlDocument =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         match source with
         | TableSource.NamedTable(identifier, alias) | TableSource.CteTable(identifier, alias) ->
-            renderIdentifier ctx.Provider identifier + (alias |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx.Provider value) |> Option.defaultValue "")
+            renderIdentifier ctx identifier + (alias |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx value) |> Option.defaultValue (doc ctx ""))
         | TableSource.DerivedTable(query, alias) ->
             renderDerivedSourceChain ctx query alias false
         | TableSource.LateralDerivedTable(query, alias) ->
@@ -1243,6 +1502,8 @@ module internal RewriteRenderer =
     // Outside-in emission preserves projection binding and provider alias
     // syntax without recursively allocating a string at every nested Query.
     and private renderDerivedSourceChain (ctx: RenderContext) query alias lateral =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let tryWrapper (current: Query) =
             let head = current.Head
             // TOP/FIRST/SKIP need prefix rewriting; PostgreSQL, MySQL,
@@ -1267,7 +1528,7 @@ module internal RewriteRenderer =
         | None ->
             (if lateral then "LATERAL (" else "(")
             + renderQuery ctx query + ")"
-            + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+            + tableAliasPrefix ctx.Provider + renderAlias ctx alias
         | Some _ ->
             let result = RenderBuffer(ctx, if lateral then "LATERAL (" else "(")
             let wrappers = ResizeArray<struct (IdentifierPart * Query)>()
@@ -1285,7 +1546,7 @@ module internal RewriteRenderer =
                         result.Append(renderExpr ctx item.Expression) |> ignore
                         item.Alias
                         |> Option.iter (fun itemAlias ->
-                            result.Append(" AS ").Append(renderAlias ctx.Provider itemAlias) |> ignore))
+                            result.Append(" AS ").Append(renderAlias ctx itemAlias) |> ignore))
                     result.Append(" FROM (") |> ignore
                     wrappers.Add(struct (childAlias, current))
                     current <- inner
@@ -1294,27 +1555,29 @@ module internal RewriteRenderer =
                 let struct (childAlias, wrapper) = wrappers.[index]
                 result.Append(')')
                       .Append(tableAliasPrefix ctx.Provider)
-                      .Append(renderAlias ctx.Provider childAlias) |> ignore
+                      .Append(renderAlias ctx childAlias) |> ignore
                 wrapper.Head.Where
                 |> Option.iter (fun predicate ->
                     result.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
-                result.Append((renderOrderClause ctx false wrapper.OrderBy) : string) |> ignore
+                result.Append((renderOrderClause ctx false wrapper.OrderBy) : SqlDocument) |> ignore
                 if hasTail wrapper then
                     // Only providers with a suffix-only paging contract
                     // can reach here; passing "" avoids copying a prefix.
-                    result.Append((renderPaging ctx wrapper "") : string) |> ignore
+                    result.Append((renderPaging ctx wrapper (doc ctx "")) : SqlDocument) |> ignore
             result.Append(')')
                   .Append(tableAliasPrefix ctx.Provider)
-                  .Append(renderAlias ctx.Provider alias)
-                  .ToString()
+                  .Append(renderAlias ctx alias)
+                  .ToDocument()
 
     and private renderSelectBody (ctx: RenderContext) (select: Select) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let groupScope expression =
             if ctx.Provider <> PostgreSql then None
             else
                 select.GroupBy
                 |> List.tryFindIndex (fun grouped -> Expr.equivalent expression grouped)
-                |> Option.map (fun index -> "postgres-group:" + string index)
+                |> Option.map (fun index -> String.Concat("postgres-group:", string index))
 
         let renderProjectionExpression expression =
             match groupScope expression with
@@ -1326,14 +1589,14 @@ module internal RewriteRenderer =
             |> List.map (fun item ->
                 renderProjectionExpression item.Expression
                 + (item.Alias
-                   |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias)
-                   |> Option.defaultValue ""))
-            |> String.concat ", "
+                   |> Option.map (fun alias -> " AS " + renderAlias ctx alias)
+                   |> Option.defaultValue (doc ctx "")))
+            |> joinDocuments ctx ", "
 
         let distinctSql =
             match select.DistinctMode with
-            | SelectDistinct.AllRows -> ""
-            | SelectDistinct.DistinctRows -> "DISTINCT "
+            | SelectDistinct.AllRows -> doc ctx ""
+            | SelectDistinct.DistinctRows -> doc ctx "DISTINCT "
             | SelectDistinct.DistinctOn expressions ->
                 if ctx.Provider <> PostgreSql then
                     raise (SqlCompilationException(
@@ -1342,7 +1605,7 @@ module internal RewriteRenderer =
                 + (expressions
                    |> NonEmpty.toList
                    |> List.map (renderExpr ctx)
-                   |> String.concat ", ")
+                   |> joinDocuments ctx ", ")
                 + ") "
         // Projection and DISTINCT ON expressions bind before FROM/JOIN
         // exactly as before. Build the text once instead of copying the
@@ -1379,8 +1642,8 @@ module internal RewriteRenderer =
                 let names =
                     columns
                     |> NonEmpty.toList
-                    |> List.map (renderAlias ctx.Provider)
-                    |> String.concat ", "
+                    |> List.map (renderAlias ctx)
+                    |> joinDocuments ctx ", "
                 sql.Append(" USING (").Append(names).Append(")") |> ignore
         select.Where
         |> Option.iter (fun predicate ->
@@ -1391,16 +1654,16 @@ module internal RewriteRenderer =
                 |> List.mapi (fun index expression ->
                     if ctx.Provider = PostgreSql then
                         ctx.WithSharedBindings(
-                            "postgres-group:" + string index,
+                            String.Concat("postgres-group:", string index),
                             fun () -> renderExpr ctx expression)
                     else
                         renderExpr ctx expression)
-                |> String.concat ", "
+                |> joinDocuments ctx ", "
             sql.Append(" GROUP BY ").Append(grouped) |> ignore
         select.Having
         |> Option.iter (fun predicate ->
             sql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
-        sql.ToString()
+        sql.ToDocument()
 
     // Stream SET arms into an existing bounded buffer. Consumers with
     // outer paging wrappers need not materialize and then concatenate an
@@ -1437,15 +1700,15 @@ module internal RewriteRenderer =
                      && not branchNoTail.SetOperations.IsEmpty then
                     // Preserve the full WITH/SET contract for the uncommon
                     // CTE-bearing branch; do not lower away capability proof.
-                    sql.Append("(").Append((renderQueryCore ctx branchNoTail) : string)
+                    sql.Append("(").Append((renderQueryCore ctx branchNoTail) : SqlDocument)
                        .Append(')') |> ignore
                 elif branchNoTail.Head.Ctes.IsEmpty then
-                    sql.Append((renderQueryCore ctx branchNoTail) : string) |> ignore
+                    sql.Append((renderQueryCore ctx branchNoTail) : SqlDocument) |> ignore
                 else
                     sql.Append("SELECT * FROM (")
-                       .Append((renderQueryCore ctx branchNoTail) : string)
+                       .Append((renderQueryCore ctx branchNoTail) : SqlDocument)
                        .Append(") AS ")
-                       .Append(renderAlias ctx.Provider
+                       .Append(renderAlias ctx
                            { Value = "_set_branch"
                              WasQuoted = false
                              PreserveSpelling = false
@@ -1455,13 +1718,17 @@ module internal RewriteRenderer =
     and private renderSetBody (ctx: RenderContext) (query: Query) =
         let sql = RenderBuffer(ctx, "")
         appendSetBody ctx sql query
-        sql.ToString()
+        sql.ToDocument()
 
     and private renderOrderClause (ctx: RenderContext) setTail orderBy =
-        if List.isEmpty orderBy then ""
-        else " ORDER BY " + (orderBy |> List.collect (renderOrderBy ctx setTail) |> String.concat ", ")
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        if List.isEmpty orderBy then doc ctx ""
+        else " ORDER BY " + (orderBy |> List.collect (renderOrderBy ctx setTail) |> joinDocuments ctx ", ")
 
-    and private renderPaging (ctx: RenderContext) (query: Query) sql =
+    and private renderPaging (ctx: RenderContext) (query: Query) (sql: SqlDocument) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let intValue value = NonNegativeRowCount.value value
         let percentValue value = NonNegativePercentage.value value
         if query.FetchPercent.IsSome && ctx.Provider <> Oracle then
@@ -1526,29 +1793,31 @@ module internal RewriteRenderer =
         | Firebird ->
             match query.Limit, query.Offset with
             | Some limit, Some offset when intValue limit > 0 && intValue offset > 0 ->
-                let first = int64 (intValue offset) + 1L
-                let last = int64 (intValue offset) + int64 (intValue limit)
+                let first = Operators.(+) (int64 (intValue offset)) 1L
+                let last = Operators.(+) (int64 (intValue offset)) (int64 (intValue limit))
                 sql + " ROWS " + ctx.Bind(box first) + " TO " + ctx.Bind(box last)
             | _ -> sql
         | SqlServer -> sql
 
     and private renderSqlServerOffset (ctx: RenderContext) (query: Query) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let projection = query.Head.Projection
         let outputNames = projection |> List.map projectionOutputName
         let internalNames =
             outputNames
             |> List.mapi (fun index _ ->
-                { Value = "_core_page_" + string index
+                { Value = String.Concat("_core_page_", string index)
                   WasQuoted = false
                   PreserveSpelling = false
                   Span = { Start = 0; Length = 0 } })
         let baseAlias = "[_core_page_base]"
         let wrapperAlias = "[results_wrapper]"
         let rowAlias = "[_core_page_row]"
-        let baseProjection = ResizeArray<string>()
+        let baseProjection = ResizeArray<SqlDocument>()
         (projection, internalNames)
         ||> List.iter2 (fun item alias ->
-            baseProjection.Add(renderExpr ctx item.Expression + " AS " + renderAlias ctx.Provider alias))
+            baseProjection.Add(renderExpr ctx item.Expression + " AS " + renderAlias ctx alias))
 
         let projectionIndex (order: OrderBy) =
             match Expr.unspan order.Expression with
@@ -1579,21 +1848,21 @@ module internal RewriteRenderer =
                     | Some index -> internalNames[index]
                     | None when not query.Head.Distinct ->
                         let hidden =
-                            { Value = "_core_page_order_" + string orderIndex
+                            { Value = String.Concat("_core_page_order_", string orderIndex)
                               WasQuoted = false
                               PreserveSpelling = false
                               Span = { Start = 0; Length = 0 } }
-                        baseProjection.Add(renderExpr ctx order.Expression + " AS " + renderAlias ctx.Provider hidden)
+                        baseProjection.Add(renderExpr ctx order.Expression + " AS " + renderAlias ctx hidden)
                         hidden
                     | None ->
                         invalidOp "SQL Server DISTINCT OFFSET pagination requires every ORDER BY expression to resolve to a projected output."
-                renderAlias ctx.Provider orderAlias + (if order.Descending then " DESC" else " ASC"))
+                renderAlias ctx orderAlias + (if order.Descending then " DESC" else " ASC"))
 
         // OFFSET wrapping used to copy the entire growing SELECT prefix for
         // every JOIN/WHERE/GROUP/HAVING. Append once, with a pre-allocation cap.
         let baseSql = RenderBuffer(ctx, "SELECT ")
         if query.Head.Distinct then baseSql.Append("DISTINCT ") |> ignore
-        baseSql.Append(baseProjection |> Seq.toList |> String.concat ", ") |> ignore
+        baseSql.Append(baseProjection |> Seq.toList |> joinDocuments ctx ", ") |> ignore
         query.Head.From
         |> Option.iter (fun source ->
             baseSql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
@@ -1613,18 +1882,18 @@ module internal RewriteRenderer =
             baseSql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
         if not query.Head.GroupBy.IsEmpty then
             baseSql.Append(" GROUP BY ")
-                   .Append(query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ") |> ignore
+                   .Append(query.Head.GroupBy |> List.map (renderExpr ctx) |> joinDocuments ctx ", ") |> ignore
         query.Head.Having
         |> Option.iter (fun predicate ->
             baseSql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
 
         let windowOrder =
-            if windowOrders.IsEmpty then "ORDER BY (SELECT 0)"
-            else "ORDER BY " + String.concat ", " windowOrders
+            if windowOrders.IsEmpty then doc ctx "ORDER BY (SELECT 0)"
+            else "ORDER BY " + joinDocuments ctx ", " windowOrders
         let middleOutputs =
             internalNames
-            |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
-            |> String.concat ", "
+            |> List.map (fun alias -> baseAlias + "." + renderAlias ctx alias)
+            |> joinDocuments ctx ", "
         let middleSql = RenderBuffer(ctx, "SELECT ")
         middleSql.Append(middleOutputs)
                  .Append(", ROW_NUMBER() OVER (")
@@ -1632,7 +1901,7 @@ module internal RewriteRenderer =
                  .Append(") AS ")
                  .Append(rowAlias)
                  .Append(" FROM (")
-                 .Append(baseSql.ToString())
+                 .Append(baseSql.ToDocument())
                  .Append(") AS ")
                  .Append(baseAlias) |> ignore
         let outerOutputs =
@@ -1640,29 +1909,29 @@ module internal RewriteRenderer =
             ||> List.map2 (fun internalName externalName ->
                 wrapperAlias
                 + "."
-                + renderAlias ctx.Provider internalName
+                + renderAlias ctx internalName
                 + " AS "
-                + renderAlias ctx.Provider externalName)
-            |> String.concat ", "
+                + renderAlias ctx externalName)
+            |> joinDocuments ctx ", "
         let offset = query.Offset |> Option.map NonNegativeRowCount.value |> Option.defaultValue 0
         let predicate =
             match query.Limit with
-            | None -> wrapperAlias + "." + rowAlias + " >= " + ctx.Bind(box (int64 offset + 1L))
+            | None -> wrapperAlias + "." + rowAlias + " >= " + ctx.Bind(box (Operators.(+) (int64 offset) 1L))
             | Some limit ->
                 wrapperAlias
                 + "."
                 + rowAlias
                 + " BETWEEN "
-                + ctx.Bind(box (int64 offset + 1L))
+                + ctx.Bind(box (Operators.(+) (int64 offset) 1L))
                 + " AND "
-                + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
+                + ctx.Bind(box (Operators.(+) (int64 offset) (int64 (NonNegativeRowCount.value limit))))
         // Budget every wrapper segment before its next allocation,
         // instead of creating an unbounded second copy of the page SQL.
         let output = RenderBuffer(ctx, renderCtes ctx query.Head.Ctes)
         output.Append("SELECT ")
               .Append(outerOutputs)
               .Append(" FROM (")
-              .Append(middleSql.ToString())
+              .Append(middleSql.ToDocument())
               .Append(") AS ")
               .Append(wrapperAlias)
               .Append(" WHERE ")
@@ -1672,14 +1941,16 @@ module internal RewriteRenderer =
               .Append(".")
               .Append(rowAlias)
               .Append(" ASC")
-              .ToString()
+              .ToDocument()
 
     and private renderSqlServerSetOffset (ctx: RenderContext) (query: Query) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let outputNames = query.Head.Projection |> List.map projectionOutputName
         let internalNames =
             outputNames
             |> List.mapi (fun index _ ->
-                { Value = "_core_page_" + string index
+                { Value = String.Concat("_core_page_", string index)
                   WasQuoted = false
                   PreserveSpelling = false
                   Span = { Start = 0; Length = 0 } })
@@ -1693,10 +1964,10 @@ module internal RewriteRenderer =
             ||> List.map2 (fun outputName internalName ->
                 setAlias
                 + "."
-                + renderAlias ctx.Provider outputName
+                + renderAlias ctx outputName
                 + " AS "
-                + renderAlias ctx.Provider internalName)
-            |> String.concat ", "
+                + renderAlias ctx internalName)
+            |> joinDocuments ctx ", "
         let pageSource = RenderBuffer(ctx, "SELECT ")
         pageSource.Append(pageSourceOutputs)
                   .Append(" FROM (")
@@ -1721,15 +1992,15 @@ module internal RewriteRenderer =
                 | _ -> invalidOp "SQL Server set-operation OFFSET pagination supports ORDER BY output names or ordinals only."
             if index < 0 || index >= internalNames.Length then
                 invalidOp "SQL Server set-operation OFFSET pagination ORDER BY position is outside the projected output width."
-            renderAlias ctx.Provider internalNames[index] + (if order.Descending then " DESC" else " ASC")
+            renderAlias ctx internalNames[index] + (if order.Descending then " DESC" else " ASC")
 
         let windowOrder =
-            if query.OrderBy.IsEmpty then "ORDER BY (SELECT 0)"
-            else "ORDER BY " + (query.OrderBy |> List.map resolveOrder |> String.concat ", ")
+            if query.OrderBy.IsEmpty then doc ctx "ORDER BY (SELECT 0)"
+            else "ORDER BY " + (query.OrderBy |> List.map resolveOrder |> joinDocuments ctx ", ")
         let middleOutputs =
             internalNames
-            |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
-            |> String.concat ", "
+            |> List.map (fun alias -> baseAlias + "." + renderAlias ctx alias)
+            |> joinDocuments ctx ", "
         let middleSql = RenderBuffer(ctx, "SELECT ")
         middleSql.Append(middleOutputs)
                  .Append(", ROW_NUMBER() OVER (")
@@ -1737,7 +2008,7 @@ module internal RewriteRenderer =
                  .Append(") AS ")
                  .Append(rowAlias)
                  .Append(" FROM (")
-                 .Append(pageSource.ToString())
+                 .Append(pageSource.ToDocument())
                  .Append(") AS ")
                  .Append(baseAlias) |> ignore
         let outerOutputs =
@@ -1745,29 +2016,29 @@ module internal RewriteRenderer =
             ||> List.map2 (fun internalName externalName ->
                 wrapperAlias
                 + "."
-                + renderAlias ctx.Provider internalName
+                + renderAlias ctx internalName
                 + " AS "
-                + renderAlias ctx.Provider externalName)
-            |> String.concat ", "
+                + renderAlias ctx externalName)
+            |> joinDocuments ctx ", "
         let offset = query.Offset |> Option.map NonNegativeRowCount.value |> Option.defaultValue 0
         let predicate =
             match query.Limit with
-            | None -> wrapperAlias + "." + rowAlias + " >= " + ctx.Bind(box (int64 offset + 1L))
+            | None -> wrapperAlias + "." + rowAlias + " >= " + ctx.Bind(box (Operators.(+) (int64 offset) 1L))
             | Some limit ->
                 wrapperAlias
                 + "."
                 + rowAlias
                 + " BETWEEN "
-                + ctx.Bind(box (int64 offset + 1L))
+                + ctx.Bind(box (Operators.(+) (int64 offset) 1L))
                 + " AND "
-                + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
+                + ctx.Bind(box (Operators.(+) (int64 offset) (int64 (NonNegativeRowCount.value limit))))
         // Budget every wrapper segment before its next allocation,
         // instead of creating an unbounded second copy of the page SQL.
         let output = RenderBuffer(ctx, renderCtes ctx query.Head.Ctes)
         output.Append("SELECT ")
               .Append(outerOutputs)
               .Append(" FROM (")
-              .Append(middleSql.ToString())
+              .Append(middleSql.ToDocument())
               .Append(") AS ")
               .Append(wrapperAlias)
               .Append(" WHERE ")
@@ -1777,9 +2048,11 @@ module internal RewriteRenderer =
               .Append(".")
               .Append(rowAlias)
               .Append(" ASC")
-              .ToString()
+              .ToDocument()
 
     and private renderSetTailWrapper (ctx: RenderContext) (query: Query) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         match ctx.Provider, query.Offset, query.Limit with
         | SqlServer, Some offset, limit
             when NonNegativeRowCount.value offset > 0
@@ -1789,52 +2062,52 @@ module internal RewriteRenderer =
             let prefix = renderCtes ctx query.Head.Ctes
             let body = renderSetBody ctx query
             let top = ctx.Bind(box (NonNegativeRowCount.value limit))
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            let alias = renderAlias ctx { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             // Retain body-before-TOP binding order, while bounding every
             // wrapper append instead of concatenating another full copy.
             let sql = RenderBuffer(ctx, prefix)
             sql.Append("SELECT TOP (").Append(top).Append(") * FROM (")
                .Append(body).Append(")").Append(tableAliasPrefix ctx.Provider)
-               .Append(alias).Append(renderOrderClause ctx true query.OrderBy).ToString()
+               .Append(alias).Append(renderOrderClause ctx true query.OrderBy).ToDocument()
         | Firebird, offset, Some limit when NonNegativeRowCount.value limit = 0 ->
             let first = ctx.Bind(box 0)
             let skip =
                 match offset with
                 | Some value when NonNegativeRowCount.value value > 0 ->
                     " SKIP " + ctx.Bind(box (NonNegativeRowCount.value value))
-                | _ -> ""
+                | _ -> doc ctx ""
             let prefix = renderCtes ctx query.Head.Ctes
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            let alias = renderAlias ctx { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             let sql = RenderBuffer(ctx, prefix)
             sql.Append("SELECT FIRST ").Append(first).Append(skip).Append(" * FROM (") |> ignore
             appendSetBody ctx sql query
             sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
-               .Append(renderOrderClause ctx true query.OrderBy).ToString()
+               .Append(renderOrderClause ctx true query.OrderBy).ToDocument()
         | Firebird, None, Some limit ->
             let first = ctx.Bind(box (NonNegativeRowCount.value limit))
             let prefix = renderCtes ctx query.Head.Ctes
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            let alias = renderAlias ctx { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             let sql = RenderBuffer(ctx, prefix)
             sql.Append("SELECT FIRST ").Append(first).Append(" * FROM (") |> ignore
             appendSetBody ctx sql query
             sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
-               .Append(renderOrderClause ctx true query.OrderBy).ToString()
+               .Append(renderOrderClause ctx true query.OrderBy).ToDocument()
         | Firebird, Some offset, None when NonNegativeRowCount.value offset > 0 ->
             let skip = ctx.Bind(box (NonNegativeRowCount.value offset))
             let prefix = renderCtes ctx query.Head.Ctes
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            let alias = renderAlias ctx { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             let sql = RenderBuffer(ctx, prefix)
             sql.Append("SELECT SKIP ").Append(skip).Append(" * FROM (") |> ignore
             appendSetBody ctx sql query
             sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
-               .Append(renderOrderClause ctx true query.OrderBy).ToString()
+               .Append(renderOrderClause ctx true query.OrderBy).ToDocument()
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
             let sql = RenderBuffer(ctx, prefix)
             sql.Append("SELECT * FROM (") |> ignore
             appendSetBody ctx sql query
             let alias =
-                renderAlias ctx.Provider
+                renderAlias ctx
                     { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
             sql.Append(")")
                .Append(tableAliasPrefix ctx.Provider)
@@ -1843,10 +2116,15 @@ module internal RewriteRenderer =
                // The terminal paging grammar is suffix-only on this path
                // for every provider; rendering it against "" avoids a
                // second copy of the entire SELECT/SET SQL text.
-               .Append(renderPaging ctx query "")
-               .ToString()
+               .Append(renderPaging ctx query (doc ctx ""))
+               .ToDocument()
 
-    and private renderQueryCore (ctx: RenderContext) (query: Query) =
+    and private renderQueryCore (ctx: RenderContext) (query: Query) : SqlDocument =
+        ctx.ResolveQuery(query, fun () -> renderQueryBody ctx query)
+
+    and private renderQueryBody (ctx: RenderContext) (query: Query) : SqlDocument =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         if isSetQuery query && hasTail query then renderSetTailWrapper ctx query
         elif ctx.Provider = SqlServer
@@ -1883,7 +2161,7 @@ module internal RewriteRenderer =
                 let skip =
                     if NonNegativeRowCount.value offset > 0 then
                         " SKIP " + ctx.Bind(box (NonNegativeRowCount.value offset))
-                    else ""
+                    else doc ctx ""
                 let ctes = renderCtes ctx query.Head.Ctes
                 let body = renderSelectBody ctx { query.Head with Ctes = [] }
                 let withOrder = body + renderOrderClause ctx false query.OrderBy
@@ -1995,7 +2273,7 @@ module internal RewriteRenderer =
                 match frame with
                 | FinishMixedCte(_, cte) ->
                     sql.Append("WITH ")
-                       .Append(renderAlias ctx.Provider cte.Name)
+                       .Append(renderAlias ctx cte.Name)
                        .Append(" AS (") |> ignore
                 | FinishMixedDerived(outer, _)
                 | FinishMixedLateral(outer, _)
@@ -2007,7 +2285,7 @@ module internal RewriteRenderer =
                         if index > 0 then sql.Append(", ") |> ignore
                         sql.Append(renderExpr ctx item.Expression) |> ignore
                         item.Alias |> Option.iter (fun alias ->
-                            sql.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore))
+                            sql.Append(" AS ").Append(renderAlias ctx alias) |> ignore))
                     match frame with
                     | FinishMixedLateral _ -> sql.Append(" FROM LATERAL (") |> ignore
                     | FinishMixedJoinedLateral(_, preceding, _, _) ->
@@ -2037,24 +2315,26 @@ module internal RewriteRenderer =
                 | FinishMixedLateral(outer, alias) ->
                     sql.Append(')')
                        .Append(tableAliasPrefix ctx.Provider)
-                       .Append(renderAlias ctx.Provider alias) |> ignore
+                       .Append(renderAlias ctx alias) |> ignore
                     outer.Head.Where |> Option.iter (fun predicate ->
                         sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
                 | FinishMixedJoinedLateral(outer, _, alias, onPredicate)
                 | FinishMixedPrefixedJoinedLateral(outer, _, _, alias, onPredicate) ->
                     sql.Append(')')
                        .Append(tableAliasPrefix ctx.Provider)
-                       .Append(renderAlias ctx.Provider alias)
+                       .Append(renderAlias ctx alias)
                        .Append(" ON ")
                        .Append(renderPredicate ctx onPredicate) |> ignore
                     outer.Head.Where |> Option.iter (fun predicate ->
                         sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
-            Some(sql.ToString())
+            Some(sql.ToDocument())
 
     // A linear correlated WHERE column IN (Query) chain needs a single
     // append-only SQL buffer: Query -> predicate -> Query must not build
     // recursive SELECT strings. Projection values still bind before IN.
     and private tryRenderLinearInQuery (ctx: RenderContext) (query: Query) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let tryWrapper (current: Query) =
             let head = current.Head
             if not head.Ctes.IsEmpty || not head.Joins.IsEmpty
@@ -2078,20 +2358,20 @@ module internal RewriteRenderer =
             RewriteResourceBudget.checkpoint ()
             match tryWrapper current with
             | Some(item, source, value, inner) ->
-                output.Append("SELECT ").Append((renderExpr ctx item.Expression) : string) |> ignore
+                output.Append("SELECT ").Append((renderExpr ctx item.Expression) : SqlDocument) |> ignore
                 item.Alias |> Option.iter (fun alias ->
-                    output.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore)
-                output.Append(" FROM ").Append((renderSource ctx source) : string)
-                      .Append(" WHERE (").Append((renderExpr ctx value) : string)
+                    output.Append(" AS ").Append(renderAlias ctx alias) |> ignore)
+                output.Append(" FROM ").Append((renderSource ctx source) : SqlDocument)
+                      .Append(" WHERE (").Append((renderExpr ctx value) : SqlDocument)
                       .Append(" IN (") |> ignore
-                count <- count + 1
+                count <- Operators.(+) count 1
                 current <- inner
             | None -> scanning <- false
         if count = 0 then None
         else
-            output.Append((renderQueryCore ctx current) : string) |> ignore
+            output.Append((renderQueryCore ctx current) : SqlDocument) |> ignore
             for _ in 1 .. count do output.Append("))") |> ignore
-            Some(output.ToString())
+            Some(output.ToDocument())
 
 
     // Append a linear searched CASE -> scalar Query chain outside-in.
@@ -2133,22 +2413,25 @@ module internal RewriteRenderer =
             match tryWrapper current with
             | Some(condition, fallback, child) ->
                 output.Append("SELECT CASE WHEN ")
-                      .Append((renderPredicate ctx condition) : string)
+                      .Append((renderPredicate ctx condition) : SqlDocument)
                       .Append(" THEN (") |> ignore
                 fallbacks.Add(fallback)
                 current <- child
             | None -> scanning <- false
         if fallbacks.Count = 0 then None
         else
-            output.Append((renderQueryCore ctx current) : string) |> ignore
+            output.Append((renderQueryCore ctx current) : SqlDocument) |> ignore
             for index = fallbacks.Count - 1 downto 0 do
                 output.Append(") ELSE ")
-                      .Append((renderExpr ctx fallbacks.[index]) : string)
+                      .Append((renderExpr ctx fallbacks.[index]) : SqlDocument)
                       .Append(" END")
                       .Append(dummyFrom) |> ignore
-            Some(output.ToString())
+            Some(output.ToDocument())
 
-    and private renderQuery (ctx: RenderContext) query =
+    and private renderQuery (ctx: RenderContext) query : SqlDocument =
+        ctx.ResolveQuery(query, fun () -> renderQueryEntry ctx query)
+
+    and private renderQueryEntry (ctx: RenderContext) query : SqlDocument =
         match tryRenderLinearCaseQuery ctx query with
         | Some sql -> sql
         | None ->
@@ -2159,7 +2442,10 @@ module internal RewriteRenderer =
                 | Some sql -> sql
                 | None -> renderQueryCore ctx query
 
-    and private renderSubquery (ctx: RenderContext) query =
+    and private renderSubquery (ctx: RenderContext) query : SqlDocument =
+        ctx.ResolveQuery(query, fun () -> renderSubqueryBody ctx query)
+
+    and private renderSubqueryBody (ctx: RenderContext) query : SqlDocument =
         if isSetQuery query
            && hasTail query
            && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
@@ -2167,11 +2453,14 @@ module internal RewriteRenderer =
             let sql = RenderBuffer(ctx, prefix)
             appendSetBody ctx sql query
             sql.Append(renderOrderClause ctx true query.OrderBy)
-               .Append(renderPaging ctx query "").ToString()
+               .Append(renderPaging ctx query (doc ctx "")).ToDocument()
         else
             renderQueryCore ctx query
 
-    and private renderCteQuery (ctx: RenderContext) query =
+    and private renderCteQuery (ctx: RenderContext) query : SqlDocument =
+        ctx.ResolveQuery(query, fun () -> renderCteQueryBody ctx query)
+
+    and private renderCteQueryBody (ctx: RenderContext) query : SqlDocument =
         if isSetQuery query
            && hasTail query
            && not query.Head.Ctes.IsEmpty
@@ -2180,27 +2469,31 @@ module internal RewriteRenderer =
             sql.Append(renderCtes ctx query.Head.Ctes) |> ignore
             appendSetBody ctx sql query
             let alias =
-                renderAlias ctx.Provider
+                renderAlias ctx
                     { Value = "_set"
                       WasQuoted = false
                       PreserveSpelling = false
                       Span = { Start = 0; Length = 0 } }
             sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
                .Append(renderOrderClause ctx true query.OrderBy)
-               .Append(renderPaging ctx query "").ToString()
+               .Append(renderPaging ctx query (doc ctx "")).ToDocument()
         else
             renderQueryCore ctx query
 
     let private renderReturning (ctx: RenderContext) (items: ReturningItem list) =
-        if List.isEmpty items then ""
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        if List.isEmpty items then doc ctx ""
         else
             match ctx.Provider with
             | PostgreSql | SQLite | Firebird ->
-                " RETURNING " + (items |> List.map (fun item -> renderExpr ctx item.Expression + (item.Alias |> Option.map (fun alias -> " AS " + renderAlias ctx.Provider alias) |> Option.defaultValue "")) |> String.concat ", ")
+                " RETURNING " + (items |> List.map (fun item -> renderExpr ctx item.Expression + (item.Alias |> Option.map (fun alias -> " AS " + renderAlias ctx alias) |> Option.defaultValue (doc ctx ""))) |> joinDocuments ctx ", ")
             | _ -> invalidOp "RETURNING is not supported by the target provider."
 
     let private renderSqlServerOutput image (ctx: RenderContext) (items: ReturningItem list) =
-        if List.isEmpty items then ""
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        if List.isEmpty items then doc ctx ""
         else
             let renderItem = function
                 | ReturningColumn(identifier, alias) ->
@@ -2208,19 +2501,19 @@ module internal RewriteRenderer =
                         invalidOp "Validated SQL Server OUTPUT requires target-only single-part columns."
                     image
                     + "."
-                    + renderIdentifier SqlServer identifier
+                    + renderIdentifier ctx identifier
                     + (alias
-                       |> Option.map (fun value -> " AS " + renderAlias SqlServer value)
-                       |> Option.defaultValue "")
+                       |> Option.map (fun value -> " AS " + renderAlias ctx value)
+                       |> Option.defaultValue (doc ctx ""))
                 | ReturningWildcard None -> image + ".*"
                 | ReturningWildcard(Some _) ->
                     invalidOp "Validated SQL Server OUTPUT wildcard cannot be aliased."
                 | ReturningExpression _ ->
                     invalidOp "Validated SQL Server OUTPUT does not admit rich expressions."
-            " OUTPUT " + (items |> List.map renderItem |> String.concat ", ")
+            " OUTPUT " + (items |> List.map renderItem |> joinDocuments ctx ", ")
 
     let private renderTrailingReturning (ctx: RenderContext) items =
-        if ctx.Provider = SqlServer then "" else renderReturning ctx items
+        if ctx.Provider = SqlServer then doc ctx "" else renderReturning ctx items
 
     let private conflictArithmeticText = function
         | ConflictAdd -> "+"
@@ -2250,10 +2543,10 @@ module internal RewriteRenderer =
             | ConflictNode node ->
                 match node with
                 | ConflictProposedColumn identifier ->
-                    output.Append(proposedQualifier).Append(".").Append(renderIdentifier ctx.Provider identifier)
+                    output.Append(proposedQualifier).Append(".").Append(renderIdentifier ctx identifier)
                     |> ignore
                 | ConflictTargetColumn identifier ->
-                    output.Append(renderIdentifier ctx.Provider identifier) |> ignore
+                    output.Append(renderIdentifier ctx identifier) |> ignore
                 | ConflictLiteral scalar ->
                     output.Append(renderExpr ctx (Expr.Literal scalar)) |> ignore
                 | ConflictNegate operand ->
@@ -2266,17 +2559,19 @@ module internal RewriteRenderer =
                     pending.Add(ConflictNode right)
                     pending.Add(ConflictText(" " + conflictArithmeticText operator + " "))
                     pending.Add(ConflictNode left)
-        output.ToString()
+        output.ToDocument()
 
     let private renderConflict (ctx: RenderContext) conflict =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         match conflict with
-        | None -> ""
+        | None -> doc ctx ""
         | Some conflict ->
             let targetClause =
                 conflict.TargetColumns
                 |> Option.map (fun columns ->
-                    " (" + (columns |> NonEmpty.toList |> List.map (renderIdentifier ctx.Provider) |> String.concat ", ") + ")")
-                |> Option.defaultValue ""
+                    " (" + (columns |> NonEmpty.toList |> List.map (renderIdentifier ctx) |> joinDocuments ctx ", ") + ")")
+                |> Option.defaultValue (doc ctx "")
             match ctx.Provider with
             | PostgreSql | SQLite ->
                 match conflict.Action with
@@ -2288,10 +2583,10 @@ module internal RewriteRenderer =
                         assignments
                         |> NonEmpty.toList
                         |> List.map (fun assignment ->
-                            renderIdentifier ctx.Provider assignment.Target
+                            renderIdentifier ctx assignment.Target
                             + " = "
                             + renderConflictValue ctx "EXCLUDED" assignment.Value)
-                        |> String.concat ", "
+                        |> joinDocuments ctx ", "
                     " ON CONFLICT" + targetClause + " DO UPDATE SET " + values
             | _ -> invalidOp "Portable INSERT conflict lowering is not supported by the target provider."
 
@@ -2311,28 +2606,30 @@ module internal RewriteRenderer =
                 output.Append(renderExpr ctx value) |> ignore)
             output.Append(')') |> ignore)
 
-    let private renderInsertValues (ctx: RenderContext) (prefix: string) rows conflict returning =
+    let private renderInsertValues (ctx: RenderContext) (prefix: SqlDocument) rows conflict returning =
         let result = RenderBuffer(ctx, prefix)
         result.Append(" VALUES ") |> ignore
         appendValues ctx result rows
         result.Append(renderConflict ctx conflict)
-              .Append(renderTrailingReturning ctx returning).ToString()
+              .Append(renderTrailingReturning ctx returning).ToDocument()
 
     let private renderInsert (ctx: RenderContext) insert =
-        let columns = if insert.Columns.IsEmpty then "" else " (" + (insert.Columns |> List.map (renderAlias ctx.Provider) |> String.concat ", ") + ")"
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
+        let columns = if insert.Columns.IsEmpty then doc ctx "" else " (" + (insert.Columns |> List.map (renderAlias ctx) |> joinDocuments ctx ", ") + ")"
         match ctx.Provider, insert.Conflict with
         | Firebird, Some conflict ->
             let values =
                 match insert.Input with
-                | Values rows when NonEmpty.length rows = 1 -> rows |> NonEmpty.toList |> List.head |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", "
+                | Values rows when NonEmpty.length rows = 1 -> rows |> NonEmpty.toList |> List.head |> NonEmpty.toList |> List.map (renderExpr ctx) |> joinDocuments ctx ", "
                 | _ -> invalidOp "Firebird UPDATE OR INSERT requires exactly one VALUES row."
             let targets =
                 conflict.TargetColumns
                 |> Option.defaultWith (fun () -> invalidOp "Firebird UPDATE OR INSERT requires an explicit MATCHING conflict target.")
                 |> NonEmpty.toList
-                |> List.map (renderIdentifier ctx.Provider)
-                |> String.concat ", "
-            "UPDATE OR INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns + " VALUES (" + values + ") MATCHING (" + targets + ")" + renderTrailingReturning ctx insert.Returning
+                |> List.map (renderIdentifier ctx)
+                |> joinDocuments ctx ", "
+            "UPDATE OR INSERT INTO " + renderIdentifier ctx insert.Target + columns + " VALUES (" + values + ") MATCHING (" + targets + ")" + renderTrailingReturning ctx insert.Returning
         | MySql, Some conflict ->
             let values =
                 match insert.Input with
@@ -2342,7 +2639,7 @@ module internal RewriteRenderer =
                     |> List.head
                     |> NonEmpty.toList
                     |> List.map (renderExpr ctx)
-                    |> String.concat ", "
+                    |> joinDocuments ctx ", "
                 | _ ->
                     invalidOp "Validated MySQL conflict lowering requires exactly one VALUES row."
             let preferredAlias = "__core_proposed"
@@ -2353,12 +2650,12 @@ module internal RewriteRenderer =
                 |> fun part -> part.Value
             let aliasName =
                 if StringComparer.OrdinalIgnoreCase.Equals(targetName, preferredAlias) then
-                    preferredAlias + "_row"
+                    String.Concat(preferredAlias, "_row")
                 else
                     preferredAlias
             let alias =
                 renderAlias
-                    MySql
+                    ctx
                     { Value = aliasName
                       WasQuoted = false
                       PreserveSpelling = false
@@ -2376,14 +2673,14 @@ module internal RewriteRenderer =
                             | Some identifier -> identifier
                             | None ->
                                 invalidOp "Validated MySQL conflict lowering admits only direct proposed-row assignments."
-                        renderIdentifier MySql assignment.Target
+                        renderIdentifier ctx assignment.Target
                         + " = "
                         + alias
                         + "."
-                        + renderIdentifier MySql proposed)
-                    |> String.concat ", "
+                        + renderIdentifier ctx proposed)
+                    |> joinDocuments ctx ", "
             "INSERT INTO "
-            + renderIdentifier MySql insert.Target
+            + renderIdentifier ctx insert.Target
             + columns
             + " VALUES ("
             + values
@@ -2392,10 +2689,10 @@ module internal RewriteRenderer =
             + " ON DUPLICATE KEY UPDATE "
             + assignments
         | Oracle, None ->
-            let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
+            let prefix = "INSERT INTO " + renderIdentifier ctx insert.Target + columns
             match insert.Input with
             | Values rows when NonEmpty.length rows > 1 ->
-                let table = renderIdentifier ctx.Provider insert.Target
+                let table = renderIdentifier ctx insert.Target
                 let result = RenderBuffer(ctx, "INSERT ALL")
                 rows |> NonEmpty.toList |> List.iter (fun row ->
                     result.Append(" INTO ").Append(table).Append(columns)
@@ -2405,7 +2702,7 @@ module internal RewriteRenderer =
                         result.Append(renderExpr ctx value) |> ignore)
                     result.Append(')') |> ignore)
                 result.Append(" SELECT 1 FROM DUAL")
-                      .Append(renderTrailingReturning ctx insert.Returning).ToString()
+                      .Append(renderTrailingReturning ctx insert.Returning).ToDocument()
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
@@ -2415,7 +2712,7 @@ module internal RewriteRenderer =
                 renderInsertValues ctx prefix rows None insert.Returning
             | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | Firebird, None ->
-            let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
+            let prefix = "INSERT INTO " + renderIdentifier ctx insert.Target + columns
             match insert.Input with
             | Values rows when NonEmpty.length rows > 1 ->
                 let result = RenderBuffer(ctx, prefix + " ")
@@ -2426,7 +2723,7 @@ module internal RewriteRenderer =
                         if index > 0 then result.Append(", ") |> ignore
                         result.Append(renderExpr ctx value) |> ignore)
                     result.Append(" FROM RDB$DATABASE") |> ignore)
-                result.Append(renderTrailingReturning ctx insert.Returning).ToString()
+                result.Append(renderTrailingReturning ctx insert.Returning).ToDocument()
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
@@ -2438,12 +2735,12 @@ module internal RewriteRenderer =
         | _ ->
             let prefix =
                 "INSERT INTO "
-                + renderIdentifier ctx.Provider insert.Target
+                + renderIdentifier ctx insert.Target
                 + columns
                 + (if ctx.Provider = SqlServer then
                        renderSqlServerOutput "INSERTED" ctx insert.Returning
                    else
-                       "")
+                       doc ctx "")
             match insert.Input with
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
@@ -2467,24 +2764,26 @@ module internal RewriteRenderer =
                 + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
 
     let private renderUpdate (ctx: RenderContext) (update: Update) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let targetAlias =
             match update.TargetAlias with
-            | None -> ""
+            | None -> doc ctx ""
             | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
-                " AS " + renderAlias ctx.Provider alias
+                " AS " + renderAlias ctx alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
 
         // Emit each assignment after checking the output work budget,
         // instead of constructing both a list of rendered assignments and
         // a second joined SET clause. Render parameter order is unchanged.
         let sql = RenderBuffer(ctx, "UPDATE ")
-        sql.Append(renderIdentifier ctx.Provider update.Target)
+        sql.Append(renderIdentifier ctx update.Target)
            .Append(targetAlias)
            .Append(" SET ") |> ignore
         update.Assignments
         |> List.iteri (fun index assignment ->
             if index > 0 then sql.Append(", ") |> ignore
-            sql.Append(renderIdentifier ctx.Provider assignment.Target)
+            sql.Append(renderIdentifier ctx assignment.Target)
                .Append(" = ")
                .Append(renderExpr ctx assignment.Value) |> ignore)
         if ctx.Provider = SqlServer then
@@ -2503,16 +2802,18 @@ module internal RewriteRenderer =
         update.Where
         |> Option.iter (fun predicate ->
             sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
-        sql.Append(renderTrailingReturning ctx update.Returning).ToString()
+        sql.Append(renderTrailingReturning ctx update.Returning).ToDocument()
 
     let private renderDelete (ctx: RenderContext) (delete: Delete) =
+        let (+) (left: obj) (right: obj) = addDocument ctx left right
+        let invalidOp message = invalidDocument ctx message
         let targetAlias =
             match delete.TargetAlias with
-            | None -> ""
+            | None -> doc ctx ""
             | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
-                " AS " + renderAlias ctx.Provider alias
+                " AS " + renderAlias ctx alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let renderedTarget = renderIdentifier ctx.Provider delete.Target
+        let renderedTarget = renderIdentifier ctx delete.Target
         let sql = RenderBuffer(ctx,
             "DELETE FROM "
             + renderedTarget
@@ -2520,7 +2821,7 @@ module internal RewriteRenderer =
             + (if ctx.Provider = SqlServer then
                    renderSqlServerOutput "DELETED" ctx delete.Returning
                else
-                   ""))
+                   doc ctx ""))
         if not delete.Using.IsEmpty then
             match ctx.Provider with
             | PostgreSql ->
@@ -2542,7 +2843,7 @@ module internal RewriteRenderer =
         delete.Where
         |> Option.iter (fun predicate ->
             sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
-        sql.Append(renderTrailingReturning ctx delete.Returning).ToString()
+        sql.Append(renderTrailingReturning ctx delete.Returning).ToDocument()
 
     let private renderMerge (ctx: RenderContext) (merge: Merge) =
         if ctx.Provider <> SqlServer then
@@ -2551,9 +2852,9 @@ module internal RewriteRenderer =
         // INSERT expressions. One bounded buffer preserves that ordering
         // without large joined intermediate assignment/value strings.
         let sql = RenderBuffer(ctx, "MERGE INTO ")
-        sql.Append(renderIdentifier SqlServer merge.Target)
+        sql.Append(renderIdentifier ctx merge.Target)
            .Append(" AS ")
-           .Append(renderAlias SqlServer merge.TargetAlias)
+           .Append(renderAlias ctx merge.TargetAlias)
            .Append(" USING (VALUES (") |> ignore
         merge.Source.SourceValues
         |> NonEmpty.toList
@@ -2561,13 +2862,13 @@ module internal RewriteRenderer =
             if index > 0 then sql.Append(", ") |> ignore
             sql.Append(renderExpr ctx value) |> ignore)
         sql.Append(")) AS ")
-           .Append(renderAlias SqlServer merge.Source.Alias)
+           .Append(renderAlias ctx merge.Source.Alias)
            .Append(" (") |> ignore
         merge.Source.SourceColumns
         |> NonEmpty.toList
         |> List.iteri (fun index column ->
             if index > 0 then sql.Append(", ") |> ignore
-            sql.Append(renderAlias SqlServer column) |> ignore)
+            sql.Append(renderAlias ctx column) |> ignore)
         sql.Append(") ON ").Append(renderPredicate ctx merge.MatchPredicate) |> ignore
 
         merge.Matched
@@ -2580,7 +2881,7 @@ module internal RewriteRenderer =
                 |> NonEmpty.toList
                 |> List.iteri (fun index assignment ->
                     if index > 0 then sql.Append(", ") |> ignore
-                    sql.Append(renderIdentifier SqlServer assignment.Target)
+                    sql.Append(renderIdentifier ctx assignment.Target)
                        .Append(" = ")
                        .Append(renderExpr ctx assignment.Value) |> ignore))
 
@@ -2591,7 +2892,7 @@ module internal RewriteRenderer =
             |> NonEmpty.toList
             |> List.iteri (fun index column ->
                 if index > 0 then sql.Append(", ") |> ignore
-                sql.Append(renderIdentifier SqlServer column) |> ignore)
+                sql.Append(renderIdentifier ctx column) |> ignore)
             sql.Append(") VALUES (") |> ignore
             mergeInsert.InsertValues
             |> NonEmpty.toList
@@ -2600,7 +2901,7 @@ module internal RewriteRenderer =
                 sql.Append(renderExpr ctx value) |> ignore)
             sql.Append(')') |> ignore)
 
-        sql.Append(';').ToString()
+        sql.Append(';').ToDocument()
 
     let private providerForRuntime = function
         | TargetRuntime.PostgreSqlRuntime -> Provider.PostgreSql
@@ -2643,4 +2944,4 @@ module internal RewriteRenderer =
                         SqlDiagnosticCategory.Resource,
                         detail,
                         location)))
-        { Sql = sql; Parameters = ctx.Parameters; ReturnsRows = returnsRows }
+        { Sql = emitDocument ctx sql; Parameters = ctx.Parameters; ReturnsRows = returnsRows }

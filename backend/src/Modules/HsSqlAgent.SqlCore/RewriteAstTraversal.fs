@@ -145,6 +145,34 @@ module internal RewriteAstTraversal =
             | _ -> true))
         && (query.OrderBy |> List.forall (fun item -> terminalExpr item.Expression))
 
+    /// A bounded local graph has only terminal Query children. It can use a
+    /// local continuation loop inside a deep parent's emission/proof loop
+    /// without growing CLR stack with input depth or replaying that parent
+    /// for every shallow sibling occurrence.
+    let isLocalQuery (query: Query) =
+        let localExpr expression =
+            not (exists true (function
+                | ScalarSubquery child | Exists(child, _) | InSubquery(_, child, _) ->
+                    not (isTerminalQuery child)
+                | _ -> false) expression)
+        let localSource = function
+            | NamedTable _ | CteTable _ -> true
+            | DerivedTable(child, _) | LateralDerivedTable(child, _) -> isTerminalQuery child
+        let head = query.Head
+        (head.Ctes |> List.forall (fun cte -> isTerminalQuery cte.Query))
+        && (query.SetOperations |> List.forall (fun branch -> isTerminalQuery branch.Query))
+        && (head.From |> Option.forall localSource)
+        && (head.Joins |> List.forall (fun join -> localSource join.Source))
+        && (head.Projection |> List.forall (fun item -> localExpr item.Expression))
+        && (head.DistinctOn |> Option.forall (List.forall localExpr))
+        && (head.Where |> Option.forall localExpr)
+        && (head.GroupBy |> List.forall localExpr)
+        && (head.Having |> Option.forall localExpr)
+        && (head.Joins |> List.forall (function
+            | OnJoin(_, _, predicate) -> localExpr predicate
+            | _ -> true))
+        && (query.OrderBy |> List.forall (fun item -> localExpr item.Expression))
+
     /// Struct DU frames avoid one managed object per nested SQL node.
     /// Explicit work capacity grows with nesting, not the CLR call stack.
     /// Explicit continuation frames for policy traversal across queries,

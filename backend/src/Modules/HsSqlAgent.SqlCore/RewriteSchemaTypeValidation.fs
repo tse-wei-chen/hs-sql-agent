@@ -521,8 +521,8 @@ module internal RewriteSchemaTypeValidation =
         and queryTypes catalog inheritedCtes parent (query: Query) =
             let action () = ProjectionKinds(queryTypesCore catalog inheritedCtes parent query)
             let result =
-                if RewriteAstTraversal.isTerminalQuery query then
-                    evaluator.EvaluateTerminal action
+                if RewriteAstTraversal.isLocalQuery query then
+                    evaluator.EvaluateLocal action
                 else evaluator.Evaluate(action, false)
             match result with
             | ProjectionKinds projection -> projection

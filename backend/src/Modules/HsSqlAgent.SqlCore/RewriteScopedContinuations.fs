@@ -28,11 +28,11 @@ module internal RewriteScopedContinuations =
         let mutable current: Frame<'T> option = None
         let mutable inlineDepth = 0
 
-        /// A caller-proven terminal Query cannot recursively enter a Query
-        /// proof. Give its possibly deep scalar expressions a local heap loop
+        /// A caller-proven local Query graph cannot grow Query nesting with
+        /// input depth. Give its scalar expressions a local heap loop
         /// so a shallow sibling does not suspend/replay an entire deep parent
         /// chain. Restore the parent's occurrence cursor on every path.
-        member this.EvaluateTerminal(action: unit -> 'T) : 'T =
+        member this.EvaluateLocal(action: unit -> 'T) : 'T =
             let previousCurrent = current
             let previousDriving = driving
             let previousDepth = inlineDepth

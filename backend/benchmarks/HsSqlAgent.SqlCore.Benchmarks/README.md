@@ -1,5 +1,25 @@
 # SqlCore compiler microbenchmark
 
+The renderer now composes bounded SQL documents, including nested SELECT, CTE,
+derived/LATERAL, SET, paging and DML output. Child queries retain document
+references rather than copying complete SQL strings into every parent. An
+explicit heap traversal emits the final string, checking limits before buffer
+growth and the final copy. Identifier escaping and SQL literal expansion reserve
+their output before allocating expanded text. Parameter/scope checkpoints use
+persistent collections so continuation retries do not copy all previous bindings.
+
+The general schema continuation matrix also runs the full public compiler on
+256-KiB stacks: four shapes at 128/512/2048 across six target providers, plus
+three PostgreSQL cases with a nested Query in an earlier LATERAL sibling. Tests
+verify exact ordered parameter values and all eight successful stages. Nine
+multi-CTE cases correctly require the existing target capability rejection;
+all other cases must compile. Depth-2048 ceilings remain 80 MB rendering and
+240 MB total allocation. A public parsed-AST negative verifies that an oversized
+quoted identifier is refused before escaping allocations (under 8 MB in rendering).
+Structurally shallow sibling queries use local heap loops; deeper graphs retain
+occurrence-scoped continuations. Prefix retries remain metered, so this is not
+a claim of arbitrary breadth-linear compilation.
+
 Run from repository root:
 
 ```bash

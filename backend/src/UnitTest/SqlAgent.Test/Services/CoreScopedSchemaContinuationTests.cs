@@ -20,6 +20,8 @@ public sealed class CoreScopedSchemaContinuationTests
         foreach (var shape in new[] { "function-query", "function-chain", "outer-join", "multi-cte" })
         foreach (var depth in new[] { 128, 512, 2048 })
             yield return new object[] { provider, shape, depth };
+        foreach (var depth in new[] { 128, 512, 2048 })
+            yield return new object[] { SqlAgentToolType.Postgres, "lateral-nested-prefix", depth };
     }
 
     public static IEnumerable<object[]> NegativeCases()
@@ -42,14 +44,23 @@ public sealed class CoreScopedSchemaContinuationTests
         if (shape == "function-chain")
         {
             var expression = leaf;
-            for (var index = 0; index < depth; index++) expression = "COALESCE(" + expression + ", 0)";
+            for (var index = 0; index < depth; index++) expression = "COALESCE(" + expression + ", " + (index + 1) + ")";
             return "SELECT " + expression + " AS id FROM users";
+        }
+        if (shape == "lateral-nested-prefix")
+        {
+            var child = "SELECT a.id AS id";
+            for (var index = 0; index < depth; index++)
+                child = "SELECT b.id FROM users u " +
+                    "JOIN LATERAL (SELECT (SELECT u.id) AS id) a ON TRUE " +
+                    "JOIN LATERAL (" + child + ") b ON TRUE";
+            return child;
         }
         var sql = "SELECT " + leaf + " AS id FROM users";
         for (var index = 0; index < depth; index++)
             sql = shape switch
             {
-                "function-query" => "SELECT COALESCE((" + sql + "), 0) AS id",
+                "function-query" => "SELECT COALESCE((" + sql + "), " + (index + 1) + ") AS id",
                 "outer-join" => "SELECT d.id FROM users AS u LEFT JOIN (" + sql + ") AS d ON u.id = d.id",
                 "multi-cte" => "WITH a AS (" + sql + "), b AS (SELECT id FROM a) SELECT id FROM b",
                 _ => throw new ArgumentOutOfRangeException(nameof(shape))
@@ -98,6 +109,79 @@ public sealed class CoreScopedSchemaContinuationTests
         var parsed = CoreSqlTextParser.ParseQuery(sql, provider);
         var native = Invoke("RewriteLegacyAstAdapter", "toParsed", parsed.Statement);
         return Invoke("RewriteBinder", "bind", provider, native);
+    }
+
+    [Theory]
+    [MemberData(nameof(DeepCases))]
+    public void GeneralGraphs_CompletePublicCompilerOn256KiBWithExactBindings(
+        SqlAgentToolType provider, string shape, int depth)
+    {
+        var sql = Query(shape, depth);
+        var source = SqlAgentToolType.Postgres;
+        var context = new SqlPlanValidationContext("general-document-v1").WithSchemaSnapshot(Snapshot(source));
+        CompiledSqlCommand? command = null;
+        Exception? failure = null;
+        long allocated = 0, renderingAllocated = -1;
+        var ownerThread = -1;
+        var successful = new HashSet<string>();
+        var subscriptions = new List<IDisposable>();
+        using var listener = DiagnosticListener.AllListeners.Subscribe(new Observer<DiagnosticListener>(sourceListener =>
+        {
+            if (sourceListener.Name != "HsSqlAgent.SqlCore.Compiler") return;
+            lock (subscriptions) subscriptions.Add(sourceListener.Subscribe(
+                new Observer<KeyValuePair<string, object?>>(measurement =>
+                {
+                    if (Environment.CurrentManagedThreadId != ownerThread || measurement.Key != "StageCompleted"
+                        || measurement.Value is not { } data) return;
+                    object? Get(string name) => data.GetType().GetProperty(name)!.GetValue(data);
+                    var stage = (string)Get("Stage")!;
+                    if (Equals(Get("Success"), true)) successful.Add(stage);
+                    if (stage == "Rendering") renderingAllocated = Convert.ToInt64(Get("AllocatedBytes"));
+                })));
+        }));
+        try
+        {
+            var worker = new Thread(() =>
+            {
+                ownerThread = Environment.CurrentManagedThreadId;
+                var before = GC.GetAllocatedBytesForCurrentThread();
+                try { command = SqlCoreFacade.CompileQuery(sql, source, provider, context, new SqlExecutionPlanPolicy()); }
+                catch (Exception error) { failure = error; }
+                finally { allocated = GC.GetAllocatedBytesForCurrentThread() - before; }
+            }, 256 * 1024) { IsBackground = true };
+            worker.Start();
+            Assert.True(worker.Join(TimeSpan.FromSeconds(30)), "General compiler worker timed out.");
+            if (shape == "multi-cte" && provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird or SqlAgentToolType.MsSqlServer)
+            {
+                var unsupported = Assert.IsType<SqlCompilationException>(failure);
+                Assert.Equal("SQL_TARGET_CAPABILITY_REJECTED", unsupported.Diagnostic?.Code);
+                Assert.Null(command);
+                return;
+            }
+            Assert.True(failure is null, failure?.ToString());
+            Assert.NotNull(command);
+            Assert.NotEmpty(command.Sql);
+            foreach (var stage in new[] { "Parsing", "Binding", "SchemaBinding", "SchemaType",
+                         "Normalization", "Validation", "Policy", "Rendering" })
+                Assert.Contains(stage, successful);
+            var parameterCount = shape == "lateral-nested-prefix" ? depth * 2
+                : shape is "function-query" or "function-chain" ? depth : 0;
+            Assert.Equal(parameterCount, command.Parameters.Length);
+            if (shape is "function-query" or "function-chain")
+                Assert.Equal(Enumerable.Range(1, depth).Select(value => (long)value),
+                    command.Parameters.Select(parameter => Convert.ToInt64(parameter.Value)));
+            if (shape == "lateral-nested-prefix")
+                Assert.All(command.Parameters, parameter => Assert.Equal(true, parameter.Value));
+            if (depth == 2048)
+            {
+                Assert.InRange(renderingAllocated, 0, 80_000_000);
+                Assert.InRange(allocated, 0, 240_000_000);
+            }
+        }
+        finally
+        {
+            lock (subscriptions) foreach (var subscription in subscriptions) subscription.Dispose();
+        }
     }
 
     [Theory]
