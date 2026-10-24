@@ -67,6 +67,56 @@ public class CoreSqlSemanticValidationTests
         Assert.Contains("projection width", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    public static IEnumerable<object[]> SixDialects() =>
+        Enum.GetValues<SqlAgentToolType>()
+            .Select(provider => new object[] { provider });
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void Compile_MixedScalarSubquerySemanticGraph_CompilesWithStableParameterBinding(
+        SqlAgentToolType provider)
+    {
+        const int depth = 24;
+        var sql = "SELECT "
+            + string.Concat(Enumerable.Repeat("(SELECT ", depth))
+            + "id FROM users WHERE id = 7"
+            + new string(')', depth);
+
+        var result = Compile(sql, provider);
+
+        Assert.Equal(depth + 1,
+            result.Sql.Split("SELECT ", StringSplitOptions.None).Length - 1);
+        Assert.Single(result.Parameters);
+        Assert.Equal(7, Convert.ToInt32(result.Parameters[0].Value));
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void Compile_NestedSetBranchWidthMismatch_RemainsFailClosed(
+        SqlAgentToolType provider)
+    {
+        var sql = "SELECT (SELECT id FROM users "
+            + "UNION ALL SELECT id, name FROM archived_users) FROM users";
+
+        var error = Assert.Throws<SqlCompilationException>(() => Compile(sql, provider));
+
+        Assert.Contains("projection width", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_InnerAggregateInWhere_StillRejectedAcrossScalarSubquery()
+    {
+        var sql = "SELECT (SELECT id FROM orders WHERE SUM(amount) > 10) FROM users";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, SqlAgentToolType.Postgres));
+
+        Assert.Contains("Aggregate function 'SUM'", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHERE/ON/FILTER", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Compile_SetOperationWithMatchingProjectionWidths_RemainsSupported()
     {

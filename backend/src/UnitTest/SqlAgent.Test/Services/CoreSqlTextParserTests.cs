@@ -5,6 +5,29 @@ namespace SqlAgent.Test.Services;
 public class CoreSqlTextParserTests
 {
     [Fact]
+    public void DeepPostgresSetRoundTrip_UsesHeapContinuationsForBothAstAdapters()
+    {
+        // This intentionally goes through the *public* compatibility parser
+        // and public parsed-AST compiler, not only the internal native F# path.
+        const int depth = 512;
+        var sql = "SELECT id FROM users WHERE id = 1";
+        for (var i = 2; i <= depth; i++)
+            sql = $"SELECT id FROM users WHERE id = {i} UNION ({sql})";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Postgres);
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            parsed, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("public-deep-set-round-trip-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(command.Sql);
+        Assert.Equal(depth - 1, command.Sql.Split(" UNION ", StringSplitOptions.None).Length - 1);
+        Assert.Equal(depth, command.Parameters.Count());
+        Assert.Equal(Enumerable.Range(1, depth).Reverse().Select(i => (long)i),
+            command.Parameters.Select(value => Convert.ToInt64(value.Value)));
+    }
+
+    [Fact]
     public void ParseQuery_BuildsCoreAstWithRealSourceSpansAndQuoteIntent()
     {
         const string sql = "SELECT \"UserId\" FROM \"App\".\"Users\" WHERE \"UserId\" = 7";

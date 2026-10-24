@@ -139,6 +139,678 @@ jobs:
               status = "ok" if worker.get("success") else "FAILED"
               print(f"{item['dialect']:12} {item['shape']:23} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} elapsedUs={worker.get('elapsedMicroseconds')} exitCode={item['processExitCode']}")
           PY
+      - name: Characterize mixed Expr/EXISTS Query nesting (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres,Oracle
+          --shapes mixed-query-graph --depths 128,512,2048
+          --output artifacts/sqlcore-mixed-depth-pr.json
+      - name: Print mixed Query depth outcomes
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-mixed-depth-pr.json; then
+            echo "Mixed Query depth report missing; preceding step failed." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-mixed-depth-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"Mixed Query depth: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              status = "ok" if worker.get("success") else "FAILED"
+              print(f"{item['dialect']:12} depth={item['depth']:4} status={status:6} allocatedBytes={worker.get('allocatedBytes')} exitCode={item['processExitCode']} code={worker.get('diagnosticCode')} error={worker.get('error')}")
+          # This guard does not claim arbitrary-depth SQL support. It
+          # locks in the measured improvement for one deterministic shape,
+          # with >4x headroom for runtime/JIT variance. The previous
+          # quadratic implementation allocated >269 MB at 2,048 layers.
+          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Mixed Query depth floor regressed: all six probes must compile.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              if not worker.get("success") or item["processExitCode"] != 0:
+                  raise SystemExit("Mixed Query probe must compile: "
+                                   + str((item["dialect"], item["depth"])))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Mixed Query 2,048-depth allocation exceeded 120 MB: "
+                                   + str((item["dialect"], worker.get("allocatedBytes"))))
+          PY
+      - name: Profile nested derived and CTE query phases (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-derived-source,nested-cte,nested-cte-typed-schema --depths 128,512,2048
+          --output artifacts/sqlcore-query-phases-pr.json
+      - name: Inspect per-stage query profiling and resource exits
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-query-phases-pr.json; then
+            echo "Nested Query phase report missing." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-query-phases-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"Nested Query stages: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              metrics = worker.get("stageMetrics") or []
+              phases = {phase.get("Stage") for phase in metrics if phase.get("Success")}
+              print(f"{item['shape']:23} depth={item['depth']:4} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} status={worker.get('success')}")
+              for phase in metrics:
+                  print(f"  {phase['Stage']:18} us={phase['ElapsedMicroseconds']} allocated={phase['AllocatedBytes']} work={phase['WorkUnits']} ok={phase['Success']}")
+                  if any(phase[field] < 0 for field in ("ElapsedMicroseconds", "AllocatedBytes", "WorkUnits")):
+                      raise SystemExit("Negative stage resource measurements.")
+              if worker.get("success") and not required.issubset(phases):
+                  raise SystemExit("Successful compilation omitted required stage telemetry.")
+          # Lock in both measured 2,048-depth Query shapes. Before the
+          # streaming CTE change this shape allocated >500 MB.
+          if report["samples"] != 9 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Nested derived/CTE/typed-CTE depth floor regressed.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              if not worker.get("success") or item["processExitCode"] != 0:
+                  raise SystemExit("Nested Query probe must compile: "
+                                   + str((item["shape"], item["depth"])))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Nested Query 2048 allocation exceeded 120 MB: "
+                                   + str((item["shape"], worker.get("allocatedBytes"))))
+          PY
+      - name: Characterize alternating CTE/derived parser resource threshold
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes mixed-cte-derived,mixed-cte-derived-typed-schema --depths 128,512,2048
+          --output artifacts/sqlcore-mixed-cte-derived-pr.json
+      - name: Gate mixed CTE/derived streaming allocations and stages
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("artifacts/sqlcore-mixed-cte-derived-pr.json")
+          if not path.exists():
+              raise SystemExit("Mixed CTE/derived profiling report missing")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          print(f"Mixed CTE/derived: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 6 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Mixed CTE/derived probe must compile at all three depths")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              phases = [p["Stage"] for p in worker.get("stageMetrics", []) if p["Success"]]
+              print(f"  depth={item['depth']} success={worker.get('success')} code={worker.get('diagnosticCode')} phases={phases} bytes={worker.get('allocatedBytes')}")
+              needed = required | ({"SchemaBinding", "SchemaType"}
+                  if item["shape"] == "mixed-cte-derived-typed-schema" else set())
+              if not worker.get("success") or item["processExitCode"] != 0 or not needed.issubset(phases):
+                  raise SystemExit("Mixed CTE/derived compile or telemetry regressed: " + str(item["depth"]))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Mixed CTE/derived 2048 exceeded 120MB total allocated; streaming path regressed")
+              for phase in worker.get("stageMetrics", []):
+                  if phase["Stage"] == "Rendering" and item["depth"] == 2048 and (
+                      phase["AllocatedBytes"] > 60_000_000
+                  ):
+                      raise SystemExit("Mixed CTE/derived 2048 rendering exceeded 60MB allocation")
+          PY
+      - name: Characterize nested SET branch stack and allocations (isolated, observational)
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-set,nested-set-typed-schema --depths 128,512,2048
+          --output artifacts/sqlcore-nested-set-pr.json
+      - name: Print nested SET path diagnostics and phase budgets
+        if: always()
+        shell: bash
+        run: |
+          if test ! -f artifacts/sqlcore-nested-set-pr.json; then
+            echo "Nested SET probe report missing." >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-nested-set-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"Nested SET: samples={report['samples']} failures={report['failures']} crashOrTimeout={report['crashesOrTimeouts']}")
+          if report["samples"] != 6 or report["failures"] != 0 or report["crashesOrTimeouts"] != 0:
+              raise SystemExit("Nested SET regression: all six subprocess probes must compile safely.")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              print(f"{item['shape']:25} depth={item['depth']:4} success={worker.get('success')} code={worker.get('diagnosticCode')} allocated={worker.get('allocatedBytes')} exit={item['processExitCode']}")
+              if not worker.get("success") or item["processExitCode"] != 0:
+                  raise SystemExit("Nested SET worker must compile: "
+                                   + str((item["shape"], item["depth"], worker.get("diagnosticCode"))))
+              samples = worker.get("stageMetrics") or []
+              stages = {stage["Stage"] for stage in samples if stage.get("Success")}
+              expected = required | ({"SchemaBinding", "SchemaType"} if item["shape"] == "nested-set-typed-schema" else set())
+              if not expected.issubset(stages):
+                  raise SystemExit("Nested SET compilation omitted required phase metrics.")
+              for phase in samples:
+                  print(f"  {phase['Stage']:18} allocated={phase['AllocatedBytes']} elapsedUs={phase['ElapsedMicroseconds']} work={phase['WorkUnits']} ok={phase['Success']}")
+                  if any(phase[key] < 0 for key in ("AllocatedBytes", "ElapsedMicroseconds", "WorkUnits")):
+                      raise SystemExit("Negative nested SET phase resource measurement.")
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Nested SET 2048 allocation exceeded 120 MB: "
+                                   + str((item["shape"], worker.get("allocatedBytes"))))
+          PY
+      - name: Verify iterative nested SET parsing on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-set,nested-set-typed-schema
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-set-small-stack-pr.json
+      - name: Gate 256 KiB nested SET successful compilation and phases
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-set-small-stack-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"SET small stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Iterative nested SET on 256 KiB must compile successfully, not merely fail closed.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              stages = {stage["Stage"] for stage in worker.get("stageMetrics", []) if stage.get("Success")}
+              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+              if item["shape"] == "nested-set-typed-schema":
+                  required |= {"SchemaBinding", "SchemaType"}
+              if (not worker.get("success") or item["processExitCode"] != 0
+                      or not required.issubset(stages)):
+                  raise SystemExit("SET stack regression: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
+              print(f"  {item['shape']:25} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(stages)}")
+          PY
+      - name: Verify heap CTE parsing and typed proof on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-cte,nested-cte-typed-schema
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-cte-small-stack-pr.json
+      - name: Gate 256 KiB nested CTE successful compilation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-cte-small-stack-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"CTE small stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Nested CTE must compile successfully on a 256 KiB stack.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              stages = {sample["Stage"] for sample in worker.get("stageMetrics", []) if sample.get("Success")}
+              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+              if item["shape"] == "nested-cte-typed-schema":
+                  required |= {"SchemaBinding", "SchemaType"}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
+                  raise SystemExit("CTE small stack did not succeed: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
+              print(f"  {item['shape']:25} depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
+          PY
+      - name: Require alternating CTE-derived full compilation on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes mixed-cte-derived,mixed-cte-derived-typed-schema --depths 512,2048
+          --stack-bytes 262144
+          --output artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
+      - name: Gate mixed CTE-derived stack success and phase completeness
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"Mixed CTE/derived 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Mixed CTE/derived must fully compile on 256 KiB, not merely fail closed.")
+          expected = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              stages = {stage["Stage"] for stage in worker.get("stageMetrics", []) if stage.get("Success")}
+              needed = expected | ({"SchemaBinding", "SchemaType"}
+                  if item["shape"] == "mixed-cte-derived-typed-schema" else set())
+              if not worker.get("success") or item["processExitCode"] != 0 or not needed.issubset(stages):
+                  raise SystemExit("Mixed Query stack success/telemetry regressed: " + str(
+                      (item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Mixed CTE/derived 2048 depth exceeds the existing 120 MB allocation ceiling")
+              print(f"  depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
+          PY
+      - name: Verify primary FROM LATERAL proof on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-lateral-derived,nested-lateral-derived-typed-schema
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-lateral-small-stack-pr.json
+      - name: Gate LATERAL rendering and scoped type proof
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-lateral-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"LATERAL 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Primary LATERAL source must compile at 512/2048 on 256 KiB.")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              present = {m["Stage"] for m in worker.get("stageMetrics", []) if m.get("Success")}
+              expected = required | ({"SchemaBinding", "SchemaType"}
+                  if item["shape"] == "nested-lateral-derived-typed-schema" else set())
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(present):
+                  raise SystemExit("LATERAL source stack/type regression: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), present)))
+              for stage in worker.get("stageMetrics", []):
+                  if any(stage[field] < 0 for field in ("ElapsedMicroseconds", "AllocatedBytes", "WorkUnits")):
+                      raise SystemExit("Negative LATERAL phase telemetry.")
+              if item["depth"] == 2048:
+                  if not isinstance(worker.get("allocatedBytes"), int) or worker["allocatedBytes"] > 120_000_000:
+                      raise SystemExit("2,048-level LATERAL total allocation exceeded 120 MB.")
+                  rendering = [p for p in worker.get("stageMetrics", []) if p["Stage"] == "Rendering"]
+                  if len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 60_000_000:
+                      raise SystemExit("2,048-level LATERAL streaming allocation exceeded 60 MB.")
+              print(f"  {item['shape']:34} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(present)}")
+          PY
+      - name: Verify correlated JOIN LATERAL and WHERE EXISTS scope on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-joined-lateral,nested-joined-lateral-typed-schema,nested-correlated-exists,nested-correlated-exists-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-correlated-small-stack-pr.json
+      - name: Gate correlated mixed Query graphs without crashes or silent validation bypass
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("artifacts/sqlcore-correlated-small-stack-pr.json")
+          with path.open(encoding="utf-8") as source:
+              report = json.load(source)
+          if (report["samples"] != 12 or report["crashesOrTimeouts"] or
+              report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Correlated Query/Expr/Source must compile all 12 cases on 256 KiB: " + str(
+                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
+          full = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          succeeded = rejected = 0
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if worker.get("success"):
+                  succeeded += 1
+                  required = full | ({"SchemaBinding", "SchemaType"} if typed else set())
+                  if item["processExitCode"] != 0 or not required.issubset(stages):
+                      raise SystemExit("Compilation skipped required proof stages: " + str(
+                          (item["shape"], item["depth"], stages)))
+              else:
+                  raise SystemExit("Correlated SQL must compile rather than fail closed: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"))))
+              if item["depth"] == 2048:
+                  if not isinstance(worker.get("allocatedBytes"), int) or worker["allocatedBytes"] > 120_000_000:
+                      raise SystemExit("Correlated 2048 total allocation exceeded 120 MB: " + item["shape"])
+                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 60_000_000:
+                      raise SystemExit("Correlated 2048 render allocation exceeded 60 MB: " + item["shape"])
+              print(f"  {item['shape']:39} depth={item['depth']:4} success={worker.get('success')} allocated={worker.get('allocatedBytes')}")
+          print(f"Correlated 256 KiB: compiled={succeeded}/12, no resource refusals or crashes")
+          PY
+      - name: Verify prefixed second JOIN LATERAL correlation on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-prefixed-joined-lateral,nested-prefixed-joined-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-prefixed-join-lateral-pr.json
+      - name: Gate second JOIN LATERAL full compilation and typed scope
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-prefixed-join-lateral-pr.json").open(encoding="utf-8") as stream:
+              report = json.load(stream)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Prefixed second JOIN LATERAL must compile all 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          stages = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              expected = stages | ({"SchemaBinding", "SchemaType"} if typed else set())
+              succeeded = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(succeeded):
+                  raise SystemExit("Prefixed LATERAL skipped a required proof: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), succeeded)))
+              if item["depth"] == 2048:
+                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 180_000_000
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > 60_000_000):
+                      raise SystemExit("Prefixed LATERAL 2048 allocation regression: " + item["shape"])
+              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Prefixed second JOIN LATERAL 256 KiB: compiled=6/6")
+          PY
+      - name: Verify two dependent JOIN LATERALs on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-double-joined-lateral,nested-double-joined-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-double-joined-lateral-pr.json
+      - name: Gate dependent JOIN LATERAL scope and real deep compilation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-double-joined-lateral-pr.json").open(encoding="utf-8") as stream:
+              report = json.load(stream)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Two dependent LATERAL sources must compile 6/6 at 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          base = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              required = base | ({"SchemaBinding", "SchemaType"} if typed else set())
+              completed = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(completed):
+                  raise SystemExit("Double LATERAL missing proof or compilation: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), completed)))
+              if item["depth"] == 2048:
+                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 220_000_000
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > 90_000_000):
+                      raise SystemExit("Double LATERAL 2048 allocation regression: " + item["shape"])
+              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Double dependent JOIN LATERAL 256 KiB: compiled=6/6")
+          PY
+      - name: Require three dependent JOIN LATERALs on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-triple-joined-lateral,nested-triple-joined-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-triple-joined-lateral-pr.json
+      - name: Gate sequential JOIN prefix heap scope and stages
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-triple-joined-lateral-pr.json").open(encoding="utf-8") as stream:
+              report = json.load(stream)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Three dependent LATERAL sources must compile 6/6 at 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              expected = required | ({"SchemaBinding", "SchemaType"} if typed else set())
+              completed = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(completed):
+                  raise SystemExit("Triple LATERAL skipped validation or compilation: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), completed)))
+              if item["depth"] == 2048:
+                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 310_000_000
+                      or len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 120_000_000):
+                      raise SystemExit("Triple LATERAL 2048 allocation regression: " + item["shape"])
+              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Triple dependent JOIN LATERAL 256 KiB: compiled=6/6")
+          PY
+      - name: Probe two independently deep LATERAL sibling Queries on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes two-deep-sibling-lateral,two-deep-sibling-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-two-deep-sibling-lateral-pr.json
+      - name: Gate two deep LATERAL sibling proofs and resource isolation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-two-deep-sibling-lateral-pr.json").open(encoding="utf-8") as source:
+              report = json.load(source)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Both independent LATERAL sibling Queries must compile 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+              if typed:
+                  required.update({"SchemaBinding", "SchemaType"})
+              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
+                  raise SystemExit("Sibling LATERAL omitted proof stage: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
+              if item["depth"] == 2048:
+                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 260_000_000
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > 100_000_000):
+                      raise SystemExit("Sibling LATERAL 2048 allocation budget exceeded: " + item["shape"])
+              print(f"  {item['shape']:43} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Two independently deep sibling LATERALs 256 KiB: compiled=6/6")
+          PY
+      - name: Verify mixed Source and WHERE EXISTS lateral comb on 256 KiB
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes lateral-exists-comb-siblings,lateral-exists-comb-siblings-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-lateral-exists-comb-pr.json
+      - name: Gate mixed Query Source Expr comb branches and typed safety
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-lateral-exists-comb-pr.json").open(encoding="utf-8") as source:
+              report = json.load(source)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Mixed LATERAL/EXISTS comb must compile 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          base = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              required = base | ({"SchemaBinding", "SchemaType"} if typed else set())
+              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
+                  raise SystemExit("Comb Query crossed stage without proof: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
+              if item["depth"] == 2048:
+                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 280_000_000
+                      or len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 120_000_000):
+                      raise SystemExit("LATERAL/EXISTS comb allocation regression: " + item["shape"])
+              print(f"  {item['shape']:44} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("LATERAL / EXISTS mixed comb 256 KiB: compiled=6/6")
+          PY
+      - name: Verify public Query Facts inspection on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes facts-joined-lateral,facts-joined-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-facts-small-stack-pr.json
+      - name: Gate Inspection phase work accounting and deep Query Facts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-facts-small-stack-pr.json").open(encoding="utf-8") as src:
+              report = json.load(src)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Public Query Facts inspection must compile 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          baseline = {"Parsing", "Binding", "Inspection", "Normalization", "Validation", "Policy", "Rendering"}
+          for sample in report["observations"]:
+              worker = sample.get("worker") or {}
+              stages = worker.get("stageMetrics", [])
+              ok = {x["Stage"] for x in stages if x.get("Success")}
+              typed = sample["shape"].endswith("-typed-schema")
+              required = baseline | ({"SchemaBinding", "SchemaType"} if typed else set())
+              inspection = [x for x in stages if x["Stage"] == "Inspection"]
+              if (not worker.get("success") or sample["processExitCode"] != 0
+                  or not required.issubset(ok) or len(inspection) != 1):
+                  raise SystemExit("Facts stage omitted proof: " + str(
+                      (sample["shape"], sample["depth"], worker.get("diagnosticCode"), ok)))
+              phase = inspection[0]
+              if phase["WorkUnits"] < sample["depth"] or phase["AllocatedBytes"] < 0:
+                  raise SystemExit("Facts inspection work is not accounted per Query node.")
+              if sample["depth"] == 2048:
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 180_000_000
+                      or phase["AllocatedBytes"] > 40_000_000):
+                      raise SystemExit("2048 Query Facts allocation regression: " + sample["shape"])
+              print(f"  {sample['shape']:39} depth={sample['depth']:4} "
+                    f"inspectionWork={phase['WorkUnits']} bytes={worker.get('allocatedBytes')}")
+          print("Query Facts Inspection 256 KiB: compiled=6/6, metered all frames")
+          PY
+      - name: Verify correlated IN Query heap continuation on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-correlated-in,nested-correlated-in-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-in-small-stack-pr.json
+      - name: Gate correlated IN actual compilation, typed proof and allocations
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-in-small-stack-pr.json").open(encoding="utf-8") as src:
+              report = json.load(src)
+          if report["samples"] != 6 or report["failures"] or report["resourceRejections"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Correlated IN must compile 6/6 on 256 KiB, not merely fail closed: " + str(
+                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"] == "nested-correlated-in-typed-schema"
+              expected = required | ({"SchemaBinding", "SchemaType"} if typed else set())
+              phases = {entry["Stage"] for entry in worker.get("stageMetrics", []) if entry.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(phases):
+                  raise SystemExit("Correlated IN skipped proof stage: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), phases)))
+              if item["depth"] == 2048:
+                  allocated = worker.get("allocatedBytes")
+                  render = [entry for entry in worker.get("stageMetrics", []) if entry["Stage"] == "Rendering"]
+                  if not isinstance(allocated, int) or allocated > 120_000_000 or len(render) != 1 or render[0]["AllocatedBytes"] > 60_000_000:
+                      raise SystemExit("Correlated IN 2048 allocation regression: " + item["shape"])
+              print(f"  {item['shape']:36} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Correlated IN small-stack: compiled 6/6, no stack reserve or crash")
+          PY
+      - name: Diagnose projection ScalarSubquery and CASE Query crossings on small stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-scalar-subquery,nested-scalar-subquery-typed-schema,nested-case-scalar,nested-case-scalar-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-scalar-case-small-stack-pr.json
+      - name: Report projection Query crossings, preserving refusal versus success
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-scalar-case-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          if (report["samples"] != 12 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("CASE and scalar Query must compile all 12/12 on 256 KiB: " + str(
+                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
+          scalar_success = case_success = 0
+          standard_stages = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item["worker"] or {}
+              shape = item["shape"]
+              scalar = "scalar-subquery" in shape
+              typed = shape.endswith("-typed-schema")
+              stage_metrics = worker.get("stageMetrics", [])
+              stages = {s["Stage"] for s in stage_metrics if s.get("Success")}
+              expected = standard_stages | ({"SchemaBinding", "SchemaType"} if typed else set())
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(stages):
+                  raise SystemExit("Projection Query must compile all proof stages: " + str(
+                      (shape, item["depth"], worker.get("diagnosticCode"), stages)))
+              if scalar:
+                  scalar_success += 1
+              else:
+                  case_success += 1
+              if item["depth"] == 2048:
+                  limit = 32_000_000 if scalar else 90_000_000
+                  render_limit = 4_000_000 if scalar else 30_000_000
+                  render = [s for s in stage_metrics if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > limit
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > render_limit):
+                      raise SystemExit("Projection Query 2048 allocation budget regressed: " + shape)
+              print(f"  {shape:36} depth={item['depth']:4} compiled={worker.get('success')} bytes={worker.get('allocatedBytes')} code={worker.get('diagnosticCode')}")
+          if scalar_success != 6 or case_success != 6:
+              raise SystemExit("All scalar and CASE projection probes must compile on 256 KiB")
+          print(f"Projection Query 256 KiB: scalar compiled={scalar_success}/6; CASE compiled={case_success}/6")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -166,6 +838,23 @@ jobs:
           path: |
             artifacts/sqlcore-depth-pr.json
             artifacts/sqlcore-small-stack-pr.json
+            artifacts/sqlcore-mixed-depth-pr.json
+            artifacts/sqlcore-query-phases-pr.json
+            artifacts/sqlcore-nested-set-pr.json
+            artifacts/sqlcore-set-small-stack-pr.json
+            artifacts/sqlcore-mixed-cte-derived-pr.json
+            artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
+            artifacts/sqlcore-lateral-small-stack-pr.json
+            artifacts/sqlcore-cte-small-stack-pr.json
+            artifacts/sqlcore-correlated-small-stack-pr.json
+            artifacts/sqlcore-prefixed-join-lateral-pr.json
+            artifacts/sqlcore-double-joined-lateral-pr.json
+            artifacts/sqlcore-triple-joined-lateral-pr.json
+            artifacts/sqlcore-two-deep-sibling-lateral-pr.json
+            artifacts/sqlcore-lateral-exists-comb-pr.json
+            artifacts/sqlcore-facts-small-stack-pr.json
+            artifacts/sqlcore-in-small-stack-pr.json
+            artifacts/sqlcore-scalar-case-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

@@ -11,10 +11,10 @@ public sealed class ManagementApiKeyPermissionTests
     [Fact]
     public void Catalog_DeniesIdentitySecurityAndManagementKeyAdministration()
     {
-        Assert.Empty(ManagementApiKeyPermissions.Grantable.Where(p =>
+        Assert.DoesNotContain(ManagementApiKeyPermissions.Grantable, p =>
             p.StartsWith("/auth/", StringComparison.Ordinal) ||
             p.StartsWith("/runtime/security.", StringComparison.Ordinal) ||
-            p.Contains("management-api-keys", StringComparison.Ordinal)));
+            p.Contains("management-api-keys", StringComparison.Ordinal));
         Assert.Throws<ArgumentException>(() => ManagementApiKeyPermissions.Validate(
             ["/auth/user.edit"]));
         Assert.Throws<ArgumentException>(() => ManagementApiKeyPermissions.Validate([]));
@@ -27,10 +27,10 @@ public sealed class ManagementApiKeyPermissionTests
     public async Task Lifecycle_UsesIndependentHashedExpiringRevocableCredentials()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
         var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
         await using var context = new AdminContext(options);
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
         var service = new ManagementApiKeyService(context);
         var ct = TestContext.Current.CancellationToken;
         var issued = await service.IssueAsync(new ManagementApiKeyRequest(
@@ -58,10 +58,10 @@ public sealed class ManagementApiKeyPermissionTests
     public async Task Issue_RejectsMissingAndUnsafePermissionsAndExpiry()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
         await using var context = new AdminContext(
             new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options);
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
         var service = new ManagementApiKeyService(context);
         var ct = TestContext.Current.CancellationToken;
         await Assert.ThrowsAsync<ArgumentException>(() => service.IssueAsync(

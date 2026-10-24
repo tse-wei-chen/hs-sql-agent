@@ -15,11 +15,38 @@ module internal RewriteRenderer =
     type Provider = PostgreSql | MySql | SqlServer | SQLite | Oracle | Firebird
     type RenderedCommand = { Sql: string; Parameters: (obj | null) list; ReturnsRows: bool }
 
-    type private RenderContext(provider: Provider, targetRuntime: TargetRuntime) =
+    // Independent of the source lexer character/token caps: a dialect
+    // renderer can expand validated AST nodes when lowering SQL.
+    [<Literal>]
+    let private MaxRenderedSqlLength = 16777216 // UTF-16 code units
+
+    // Guard transient SQL-emitter copies independently of final SQL size.
+    // This is a conservative work ceiling, NOT an absolute process RSS cap.
+    [<Literal>]
+    let private MaxRenderedSqlWorkLength = 134217728L // aggregate appended UTF-16 units
+
+    type private RenderContext(provider: Provider, targetRuntime: TargetRuntime, sourceSpan: Span) =
         let parameters = ResizeArray<obj | null>()
         let sharedParameters = Dictionary<string, string * (obj | null)>(StringComparer.Ordinal)
         let mutable sharedScope: string option = None
         let mutable sharedOrdinal = 0
+        let mutable appendedWork = 0L
+
+        let failBudget code detail : 'T =
+            let location =
+                if sourceSpan.Start >= 0 && sourceSpan.Length >= 0 then
+                    SqlDiagnosticSpan(sourceSpan.Start, sourceSpan.Length)
+                else
+                    Unchecked.defaultof<SqlDiagnosticSpan>
+            raise (
+                SqlCompilationException(
+                    detail,
+                    SqlDiagnostic(
+                        code,
+                        SqlDiagnosticStage.RenderingInvariant,
+                        SqlDiagnosticCategory.Resource,
+                        detail,
+                        location)))
 
         let parameterName index =
             match provider with Oracle -> ":p" + string index | _ -> "@p" + string index
@@ -62,6 +89,43 @@ module internal RewriteRenderer =
                 sharedOrdinal <- previousOrdinal
 
         member _.Parameters = parameters |> Seq.toList
+
+        // The limit is checked BEFORE StringBuilder grows, so a huge
+        // intermediate buffer cannot allocate above the rendered-SQL cap.
+        // Aggregate emitted work also bounds repeated text-copy paths.
+        member _.CheckAppend(existingLength: int, addedLength: int) =
+            RewriteResourceBudget.checkpoint ()
+            if int64 existingLength + int64 addedLength > int64 MaxRenderedSqlLength then
+                failBudget
+                    "SQL_COMPILER_RENDERED_OUTPUT_LIMIT"
+                    ("Rendered SQL exceeds the maximum "
+                     + string MaxRenderedSqlLength + " UTF-16 code units.")
+            if appendedWork + int64 addedLength > MaxRenderedSqlWorkLength then
+                failBudget
+                    "SQL_COMPILER_RENDER_WORK_LIMIT"
+                    ("SQL rendering exceeds the maximum "
+                     + string MaxRenderedSqlWorkLength + " appended UTF-16 code units.")
+            appendedWork <- appendedWork + int64 addedLength
+
+    // Check each write before allocation instead of rejecting only after
+    // materializing a full (possibly transient) SQL fragment.
+    type private RenderBuffer(ctx: RenderContext, initial: string) =
+        let output = StringBuilder()
+        do
+            ctx.CheckAppend(0, initial.Length)
+            output.Append(initial) |> ignore
+
+        member this.Append(value: string) =
+            ctx.CheckAppend(output.Length, value.Length)
+            output.Append(value) |> ignore
+            this
+
+        member this.Append(value: char) =
+            ctx.CheckAppend(output.Length, 1)
+            output.Append(value) |> ignore
+            this
+
+        override _.ToString() = output.ToString()
 
     let private quotePart provider (part: IdentifierPart) =
         let raw =
@@ -204,49 +268,61 @@ module internal RewriteRenderer =
     let private hasTail (query: Query) =
         not query.OrderBy.IsEmpty || query.Limit.IsSome || query.Offset.IsSome || query.FetchPercent.IsSome || query.FetchWithTies
 
-    let rec private isBooleanExpression expression =
-        match expression with
-        | Spanned(_, inner) -> isBooleanExpression inner
-        | Literal(ScalarValue.Boolean _) -> true
-        | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ | RegexMatch _ -> true
-        | Unary(UnaryOperator.Not, _) -> true
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.DistinctFrom
-                 | BinaryOperator.NotDistinctFrom
-                 | BinaryOperator.And
-                 | BinaryOperator.Or), _, _) -> true
-        | SimpleCase(_, branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+    // The renderer's Boolean CASE classifier must not recursively consume
+    // one CLR call frame per nested CASE result. Keep its original proof:
+    // only non-NULL result arms count, and WHEN predicates are not inspected.
+    let private isBooleanExpression expression =
+        let pending = ResizeArray<Expr>()
+        pending.Add expression
+        let mutable isBoolean = true
+        while isBoolean && pending.Count > 0 do
+            let index = pending.Count - 1
+            let current = Expr.unspan pending.[index]
+            pending.RemoveAt index
+            match current with
+            | Literal(ScalarValue.Boolean _) -> ()
+            | IsNull _ | InList _ | InSubquery _ | Between _
+            | Exists _ | Like _ | RegexMatch _ -> ()
+            | Unary(UnaryOperator.Not, _) -> ()
+            | Binary((BinaryOperator.Equal
+                     | BinaryOperator.NotEqual
+                     | BinaryOperator.GreaterThan
+                     | BinaryOperator.LessThan
+                     | BinaryOperator.GreaterThanOrEqual
+                     | BinaryOperator.LessThanOrEqual
+                     | BinaryOperator.DistinctFrom
+                     | BinaryOperator.NotDistinctFrom
+                     | BinaryOperator.And
+                     | BinaryOperator.Or), _, _) -> ()
+            | SimpleCase(_, branches, fallback) ->
+                let mutable nonNull = 0
+                let push value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
-        | SearchedCase(branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter push
+                NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                    push branch.Result) branches
+                if nonNull = 0 then isBoolean <- false
+            | SearchedCase(branches, fallback) ->
+                let mutable nonNull = 0
+                let push value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall isBooleanExpression
-        | _ -> false
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter push
+                NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                    push branch.Result) branches
+                if nonNull = 0 then isBoolean <- false
+            | _ -> isBoolean <- false
+        isBoolean
 
-    let rec private renderBooleanTruthValue expression =
-        match expression with
-        | Spanned(_, inner) -> renderBooleanTruthValue inner
+    let private renderBooleanTruthValue expression =
+        match Expr.unspan expression with
         | Literal(ScalarValue.Boolean true) -> "1"
         | Literal(ScalarValue.Boolean false) -> "0"
         | Literal ScalarValue.Null -> "NULL"
@@ -254,10 +330,50 @@ module internal RewriteRenderer =
             raise (SqlCompilationException(
                 "Boolean CASE predicates currently require literal TRUE, FALSE, or NULL branch results; richer predicate results remain fail-closed."))
 
+    // Most SQL predicates contain a bound column and a literal, not a
+    // recursive scalar graph. Preserve the old allocation-free leaf path
+    // instead of constructing a StringBuilder and two frame stacks for
+    // each comparison in a long AND/OR chain.
+    let private isScalarLeaf expression =
+        match Expr.unspan expression with
+        | Expr.Column _ | Expr.BoundColumn _ | Expr.Wildcard _
+        | Expr.OrderOrdinal _ | Expr.Literal _ | Expr.Interval _ -> true
+        | _ -> false
+
+    // SQL fragments are emitted in source order. Text frames and Expr
+    // frames share one heap-backed stack, so right-deep and alternating
+    // arithmetic / unary / predicate trees do not consume CLR call frames.
+    // Distinct field names are required by an F# struct discriminated union.
+    [<Struct>]
+    type private ScalarRenderFrame =
+        | ScalarNode of expression: Expr
+        | ScalarText of emittedText: string
+        | ScalarRegexCheck
+        | ScalarCastComplete of castExpression: Expr
+        | ScalarConcatProof of unprovenMessage: string
+
+    // Nested PostgreSQL SET branches share an append-only SQL buffer.
+    // Explicit frames avoid a CLR Query -> branch Query recursion and the
+    // previous O(depth^2) intermediate SQL materialization.
+    type private SetEmitFrame =
+        | EnterSetBody of Query
+        | EmitSetBranch of SetBranch
+        | CloseNestedSet
+
+    // Used by the mixed CTE / derived source streaming path. A single
+    // output buffer owns every nested Query boundary, so alternating
+    // wrappers never allocate and copy a complete child SQL string.
+    type private MixedQueryEmitFrame =
+        | FinishMixedCte of outer: Query * cte: Cte
+        | FinishMixedDerived of outer: Query * alias: IdentifierPart
+        | FinishMixedLateral of outer: Query * alias: IdentifierPart
+        | FinishMixedJoinedLateral of outer: Query * preceding: TableSource * alias: IdentifierPart * onPredicate: Expr
+        | FinishMixedPrefixedJoinedLateral of outer: Query * preceding: TableSource * earlier: Join list * alias: IdentifierPart * onPredicate: Expr
+
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
-        | Expr.Spanned(_, inner) -> renderExpr ctx inner
+        | Expr.Spanned _ -> renderExpr ctx (Expr.unspan expression)
         | Expr.Column identifier
         | Expr.BoundColumn(identifier, _) -> renderIdentifier ctx.Provider identifier
         | Expr.Wildcard None -> "*"
@@ -352,63 +468,54 @@ module internal RewriteRenderer =
                 "TIMESTAMPDIFF(" + keyword + ", " + startValue + ", " + finish + ")"
             | Firebird ->
                 "DATEDIFF(" + keyword + " FROM " + startValue + " TO " + finish + ")"
-        | Expr.Unary(UnaryOperator.Not, operand) -> "NOT (" + renderExpr ctx operand + ")"
-        | Expr.Unary(UnaryOperator.Negate, operand) -> "(-" + renderExpr ctx operand + ")"
-        | Expr.Unary(UnaryOperator.Positive, operand) -> "(+" + renderExpr ctx operand + ")"
+        | Expr.Unary _ -> renderScalarGraph ctx expression
         | Expr.Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
-            renderLeftDeepBoolean ctx renderExpr chain
-        | Expr.Binary(operator, left, right) ->
+            renderBooleanGraph ctx renderExpr chain
+        | Expr.Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom as op), left, right)
+            when ctx.Provider = Oracle ->
+            // Oracle null-safe comparison expands the already rendered
+            // operands several times. Cache their SQL text once so bind
+            // parameters are NOT allocated twice.
+            let leftSql = renderExpr ctx left
+            let rightSql = renderExpr ctx right
+            let equal =
+                "CASE WHEN " + leftSql + " IS NULL THEN CASE WHEN " + rightSql
+                + " IS NULL THEN 1 ELSE 0 END WHEN " + rightSql
+                + " IS NULL THEN 0 WHEN " + leftSql + " = " + rightSql
+                + " THEN 1 ELSE 0 END"
+            "(" + equal
+            + (if op = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
+        | Expr.Binary(operator, left, right)
+            when isScalarLeaf left && isScalarLeaf right ->
+            // The scalar leaves have no nested render graph, so the original
+            // direct binary path remains cheaper and retains the exact
+            // provider/parameter semantics.
             let leftSql = renderExpr ctx left
             let rightSql = renderExpr ctx right
             match operator, ctx.Provider, ctx.TargetRuntime with
-            | BinaryOperator.Modulo, (Oracle | Firebird), _ -> "MOD(" + leftSql + ", " + rightSql + ")"
-            | BinaryOperator.Concat, MySql, _ -> "CONCAT(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Modulo, (Oracle | Firebird), _ ->
+                "MOD(" + leftSql + ", " + rightSql + ")"
+            | BinaryOperator.Concat, MySql, _ ->
+                "CONCAT(" + leftSql + ", " + rightSql + ")"
             | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven NativePipes) ->
                 "(" + leftSql + " || " + rightSql + ")"
             | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Proven PlusOperator) ->
                 "(" + leftSql + " + " + rightSql + ")"
             | BinaryOperator.Concat, SqlServer, SqlServerRuntime(Unproven message) ->
-                invalidOp ("Validated SQL reached rendering without SQL Server concat proof: " + message)
+                invalidOp (
+                    "Validated SQL reached rendering without SQL Server concat proof: "
+                    + message)
             | BinaryOperator.NotDistinctFrom, MySql, _ ->
                 "(" + leftSql + " <=> " + rightSql + ")"
             | BinaryOperator.DistinctFrom, MySql, _ ->
                 "NOT (" + leftSql + " <=> " + rightSql + ")"
-            | (BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), Oracle, _ ->
-                let equal =
-                    "CASE WHEN " + leftSql + " IS NULL THEN CASE WHEN " + rightSql
-                    + " IS NULL THEN 1 ELSE 0 END WHEN " + rightSql
-                    + " IS NULL THEN 0 WHEN " + leftSql + " = " + rightSql
-                    + " THEN 1 ELSE 0 END"
-                "(" + equal
-                + (if operator = BinaryOperator.NotDistinctFrom then " = 1)" else " = 0)")
-            | _ -> "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
-        | Expr.Like(value, pattern, escape, negated, caseInsensitive) ->
-            if caseInsensitive && ctx.Provider <> PostgreSql then invalidOp (capabilityError ctx.Provider "operator.ilike")
-            let positive =
-                "(" + renderExpr ctx value + " " + (if caseInsensitive then "ILIKE" else "LIKE") + " " + renderExpr ctx pattern
-                + (escape |> Option.map (fun value -> " ESCAPE " + renderLikeEscape ctx.Provider value) |> Option.defaultValue "") + ")"
-            if negated then "NOT (" + positive + ")" else positive
+            | _ ->
+                "(" + leftSql + " " + binaryText operator + " " + rightSql + ")"
+        | Expr.Binary _ | Expr.Like _ -> renderScalarGraph ctx expression
         | Expr.RawRegexCall _ ->
             invalidOp "Raw REGEXP_LIKE reached rendering before canonicalization."
-        | Expr.RegexMatch(value, pattern) ->
-            let valueSql = renderExpr ctx value
-            let patternSql = renderExpr ctx pattern
-            match ctx.Provider with
-            | PostgreSql -> "(" + valueSql + " ~ " + patternSql + ")"
-            | MySql | Oracle | SqlServer -> "REGEXP_LIKE(" + valueSql + ", " + patternSql + ")"
-            | SQLite | Firebird -> invalidOp (capabilityError ctx.Provider "function.regex_match")
-        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
-            if ctx.Provider <> PostgreSql then
-                invalidOp (capabilityError ctx.Provider "json.operator.postgres_arrow")
-            let selectorSql =
-                match selector with
-                | PostgresJsonProperty key -> ctx.Bind(box key)
-                | PostgresJsonArrayIndex index -> ctx.Bind(box index)
-            let operator =
-                match resultKind with
-                | JsonResult -> "->"
-                | TextResult -> "->>"
-            "(" + renderExpr ctx value + " " + operator + " " + selectorSql + ")"
+        | Expr.RegexMatch _ | Expr.PostgresJsonAccess _ ->
+            renderScalarGraph ctx expression
         | Expr.FunctionCall call ->
             renderFunction ctx call
         | Expr.FilteredAggregate(value, predicate) ->
@@ -417,31 +524,7 @@ module internal RewriteRenderer =
                 renderExpr ctx value + " FILTER (WHERE " + renderPredicate ctx predicate + ")"
             | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
-        | Expr.Cast(value, targetType) -> "CAST(" + renderExpr ctx value + " AS " + RewriteCastTypes.renderTarget (providerTool ctx.Provider) targetType + ")"
-        | Expr.Extract(field, value) ->
-            let part = ExtractField.value field |> fun value -> value.Trim().ToUpperInvariant()
-            let tool = providerTool ctx.Provider
-            match SqlDatePartCapabilityRules.TargetValidationError(part, tool) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            let rendered = renderExpr ctx value
-            match ctx.Provider with
-            | SqlServer -> "DATEPART(" + part + ", " + rendered + ")"
-            | MySql -> part + "(" + rendered + ")"
-            | PostgreSql
-            | Oracle -> "EXTRACT(" + part + " FROM " + rendered + ")"
-            | Firebird -> "EXTRACT(" + part + " FROM CAST(" + rendered + " AS DATE))"
-            | SQLite ->
-                match part with
-                | "YEAR" -> "CAST(STRFTIME('%Y', " + rendered + ") AS INTEGER)"
-                | "MONTH" -> "CAST(STRFTIME('%m', " + rendered + ") AS INTEGER)"
-                | "DAY" -> "CAST(STRFTIME('%d', " + rendered + ") AS INTEGER)"
-                | "HOUR" -> "CAST(STRFTIME('%H', " + rendered + ") AS INTEGER)"
-                | "MINUTE" -> "CAST(STRFTIME('%M', " + rendered + ") AS INTEGER)"
-                | "SECOND" -> "CAST(STRFTIME('%S', " + rendered + ") AS INTEGER)"
-                | "QUARTER" ->
-                    "CAST(((CAST(STRFTIME('%m', " + rendered + ") AS INTEGER) + 2) / 3) AS INTEGER)"
-                | _ -> raise (SqlCompilationException("SQLite does not support date part " + part + "."))
+        | Expr.Cast _ | Expr.Extract _ -> renderScalarGraph ctx expression
         | Expr.SimpleCase(input, branches, fallback) ->
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> String.concat ""
             "CASE " + renderExpr ctx input + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
@@ -453,14 +536,13 @@ module internal RewriteRenderer =
                     " WHEN " + renderPredicate ctx branch.Condition + " THEN " + renderExpr ctx branch.Result)
                 |> String.concat ""
             "CASE" + cases + (fallback |> Option.map (fun value -> " ELSE " + renderExpr ctx value) |> Option.defaultValue "") + " END"
-        | Expr.InList(value, items, negated) ->
-            "(" + renderExpr ctx value + (if negated then " NOT IN " else " IN ") + "(" + (items |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + "))"
+        | Expr.InList _ -> renderScalarGraph ctx expression
         | Expr.InSubquery(value, query, negated) ->
             "(" + renderExpr ctx value
             + (if negated then " NOT IN (" else " IN (")
             + renderSubquery ctx query + "))"
-        | Expr.Between(value, lower, upper, negated) -> "(" + renderExpr ctx value + (if negated then " NOT BETWEEN " else " BETWEEN ") + renderExpr ctx lower + " AND " + renderExpr ctx upper + ")"
-        | Expr.IsNull(value, negated) -> "(" + renderExpr ctx value + (if negated then " IS NOT NULL)" else " IS NULL)")
+        | Expr.Between _ | Expr.IsNull _ ->
+            renderScalarGraph ctx expression
         | Expr.ScalarSubquery query ->
             // Materializing the entire inner SELECT at every level was O(n^2)
             // in SQL-string allocations for a pure nested scalar SELECT chain.
@@ -496,7 +578,7 @@ module internal RewriteRenderer =
                     | Oracle -> " FROM DUAL"
                     | Firebird -> " FROM RDB$DATABASE"
                     | _ -> ""
-                let builder = StringBuilder()
+                let builder = RenderBuffer(ctx, "")
                 builder.Append('(') |> ignore
                 for _ in 1 .. wrappers do builder.Append("SELECT (") |> ignore
                 builder.Append(renderSubquery ctx current) |> ignore
@@ -505,7 +587,72 @@ module internal RewriteRenderer =
                 builder.Append(')') |> ignore
                 builder.ToString()
         | Expr.Exists(query, negated) ->
-            (if negated then "NOT EXISTS (" else "EXISTS (") + renderSubquery ctx query + ")"
+            renderExistsQueryChain ctx query negated
+
+    // A SELECT-with-EXISTS-WHERE chain forms one SQL output stream, not
+    // one completed SQL string per enclosing Query. Materializing every
+    // inner SELECT first causes quadratic allocations for mixed Expr/Query
+    // nesting even after Binder and Normalizer have become iterative.
+    //
+    // Restrict this fast path to inert, single-leaf SELECTs so every dialect
+    // keeps its exact projection parameter and dummy-FROM order. Any CTE,
+    // set branch, paging tail, non-EXISTS predicate, or richer SELECT returns
+    // to the original provider-aware renderSubquery path.
+    and private renderExistsQueryChain (ctx: RenderContext) query negated =
+        let dummyFrom =
+            match ctx.Provider with
+            | Oracle -> " FROM DUAL"
+            | Firebird -> " FROM RDB$DATABASE"
+            | _ -> ""
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || not head.Joins.IsEmpty
+               || not head.GroupBy.IsEmpty || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then
+                None
+            else
+                match head.Projection, head.Where with
+                | [ { Alias = None; Expression = projected } ], Some predicate ->
+                    match head.From, Expr.unspan projected, Expr.unspan predicate with
+                    | (None | Some(TableSource.NamedTable _ | TableSource.CteTable _)),
+                      (Literal _ | Column _ | BoundColumn _),
+                      Exists(child, isNegated) ->
+                        Some(projected, head.From, child, isNegated)
+                    | _ -> None
+                | _ -> None
+        // Ordinary EXISTS has no wrappers: don't allocate a builder or
+        // per-query continuation state just to surround one subquery.
+        if Option.isNone (tryWrapper query) then
+            (if negated then "NOT EXISTS (" else "EXISTS (")
+            + renderSubquery ctx query + ")"
+        else
+            let mutable current = query
+            let mutable currentNegated = negated
+            let mutable wrapping = true
+            let mutable levels = 0
+            let output = RenderBuffer(ctx, "")
+            while wrapping do
+                match tryWrapper current with
+                | Some(projected, source, child, innerNegated) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                    output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
+                          .Append("SELECT ")
+                          .Append(renderExpr ctx projected) |> ignore
+                    match source with
+                    | Some named -> output.Append(" FROM ").Append((renderSource ctx named) : string) |> ignore
+                    | None -> output.Append(dummyFrom) |> ignore
+                    output.Append(" WHERE ") |> ignore
+                    levels <- levels + 1
+                    current <- child
+                    currentNegated <- innerNegated
+                | None -> wrapping <- false
+            output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
+                  .Append(renderSubquery ctx current)
+                  .Append(')') |> ignore
+            for _ in 1 .. levels do output.Append(')') |> ignore
+            output.ToString()
 
     and private renderPredicate (ctx: RenderContext) expression =
         match ctx.Provider with
@@ -517,7 +664,7 @@ module internal RewriteRenderer =
             | Unary(UnaryOperator.Not, operand) ->
                 "NOT (" + renderPredicate ctx operand + ")"
             | Binary((BinaryOperator.And | BinaryOperator.Or), _, _) as chain ->
-                renderLeftDeepBoolean ctx renderPredicate chain
+                renderBooleanGraph ctx renderPredicate chain
             | SimpleCase(input, branches, fallback) when isBooleanExpression expression ->
                 let cases =
                     branches
@@ -548,33 +695,238 @@ module internal RewriteRenderer =
         | PostgreSql | MySql | SQLite | Firebird ->
             renderExpr ctx expression
 
-    // Preserve every original parenthesis and operand's left-to-right
-    // parameter-binding order, but avoid building each intermediate prefix
-    // string on long left-deep AND/OR chains. This is a rendering traversal
-    // optimization, not boolean reassociation or AST canonicalization.
-    and private renderLeftDeepBoolean
+    // A Boolean subtree can be left-deep, right-deep or balanced. Each
+    // pending binary uses ONE struct frame: after rendering its left child,
+    // append its operator; after rendering its right child, close exactly
+    // that parent's parentheses. No node reordering, Boolean reassociation,
+    // per-node option allocations or managed recursion is needed.
+    and private renderBooleanGraph
         (ctx: RenderContext)
         (renderLeaf: RenderContext -> Expr -> string)
         expression =
-        let operations = ResizeArray<BinaryOperator * Expr>()
+        let pending = ResizeArray<struct (BinaryOperator * Expr * bool)>()
+        let builder = RenderBuffer(ctx, "")
         let mutable current = expression
-        let mutable descending = true
-        while descending do
-            match Expr.unspan current with
-            | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
-                operations.Add(op, right)
-                current <- left
-            | _ -> descending <- false
-
-        let builder = StringBuilder()
-        for _ in 1 .. operations.Count do
-            builder.Append('(') |> ignore
-        builder.Append(renderLeaf ctx current) |> ignore
-        for index = operations.Count - 1 downto 0 do
-            let op, right = operations[index]
-            builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
-            builder.Append(renderLeaf ctx right).Append(')') |> ignore
+        let mutable visiting = true
+        while visiting || pending.Count > 0 do
+            if visiting then
+                match Expr.unspan current with
+                | Binary((BinaryOperator.And | BinaryOperator.Or as op), left, right) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                    builder.Append('(') |> ignore
+                    pending.Add(struct (op, right, false))
+                    current <- left
+                | _ ->
+                    builder.Append(renderLeaf ctx current) |> ignore
+                    visiting <- false
+            else
+                let last = pending.Count - 1
+                let struct (op, right, leftFinished) = pending.[last]
+                if leftFinished then
+                    pending.RemoveAt last
+                    builder.Append(')') |> ignore
+                else
+                    pending.[last] <- struct (op, right, true)
+                    builder.Append(' ').Append(binaryText op).Append(' ') |> ignore
+                    current <- right
+                    visiting <- true
         builder.ToString()
+
+    // Preserve exact nested parentheses and left-to-right parameter
+    // binding while avoiding depth-proportional recursion and intermediate
+    // SQL prefixes for left-deep arithmetic trees. Complex operators (e.g.
+    // MOD, CONCAT, IS DISTINCT FROM) continue through their dialect-aware
+    // renderer instead of being incorrectly treated as infix arithmetic.
+    // Emit the compositional scalar grammar into ONE StringBuilder. The
+    // old renderExpr recursively entered itself through every unary,
+    // right-nested binary, CAST, LIKE, BETWEEN and IN-list node. Arithmetic
+    // is not flattened or reassociated: parentheses are emitted exactly
+    // as for the recursive implementation, including dialect-specific
+    // MOD/CONCAT/NULL-safe forms and left-to-right parameter binding.
+    and private renderScalarGraph (ctx: RenderContext) root =
+        let pending = ResizeArray<ScalarRenderFrame>()
+        let output = RenderBuffer(ctx, "")
+        let inline node value = pending.Add(ScalarNode value)
+        let inline text (value: string) = pending.Add(ScalarText value)
+        let append (value: string) = output.Append(value) |> ignore
+        let wrap prefix suffix child =
+            append prefix
+            text suffix
+            node child
+        let binary prefix separator suffix left right =
+            append prefix
+            text suffix
+            node right
+            text separator
+            node left
+        node root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | ScalarText fragment -> append fragment
+            | ScalarRegexCheck ->
+                match ctx.Provider with
+                | SQLite | Firebird ->
+                    invalidOp (capabilityError ctx.Provider "function.regex_match")
+                | _ -> ()
+            | ScalarConcatProof message ->
+                invalidOp (
+                    "Validated SQL reached rendering without SQL Server concat proof: "
+                    + message)
+            | ScalarCastComplete original ->
+                match Expr.unspan original with
+                | Expr.Cast(_, targetType) ->
+                    append (
+                        " AS "
+                        + RewriteCastTypes.renderTarget
+                            (providerTool ctx.Provider) targetType
+                        + ")")
+                | _ -> invalidOp "Scalar CAST completion frame lost its source AST."
+            | ScalarNode original ->
+                RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
+                match Expr.unspan original with
+                | Expr.Unary(UnaryOperator.Not, operand) ->
+                    wrap "NOT (" ")" operand
+                | Expr.Unary(UnaryOperator.Negate, operand) ->
+                    wrap "(-" ")" operand
+                | Expr.Unary(UnaryOperator.Positive, operand) ->
+                    wrap "(+" ")" operand
+                | Expr.Binary((BinaryOperator.DistinctFrom
+                              | BinaryOperator.NotDistinctFrom), _, _)
+                    when ctx.Provider = Oracle ->
+                    // Oracle expands operands more than once; renderExpr
+                    // caches them in the special-case branch above.
+                    append (renderExpr ctx original)
+                | Expr.Binary(op, left, right) ->
+                    match op, ctx.Provider, ctx.TargetRuntime with
+                    | BinaryOperator.Modulo, (Oracle | Firebird), _ ->
+                        binary "MOD(" ", " ")" left right
+                    | BinaryOperator.Concat, MySql, _ ->
+                        binary "CONCAT(" ", " ")" left right
+                    | BinaryOperator.Concat, SqlServer,
+                        SqlServerRuntime(Proven NativePipes) ->
+                        binary "(" " || " ")" left right
+                    | BinaryOperator.Concat, SqlServer,
+                        SqlServerRuntime(Proven PlusOperator) ->
+                        binary "(" " + " ")" left right
+                    | BinaryOperator.Concat, SqlServer,
+                        SqlServerRuntime(Unproven message) ->
+                        // A nonportable concat proof originally fails AFTER
+                        // its left and right operands have been rendered.
+                        pending.Add(ScalarConcatProof message)
+                        binary "(" " + " ")" left right
+                    | BinaryOperator.NotDistinctFrom, MySql, _ ->
+                        binary "(" " <=> " ")" left right
+                    | BinaryOperator.DistinctFrom, MySql, _ ->
+                        binary "NOT (" " <=> " ")" left right
+                    | _ ->
+                        binary "(" (" " + binaryText op + " ") ")" left right
+                | Expr.IsNull(value, negated) ->
+                    wrap "(" (if negated then " IS NOT NULL)" else " IS NULL)") value
+                | Expr.Between(value, lower, upper, negated) ->
+                    append "("
+                    text ")"
+                    node upper
+                    text " AND "
+                    node lower
+                    text (if negated then " NOT BETWEEN " else " BETWEEN ")
+                    node value
+                | Expr.InList(value, items, negated) ->
+                    append "("
+                    text "))"
+                    let entries = NonEmpty.toList items |> List.toArray
+                    for index = entries.Length - 1 downto 0 do
+                        node entries.[index]
+                        if index > 0 then text ", "
+                    text (if negated then " NOT IN (" else " IN (")
+                    node value
+                | Expr.Like(value, pattern, escape, negated, insensitive) ->
+                    if insensitive && ctx.Provider <> PostgreSql then
+                        invalidOp (capabilityError ctx.Provider "operator.ilike")
+                    append (if negated then "NOT ((" else "(")
+                    text (if negated then "))" else ")")
+                    text (escape
+                          |> Option.map (fun value ->
+                              " ESCAPE " + renderLikeEscape ctx.Provider value)
+                          |> Option.defaultValue "")
+                    node pattern
+                    text (if insensitive then " ILIKE " else " LIKE ")
+                    node value
+                | Expr.RegexMatch(value, pattern) ->
+                    match ctx.Provider with
+                    | PostgreSql ->
+                        binary "(" " ~ " ")" value pattern
+                    | MySql | Oracle | SqlServer ->
+                        binary "REGEXP_LIKE(" ", " ")" value pattern
+                    | SQLite | Firebird ->
+                        // Historically target checks happen after both
+                        // operand subtrees are rendered.
+                        pending.Add ScalarRegexCheck
+                        binary "REGEXP_LIKE(" ", " ")" value pattern
+                | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+                    if ctx.Provider <> PostgreSql then
+                        invalidOp (capabilityError ctx.Provider "json.operator.postgres_arrow")
+                    // The legacy renderer binds the selector first, then
+                    // visits the value expression. Retain that exact order.
+                    let selectorSql =
+                        match selector with
+                        | PostgresJsonProperty key -> ctx.Bind(box key)
+                        | PostgresJsonArrayIndex index -> ctx.Bind(box index)
+                    let operator =
+                        match resultKind with
+                        | JsonResult -> "->"
+                        | TextResult -> "->>"
+                    wrap "(" (" " + operator + " " + selectorSql + ")") value
+                | Expr.Cast(value, _) ->
+                    // CAST target validation/rendering runs only after its
+                    // operand, retaining the previous diagnostic precedence.
+                    append "CAST("
+                    pending.Add(ScalarCastComplete original)
+                    node value
+                | Expr.Extract(field, value) ->
+                    let part =
+                        ExtractField.value field
+                        |> fun value -> value.Trim().ToUpperInvariant()
+                    match SqlDatePartCapabilityRules.TargetValidationError(
+                              part, providerTool ctx.Provider) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    match ctx.Provider with
+                    | SqlServer ->
+                        wrap ("DATEPART(" + part + ", ") ")" value
+                    | MySql ->
+                        wrap (part + "(") ")" value
+                    | PostgreSql | Oracle ->
+                        wrap ("EXTRACT(" + part + " FROM ") ")" value
+                    | Firebird ->
+                        wrap ("EXTRACT(" + part + " FROM CAST(") " AS DATE))" value
+                    | SQLite ->
+                        let fmt =
+                            match part with
+                            | "YEAR" -> "%Y" | "MONTH" -> "%m"
+                            | "DAY" -> "%d" | "HOUR" -> "%H"
+                            | "MINUTE" -> "%M" | "SECOND" -> "%S"
+                            | "QUARTER" -> "%m"
+                            | _ ->
+                                raise (SqlCompilationException(
+                                    "SQLite does not support date part " + part + "."))
+                        let prefix =
+                            if part = "QUARTER" then
+                                "CAST(((CAST(STRFTIME('" + fmt + "', "
+                            else "CAST(STRFTIME('" + fmt + "', "
+                        let suffix =
+                            if part = "QUARTER" then
+                                ") AS INTEGER) + 2) / 3) AS INTEGER)"
+                            else ") AS INTEGER)"
+                        wrap prefix suffix value
+                | _ ->
+                    // Functions, CASE, windows and Query bodies still have
+                    // their specialized semantic/parameter pathways. Only
+                    // non-compositional leaves are delegated.
+                    append (renderExpr ctx original)
+        output.ToString()
 
     and private renderFunction (ctx: RenderContext) (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
@@ -589,9 +941,8 @@ module internal RewriteRenderer =
             if call.Arguments.Length <> count then
                 fail ("Canonical function '" + name + "' requires " + string count + " argument(s).")
 
-        let rec literalText label expression =
-            match expression with
-            | Spanned(_, inner) -> literalText label inner
+        let literalText label expression =
+            match Expr.unspan expression with
             | Literal(ScalarValue.Text value) -> value
             | _ -> fail (label + " must be a string literal.")
 
@@ -831,7 +1182,7 @@ module internal RewriteRenderer =
                     [ "CASE WHEN (" + expression + " IS NULL) THEN " + nullRankSql + " ELSE " + nonNullRankSql + " END ASC"; expression + direction ]
                 | _ -> invalidOp (capabilityError ctx.Provider "ordering.nulls")
 
-    and private renderCtes (ctx: RenderContext) ctes =
+    and private renderCtes (ctx: RenderContext) (ctes: Cte list) =
         if List.isEmpty ctes then ""
         else
             let recursiveScope = ctes |> List.exists (fun cte -> cte.RecursiveScope)
@@ -841,24 +1192,121 @@ module internal RewriteRenderer =
                     raise (SqlCompilationException(
                         "SQL capability 'select.recursive_cte' is not supported by target provider "
                         + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
-            "WITH "
-            + (if recursiveScope then "RECURSIVE " else "")
-            + (ctes
-               |> List.map (fun cte -> renderAlias ctx.Provider cte.Name + " AS (" + renderCteQuery ctx cte.Query + ")")
-               |> String.concat ", ")
-            + " "
+            let result = RenderBuffer(ctx, "WITH ")
+            if recursiveScope then result.Append("RECURSIVE ") |> ignore
+            ctes
+            |> List.iteri (fun index cte ->
+                if index > 0 then result.Append(", ") |> ignore
+                result.Append(renderAlias ctx.Provider cte.Name).Append(" AS (") |> ignore
 
-    and private renderSource (ctx: RenderContext) source =
+                // Streaming one-CTE nesting is crucial: each nested CTE body
+                // used to render to a complete string before its parent,
+                // allocating O(depth^2) SQL text. Keep Query tails, SET,
+                // recursive scopes and multi-CTE bodies on the full path.
+                let nested = ResizeArray<Query>()
+                let mutable current = cte.Query
+                let mutable walking = true
+                while walking do
+                    RewriteResourceBudget.checkpoint ()
+                    match current.Head.Ctes with
+                    | [ innerCte ] when not innerCte.RecursiveScope
+                                        && current.SetOperations.IsEmpty
+                                        && not (hasTail current) ->
+                        result.Append("WITH ")
+                              .Append(renderAlias ctx.Provider innerCte.Name)
+                              .Append(" AS (") |> ignore
+                        nested.Add(current)
+                        current <- innerCte.Query
+                    | _ -> walking <- false
+
+                result.Append((renderCteQuery ctx current) : string) |> ignore
+                for nesting = nested.Count - 1 downto 0 do
+                    result.Append(") ") |> ignore
+                    let query = nested.[nesting]
+                    result.Append(
+                        (renderSelectBody ctx { query.Head with Ctes = [] }) : string)
+                    |> ignore
+                result.Append(')') |> ignore)
+            result.Append(' ').ToString()
+
+    and private renderSource (ctx: RenderContext) source : string =
         match source with
         | TableSource.NamedTable(identifier, alias) | TableSource.CteTable(identifier, alias) ->
             renderIdentifier ctx.Provider identifier + (alias |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx.Provider value) |> Option.defaultValue "")
         | TableSource.DerivedTable(query, alias) ->
-            "(" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+            renderDerivedSourceChain ctx query alias false
         | TableSource.LateralDerivedTable(query, alias) ->
             match SqlLateralDerivedTableCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
-            | null ->
-                "LATERAL (" + renderQuery ctx query + ")" + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+            | null -> renderDerivedSourceChain ctx query alias true
             | message -> raise (SqlCompilationException(message))
+
+    // Outside-in emission preserves projection binding and provider alias
+    // syntax without recursively allocating a string at every nested Query.
+    and private renderDerivedSourceChain (ctx: RenderContext) query alias lateral =
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            // TOP/FIRST/SKIP need prefix rewriting; PostgreSQL, MySQL,
+            // SQLite and Oracle tails are suffixes and can stream safely.
+            let tailIsSuffix =
+                not (hasTail current)
+                || (match ctx.Provider with
+                    | PostgreSql | MySql | SQLite | Oracle -> true
+                    | SqlServer | Firebird -> false)
+            if not head.Ctes.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || not head.Joins.IsEmpty
+               || not head.GroupBy.IsEmpty || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || not tailIsSuffix then
+                None
+            else
+                match head.From with
+                | Some (TableSource.DerivedTable(inner, innerAlias)) ->
+                    Some(head.Projection, inner, innerAlias)
+                | _ -> None
+        match tryWrapper query with
+        | None ->
+            (if lateral then "LATERAL (" else "(")
+            + renderQuery ctx query + ")"
+            + tableAliasPrefix ctx.Provider + renderAlias ctx.Provider alias
+        | Some _ ->
+            let result = RenderBuffer(ctx, if lateral then "LATERAL (" else "(")
+            let wrappers = ResizeArray<struct (IdentifierPart * Query)>()
+            let mutable current = query
+            let mutable scanning = true
+            while scanning do
+                RewriteResourceBudget.checkpoint ()
+                match tryWrapper current with
+                | None -> scanning <- false
+                | Some(projection, inner, childAlias) ->
+                    result.Append("SELECT ") |> ignore
+                    projection
+                    |> List.iteri (fun index item ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderExpr ctx item.Expression) |> ignore
+                        item.Alias
+                        |> Option.iter (fun itemAlias ->
+                            result.Append(" AS ").Append(renderAlias ctx.Provider itemAlias) |> ignore))
+                    result.Append(" FROM (") |> ignore
+                    wrappers.Add(struct (childAlias, current))
+                    current <- inner
+            result.Append(renderQuery ctx current) |> ignore
+            for index = wrappers.Count - 1 downto 0 do
+                let struct (childAlias, wrapper) = wrappers.[index]
+                result.Append(')')
+                      .Append(tableAliasPrefix ctx.Provider)
+                      .Append(renderAlias ctx.Provider childAlias) |> ignore
+                wrapper.Head.Where
+                |> Option.iter (fun predicate ->
+                    result.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+                result.Append((renderOrderClause ctx false wrapper.OrderBy) : string) |> ignore
+                if hasTail wrapper then
+                    // Only providers with a suffix-only paging contract
+                    // can reach here; passing "" avoids copying a prefix.
+                    result.Append((renderPaging ctx wrapper "") : string) |> ignore
+            result.Append(')')
+                  .Append(tableAliasPrefix ctx.Provider)
+                  .Append(renderAlias ctx.Provider alias)
+                  .ToString()
 
     and private renderSelectBody (ctx: RenderContext) (select: Select) =
         let groupScope expression =
@@ -896,10 +1344,19 @@ module internal RewriteRenderer =
                    |> List.map (renderExpr ctx)
                    |> String.concat ", ")
                 + ") "
-        let mutable sql = "SELECT " + distinctSql + projection
-        select.From |> Option.iter (fun source -> sql <- sql + " FROM " + renderSource ctx source)
+        // Projection and DISTINCT ON expressions bind before FROM/JOIN
+        // exactly as before. Build the text once instead of copying the
+        // complete SELECT prefix for every JOIN, WHERE, GROUP and HAVING.
+        let sql = RenderBuffer(ctx, "SELECT ")
+        sql.Append(distinctSql).Append(projection) |> ignore
+        select.From
+        |> Option.iter (fun source ->
+            sql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
         if select.From.IsNone then
-            match ctx.Provider with Oracle -> sql <- sql + " FROM DUAL" | Firebird -> sql <- sql + " FROM RDB$DATABASE" | _ -> ()
+            match ctx.Provider with
+            | Oracle -> sql.Append(" FROM DUAL") |> ignore
+            | Firebird -> sql.Append(" FROM RDB$DATABASE") |> ignore
+            | _ -> ()
         for join in select.Joins do
             let joinSql =
                 match join with
@@ -908,59 +1365,97 @@ module internal RewriteRenderer =
                     | null -> naturalJoinText kind
                     | message -> raise (SqlCompilationException(message))
                 | _ -> joinText join.Kind
-            sql <- sql + " " + joinSql + " " + renderSource ctx join.Source
+            sql.Append(" ").Append(joinSql).Append(" ")
+               .Append(renderSource ctx join.Source) |> ignore
             match join with
             | CrossJoin _
             | NaturalJoin _ -> ()
             | OnJoin(_, _, predicate) ->
-                sql <- sql + " ON " + renderPredicate ctx predicate
+                sql.Append(" ON ").Append(renderPredicate ctx predicate) |> ignore
             | UsingJoin(_, _, columns) ->
                 match SqlUsingJoinCapabilityRules.TargetValidationError(providerTool ctx.Provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
-                sql <-
-                    sql
-                    + " USING ("
-                    + (columns |> NonEmpty.toList |> List.map (renderAlias ctx.Provider) |> String.concat ", ")
-                    + ")"
-        select.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
+                let names =
+                    columns
+                    |> NonEmpty.toList
+                    |> List.map (renderAlias ctx.Provider)
+                    |> String.concat ", "
+                sql.Append(" USING (").Append(names).Append(")") |> ignore
+        select.Where
+        |> Option.iter (fun predicate ->
+            sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
         if not select.GroupBy.IsEmpty then
             let grouped =
                 select.GroupBy
                 |> List.mapi (fun index expression ->
                     if ctx.Provider = PostgreSql then
-                        ctx.WithSharedBindings("postgres-group:" + string index, fun () -> renderExpr ctx expression)
+                        ctx.WithSharedBindings(
+                            "postgres-group:" + string index,
+                            fun () -> renderExpr ctx expression)
                     else
                         renderExpr ctx expression)
                 |> String.concat ", "
-            sql <- sql + " GROUP BY " + grouped
-        select.Having |> Option.iter (fun predicate -> sql <- sql + " HAVING " + renderPredicate ctx predicate)
-        sql
+            sql.Append(" GROUP BY ").Append(grouped) |> ignore
+        select.Having
+        |> Option.iter (fun predicate ->
+            sql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
+        sql.ToString()
+
+    // Stream SET arms into an existing bounded buffer. Consumers with
+    // outer paging wrappers need not materialize and then concatenate an
+    // entire intermediate UNION body before enforcing the output budget.
+    and private appendSetBody (ctx: RenderContext) (sql: RenderBuffer) (query: Query) =
+        let pending = ResizeArray<SetEmitFrame>()
+        pending.Add(EnterSetBody query)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | EnterSetBody current ->
+                sql.Append(renderSelectBody ctx { current.Head with Ctes = [] }) |> ignore
+                for branch in List.rev current.SetOperations do
+                    pending.Add(EmitSetBranch branch)
+            | EmitSetBranch branch ->
+                let branchNoTail =
+                    { branch.Query with
+                        OrderBy = []
+                        Limit = None
+                        Offset = None
+                        FetchPercent = None
+                        FetchWithTies = false }
+                sql.Append(" ").Append(setText branch.Operator).Append(" ") |> ignore
+                if ctx.Provider = PostgreSql
+                   && not branchNoTail.SetOperations.IsEmpty
+                   && branchNoTail.Head.Ctes.IsEmpty then
+                    sql.Append('(') |> ignore
+                    pending.Add(CloseNestedSet)
+                    pending.Add(EnterSetBody branchNoTail)
+                elif ctx.Provider = PostgreSql
+                     && not branchNoTail.SetOperations.IsEmpty then
+                    // Preserve the full WITH/SET contract for the uncommon
+                    // CTE-bearing branch; do not lower away capability proof.
+                    sql.Append("(").Append((renderQueryCore ctx branchNoTail) : string)
+                       .Append(')') |> ignore
+                elif branchNoTail.Head.Ctes.IsEmpty then
+                    sql.Append((renderQueryCore ctx branchNoTail) : string) |> ignore
+                else
+                    sql.Append("SELECT * FROM (")
+                       .Append((renderQueryCore ctx branchNoTail) : string)
+                       .Append(") AS ")
+                       .Append(renderAlias ctx.Provider
+                           { Value = "_set_branch"
+                             WasQuoted = false
+                             PreserveSpelling = false
+                             Span = { Start = 0; Length = 0 } }) |> ignore
+            | CloseNestedSet -> sql.Append(')') |> ignore
 
     and private renderSetBody (ctx: RenderContext) (query: Query) =
-        let headNoCtes = { query.Head with Ctes = [] }
-        let mutable sql = renderSelectBody ctx headNoCtes
-        for branch in query.SetOperations do
-            let branchNoTail =
-                { branch.Query with
-                    OrderBy = []
-                    Limit = None
-                    Offset = None
-                    FetchPercent = None
-                    FetchWithTies = false }
-            let branchSql =
-                if ctx.Provider = PostgreSql && not branchNoTail.SetOperations.IsEmpty then
-                    "(" + renderQueryCore ctx branchNoTail + ")"
-                elif branchNoTail.Head.Ctes.IsEmpty then
-                    renderQueryCore ctx branchNoTail
-                else
-                    "SELECT * FROM ("
-                    + renderQueryCore ctx branchNoTail
-                    + ") AS "
-                    + renderAlias ctx.Provider
-                        { Value = "_set_branch"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            sql <- sql + " " + setText branch.Operator + " " + branchSql
-        sql
+        let sql = RenderBuffer(ctx, "")
+        appendSetBody ctx sql query
+        sql.ToString()
 
     and private renderOrderClause (ctx: RenderContext) setTail orderBy =
         if List.isEmpty orderBy then ""
@@ -1094,25 +1589,34 @@ module internal RewriteRenderer =
                         invalidOp "SQL Server DISTINCT OFFSET pagination requires every ORDER BY expression to resolve to a projected output."
                 renderAlias ctx.Provider orderAlias + (if order.Descending then " DESC" else " ASC"))
 
-        let mutable baseSql =
-            "SELECT "
-            + (if query.Head.Distinct then "DISTINCT " else "")
-            + (baseProjection |> Seq.toList |> String.concat ", ")
-        query.Head.From |> Option.iter (fun source -> baseSql <- baseSql + " FROM " + renderSource ctx source)
+        // OFFSET wrapping used to copy the entire growing SELECT prefix for
+        // every JOIN/WHERE/GROUP/HAVING. Append once, with a pre-allocation cap.
+        let baseSql = RenderBuffer(ctx, "SELECT ")
+        if query.Head.Distinct then baseSql.Append("DISTINCT ") |> ignore
+        baseSql.Append(baseProjection |> Seq.toList |> String.concat ", ") |> ignore
+        query.Head.From
+        |> Option.iter (fun source ->
+            baseSql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
         for join in query.Head.Joins do
-            baseSql <- baseSql + " " + joinText join.Kind + " " + renderSource ctx join.Source
+            baseSql.Append(" ").Append(joinText join.Kind).Append(" ")
+                   .Append(renderSource ctx join.Source) |> ignore
             match join with
             | CrossJoin _ -> ()
             | NaturalJoin _ ->
                 invalidOp "NATURAL JOIN cannot enter SQL Server pagination lowering without an explicit target capability."
             | OnJoin(_, _, predicate) ->
-                baseSql <- baseSql + " ON " + renderPredicate ctx predicate
+                baseSql.Append(" ON ").Append(renderPredicate ctx predicate) |> ignore
             | UsingJoin(_, _, _) ->
                 invalidOp "JOIN USING cannot enter SQL Server pagination lowering without an explicit target capability."
-        query.Head.Where |> Option.iter (fun predicate -> baseSql <- baseSql + " WHERE " + renderPredicate ctx predicate)
+        query.Head.Where
+        |> Option.iter (fun predicate ->
+            baseSql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
         if not query.Head.GroupBy.IsEmpty then
-            baseSql <- baseSql + " GROUP BY " + (query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ")
-        query.Head.Having |> Option.iter (fun predicate -> baseSql <- baseSql + " HAVING " + renderPredicate ctx predicate)
+            baseSql.Append(" GROUP BY ")
+                   .Append(query.Head.GroupBy |> List.map (renderExpr ctx) |> String.concat ", ") |> ignore
+        query.Head.Having
+        |> Option.iter (fun predicate ->
+            baseSql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
 
         let windowOrder =
             if windowOrders.IsEmpty then "ORDER BY (SELECT 0)"
@@ -1121,17 +1625,16 @@ module internal RewriteRenderer =
             internalNames
             |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
             |> String.concat ", "
-        let middleSql =
-            "SELECT "
-            + middleOutputs
-            + ", ROW_NUMBER() OVER ("
-            + windowOrder
-            + ") AS "
-            + rowAlias
-            + " FROM ("
-            + baseSql
-            + ") AS "
-            + baseAlias
+        let middleSql = RenderBuffer(ctx, "SELECT ")
+        middleSql.Append(middleOutputs)
+                 .Append(", ROW_NUMBER() OVER (")
+                 .Append(windowOrder)
+                 .Append(") AS ")
+                 .Append(rowAlias)
+                 .Append(" FROM (")
+                 .Append(baseSql.ToString())
+                 .Append(") AS ")
+                 .Append(baseAlias) |> ignore
         let outerOutputs =
             (internalNames, outputNames)
             ||> List.map2 (fun internalName externalName ->
@@ -1153,20 +1656,23 @@ module internal RewriteRenderer =
                 + ctx.Bind(box (int64 offset + 1L))
                 + " AND "
                 + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
-        renderCtes ctx query.Head.Ctes
-        + "SELECT "
-        + outerOutputs
-        + " FROM ("
-        + middleSql
-        + ") AS "
-        + wrapperAlias
-        + " WHERE "
-        + predicate
-        + " ORDER BY "
-        + wrapperAlias
-        + "."
-        + rowAlias
-        + " ASC"
+        // Budget every wrapper segment before its next allocation,
+        // instead of creating an unbounded second copy of the page SQL.
+        let output = RenderBuffer(ctx, renderCtes ctx query.Head.Ctes)
+        output.Append("SELECT ")
+              .Append(outerOutputs)
+              .Append(" FROM (")
+              .Append(middleSql.ToString())
+              .Append(") AS ")
+              .Append(wrapperAlias)
+              .Append(" WHERE ")
+              .Append(predicate)
+              .Append(" ORDER BY ")
+              .Append(wrapperAlias)
+              .Append(".")
+              .Append(rowAlias)
+              .Append(" ASC")
+              .ToString()
 
     and private renderSqlServerSetOffset (ctx: RenderContext) (query: Query) =
         let outputNames = query.Head.Projection |> List.map projectionOutputName
@@ -1191,8 +1697,12 @@ module internal RewriteRenderer =
                 + " AS "
                 + renderAlias ctx.Provider internalName)
             |> String.concat ", "
-        let pageSource =
-            "SELECT " + pageSourceOutputs + " FROM (" + body + ") AS " + setAlias
+        let pageSource = RenderBuffer(ctx, "SELECT ")
+        pageSource.Append(pageSourceOutputs)
+                  .Append(" FROM (")
+                  .Append(body)
+                  .Append(") AS ")
+                  .Append(setAlias) |> ignore
 
         let resolveOrder (order: OrderBy) =
             let index =
@@ -1220,17 +1730,16 @@ module internal RewriteRenderer =
             internalNames
             |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
             |> String.concat ", "
-        let middleSql =
-            "SELECT "
-            + middleOutputs
-            + ", ROW_NUMBER() OVER ("
-            + windowOrder
-            + ") AS "
-            + rowAlias
-            + " FROM ("
-            + pageSource
-            + ") AS "
-            + baseAlias
+        let middleSql = RenderBuffer(ctx, "SELECT ")
+        middleSql.Append(middleOutputs)
+                 .Append(", ROW_NUMBER() OVER (")
+                 .Append(windowOrder)
+                 .Append(") AS ")
+                 .Append(rowAlias)
+                 .Append(" FROM (")
+                 .Append(pageSource.ToString())
+                 .Append(") AS ")
+                 .Append(baseAlias) |> ignore
         let outerOutputs =
             (internalNames, outputNames)
             ||> List.map2 (fun internalName externalName ->
@@ -1252,20 +1761,23 @@ module internal RewriteRenderer =
                 + ctx.Bind(box (int64 offset + 1L))
                 + " AND "
                 + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
-        renderCtes ctx query.Head.Ctes
-        + "SELECT "
-        + outerOutputs
-        + " FROM ("
-        + middleSql
-        + ") AS "
-        + wrapperAlias
-        + " WHERE "
-        + predicate
-        + " ORDER BY "
-        + wrapperAlias
-        + "."
-        + rowAlias
-        + " ASC"
+        // Budget every wrapper segment before its next allocation,
+        // instead of creating an unbounded second copy of the page SQL.
+        let output = RenderBuffer(ctx, renderCtes ctx query.Head.Ctes)
+        output.Append("SELECT ")
+              .Append(outerOutputs)
+              .Append(" FROM (")
+              .Append(middleSql.ToString())
+              .Append(") AS ")
+              .Append(wrapperAlias)
+              .Append(" WHERE ")
+              .Append(predicate)
+              .Append(" ORDER BY ")
+              .Append(wrapperAlias)
+              .Append(".")
+              .Append(rowAlias)
+              .Append(" ASC")
+              .ToString()
 
     and private renderSetTailWrapper (ctx: RenderContext) (query: Query) =
         match ctx.Provider, query.Offset, query.Limit with
@@ -1278,15 +1790,12 @@ module internal RewriteRenderer =
             let body = renderSetBody ctx query
             let top = ctx.Bind(box (NonNegativeRowCount.value limit))
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT TOP ("
-            + top
-            + ") * FROM ("
-            + body
-            + ")"
-            + tableAliasPrefix ctx.Provider
-            + alias
-            + renderOrderClause ctx true query.OrderBy
+            // Retain body-before-TOP binding order, while bounding every
+            // wrapper append instead of concatenating another full copy.
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT TOP (").Append(top).Append(") * FROM (")
+               .Append(body).Append(")").Append(tableAliasPrefix ctx.Provider)
+               .Append(alias).Append(renderOrderClause ctx true query.OrderBy).ToString()
         | Firebird, offset, Some limit when NonNegativeRowCount.value limit = 0 ->
             let first = ctx.Bind(box 0)
             let skip =
@@ -1295,40 +1804,47 @@ module internal RewriteRenderer =
                     " SKIP " + ctx.Bind(box (NonNegativeRowCount.value value))
                 | _ -> ""
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT FIRST " + first + skip
-            + " * FROM (" + body + ")"
-            + tableAliasPrefix ctx.Provider + alias
-            + renderOrderClause ctx true query.OrderBy
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT FIRST ").Append(first).Append(skip).Append(" * FROM (") |> ignore
+            appendSetBody ctx sql query
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy).ToString()
         | Firebird, None, Some limit ->
             let first = ctx.Bind(box (NonNegativeRowCount.value limit))
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT FIRST " + first
-            + " * FROM (" + body + ")"
-            + tableAliasPrefix ctx.Provider + alias
-            + renderOrderClause ctx true query.OrderBy
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT FIRST ").Append(first).Append(" * FROM (") |> ignore
+            appendSetBody ctx sql query
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy).ToString()
         | Firebird, Some offset, None when NonNegativeRowCount.value offset > 0 ->
             let skip = ctx.Bind(box (NonNegativeRowCount.value offset))
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT SKIP " + skip
-            + " * FROM (" + body + ")"
-            + tableAliasPrefix ctx.Provider + alias
-            + renderOrderClause ctx true query.OrderBy
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT SKIP ").Append(skip).Append(" * FROM (") |> ignore
+            appendSetBody ctx sql query
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy).ToString()
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            let wrapper = "SELECT * FROM (" + body + ")" + tableAliasPrefix ctx.Provider + alias
-            let ordered = wrapper + renderOrderClause ctx true query.OrderBy
-            prefix + renderPaging ctx query ordered
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT * FROM (") |> ignore
+            appendSetBody ctx sql query
+            let alias =
+                renderAlias ctx.Provider
+                    { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            sql.Append(")")
+               .Append(tableAliasPrefix ctx.Provider)
+               .Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy)
+               // The terminal paging grammar is suffix-only on this path
+               // for every provider; rendering it against "" avoids a
+               // second copy of the entire SELECT/SET SQL text.
+               .Append(renderPaging ctx query "")
+               .ToString()
 
     and private renderQueryCore (ctx: RenderContext) (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
@@ -1390,16 +1906,268 @@ module internal RewriteRenderer =
                 let withOrder = body + renderOrderClause ctx (isSetQuery query) query.OrderBy
                 ctes + renderPaging ctx query withOrder
 
-    and private renderQuery (ctx: RenderContext) query = renderQueryCore ctx query
+    and private tryRenderMixedLinearQuery (ctx: RenderContext) (query: Query) =
+        // Restrict this optimization to a proven, non-recursive linear
+        // grammar: single CTE definition or ordinary derived FROM,
+        // SELECT without SET/paging or GROUP/JOIN/DISTINCT. All richer
+        // cases go through the existing capability-checked renderer.
+        let frames = ResizeArray<MixedQueryEmitFrame>()
+        let mutable current = query
+        let mutable sawCte = false
+        let mutable sawDerived = false
+        let mutable sawLateral = false
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            if current.SetOperations.IsEmpty && not (hasTail current) then
+                let head = current.Head
+                match head.Ctes, head.From with
+                | [ cte ], Some (TableSource.CteTable _)
+                    when not cte.RecursiveScope ->
+                    frames.Add(FinishMixedCte(current, cte))
+                    sawCte <- true
+                    current <- cte.Query
+                | [], Some (TableSource.DerivedTable(inner, alias))
+                    when head.DistinctMode = SelectDistinct.AllRows
+                         && head.Joins.IsEmpty && head.GroupBy.IsEmpty
+                         && head.Having.IsNone ->
+                    frames.Add(FinishMixedDerived(current, alias))
+                    sawDerived <- true
+                    current <- inner
+                | [], Some (TableSource.LateralDerivedTable(inner, alias))
+                    when head.DistinctMode = SelectDistinct.AllRows
+                         && head.Joins.IsEmpty && head.GroupBy.IsEmpty
+                         && head.Having.IsNone ->
+                    // Skipping renderSource must not skip its fail-closed
+                    // provider proof. Only a primary FROM LATERAL is safe
+                    // to stream without constructing left-join scope.
+                    match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                              providerTool ctx.Provider, null) with
+                    | null ->
+                        frames.Add(FinishMixedLateral(current, alias))
+                        sawLateral <- true
+                        current <- inner
+                    | message -> raise (SqlCompilationException(message))
+                | [], Some ((TableSource.NamedTable _ | TableSource.CteTable _) as preceding)
+                    when head.DistinctMode = SelectDistinct.AllRows
+                         && head.GroupBy.IsEmpty && head.Having.IsNone ->
+                    match head.Joins with
+                    | [ OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) ] ->
+                        match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                                  providerTool ctx.Provider, null) with
+                        | null ->
+                            frames.Add(FinishMixedJoinedLateral(current, preceding, alias, predicate))
+                            sawLateral <- true
+                            current <- inner
+                        | message -> raise (SqlCompilationException(message))
+                    | joins ->
+                        match List.rev joins with
+                        | OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) :: precedingReversed
+                            when not precedingReversed.IsEmpty &&
+                                 (precedingReversed |> List.forall (function
+                                     | OnJoin(OnJoinKind.Inner,
+                                              (TableSource.NamedTable _ | TableSource.CteTable _ | TableSource.LateralDerivedTable _), _) -> true
+                                     | _ -> false)) ->
+                            // All preceding sources/predicates keep their
+                            // original parameter order. Only the last
+                            // Query crosses the heap continuation.
+                            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                                      providerTool ctx.Provider, null) with
+                            | null ->
+                                frames.Add(FinishMixedPrefixedJoinedLateral(
+                                    current, preceding, List.rev precedingReversed, alias, predicate))
+                                sawLateral <- true
+                                current <- inner
+                            | message -> raise (SqlCompilationException(message))
+                        | _ -> scanning <- false
+                | _ -> scanning <- false
+            else
+                scanning <- false
+
+        if not (sawCte && sawDerived) && not sawLateral then None
+        else
+            let sql = RenderBuffer(ctx, "")
+            // Emit the lexical SQL prefixes outside-in. Projection
+            // expressions bind before each derived body, whereas CTE
+            // definitions bind before their referencing SELECT.
+            for frame in frames do
+                RewriteResourceBudget.checkpoint ()
+                match frame with
+                | FinishMixedCte(_, cte) ->
+                    sql.Append("WITH ")
+                       .Append(renderAlias ctx.Provider cte.Name)
+                       .Append(" AS (") |> ignore
+                | FinishMixedDerived(outer, _)
+                | FinishMixedLateral(outer, _)
+                | FinishMixedJoinedLateral(outer, _, _, _)
+                | FinishMixedPrefixedJoinedLateral(outer, _, _, _, _) as frame ->
+                    sql.Append("SELECT ") |> ignore
+                    outer.Head.Projection
+                    |> List.iteri (fun index item ->
+                        if index > 0 then sql.Append(", ") |> ignore
+                        sql.Append(renderExpr ctx item.Expression) |> ignore
+                        item.Alias |> Option.iter (fun alias ->
+                            sql.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore))
+                    match frame with
+                    | FinishMixedLateral _ -> sql.Append(" FROM LATERAL (") |> ignore
+                    | FinishMixedJoinedLateral(_, preceding, _, _) ->
+                        sql.Append(" FROM ").Append(renderSource ctx preceding)
+                           .Append(" INNER JOIN LATERAL (") |> ignore
+                    | FinishMixedPrefixedJoinedLateral(_, preceding, earlier, _, _) ->
+                        sql.Append(" FROM ").Append(renderSource ctx preceding) |> ignore
+                        for join in earlier do
+                            RewriteResourceBudget.checkpoint ()
+                            sql.Append(" INNER JOIN ").Append(renderSource ctx join.Source) |> ignore
+                            match join with
+                            | OnJoin(_, _, condition) ->
+                                sql.Append(" ON ").Append(renderPredicate ctx condition) |> ignore
+                            | _ -> invalidOp "Streaming JOIN proof requires an ON predicate."
+                        sql.Append(" INNER JOIN LATERAL (") |> ignore
+                    | _ -> sql.Append(" FROM (") |> ignore
+
+            sql.Append(renderQueryCore ctx current) |> ignore
+            for index = frames.Count - 1 downto 0 do
+                RewriteResourceBudget.checkpoint ()
+                match frames.[index] with
+                | FinishMixedCte(outer, _) ->
+                    sql.Append(") ")
+                       .Append(renderSelectBody ctx { outer.Head with Ctes = [] })
+                    |> ignore
+                | FinishMixedDerived(outer, alias)
+                | FinishMixedLateral(outer, alias) ->
+                    sql.Append(')')
+                       .Append(tableAliasPrefix ctx.Provider)
+                       .Append(renderAlias ctx.Provider alias) |> ignore
+                    outer.Head.Where |> Option.iter (fun predicate ->
+                        sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+                | FinishMixedJoinedLateral(outer, _, alias, onPredicate)
+                | FinishMixedPrefixedJoinedLateral(outer, _, _, alias, onPredicate) ->
+                    sql.Append(')')
+                       .Append(tableAliasPrefix ctx.Provider)
+                       .Append(renderAlias ctx.Provider alias)
+                       .Append(" ON ")
+                       .Append(renderPredicate ctx onPredicate) |> ignore
+                    outer.Head.Where |> Option.iter (fun predicate ->
+                        sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+            Some(sql.ToString())
+
+    // A linear correlated WHERE column IN (Query) chain needs a single
+    // append-only SQL buffer: Query -> predicate -> Query must not build
+    // recursive SELECT strings. Projection values still bind before IN.
+    and private tryRenderLinearInQuery (ctx: RenderContext) (query: Query) =
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || not head.GroupBy.IsEmpty || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then None
+            else
+                match head.Projection, head.From, head.Where |> Option.map Expr.unspan with
+                | [ item ], Some ((TableSource.NamedTable _ | TableSource.CteTable _) as source),
+                  Some(InSubquery(value, inner, false)) ->
+                    match Expr.unspan item.Expression, Expr.unspan value with
+                    | (Literal _ | Column _ | BoundColumn _),
+                      (Column _ | BoundColumn _) -> Some(item, source, value, inner)
+                    | _ -> None
+                | _ -> None
+        let output = RenderBuffer(ctx, "")
+        let mutable current = query
+        let mutable count = 0
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            match tryWrapper current with
+            | Some(item, source, value, inner) ->
+                output.Append("SELECT ").Append((renderExpr ctx item.Expression) : string) |> ignore
+                item.Alias |> Option.iter (fun alias ->
+                    output.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore)
+                output.Append(" FROM ").Append((renderSource ctx source) : string)
+                      .Append(" WHERE (").Append((renderExpr ctx value) : string)
+                      .Append(" IN (") |> ignore
+                count <- count + 1
+                current <- inner
+            | None -> scanning <- false
+        if count = 0 then None
+        else
+            output.Append((renderQueryCore ctx current) : string) |> ignore
+            for _ in 1 .. count do output.Append("))") |> ignore
+            Some(output.ToString())
+
+
+    // Append a linear searched CASE -> scalar Query chain outside-in.
+    // Condition parameters precede child parameters; ELSE binds on unwind.
+    and private tryRenderLinearCaseQuery (ctx: RenderContext) (query: Query) =
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty || head.From.IsSome
+               || not head.Joins.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || head.Where.IsSome || not head.GroupBy.IsEmpty
+               || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then None
+            else
+                match head.Projection with
+                | [ { Alias = None; Expression = projection } ] ->
+                    match Expr.unspan projection with
+                    | SearchedCase(branches, Some fallback) ->
+                        match NonEmpty.toList branches, Expr.unspan fallback with
+                        | [ branch ], Literal _ ->
+                            match Expr.unspan branch.Result, Expr.unspan branch.Condition with
+                            | ScalarSubquery child, Binary _ ->
+                                Some(branch.Condition, fallback, child)
+                            | _ -> None
+                        | _ -> None
+                    | _ -> None
+                | _ -> None
+        let dummyFrom =
+            match ctx.Provider with
+            | Oracle -> " FROM DUAL"
+            | Firebird -> " FROM RDB$DATABASE"
+            | _ -> ""
+        let mutable current = query
+        let fallbacks = ResizeArray<Expr>()
+        let output = RenderBuffer(ctx, "")
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            match tryWrapper current with
+            | Some(condition, fallback, child) ->
+                output.Append("SELECT CASE WHEN ")
+                      .Append((renderPredicate ctx condition) : string)
+                      .Append(" THEN (") |> ignore
+                fallbacks.Add(fallback)
+                current <- child
+            | None -> scanning <- false
+        if fallbacks.Count = 0 then None
+        else
+            output.Append((renderQueryCore ctx current) : string) |> ignore
+            for index = fallbacks.Count - 1 downto 0 do
+                output.Append(") ELSE ")
+                      .Append((renderExpr ctx fallbacks.[index]) : string)
+                      .Append(" END")
+                      .Append(dummyFrom) |> ignore
+            Some(output.ToString())
+
+    and private renderQuery (ctx: RenderContext) query =
+        match tryRenderLinearCaseQuery ctx query with
+        | Some sql -> sql
+        | None ->
+            match tryRenderLinearInQuery ctx query with
+            | Some sql -> sql
+            | None ->
+                match tryRenderMixedLinearQuery ctx query with
+                | Some sql -> sql
+                | None -> renderQueryCore ctx query
 
     and private renderSubquery (ctx: RenderContext) query =
         if isSetQuery query
            && hasTail query
            && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
-            let ordered = body + renderOrderClause ctx true query.OrderBy
-            prefix + renderPaging ctx query ordered
+            let sql = RenderBuffer(ctx, prefix)
+            appendSetBody ctx sql query
+            sql.Append(renderOrderClause ctx true query.OrderBy)
+               .Append(renderPaging ctx query "").ToString()
         else
             renderQueryCore ctx query
 
@@ -1408,16 +2176,18 @@ module internal RewriteRenderer =
            && hasTail query
            && not query.Head.Ctes.IsEmpty
            && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
-            let inner = renderCtes ctx query.Head.Ctes + renderSetBody ctx query
+            let sql = RenderBuffer(ctx, "SELECT * FROM (")
+            sql.Append(renderCtes ctx query.Head.Ctes) |> ignore
+            appendSetBody ctx sql query
             let alias =
                 renderAlias ctx.Provider
                     { Value = "_set"
                       WasQuoted = false
                       PreserveSpelling = false
                       Span = { Start = 0; Length = 0 } }
-            let wrapper = "SELECT * FROM (" + inner + ")" + tableAliasPrefix ctx.Provider + alias
-            let ordered = wrapper + renderOrderClause ctx true query.OrderBy
-            renderPaging ctx query ordered
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy)
+               .Append(renderPaging ctx query "").ToString()
         else
             renderQueryCore ctx query
 
@@ -1459,23 +2229,44 @@ module internal RewriteRenderer =
         | ConflictDivide -> "/"
         | ConflictModulo -> "%"
 
-    let rec private renderConflictValue (ctx: RenderContext) proposedQualifier = function
-        | ConflictProposedColumn identifier ->
-            proposedQualifier + "." + renderIdentifier ctx.Provider identifier
-        | ConflictTargetColumn identifier ->
-            renderIdentifier ctx.Provider identifier
-        | ConflictLiteral scalar ->
-            renderExpr ctx (Expr.Literal scalar)
-        | ConflictNegate operand ->
-            "(-" + renderConflictValue ctx proposedQualifier operand + ")"
-        | ConflictBinary(operator, left, right) ->
-            "("
-            + renderConflictValue ctx proposedQualifier left
-            + " "
-            + conflictArithmeticText operator
-            + " "
-            + renderConflictValue ctx proposedQualifier right
-            + ")"
+    [<Struct>]
+    type private ConflictRenderFrame =
+        | ConflictNode of conflictValue: ConflictValue
+        | ConflictText of emittedText: string
+
+    let private renderConflictValue (ctx: RenderContext) (proposedQualifier: string) (value: ConflictValue) =
+        // Explicit preorder emission preserves left-to-right parameter
+        // binding for nested conflict arithmetic without consuming a CLR
+        // call frame for every ConflictBinary/ConflictNegate.
+        let pending = ResizeArray<ConflictRenderFrame>()
+        let output = RenderBuffer(ctx, "")
+        pending.Add(ConflictNode value)
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | ConflictText text -> output.Append(text) |> ignore
+            | ConflictNode node ->
+                match node with
+                | ConflictProposedColumn identifier ->
+                    output.Append(proposedQualifier).Append(".").Append(renderIdentifier ctx.Provider identifier)
+                    |> ignore
+                | ConflictTargetColumn identifier ->
+                    output.Append(renderIdentifier ctx.Provider identifier) |> ignore
+                | ConflictLiteral scalar ->
+                    output.Append(renderExpr ctx (Expr.Literal scalar)) |> ignore
+                | ConflictNegate operand ->
+                    output.Append("(-") |> ignore
+                    pending.Add(ConflictText ")")
+                    pending.Add(ConflictNode operand)
+                | ConflictBinary(operator, left, right) ->
+                    output.Append("(") |> ignore
+                    pending.Add(ConflictText ")")
+                    pending.Add(ConflictNode right)
+                    pending.Add(ConflictText(" " + conflictArithmeticText operator + " "))
+                    pending.Add(ConflictNode left)
+        output.ToString()
 
     let private renderConflict (ctx: RenderContext) conflict =
         match conflict with
@@ -1503,6 +2294,29 @@ module internal RewriteRenderer =
                         |> String.concat ", "
                     " ON CONFLICT" + targetClause + " DO UPDATE SET " + values
             | _ -> invalidOp "Portable INSERT conflict lowering is not supported by the target provider."
+
+    // Row-major VALUES rendering must not allocate one intermediate SQL
+    // string per row and a second aggregate concatenation. All writes check
+    // the bound before StringBuilder growth, including conflict/RETURNING.
+    let private appendValues (ctx: RenderContext) (output: RenderBuffer) rows =
+        rows
+        |> NonEmpty.toList
+        |> List.iteri (fun rowIndex row ->
+            if rowIndex > 0 then output.Append(", ") |> ignore
+            output.Append('(') |> ignore
+            row
+            |> NonEmpty.toList
+            |> List.iteri (fun columnIndex value ->
+                if columnIndex > 0 then output.Append(", ") |> ignore
+                output.Append(renderExpr ctx value) |> ignore)
+            output.Append(')') |> ignore)
+
+    let private renderInsertValues (ctx: RenderContext) (prefix: string) rows conflict returning =
+        let result = RenderBuffer(ctx, prefix)
+        result.Append(" VALUES ") |> ignore
+        appendValues ctx result rows
+        result.Append(renderConflict ctx conflict)
+              .Append(renderTrailingReturning ctx returning).ToString()
 
     let private renderInsert (ctx: RenderContext) insert =
         let columns = if insert.Columns.IsEmpty then "" else " (" + (insert.Columns |> List.map (renderAlias ctx.Provider) |> String.concat ", ") + ")"
@@ -1582,51 +2396,44 @@ module internal RewriteRenderer =
             match insert.Input with
             | Values rows when NonEmpty.length rows > 1 ->
                 let table = renderIdentifier ctx.Provider insert.Target
-                let parts =
-                    rows
-                    |> NonEmpty.toList
-                    |> List.map (fun row ->
-                        " INTO " + table + columns + " VALUES ("
-                        + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
-                        + ")")
-                    |> String.concat ""
-                "INSERT ALL" + parts + " SELECT 1 FROM DUAL" + renderTrailingReturning ctx insert.Returning
+                let result = RenderBuffer(ctx, "INSERT ALL")
+                rows |> NonEmpty.toList |> List.iter (fun row ->
+                    result.Append(" INTO ").Append(table).Append(columns)
+                          .Append(" VALUES (") |> ignore
+                    row |> NonEmpty.toList |> List.iteri (fun index value ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderExpr ctx value) |> ignore)
+                    result.Append(')') |> ignore)
+                result.Append(" SELECT 1 FROM DUAL")
+                      .Append(renderTrailingReturning ctx insert.Returning).ToString()
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
                 prefix + " " + withClause + source + renderTrailingReturning ctx insert.Returning
             | QuerySource query -> prefix + " " + renderQuery ctx query + renderTrailingReturning ctx insert.Returning
             | Values rows ->
-                prefix + " VALUES "
-                + (rows |> NonEmpty.toList |> List.map (fun row ->
-                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
-                   |> String.concat ", ")
-                + renderTrailingReturning ctx insert.Returning
+                renderInsertValues ctx prefix rows None insert.Returning
             | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | Firebird, None ->
             let prefix = "INSERT INTO " + renderIdentifier ctx.Provider insert.Target + columns
             match insert.Input with
             | Values rows when NonEmpty.length rows > 1 ->
-                prefix + " "
-                + (rows
-                   |> NonEmpty.toList
-                   |> List.map (fun row ->
-                       "SELECT "
-                       + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ")
-                       + " FROM RDB$DATABASE")
-                   |> String.concat " UNION ALL ")
-                + renderTrailingReturning ctx insert.Returning
+                let result = RenderBuffer(ctx, prefix + " ")
+                rows |> NonEmpty.toList |> List.iteri (fun rowIndex row ->
+                    if rowIndex > 0 then result.Append(" UNION ALL ") |> ignore
+                    result.Append("SELECT ") |> ignore
+                    row |> NonEmpty.toList |> List.iteri (fun index value ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderExpr ctx value) |> ignore)
+                    result.Append(" FROM RDB$DATABASE") |> ignore)
+                result.Append(renderTrailingReturning ctx insert.Returning).ToString()
             | QuerySource query when not query.Head.Ctes.IsEmpty ->
                 let withClause = renderCtes ctx query.Head.Ctes
                 let source = renderQuery ctx { query with Head = { query.Head with Ctes = [] } }
                 prefix + " " + withClause + source + renderTrailingReturning ctx insert.Returning
             | QuerySource query -> prefix + " " + renderQuery ctx query + renderTrailingReturning ctx insert.Returning
             | Values rows ->
-                prefix + " VALUES "
-                + (rows |> NonEmpty.toList |> List.map (fun row ->
-                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
-                   |> String.concat ", ")
-                + renderTrailingReturning ctx insert.Returning
+                renderInsertValues ctx prefix rows None insert.Returning
             | DefaultValues -> prefix + " DEFAULT VALUES" + renderTrailingReturning ctx insert.Returning
         | _ ->
             let prefix =
@@ -1654,42 +2461,49 @@ module internal RewriteRenderer =
                 prefix + " " + renderQuery ctx query
                 + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
             | Values rows ->
-                prefix + " VALUES "
-                + (rows |> NonEmpty.toList |> List.map (fun row ->
-                    "(" + (row |> NonEmpty.toList |> List.map (renderExpr ctx) |> String.concat ", ") + ")")
-                   |> String.concat ", ")
-                + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
+                renderInsertValues ctx prefix rows insert.Conflict insert.Returning
             | DefaultValues ->
                 prefix + " DEFAULT VALUES"
                 + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
 
     let private renderUpdate (ctx: RenderContext) (update: Update) =
-        let assignments = update.Assignments |> List.map (fun (assignment: Assignment) -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
         let targetAlias =
             match update.TargetAlias with
             | None -> ""
             | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
                 " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let mutable sql =
-            "UPDATE "
-            + renderIdentifier ctx.Provider update.Target
-            + targetAlias
-            + " SET "
-            + assignments
-            + (if ctx.Provider = SqlServer then
-                   renderSqlServerOutput "INSERTED" ctx update.Returning
-               else
-                   "")
+
+        // Emit each assignment after checking the output work budget,
+        // instead of constructing both a list of rendered assignments and
+        // a second joined SET clause. Render parameter order is unchanged.
+        let sql = RenderBuffer(ctx, "UPDATE ")
+        sql.Append(renderIdentifier ctx.Provider update.Target)
+           .Append(targetAlias)
+           .Append(" SET ") |> ignore
+        update.Assignments
+        |> List.iteri (fun index assignment ->
+            if index > 0 then sql.Append(", ") |> ignore
+            sql.Append(renderIdentifier ctx.Provider assignment.Target)
+               .Append(" = ")
+               .Append(renderExpr ctx assignment.Value) |> ignore)
+        if ctx.Provider = SqlServer then
+            sql.Append(renderSqlServerOutput "INSERTED" ctx update.Returning) |> ignore
         if not update.From.IsEmpty then
             if ctx.Provider <> PostgreSql
                && ctx.Provider <> SqlServer
                && ctx.Provider <> SQLite
                && ctx.Provider <> Oracle then
                 invalidOp "UPDATE ... FROM is not supported by the target provider."
-            sql <- sql + " FROM " + (update.From |> List.map (renderSource ctx) |> String.concat ", ")
-        update.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
-        sql + renderTrailingReturning ctx update.Returning
+            sql.Append(" FROM ") |> ignore
+            update.From
+            |> List.iteri (fun index source ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderSource ctx source) |> ignore)
+        update.Where
+        |> Option.iter (fun predicate ->
+            sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+        sql.Append(renderTrailingReturning ctx update.Returning).ToString()
 
     let private renderDelete (ctx: RenderContext) (delete: Delete) =
         let targetAlias =
@@ -1699,93 +2513,94 @@ module internal RewriteRenderer =
                 " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let renderedTarget = renderIdentifier ctx.Provider delete.Target
-        let mutable sql =
+        let sql = RenderBuffer(ctx,
             "DELETE FROM "
             + renderedTarget
             + targetAlias
             + (if ctx.Provider = SqlServer then
                    renderSqlServerOutput "DELETED" ctx delete.Returning
                else
-                   "")
+                   ""))
         if not delete.Using.IsEmpty then
             match ctx.Provider with
             | PostgreSql ->
-                sql <- sql + " USING " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+                sql.Append(" USING ") |> ignore
             | SqlServer ->
                 if delete.TargetAlias.IsSome then
                     invalidOp "SQL Server joined DELETE target aliases require FROM-scope alias declaration and are not represented by the current Core DML target-alias shape."
-                sql <-
-                    sql
-                    + " FROM "
-                    + renderedTarget
-                    + ", "
-                    + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+                sql.Append(" FROM ").Append(renderedTarget).Append(", ") |> ignore
             | Oracle ->
                 if delete.TargetAlias.IsSome then
                     invalidOp "Oracle direct-join DELETE target aliases are not represented by the current Core target-alias lowering."
-                sql <- sql + " FROM " + (delete.Using |> List.map (renderSource ctx) |> String.concat ", ")
+                sql.Append(" FROM ") |> ignore
             | _ ->
                 invalidOp "Joined DELETE is not supported by the target provider."
-        delete.Where |> Option.iter (fun predicate -> sql <- sql + " WHERE " + renderPredicate ctx predicate)
-        sql + renderTrailingReturning ctx delete.Returning
+            delete.Using
+            |> List.iteri (fun index source ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderSource ctx source) |> ignore)
+        delete.Where
+        |> Option.iter (fun predicate ->
+            sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+        sql.Append(renderTrailingReturning ctx delete.Returning).ToString()
 
     let private renderMerge (ctx: RenderContext) (merge: Merge) =
         if ctx.Provider <> SqlServer then
             invalidOp "Validated canonical MERGE reached a non-SQL Server renderer."
-        let sourceColumns =
-            merge.Source.SourceColumns
-            |> NonEmpty.toList
-            |> List.map (renderAlias SqlServer)
-            |> String.concat ", "
-        let sourceValues =
-            merge.Source.SourceValues
-            |> NonEmpty.toList
-            |> List.map (renderExpr ctx)
-            |> String.concat ", "
-        let mutable sql =
-            "MERGE INTO "
-            + renderIdentifier SqlServer merge.Target
-            + " AS "
-            + renderAlias SqlServer merge.TargetAlias
-            + " USING (VALUES ("
-            + sourceValues
-            + ")) AS "
-            + renderAlias SqlServer merge.Source.Alias
-            + " ("
-            + sourceColumns
-            + ") ON "
-            + renderPredicate ctx merge.MatchPredicate
+        // Source values must bind before ON, matched UPDATE and unmatched
+        // INSERT expressions. One bounded buffer preserves that ordering
+        // without large joined intermediate assignment/value strings.
+        let sql = RenderBuffer(ctx, "MERGE INTO ")
+        sql.Append(renderIdentifier SqlServer merge.Target)
+           .Append(" AS ")
+           .Append(renderAlias SqlServer merge.TargetAlias)
+           .Append(" USING (VALUES (") |> ignore
+        merge.Source.SourceValues
+        |> NonEmpty.toList
+        |> List.iteri (fun index value ->
+            if index > 0 then sql.Append(", ") |> ignore
+            sql.Append(renderExpr ctx value) |> ignore)
+        sql.Append(")) AS ")
+           .Append(renderAlias SqlServer merge.Source.Alias)
+           .Append(" (") |> ignore
+        merge.Source.SourceColumns
+        |> NonEmpty.toList
+        |> List.iteri (fun index column ->
+            if index > 0 then sql.Append(", ") |> ignore
+            sql.Append(renderAlias SqlServer column) |> ignore)
+        sql.Append(") ON ").Append(renderPredicate ctx merge.MatchPredicate) |> ignore
 
         merge.Matched
         |> Option.iter (function
             | MergeDelete ->
-                sql <- sql + " WHEN MATCHED THEN DELETE"
+                sql.Append(" WHEN MATCHED THEN DELETE") |> ignore
             | MergeUpdate assignments ->
-                let rendered =
-                    assignments
-                    |> NonEmpty.toList
-                    |> List.map (fun assignment ->
-                        renderIdentifier SqlServer assignment.Target
-                        + " = "
-                        + renderExpr ctx assignment.Value)
-                    |> String.concat ", "
-                sql <- sql + " WHEN MATCHED THEN UPDATE SET " + rendered)
+                sql.Append(" WHEN MATCHED THEN UPDATE SET ") |> ignore
+                assignments
+                |> NonEmpty.toList
+                |> List.iteri (fun index assignment ->
+                    if index > 0 then sql.Append(", ") |> ignore
+                    sql.Append(renderIdentifier SqlServer assignment.Target)
+                       .Append(" = ")
+                       .Append(renderExpr ctx assignment.Value) |> ignore))
 
         merge.NotMatched
         |> Option.iter (fun mergeInsert ->
-            let columns =
-                mergeInsert.InsertColumns
-                |> NonEmpty.toList
-                |> List.map (renderIdentifier SqlServer)
-                |> String.concat ", "
-            let values =
-                mergeInsert.InsertValues
-                |> NonEmpty.toList
-                |> List.map (renderExpr ctx)
-                |> String.concat ", "
-            sql <- sql + " WHEN NOT MATCHED THEN INSERT (" + columns + ") VALUES (" + values + ")")
+            sql.Append(" WHEN NOT MATCHED THEN INSERT (") |> ignore
+            mergeInsert.InsertColumns
+            |> NonEmpty.toList
+            |> List.iteri (fun index column ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderIdentifier SqlServer column) |> ignore)
+            sql.Append(") VALUES (") |> ignore
+            mergeInsert.InsertValues
+            |> NonEmpty.toList
+            |> List.iteri (fun index value ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderExpr ctx value) |> ignore)
+            sql.Append(')') |> ignore)
 
-        sql + ";"
+        sql.Append(';').ToString()
 
     let private providerForRuntime = function
         | TargetRuntime.PostgreSqlRuntime -> Provider.PostgreSql
@@ -1797,8 +2612,8 @@ module internal RewriteRenderer =
 
     let render (executable: RewritePolicy.ExecutableSql) : RenderedCommand =
         let targetRuntime = RewritePolicy.Executable.targetRuntime executable
-        let ctx = RenderContext(providerForRuntime targetRuntime, targetRuntime)
         let document = RewritePolicy.Executable.value executable
+        let ctx = RenderContext(providerForRuntime targetRuntime, targetRuntime, document.Span)
         let sql, returnsRows =
             match document.Statement with
             | Statement.QueryStatement query -> renderQuery ctx query, false
@@ -1806,4 +2621,26 @@ module internal RewriteRenderer =
             | Statement.UpdateStatement update -> renderUpdate ctx update, not update.Returning.IsEmpty
             | Statement.DeleteStatement delete -> renderDelete ctx delete, not delete.Returning.IsEmpty
             | Statement.MergeStatement merge -> renderMerge ctx merge, false
+        // Fail closed before exposing a generated command to the executor.
+        // This guards the delivered artifact size; individual specialized
+        // emitters still need streaming checks to cap transient allocations.
+        if sql.Length > MaxRenderedSqlLength then
+            let detail =
+                "Rendered SQL exceeds the maximum "
+                + string MaxRenderedSqlLength
+                + " UTF-16 code units."
+            let location =
+                if document.Span.Start >= 0 && document.Span.Length >= 0 then
+                    SqlDiagnosticSpan(document.Span.Start, document.Span.Length)
+                else
+                    Unchecked.defaultof<SqlDiagnosticSpan>
+            raise (
+                SqlCompilationException(
+                    detail,
+                    SqlDiagnostic(
+                        "SQL_COMPILER_RENDERED_OUTPUT_LIMIT",
+                        SqlDiagnosticStage.RenderingInvariant,
+                        SqlDiagnosticCategory.Resource,
+                        detail,
+                        location)))
         { Sql = sql; Parameters = ctx.Parameters; ReturnsRows = returnsRows }

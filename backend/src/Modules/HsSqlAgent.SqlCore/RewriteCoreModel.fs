@@ -60,8 +60,15 @@ module internal CoreModel =
             | [] -> invalidArg argumentName "Collection must contain at least one item."
         let toList (NonEmpty(head, tail)) = head :: tail
         let map mapping (NonEmpty(head, tail)) = NonEmpty(mapping head, tail |> List.map mapping)
-        let iter action values = values |> toList |> List.iter action
-        let length values = values |> toList |> List.length
+        let iter action (NonEmpty(head, tail)) =
+            action head
+            tail |> List.iter action
+        // Push children in reverse source order for an explicit LIFO walk.
+        // The common single-element case needs no temporary list or array.
+        let iterReverse action (NonEmpty(head, tail)) =
+            tail |> List.rev |> List.iter action
+            action head
+        let length (NonEmpty(_, tail)) = 1 + List.length tail
 
     type NonNegativeRowCount = private NonNegativeRowCount of int
 
@@ -626,41 +633,72 @@ module internal CoreModel =
             | [ part ] -> Some(Identifier.create [ part ])
             | _ -> None
 
-        let rec tryOfExpression expression =
-            match expression with
-            | Spanned(_, inner) -> tryOfExpression inner
-            | Column identifier ->
-                match Identifier.parts identifier with
-                | [ part ] -> Ok(ConflictTargetColumn(Identifier.create [ part ]))
-                | [ qualifier; part ]
-                    when not qualifier.WasQuoted
-                         && StringComparer.OrdinalIgnoreCase.Equals(qualifier.Value, "EXCLUDED") ->
-                    Ok(ConflictProposedColumn(Identifier.create [ part ]))
-                | _ -> Error error
-            | Literal value -> Ok(ConflictLiteral value)
-            | Unary(UnaryOperator.Positive, operand) -> tryOfExpression operand
-            | Unary(UnaryOperator.Negate, operand) ->
-                tryOfExpression operand |> Result.map ConflictNegate
-            | Binary(operator, left, right) ->
-                let mapped =
+        // The conflict grammar is deliberately closed and much narrower
+        // than general Expr. Convert it post-order using explicit frames
+        // rather than nested CLR calls for deep deterministic arithmetic.
+        // Struct tuple frames and result stacks avoid recursive DU copying.
+        let tryOfExpression expression =
+            let pending = ResizeArray<struct (Expr * bool)>()
+            let completed = ResizeArray<ConflictValue>()
+            let mutable rejected = false
+            let pop () =
+                let last = completed.Count - 1
+                if last < 0 then
+                    invalidOp "Conflict expression conversion results underflow."
+                let value = completed.[last]
+                completed.RemoveAt(last)
+                value
+            pending.Add(struct (expression, false))
+            while pending.Count > 0 && not rejected do
+                let last = pending.Count - 1
+                let struct (node, finish) = pending.[last]
+                pending.RemoveAt(last)
+                match node, finish with
+                | Spanned(_, inner), false
+                | Unary(UnaryOperator.Positive, inner), false ->
+                    pending.Add(struct (inner, false))
+                | Column identifier, false ->
+                    match Identifier.parts identifier with
+                    | [ part ] ->
+                        completed.Add(ConflictTargetColumn(Identifier.create [ part ]))
+                    | [ qualifier; part ]
+                        when not qualifier.WasQuoted
+                             && StringComparer.OrdinalIgnoreCase.Equals(qualifier.Value, "EXCLUDED") ->
+                        completed.Add(ConflictProposedColumn(Identifier.create [ part ]))
+                    | _ -> rejected <- true
+                | Literal value, false -> completed.Add(ConflictLiteral value)
+                | Unary(UnaryOperator.Negate, operand), false ->
+                    pending.Add(struct (node, true))
+                    pending.Add(struct (operand, false))
+                | Unary(UnaryOperator.Negate, _), true ->
+                    completed.Add(ConflictNegate(pop ()))
+                | Binary(operator, left, right), false ->
                     match operator with
-                    | BinaryOperator.Add -> Some ConflictAdd
-                    | BinaryOperator.Subtract -> Some ConflictSubtract
-                    | BinaryOperator.Multiply -> Some ConflictMultiply
-                    | BinaryOperator.Divide -> Some ConflictDivide
-                    | BinaryOperator.Modulo -> Some ConflictModulo
-                    | _ -> None
-                match mapped with
-                | None -> Error error
-                | Some conflictOperator ->
-                    match tryOfExpression left, tryOfExpression right with
-                    | Ok leftValue, Ok rightValue ->
-                        Ok(ConflictBinary(conflictOperator, leftValue, rightValue))
-                    | Error message, _
-                    | _, Error message -> Error message
-            | _ -> Error error
+                    | BinaryOperator.Add | BinaryOperator.Subtract
+                    | BinaryOperator.Multiply | BinaryOperator.Divide
+                    | BinaryOperator.Modulo ->
+                        pending.Add(struct (node, true))
+                        pending.Add(struct (right, false))
+                        pending.Add(struct (left, false))
+                    | _ -> rejected <- true
+                | Binary(operator, _, _), true ->
+                    let conflictOperator =
+                        match operator with
+                        | BinaryOperator.Add -> ConflictAdd
+                        | BinaryOperator.Subtract -> ConflictSubtract
+                        | BinaryOperator.Multiply -> ConflictMultiply
+                        | BinaryOperator.Divide -> ConflictDivide
+                        | BinaryOperator.Modulo -> ConflictModulo
+                        | _ -> invalidOp "Non-arithmetic conflict continuation was scheduled."
+                    let right = pop ()
+                    let left = pop ()
+                    completed.Add(ConflictBinary(conflictOperator, left, right))
+                | _ -> rejected <- true
+            if rejected then Error error
+            elif completed.Count = 1 then Ok completed.[0]
+            else invalidOp "Conflict expression conversion did not produce one value."
 
-        let rec toExpression value =
+        let toExpression value =
             let proposedIdentifier identifier =
                 match singlePart identifier with
                 | None -> invalidOp "Conflict proposed-row identifiers must contain exactly one part."
@@ -671,20 +709,50 @@ module internal CoreModel =
                           PreserveSpelling = false
                           Span = Span.unknown }
                     Identifier.create [ excluded; Identifier.parts column |> List.head ]
-            match value with
-            | ConflictProposedColumn identifier -> Column(proposedIdentifier identifier)
-            | ConflictTargetColumn identifier -> Column identifier
-            | ConflictLiteral scalar -> Literal scalar
-            | ConflictNegate operand -> Unary(UnaryOperator.Negate, toExpression operand)
-            | ConflictBinary(operator, left, right) ->
-                let binaryOperator =
-                    match operator with
-                    | ConflictAdd -> BinaryOperator.Add
-                    | ConflictSubtract -> BinaryOperator.Subtract
-                    | ConflictMultiply -> BinaryOperator.Multiply
-                    | ConflictDivide -> BinaryOperator.Divide
-                    | ConflictModulo -> BinaryOperator.Modulo
-                Binary(binaryOperator, toExpression left, toExpression right)
+            let binaryOperator = function
+                | ConflictAdd -> BinaryOperator.Add
+                | ConflictSubtract -> BinaryOperator.Subtract
+                | ConflictMultiply -> BinaryOperator.Multiply
+                | ConflictDivide -> BinaryOperator.Divide
+                | ConflictModulo -> BinaryOperator.Modulo
+            let pending = ResizeArray<struct (ConflictValue * bool)>()
+            let completed = ResizeArray<Expr>()
+            let pop () =
+                let last = completed.Count - 1
+                if last < 0 then
+                    invalidOp "Conflict AST conversion results underflow."
+                let expression = completed.[last]
+                completed.RemoveAt(last)
+                expression
+            pending.Add(struct (value, false))
+            while pending.Count > 0 do
+                let last = pending.Count - 1
+                let struct (node, finish) = pending.[last]
+                pending.RemoveAt(last)
+                match node, finish with
+                | ConflictProposedColumn identifier, false ->
+                    completed.Add(Column(proposedIdentifier identifier))
+                | ConflictTargetColumn identifier, false ->
+                    completed.Add(Column identifier)
+                | ConflictLiteral scalar, false -> completed.Add(Literal scalar)
+                | ConflictNegate operand, false ->
+                    pending.Add(struct (node, true))
+                    pending.Add(struct (operand, false))
+                | ConflictNegate _, true ->
+                    completed.Add(Unary(UnaryOperator.Negate, pop ()))
+                | ConflictBinary(_, left, right), false ->
+                    pending.Add(struct (node, true))
+                    pending.Add(struct (right, false))
+                    pending.Add(struct (left, false))
+                | ConflictBinary(operator, _, _), true ->
+                    let right = pop ()
+                    let left = pop ()
+                    completed.Add(Binary(binaryOperator operator, left, right))
+                | _ ->
+                    invalidOp "Unexpected conflict AST conversion continuation frame."
+            if completed.Count <> 1 then
+                invalidOp "Conflict AST conversion did not reconstruct one expression."
+            completed.[0]
 
         let trySimpleProposed = function
             | ConflictProposedColumn identifier -> Some identifier
@@ -779,126 +847,171 @@ module internal CoreModel =
             | Spanned(value, _) -> value
             | _ -> Span.unknown
 
-        let rec unspan expression =
-            match expression with
-            | Spanned(_, inner) -> unspan inner
-            | inner -> inner
+        let unspan expression =
+            let mutable current = expression
+            let mutable doneWalking = false
+            while not doneWalking do
+                match current with
+                | Spanned(_, inner) -> current <- inner
+                | _ -> doneWalking <- true
+            current
 
-        let private optionEquivalent (comparer: 'a -> 'a -> bool) (left: 'a option) (right: 'a option) =
-            match left, right with
-            | None, None -> true
-            | Some leftValue, Some rightValue -> comparer leftValue rightValue
-            | _ -> false
-
-        let private listEquivalent (comparer: 'a -> 'a -> bool) (left: 'a list) (right: 'a list) =
-            List.length left = List.length right && List.forall2 comparer left right
-
-        let rec equivalent (left: Expr) (right: Expr) =
-            match left, right with
-            | Spanned(_, leftValue), _ -> equivalent leftValue right
-            | _, Spanned(_, rightValue) -> equivalent left rightValue
-            | Column leftId, Column rightId
-            | Column leftId, BoundColumn(rightId, _)
-            | BoundColumn(leftId, _), Column rightId
-            | BoundColumn(leftId, _), BoundColumn(rightId, _) ->
-                Identifier.equivalent leftId rightId
-            | Wildcard leftId, Wildcard rightId ->
-                optionEquivalent Identifier.equivalent leftId rightId
-            | OrderOrdinal leftOrdinal, OrderOrdinal rightOrdinal ->
-                PositiveRowCount.value leftOrdinal = PositiveRowCount.value rightOrdinal
-            | Literal leftValue, Literal rightValue ->
-                leftValue = rightValue
-            | Interval leftValue, Interval rightValue ->
-                IntervalLiteral.value leftValue = IntervalLiteral.value rightValue
-            | DateAdd(leftUnit, leftAmount, leftValue), DateAdd(rightUnit, rightAmount, rightValue) ->
-                leftUnit = rightUnit
-                && equivalent leftAmount rightAmount
-                && equivalent leftValue rightValue
-            | DateDiff(leftUnit, leftStart, leftFinish), DateDiff(rightUnit, rightStart, rightFinish) ->
-                leftUnit = rightUnit
-                && equivalent leftStart rightStart
-                && equivalent leftFinish rightFinish
-            | Unary(leftOperator, leftValue), Unary(rightOperator, rightValue) ->
-                leftOperator = rightOperator && equivalent leftValue rightValue
-            | Binary(leftOperator, leftLeft, leftRight), Binary(rightOperator, rightLeft, rightRight) ->
-                leftOperator = rightOperator
-                && equivalent leftLeft rightLeft
-                && equivalent leftRight rightRight
-            | Like(leftValue, leftPattern, leftEscape, leftNegated, leftInsensitive),
-              Like(rightValue, rightPattern, rightEscape, rightNegated, rightInsensitive) ->
-                leftNegated = rightNegated
-                && leftInsensitive = rightInsensitive
-                && leftEscape = rightEscape
-                && equivalent leftValue rightValue
-                && equivalent leftPattern rightPattern
-            | RawRegexCall(leftArguments, leftDistinct), RawRegexCall(rightArguments, rightDistinct) ->
-                leftDistinct = rightDistinct
-                && listEquivalent equivalent leftArguments rightArguments
-            | RegexMatch(leftValue, leftPattern), RegexMatch(rightValue, rightPattern) ->
-                equivalent leftValue rightValue
-                && equivalent leftPattern rightPattern
-            | PostgresJsonAccess(leftValue, leftSelector, leftResult),
-              PostgresJsonAccess(rightValue, rightSelector, rightResult) ->
-                leftSelector = rightSelector
-                && leftResult = rightResult
-                && equivalent leftValue rightValue
-            | FunctionCall leftCall, FunctionCall rightCall ->
-                leftCall.Name = rightCall.Name
-                && leftCall.IsDistinct = rightCall.IsDistinct
-                && leftCall.AggregateOrderSyntax = rightCall.AggregateOrderSyntax
-                && leftCall.AggregateSeparator = rightCall.AggregateSeparator
-                && listEquivalent equivalent leftCall.Arguments rightCall.Arguments
-                && listEquivalent orderEquivalent leftCall.AggregateOrderBy rightCall.AggregateOrderBy
-            | FilteredAggregate(leftValue, leftPredicate), FilteredAggregate(rightValue, rightPredicate) ->
-                equivalent leftValue rightValue && equivalent leftPredicate rightPredicate
-            | Windowed(leftValue, leftWindow), Windowed(rightValue, rightWindow) ->
-                equivalent leftValue rightValue
-                && listEquivalent equivalent leftWindow.PartitionBy rightWindow.PartitionBy
-                && listEquivalent orderEquivalent leftWindow.OrderBy rightWindow.OrderBy
-                && leftWindow.Frame = rightWindow.Frame
-            | Cast(leftValue, leftType), Cast(rightValue, rightType) ->
-                CastType.equivalent leftType rightType && equivalent leftValue rightValue
-            | Extract(leftField, leftValue), Extract(rightField, rightValue) ->
-                leftField = rightField && equivalent leftValue rightValue
-            | SimpleCase(leftInput, leftBranches, leftFallback),
-              SimpleCase(rightInput, rightBranches, rightFallback) ->
-                equivalent leftInput rightInput
-                && listEquivalent
-                    (fun leftBranch rightBranch ->
-                        equivalent leftBranch.Match rightBranch.Match
-                        && equivalent leftBranch.Result rightBranch.Result)
-                    (NonEmpty.toList leftBranches)
-                    (NonEmpty.toList rightBranches)
-                && optionEquivalent equivalent leftFallback rightFallback
-            | SearchedCase(leftBranches, leftFallback),
-              SearchedCase(rightBranches, rightFallback) ->
-                listEquivalent
-                    (fun leftBranch rightBranch ->
-                        equivalent leftBranch.Condition rightBranch.Condition
-                        && equivalent leftBranch.Result rightBranch.Result)
-                    (NonEmpty.toList leftBranches)
-                    (NonEmpty.toList rightBranches)
-                && optionEquivalent equivalent leftFallback rightFallback
-            | InList(leftValue, leftItems, leftNegated), InList(rightValue, rightItems, rightNegated) ->
-                leftNegated = rightNegated
-                && equivalent leftValue rightValue
-                && listEquivalent equivalent (NonEmpty.toList leftItems) (NonEmpty.toList rightItems)
-            | Between(leftValue, leftLower, leftUpper, leftNegated),
-              Between(rightValue, rightLower, rightUpper, rightNegated) ->
-                leftNegated = rightNegated
-                && equivalent leftValue rightValue
-                && equivalent leftLower rightLower
-                && equivalent leftUpper rightUpper
-            | IsNull(leftValue, leftNegated), IsNull(rightValue, rightNegated) ->
-                leftNegated = rightNegated && equivalent leftValue rightValue
-            | InSubquery _, InSubquery _
-            | ScalarSubquery _, ScalarSubquery _
-            | Exists _, Exists _ ->
-                false
-            | _ ->
-                false
-
-        and private orderEquivalent (left: OrderBy) (right: OrderBy) =
-            left.Descending = right.Descending
-            && left.NullOrdering = right.NullOrdering
-            && equivalent left.Expression right.Expression
+        // Compare expression pairs iteratively: deep legal SQL does not
+        // consume one managed call frame per AST node. A subquery remains
+        // conservatively non-equivalent, matching the original proof rule.
+        let equivalent (left: Expr) (right: Expr) =
+            let pending = System.Collections.Generic.List<struct (Expr * Expr)>()
+            let inline push a b = pending.Add(struct (a, b))
+            let pushLists (xs: Expr list) (ys: Expr list) =
+                let leftItems = List.toArray xs
+                let rightItems = List.toArray ys
+                if leftItems.Length <> rightItems.Length then false
+                else
+                    for index = leftItems.Length - 1 downto 0 do
+                        push leftItems.[index] rightItems.[index]
+                    true
+            let pushOrders (xs: OrderBy list) (ys: OrderBy list) =
+                let leftItems = List.toArray xs
+                let rightItems = List.toArray ys
+                if leftItems.Length <> rightItems.Length then false
+                elif Array.exists2 (fun a b ->
+                    a.Descending <> b.Descending || a.NullOrdering <> b.NullOrdering)
+                    leftItems rightItems then false
+                else
+                    for index = leftItems.Length - 1 downto 0 do
+                        push leftItems.[index].Expression rightItems.[index].Expression
+                    true
+            let pushOptions (a: Expr option) (b: Expr option) =
+                match a, b with
+                | None, None -> true
+                | Some x, Some y -> push x y; true
+                | _ -> false
+            push left right
+            let mutable same = true
+            while same && pending.Count > 0 do
+                let last = pending.Count - 1
+                let struct (a, b) = pending.[last]
+                pending.RemoveAt(last)
+                match unspan a, unspan b with
+                | Column leftId, Column rightId
+                | Column leftId, BoundColumn(rightId, _)
+                | BoundColumn(leftId, _), Column rightId
+                | BoundColumn(leftId, _), BoundColumn(rightId, _) ->
+                    same <- Identifier.equivalent leftId rightId
+                | Wildcard leftId, Wildcard rightId ->
+                    same <-
+                        match leftId, rightId with
+                        | None, None -> true
+                        | Some x, Some y -> Identifier.equivalent x y
+                        | _ -> false
+                | OrderOrdinal a, OrderOrdinal b ->
+                    same <- PositiveRowCount.value a = PositiveRowCount.value b
+                | Literal a, Literal b -> same <- a = b
+                | Interval a, Interval b ->
+                    same <- IntervalLiteral.value a = IntervalLiteral.value b
+                | DateAdd(unitA, amountA, valueA), DateAdd(unitB, amountB, valueB) ->
+                    same <- unitA = unitB
+                    if same then
+                        push valueA valueB
+                        push amountA amountB
+                | DateDiff(unitA, startA, finishA), DateDiff(unitB, startB, finishB) ->
+                    same <- unitA = unitB
+                    if same then
+                        push finishA finishB
+                        push startA startB
+                | Unary(opA, a), Unary(opB, b) ->
+                    same <- opA = opB
+                    if same then push a b
+                | Binary(opA, leftA, rightA), Binary(opB, leftB, rightB) ->
+                    same <- opA = opB
+                    if same then
+                        push rightA rightB
+                        push leftA leftB
+                | Like(valueA, patternA, escapeA, negatedA, insensitiveA),
+                  Like(valueB, patternB, escapeB, negatedB, insensitiveB) ->
+                    same <- negatedA = negatedB
+                            && insensitiveA = insensitiveB
+                            && escapeA = escapeB
+                    if same then
+                        push patternA patternB
+                        push valueA valueB
+                | RawRegexCall(argsA, distinctA), RawRegexCall(argsB, distinctB) ->
+                    same <- distinctA = distinctB && pushLists argsA argsB
+                | RegexMatch(a, patternA), RegexMatch(b, patternB) ->
+                    push patternA patternB
+                    push a b
+                | PostgresJsonAccess(a, selectorA, resultA),
+                  PostgresJsonAccess(b, selectorB, resultB) ->
+                    same <- selectorA = selectorB && resultA = resultB
+                    if same then push a b
+                | FunctionCall a, FunctionCall b ->
+                    same <- a.Name = b.Name
+                            && a.IsDistinct = b.IsDistinct
+                            && a.AggregateOrderSyntax = b.AggregateOrderSyntax
+                            && a.AggregateSeparator = b.AggregateSeparator
+                            && List.length a.Arguments = List.length b.Arguments
+                            && List.length a.AggregateOrderBy = List.length b.AggregateOrderBy
+                    if same then
+                        // Arguments are checked before aggregate ORDER BY.
+                        same <- pushOrders a.AggregateOrderBy b.AggregateOrderBy
+                                && pushLists a.Arguments b.Arguments
+                | FilteredAggregate(a, predA), FilteredAggregate(b, predB) ->
+                    push predA predB
+                    push a b
+                | Windowed(a, windowA), Windowed(b, windowB) ->
+                    same <- windowA.Frame = windowB.Frame
+                            && List.length windowA.PartitionBy = List.length windowB.PartitionBy
+                            && List.length windowA.OrderBy = List.length windowB.OrderBy
+                    if same then
+                        same <- pushOrders windowA.OrderBy windowB.OrderBy
+                                && pushLists windowA.PartitionBy windowB.PartitionBy
+                        if same then push a b
+                | Cast(a, typeA), Cast(b, typeB) ->
+                    same <- CastType.equivalent typeA typeB
+                    if same then push a b
+                | Extract(fieldA, a), Extract(fieldB, b) ->
+                    same <- fieldA = fieldB
+                    if same then push a b
+                | SimpleCase(inputA, branchesA, fallbackA),
+                  SimpleCase(inputB, branchesB, fallbackB) ->
+                    let itemsA = NonEmpty.toList branchesA |> List.toArray
+                    let itemsB = NonEmpty.toList branchesB |> List.toArray
+                    same <- itemsA.Length = itemsB.Length
+                    if same then
+                        same <- pushOptions fallbackA fallbackB
+                        for index = itemsA.Length - 1 downto 0 do
+                            push itemsA.[index].Result itemsB.[index].Result
+                            push itemsA.[index].Match itemsB.[index].Match
+                        push inputA inputB
+                | SearchedCase(branchesA, fallbackA),
+                  SearchedCase(branchesB, fallbackB) ->
+                    let itemsA = NonEmpty.toList branchesA |> List.toArray
+                    let itemsB = NonEmpty.toList branchesB |> List.toArray
+                    same <- itemsA.Length = itemsB.Length
+                    if same then
+                        same <- pushOptions fallbackA fallbackB
+                        for index = itemsA.Length - 1 downto 0 do
+                            push itemsA.[index].Result itemsB.[index].Result
+                            push itemsA.[index].Condition itemsB.[index].Condition
+                | InList(a, itemsA, negatedA), InList(b, itemsB, negatedB) ->
+                    same <- negatedA = negatedB
+                    if same then
+                        same <- pushLists (NonEmpty.toList itemsA) (NonEmpty.toList itemsB)
+                        push a b
+                | Between(a, lowerA, upperA, negatedA),
+                  Between(b, lowerB, upperB, negatedB) ->
+                    same <- negatedA = negatedB
+                    if same then
+                        push upperA upperB
+                        push lowerA lowerB
+                        push a b
+                | IsNull(a, negatedA), IsNull(b, negatedB) ->
+                    same <- negatedA = negatedB
+                    if same then push a b
+                | InSubquery _, InSubquery _
+                | ScalarSubquery _, ScalarSubquery _
+                | Exists _, Exists _ ->
+                    // Equality of correlated subqueries needs query/scope proof.
+                    same <- false
+                | _ -> same <- false
+            same

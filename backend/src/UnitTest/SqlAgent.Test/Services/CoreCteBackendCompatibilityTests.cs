@@ -7,6 +7,34 @@ public class CoreCteBackendCompatibilityTests
     [Theory]
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_WideSetBranchWithInheritedCte_PreservesVisibilityAndOrder(
+        SqlAgentToolType targetProvider)
+    {
+        // The query binder must pass head CTE visibility to every UNION
+        // branch, but never accidentally inherit head table aliases.
+        var branches = Enumerable.Range(1, 24)
+            .Select(number => $"SELECT id FROM active WHERE id = {number}");
+        var sql = "WITH active AS (SELECT id FROM users) "
+            + string.Join(" UNION ALL ", branches)
+            + " ORDER BY 1";
+
+        var command = Compile(sql, targetProvider);
+        Assert.Contains("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(23,
+            command.Sql.Split("UNION ALL", StringSplitOptions.None).Length - 1);
+        Assert.Contains("ORDER BY 1", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(
+            Enumerable.Range(1, 24).Select(x => (long)x),
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
     public void Compile_CteInsideDerivedTable_UsesFullNestedCompilation(
         SqlAgentToolType targetProvider)

@@ -397,49 +397,53 @@ module internal RewriteFacadeAdapter =
         (sourceProfile: SqlProviderCapabilityProfile | null)
         (targetProfile: SqlProviderCapabilityProfile | null) =
 
-        if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        match sourceProfile with
-        | null -> ()
-        | profile when profile.Provider <> source ->
-            invalidArg "sourceProfile" "Source capability profile provider does not match source dialect."
-        | _ -> ()
-        match targetProfile with
-        | null -> ()
-        | profile when profile.Provider <> target ->
-            invalidArg "targetProfile" "Target capability profile provider does not match target provider."
-        | _ -> ()
+        RewriteResourceBudget.withCompilation (fun () ->
+            if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
+            match sourceProfile with
+            | null -> ()
+            | profile when profile.Provider <> source ->
+                invalidArg "sourceProfile" "Source capability profile provider does not match source dialect."
+            | _ -> ()
+            match targetProfile with
+            | null -> ()
+            | profile when profile.Provider <> target ->
+                invalidArg "targetProfile" "Target capability profile provider does not match target provider."
+            | _ -> ()
 
-        let semantics = sourceSemantics source sourceProfile
-        let parserDialect = sourceDialect source
-        let runtime = targetRuntime target targetProfile
-        let parsed = parseSourceValidated sql source sourceProfile
-        let parsedDocument = Parsed.value parsed
-        let canonical =
-            parsed
-            |> RewriteBinder.bind source
-            |> RewriteStages.normalize
-                semantics.EnforceDialectSyntax
-                parserDialect
-                runtime
-                semantics.Expressions.RegexMatch
-                semantics.Ordering
-                semantics.MySqlPipes
-                sourceProfile
-                targetProfile
-        let canonicalDocument = Canonical.value canonical
-        let renormalized =
-            RewriteStages.normalizeDocumentForInspection
-                parserDialect
-                runtime
-                canonicalDocument
-        let canonicalFingerprint = structuralFingerprint canonicalDocument
-        let renormalizedFingerprint = structuralFingerprint renormalized
-
-        SqlDeterminismInspectionFacts(
-            structuralFingerprint parsedDocument,
-            canonicalFingerprint,
-            renormalizedFingerprint,
-            StringComparer.Ordinal.Equals(canonicalFingerprint, renormalizedFingerprint))
+            let semantics = sourceSemantics source sourceProfile
+            let parserDialect = sourceDialect source
+            let runtime = targetRuntime target targetProfile
+            let parsed =
+                RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                    parseSourceValidated sql source sourceProfile)
+            let parsedDocument = Parsed.value parsed
+            let bound =
+                RewriteResourceBudget.withStage "Binding" SqlDiagnosticStage.Binding (fun () ->
+                    RewriteBinder.bind source parsed)
+            let canonical =
+                RewriteResourceBudget.withStage "Normalization" SqlDiagnosticStage.SemanticValidation (fun () ->
+                    RewriteStages.normalize
+                        semantics.EnforceDialectSyntax
+                        parserDialect
+                        runtime
+                        semantics.Expressions.RegexMatch
+                        semantics.Ordering
+                        semantics.MySqlPipes
+                        sourceProfile
+                        targetProfile
+                        bound)
+            let canonicalDocument = Canonical.value canonical
+            RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.SemanticValidation (fun () ->
+                let renormalized =
+                    RewriteStages.normalizeDocumentForInspection
+                        parserDialect runtime canonicalDocument
+                let canonicalFingerprint = structuralFingerprint canonicalDocument
+                let renormalizedFingerprint = structuralFingerprint renormalized
+                SqlDeterminismInspectionFacts(
+                    structuralFingerprint parsedDocument,
+                    canonicalFingerprint,
+                    renormalizedFingerprint,
+                    StringComparer.Ordinal.Equals(canonicalFingerprint, renormalizedFingerprint))))
 
     let private columnSetAssurance (columns: ImmutableArray<string>) =
         if columns.IsDefaultOrEmpty then
@@ -861,49 +865,60 @@ module internal RewriteFacadeAdapter =
                 allowed
                 schemaSnapshot
         try
-            if parsed.EnforceSourceDialectSyntax then
-                match parsed.RawSql with
-                | null -> ()
-                | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
-                | rawSql ->
-                    // Preserve the source-dialect syntax check without making RawSql the executable source
-                    // of truth. Callers of the compatibility ParsedStatement API may intentionally replace
-                    // Statement after parsing; compilation must consume that statement, not silently reparse
-                    // the original text.
-                    parseSourceValidated rawSql source parsed.SourceProfile |> ignore
-            let rendered =
-                runParsed
-                    (compileOptions
-                        source
-                        (parsedSourceSemantics parsed)
-                        target
-                        parsed.SourceProfile
-                        targetProfile
-                        conflictTargetAssurance
-                        resultRowAssurance
-                        policy
-                        allowed
-                        schemaSnapshot)
-                    (RewriteLegacyAstAdapter.toParsed parsed.Statement)
-            let kind = legacyKind parsed.Statement
-            let parameterValues = parameters target rendered.Parameters
-            let command = CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
-            let fingerprint = DmlFingerprintService.ComputePlanFingerprint(command, fingerprintPolicyVersion policyVersion schemaSnapshot)
-            let evidence =
-                CompileEvidenceBuilder.build
-                    evidenceContext
-                    SqlCompileVerdict.Translated
-                    SqlCompileDecisionBoundary.Completed
-                    "SQL_COMPILE_TRANSLATED"
-                    fingerprint
-            CompiledSqlCommand.Create(
-                rendered.Sql,
-                parameterValues,
-                kind,
-                fingerprint,
-                target,
-                rendered.ReturnsRows,
-                evidence)
+            RewriteResourceBudget.withCompilation (fun () ->
+                if parsed.EnforceSourceDialectSyntax then
+                    match parsed.RawSql with
+                    | null -> ()
+                    | rawSql when String.IsNullOrWhiteSpace(rawSql) -> ()
+                    | rawSql ->
+                        // Validate declared source syntax without treating
+                        // RawSql as the executable AST source of truth.
+                        RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                            parseSourceValidated rawSql source parsed.SourceProfile)
+                        |> ignore
+                let rewritten =
+                    RewriteResourceBudget.withStage "LegacyConversion" SqlDiagnosticStage.Binding (fun () ->
+                        RewriteLegacyAstAdapter.toParsed parsed.Statement)
+                let rendered =
+                    runParsed
+                        (compileOptions
+                            source
+                            (parsedSourceSemantics parsed)
+                            target
+                            parsed.SourceProfile
+                            targetProfile
+                            conflictTargetAssurance
+                            resultRowAssurance
+                            policy
+                            allowed
+                            schemaSnapshot)
+                        rewritten
+                let kind = legacyKind parsed.Statement
+                let parameterValues =
+                    RewriteResourceBudget.withStage "Materialization" SqlDiagnosticStage.RenderingInvariant (fun () ->
+                        parameters target rendered.Parameters)
+                let command =
+                    CompiledSqlCommand.Create(
+                        rendered.Sql, parameterValues, kind, String.Empty, target, rendered.ReturnsRows)
+                let fingerprint =
+                    RewriteResourceBudget.withStage "Fingerprint" SqlDiagnosticStage.Policy (fun () ->
+                        DmlFingerprintService.ComputePlanFingerprint(
+                            command, fingerprintPolicyVersion policyVersion schemaSnapshot))
+                let evidence =
+                    CompileEvidenceBuilder.build
+                        evidenceContext
+                        SqlCompileVerdict.Translated
+                        SqlCompileDecisionBoundary.Completed
+                        "SQL_COMPILE_TRANSLATED"
+                        fingerprint
+                CompiledSqlCommand.Create(
+                    rendered.Sql,
+                    parameterValues,
+                    kind,
+                    fingerprint,
+                    target,
+                    rendered.ReturnsRows,
+                    evidence))
         with ex ->
             attachRejectedEvidence evidenceContext ex
             reraise()

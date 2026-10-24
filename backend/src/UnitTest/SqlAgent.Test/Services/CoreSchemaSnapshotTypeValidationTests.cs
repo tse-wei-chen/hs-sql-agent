@@ -63,6 +63,348 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         Assert.Equal(SqlDiagnosticCategory.Semantic, error.Diagnostic.Category);
     }
 
+    [Fact]
+    public void NestedSetQueries_PreserveTypeFamilyDiagnostics()
+    {
+        const int depth = 48;
+        var valid = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            valid = $"SELECT id FROM users UNION ({valid})";
+        var compiled = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres, typed: true),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+
+        var invalid = "SELECT name + 2 AS id FROM users";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT id FROM users UNION ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void DeepSingleCteChain_UsesExplicitTypeProofContinuations(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 256; depth++)
+            sql = $"WITH c AS ({sql}) SELECT id FROM c";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect, typed: true),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void NestedCte_UnsupportedNativeTargetRemainsFailClosed(
+        SqlAgentToolType dialect)
+    {
+        var sql = "WITH c AS (WITH inner_c AS (SELECT id FROM users) " +
+                  "SELECT id FROM inner_c) SELECT id FROM c";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, Context(dialect, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Contains("select.cte_scope", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void NestedDerivedQueries_KeepTypedNumericProjectionProof(
+        SqlAgentToolType dialect)
+    {
+        // Typed query projection checks must remain safe across
+        // Query -> derived Source -> Query transitions.
+        var query = "SELECT id FROM users";
+        for (var depth = 0; depth < 256; depth++)
+            query = $"SELECT d.id FROM ({query}) d";
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect, Context(dialect, typed: true),
+            new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(compiled.Sql);
+    }
+
+
+
+
+
+
+    [Fact]
+    public void DeepSearchedCaseScalarSubquery_RejectsInvalidInnerArithmetic()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var valid = "SELECT id + 1 FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT CASE WHEN 1 = 1 THEN (" + valid + ") ELSE 0 END";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT name + 1 FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT CASE WHEN 1 = 1 THEN (" + invalid + ") ELSE 0 END";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void DeepProjectionScalarSubquery_PreservesNumericTypeRejection()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var valid = "SELECT id + 1 FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT (" + valid + ")";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT name + 1 FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT (" + invalid + ")";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void DeepCorrelatedInSubquery_PreservesStrictNumericComparison()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var valid = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            valid = $"SELECT id FROM users WHERE id IN ({valid})";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT name FROM users";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT id FROM users WHERE id IN ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+    [Fact]
+    public void CorrelatedWhereExistsChain_PreservesNumericTypeFamilyProof()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var sql = "SELECT 1 WHERE u.id = 1";
+        for (var level = 0; level < depth; level++)
+            sql = $"SELECT u.id FROM users u WHERE EXISTS ({sql})";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT 1 WHERE u.name + 1 = 0";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT u.id FROM users u WHERE EXISTS ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+
+
+
+
+
+    [Fact]
+    public void LateralExistsCombSiblings_TypedSchemaRejectsInnerWhereArithmetic()
+    {
+        const int depth = 96;
+        static string Comb(string sql)
+        {
+            for (var i = 0; i < depth; i++)
+                sql = "SELECT x.id AS id FROM LATERAL (" + sql
+                    + ") x WHERE EXISTS (SELECT x.id)";
+            return sql;
+        }
+        var left = Comb("SELECT u.id AS id");
+        var right = Comb("SELECT a.id AS id");
+        var sql = "SELECT b.id FROM users u JOIN LATERAL (" + left
+            + ") a ON TRUE JOIN LATERAL (" + right + ") b ON TRUE";
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var broken = right.Replace("WHERE EXISTS (SELECT x.id)",
+            "WHERE EXISTS (SELECT x.id + 'not-numeric')");
+        var invalid = "SELECT b.id FROM users u JOIN LATERAL (" + left
+            + ") a ON TRUE JOIN LATERAL (" + broken + ") b ON TRUE";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void IndependentlyDeepSiblingLaterals_PreserveStrictTypeFailureInSecondBranch()
+    {
+        const int depth = 96;
+        static string Wrap(string sql) =>
+            "SELECT x.id AS id FROM LATERAL (" + sql + ") x";
+        var left = "SELECT u.id AS id";
+        var right = "SELECT a.id AS id";
+        for (var i = 0; i < depth; i++)
+        {
+            left = Wrap(left);
+            right = Wrap(right);
+        }
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var sql = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right + ") b ON TRUE";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right.Replace("SELECT a.id AS id",
+                                                "SELECT a.id + 'invalid' AS id") + ") b ON TRUE";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void ThreeDependentLaterals_PreserveNumericTypeAndNegativeDiagnostics()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        static string Wrap(string sql) =>
+            "SELECT c.id FROM users u "
+            + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+            + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
+        var valid = "SELECT b.id AS id";
+        for (var i = 0; i < depth; i++) valid = Wrap(valid);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT b.id + 'not-numeric' AS id";
+        for (var i = 0; i < depth; i++) invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void TwoJoinedLaterals_SecondInheritsFirstNumericColumnType()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        static string Wrap(string sql) =>
+            "SELECT b.id FROM users u JOIN LATERAL "
+            + "(SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (" + sql + ") b ON b.id = a.id";
+        var valid = "SELECT a.id AS id";
+        for (var i = 0; i < depth; i++)
+            valid = Wrap(valid);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT a.id + 'not-numeric' AS id";
+        for (var i = 0; i < depth; i++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void PrefixedSecondJoinLateralChain_PreservesNumericTypeProof()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        static string Wrap(string sql) =>
+            "SELECT l.id FROM users u JOIN users v ON v.id = u.id "
+            + "JOIN LATERAL (" + sql + ") l ON l.id = v.id";
+        var valid = "SELECT v.id AS id";
+        for (var level = 0; level < depth; level++)
+            valid = Wrap(valid);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT v.name + 1 AS id";
+        for (var level = 0; level < depth; level++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void JoinedCorrelatedLateralChain_PreservesNestedNumericTypeAndMismatch()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        static string Wrap(string sql) =>
+            $"SELECT l.id FROM users u JOIN LATERAL ({sql}) l ON l.id = u.id";
+        var valid = "SELECT u.id AS id";
+        for (var level = 0; level < depth; level++)
+            valid = Wrap(valid);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT u.name + 1 AS id";
+        for (var level = 0; level < depth; level++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void TypedSnapshot_DeepBooleanGraph_UsesIterativeTypeProof(
+        SqlAgentToolType dialect)
+    {
+        var suffix = string.Concat(Enumerable.Repeat(" AND id = 1", 384));
+        var sql = "SELECT id FROM users WHERE id = 1" + suffix;
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect, typed: true),
+            new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT id FROM users WHERE name + 2 = 1" + suffix;
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect, typed: true),
+                new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
     [Theory]
     [MemberData(nameof(Providers))]
     public void TypedSnapshot_PreservesValidNumericAndTextPredicatesAndAssignments(

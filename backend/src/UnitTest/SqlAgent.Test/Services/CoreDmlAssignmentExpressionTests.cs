@@ -76,6 +76,29 @@ public class CoreDmlAssignmentExpressionTests
             || parameter.Value is long longValue && longValue == 11077L);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void CompileUpdate_StreamedAssignments_PreserveSixProviderParameterOrder(
+        SqlAgentToolType targetProvider)
+    {
+        var command = Compile(
+            "UPDATE orders SET quantity = 10, status = 'open', parent_id = 2 WHERE order_id = 7",
+            SqlAgentToolType.Postgres, targetProvider);
+
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.Contains(" SET ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(4, command.Parameters.Length);
+        Assert.Equal(10L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.Equal("open", command.Parameters[1].Value);
+        Assert.Equal(2L, Convert.ToInt64(command.Parameters[2].Value));
+        Assert.Equal(7L, Convert.ToInt64(command.Parameters[3].Value));
+    }
+
     [Fact]
     public void CompileUpdate_MultipleLiteralAssignments_PreservesBindingOrder()
     {
