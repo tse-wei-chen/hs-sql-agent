@@ -22,7 +22,7 @@ public class CoreSqlTextParserTests
 
         Assert.NotEmpty(command.Sql);
         Assert.Equal(depth - 1, command.Sql.Split(" UNION ", StringSplitOptions.None).Length - 1);
-        Assert.Equal(depth, command.Parameters.Count);
+        Assert.Equal(depth, command.Parameters.Count());
         Assert.Equal(Enumerable.Range(1, depth).Reverse().Select(i => (long)i),
             command.Parameters.Select(value => Convert.ToInt64(value.Value)));
     }

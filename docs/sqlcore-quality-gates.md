@@ -1212,3 +1212,9 @@ operations, parameter binding, or AST validation failures. The public
 round-trips **512 nested PostgreSQL UNIONs** and checks parameter order.
 Mixed CTE, nested scalar expression and derived/LATERAL source conversions
 still require a separate recursion audit and must not be claimed complete.
+
+The CLR→F# SET converter explicitly validates each branch operator
+**before** visiting that branch's child Query (the previous recursive
+error-precedence contract), while still resolving sibling branches in
+source order. Both conversion directions preserve the SELECT-head-first
+order and the existing capability fence.

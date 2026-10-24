@@ -175,6 +175,7 @@ module internal RewriteLegacyAstAdapter =
 
     type private LegacySetFrame =
         | VisitLegacySet of HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+        | ValidateLegacySetOperator of HsSqlAgent.SqlCore.Core.Ast.SetOperationKind
         | FinishLegacySet of HsSqlAgent.SqlCore.Core.Ast.QueryStatement * Select
 
     let rec private exprOf (expression: HsSqlAgent.SqlCore.Core.Ast.SqlExpr) : Expr =
@@ -518,8 +519,14 @@ module internal RewriteLegacyAstAdapter =
                     let head = selectOf query.Head
                     pending.Add(FinishLegacySet(query, head))
                     for index = query.SetOperations.Length - 1 downto 0 do
-                        pending.Add(VisitLegacySet query.SetOperations.[index].Query)
+                        let operation = query.SetOperations.[index]
+                        pending.Add(VisitLegacySet operation.Query)
+                        // Preserve the original left-to-right failure order:
+                        // validate branch operator before visiting its body.
+                        pending.Add(ValidateLegacySetOperator operation.Kind)
                 | _ -> failClosed "query statement" node
+            | ValidateLegacySetOperator kind ->
+                setOperator kind |> ignore
             | FinishLegacySet(query, head) ->
                 converted.[query] <-
                     { Query.Head = head
