@@ -96,6 +96,14 @@ rejections are still printed explicitly in the uploaded report.
   workers MUST compile 6/6 at 128/512/2048 on 256-KiB stacks (including
   typed phases), with 2048-depth ceilings of 220 MB total / 90 MB rendering.
 
+- Arbitrary-length INNER JOIN prefixes before the final correlated LATERAL
+  are now replayed in source order without hardcoding a one- or two-JOIN
+  schema/type traversal. The `nested-triple-joined-lateral` isolated workers
+  enforce 6/6 actual compile successes with 128/512/2048 depth and typed
+  metadata on 256 KiB stacks, with 310 MB total / 120 MB Renderer depth-2048
+  allocation ceilings. Non-INNER JOIN, multiple *deep* sibling sources and
+  non-linear Query/Expr graphs remain outside this proven path.
+
 - Cross-dialect translation, huge inputs, pathological nesting, type metadata, I/O,
   and database execution are **not** measured by this initial harness.
 - No performance percentage or regression threshold is asserted before establishing a

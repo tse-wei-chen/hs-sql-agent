@@ -31,7 +31,8 @@ internal static class SqlCoreDepthProbe
          "nested-scalar-subquery-typed-schema", "nested-case-scalar",
          "nested-case-scalar-typed-schema",
          "nested-prefixed-joined-lateral", "nested-prefixed-joined-lateral-typed-schema",
-         "nested-double-joined-lateral", "nested-double-joined-lateral-typed-schema"];
+         "nested-double-joined-lateral", "nested-double-joined-lateral-typed-schema",
+         "nested-triple-joined-lateral", "nested-triple-joined-lateral-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -92,6 +93,20 @@ internal static class SqlCoreDepthProbe
             sql = "SELECT b.id FROM users u "
                 + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
                 + "JOIN LATERAL (" + sql + ") b ON b.id = a.id";
+        return sql;
+    }
+
+    // An arbitrary-length INNER JOIN prefix is resolved in source order:
+    // A sees users u; B sees A; the last LATERAL C sees B and owns the
+    // recursive nested Query edge that must be suspended on the heap.
+    private static string NestTripleJoinedLateral(int depth)
+    {
+        var sql = "SELECT b.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT c.id FROM users u "
+                + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
+                + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+                + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
         return sql;
     }
 
@@ -211,6 +226,8 @@ internal static class SqlCoreDepthProbe
                 NestPrefixedJoinedLateral(depth),
             "nested-double-joined-lateral" or "nested-double-joined-lateral-typed-schema" =>
                 NestDoubleJoinedLateral(depth),
+            "nested-triple-joined-lateral" or "nested-triple-joined-lateral-typed-schema" =>
+                NestTripleJoinedLateral(depth),
             "nested-correlated-exists" or "nested-correlated-exists-typed-schema" =>
                 NestCorrelatedExists(depth),
             "nested-correlated-in" or "nested-correlated-in-typed-schema" =>
@@ -259,6 +276,7 @@ internal static class SqlCoreDepthProbe
                     or "nested-joined-lateral-typed-schema"
                     or "nested-prefixed-joined-lateral-typed-schema"
                     or "nested-double-joined-lateral-typed-schema"
+                    or "nested-triple-joined-lateral-typed-schema"
                     or "nested-correlated-exists-typed-schema"
                     or "nested-correlated-in-typed-schema"
                     or "nested-scalar-subquery-typed-schema"

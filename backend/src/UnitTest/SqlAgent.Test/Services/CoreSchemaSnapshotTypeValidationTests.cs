@@ -229,6 +229,30 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
 
 
 
+
+    [Fact]
+    public void ThreeDependentLaterals_PreserveNumericTypeAndNegativeDiagnostics()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        static string Wrap(string sql) =>
+            "SELECT c.id FROM users u "
+            + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+            + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
+        var valid = "SELECT b.id AS id";
+        for (var i = 0; i < depth; i++) valid = Wrap(valid);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT b.id + 'not-numeric' AS id";
+        for (var i = 0; i < depth; i++) invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void TwoJoinedLaterals_SecondInheritsFirstNumericColumnType()
     {

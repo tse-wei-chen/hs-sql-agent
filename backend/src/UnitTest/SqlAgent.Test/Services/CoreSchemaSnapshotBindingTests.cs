@@ -248,6 +248,39 @@ public sealed class CoreSchemaSnapshotBindingTests
 
 
 
+
+    [Fact]
+    public void ThreeDependentLaterals_UseOrderedStrictScopeAndProtectFutureAliases()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            "SELECT c.id FROM users u "
+            + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+            + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
+        var valid = "SELECT b.id AS id";
+        for (var i = 0; i < depth; i++) valid = Wrap(valid);
+        var result = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth * 3, result.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var missing = "SELECT b.missing AS id";
+        for (var i = 0; i < depth; i++) missing = Wrap(missing);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(missing, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+
+        var forward = "SELECT c.id FROM users u "
+            + "JOIN LATERAL (SELECT b.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+            + "JOIN LATERAL (SELECT b.id AS id) c ON c.id = b.id";
+        Assert.NotNull(Record.Exception(() => SqlCoreFacade.CompileQuery(
+            forward, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy())));
+    }
+
     [Fact]
     public void TwoJoinedLaterals_SecondSeesFirstWithoutExposingFutureAlias()
     {

@@ -186,6 +186,21 @@ public sealed class CoreBinderJoinScopeTests
         Assert.Equal(2, command.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
     }
 
+
+    [Fact]
+    public void Compile_ThreeDependentLaterals_PreserveProjectionAndJoinParameterOrder()
+    {
+        var sql = "SELECT 11 FROM users u "
+            + "JOIN LATERAL (SELECT 22 AS id WHERE u.id = 33) a ON a.id = 44 "
+            + "JOIN LATERAL (SELECT 55 AS id WHERE a.id = 66) b ON b.id = 77 "
+            + "JOIN LATERAL (SELECT 88 AS id WHERE b.id = 99) c ON c.id = 100 "
+            + "WHERE u.id = 111";
+        var command = Compile(sql, SqlAgentToolType.Postgres);
+        Assert.Equal(new long[] { 11, 22, 33, 44, 55, 66, 77, 88, 99, 100, 111 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+        Assert.Equal(3, command.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, provider),
