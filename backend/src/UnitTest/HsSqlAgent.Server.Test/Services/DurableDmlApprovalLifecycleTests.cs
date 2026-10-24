@@ -1414,24 +1414,23 @@ public sealed class DurableDmlApprovalLifecycleTests
             }
             serviceCollection.AddSingleton<ICryptoService, CryptoService>();
             serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
-            if (enableV2Reader)
+            // v3 has no legacy reader mode; both purpose key rings are mandatory.
+            var encryption = new SecretEncryptionOptions();
+            encryption.Purposes["DurableDmlPayload"] = new SecretEncryptionPurposeOptions
             {
-                var encryption = new SecretEncryptionOptions
-                {
-                    Enabled = true,
-                    EnableV2DurableDmlWrites = v2Writes,
-                    AllNodesDualReadConfirmed = v2Writes
-                };
-                encryption.Purposes["DurableDmlPayload"] = new SecretEncryptionPurposeOptions
-                {
-                    ActiveKeyId = "dml_new_1",
-                    Keys = new Dictionary<string, string>
-                    {
-                        ["dml_new_1"] = Convert.ToBase64String(Enumerable.Repeat((byte)0xb7, 32).ToArray())
-                    }
-                };
-                serviceCollection.AddHsSqlAgentSecretEncryption(encryption);
-            }
+                ActiveKeyId = "dml_new_1",
+                Keys = new Dictionary<string,string> {
+                    ["dml_new_1"] = Convert.ToBase64String(Enumerable.Repeat((byte)0xb7,32).ToArray())
+                }
+            };
+            encryption.Purposes["DatabasePassword"] = new SecretEncryptionPurposeOptions
+            {
+                ActiveKeyId = "db_new_1",
+                Keys = new Dictionary<string,string> {
+                    ["db_new_1"] = Convert.ToBase64String(Enumerable.Repeat((byte)0xb8,32).ToArray())
+                }
+            };
+            serviceCollection.AddHsSqlAgentSecretEncryption(encryption);
             return serviceCollection.BuildServiceProvider();
         }
 

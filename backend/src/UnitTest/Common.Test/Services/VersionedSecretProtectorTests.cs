@@ -92,18 +92,15 @@ public class VersionedSecretProtectorTests
     }
 
     [Fact]
-    public void LegacyDecryptionIsOptInAndCanBeReprotected()
+    public void V3NeverDecryptsProductV2CiphertextEvenWithSuppliedLegacyKey()
     {
         var legacyKey = Encoding.UTF8.GetBytes("legacy-hmac-key-at-least-32-bytes-long");
-        var legacy = new CryptoService().EncryptText("old-password", legacyKey)!;
-        var withoutLegacy = new VersionedSecretProtector(Ring());
-        Assert.ThrowsAny<CryptographicException>(() => withoutLegacy.Unprotect(legacy, SecretPurpose.DatabasePassword, "42"));
-
+        var legacyCipher = new CryptoService().EncryptText("old-password", legacyKey);
         var protector = new VersionedSecretProtector(Ring(), legacyKey);
-        Assert.Equal("old-password", protector.Unprotect(legacy, SecretPurpose.DatabasePassword, "42"));
-        var migrated = protector.Reprotect(legacy, SecretPurpose.DatabasePassword, "42")!;
-        Assert.StartsWith("v2:db_2026:", migrated);
-        Assert.Equal("old-password", withoutLegacy.Unprotect(migrated, SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            protector.Unprotect(legacyCipher, SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            protector.Reprotect(legacyCipher, SecretPurpose.DatabasePassword, "42"));
     }
 
     [Fact]

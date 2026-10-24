@@ -18,6 +18,7 @@ public class DbManagementServiceTests
     private readonly Mock<IOptions<McpKeySettings>> _mcpKeySettingsMock;
     private readonly Mock<ICacheService> _cacheMock;
     private readonly DbManagementService _service;
+    private readonly Mock<ISecretProtector> _secretProtectorMock = new();
     private readonly string _testHmacSecret = "test-secret-key-12345";
     private readonly byte[] _hmacSecretBytes;
 
@@ -45,7 +46,7 @@ public class DbManagementServiceTests
             _contextMock.Object,
             _cryptoServiceMock.Object,
             _mcpKeySettingsMock.Object,
-            _cacheMock.Object);
+            _cacheMock.Object, _secretProtectorMock.Object);
     }
 
     [Fact]
@@ -66,29 +67,14 @@ public class DbManagementServiceTests
         };
 
         var expectedEncryptedPassword = "encrypted-password";
-        _cryptoServiceMock.Setup(c => c.EncryptText(request.Password, _hmacSecretBytes))
+        _secretProtectorMock.Setup(c => c.Protect(
+                request.Password, SecretPurpose.DatabasePassword, It.IsAny<string>()))
             .Returns(expectedEncryptedPassword);
 
-        // Act
-        var result = await _service.CreateDbAsync(request, TestContext.Current.CancellationToken);
-
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(request.Name, result.Name);
-        Assert.Equal(request.SqlProvider, result.SqlProvider);
-        Assert.Equal(request.Host, result.Host);
-        Assert.Equal(request.Port, result.Port);
-        Assert.Equal(request.Username, result.Username);
-        Assert.Equal(request.Database, result.Database);
-
-        _contextMock.Verify(c => c.DbManagement.Add(It.Is<DbManagement>(db =>
-            db.Name == request.Name &&
-            db.SqlProvider == request.SqlProvider &&
-            db.PasswordHash == expectedEncryptedPassword &&
-            db.CreatedBy == request.CreatedBy
-        )), Times.Once, "The entity was not added to the context with correct parameters.");
-
-        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Once, "SaveChanges was not called.");
+        // v3 forbids a non-transactional Admin Store even with a valid password.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.CreateDbAsync(request, TestContext.Current.CancellationToken));
+        _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -122,14 +108,12 @@ public class DbManagementServiceTests
             SqlProvider = "Sqlite",
             Database = "local.db"
         };
-        _cryptoServiceMock
-            .Setup(c => c.EncryptText(string.Empty, _hmacSecretBytes))
-            .Returns("encrypted-empty-password");
+
 
         await _service.CreateDbAsync(request, TestContext.Current.CancellationToken);
 
         _contextMock.Verify(c => c.DbManagement.Add(It.Is<DbManagement>(
-            db => db.PasswordHash == "encrypted-empty-password")), Times.Once);
+            db => db.PasswordHash == null)), Times.Once);
         _contextMock.Verify(
             c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
             Times.Once);
@@ -255,7 +239,8 @@ public class DbManagementServiceTests
         };
 
         var expectedEncryptedPassword = "new-hash";
-        _cryptoServiceMock.Setup(c => c.EncryptText(request.Password, _hmacSecretBytes))
+        _secretProtectorMock.Setup(c => c.Protect(
+                request.Password, SecretPurpose.DatabasePassword, It.IsAny<string>()))
             .Returns(expectedEncryptedPassword);
 
         // Act

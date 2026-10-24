@@ -73,15 +73,14 @@ public sealed class SecretMigrationAuthorizationTests
     }
 
     [Fact]
-    public async Task ValidHumanEditor_CanInventoryAndMigrate_WithoutSecretDisclosure()
+    public async Task ValidHumanEditor_CanInventoryWithoutHistoricalMigration()
     {
-        await using var store = await Store.CreateAsync(enabled: true);
+        await using var store = await Store.CreateAsync();
         var plaintext = "private-database-password";
         store.Context.DbManagement.Add(new DbManagement
         {
             Name = "primary",
-            PasswordHash = new CryptoService().EncryptText(
-                plaintext, System.Text.Encoding.UTF8.GetBytes(Hmac)),
+            PasswordHash = null,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         });
@@ -95,24 +94,9 @@ public sealed class SecretMigrationAuthorizationTests
         var before = Assert.IsType<SecretMigrationInventory>(inventory.Value);
         Assert.Equal(1, before.LegacyDatabasePasswords);
 
-        var wrong = await controller.MigrateDatabasePasswords(
-            new DatabasePasswordMigrationRequest(0, 10, "wrong"),
-            TestContext.Current.CancellationToken);
-        Assert.IsType<BadRequestObjectResult>(wrong);
-
-        var migrated = await controller.MigrateDatabasePasswords(
-            new DatabasePasswordMigrationRequest(0, 10, "MIGRATE_DATABASE_SECRETS"),
-            TestContext.Current.CancellationToken);
-        var ok = Assert.IsType<OkObjectResult>(migrated);
-        var result = Assert.IsType<DatabaseSecretMigrationBatch>(ok.Value);
-        Assert.Equal(1, result.Migrated);
-        Assert.DoesNotContain(plaintext, System.Text.Json.JsonSerializer.Serialize(ok.Value));
-
-        var audit = await store.Context.AuditLogs.AsNoTracking()
-            .SingleAsync(TestContext.Current.CancellationToken);
-        Assert.Equal("security-editor", audit.ActorId);
-        Assert.Equal("security.database-secret.migrated", audit.Action);
-        Assert.DoesNotContain(plaintext, System.Text.Json.JsonSerializer.Serialize(audit));
+        Assert.DoesNotContain(plaintext, System.Text.Json.JsonSerializer.Serialize(inventory.Value));
+        Assert.Null(typeof(SecretMigrationController).GetMethod("MigrateDatabasePasswords"));
+        Assert.Empty(await store.Context.AuditLogs.ToListAsync(TestContext.Current.CancellationToken));
     }
 
     private static ClaimsPrincipal Human(string subject) =>
@@ -139,7 +123,7 @@ public sealed class SecretMigrationAuthorizationTests
             }
         };
         var method = typeof(SecretMigrationController)
-            .GetMethod(nameof(SecretMigrationController.MigrateDatabasePasswords))!;
+            .GetMethod(nameof(SecretMigrationController.Inventory))!;
         var attribute = Assert.Single(method.GetCustomAttributes(typeof(HasPermissionAttribute), true)
             .OfType<HasPermissionAttribute>());
         Assert.Equal("/runtime/security.edit", attribute.Permission);

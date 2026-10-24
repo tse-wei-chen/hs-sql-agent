@@ -24,13 +24,13 @@ public sealed class DurableDmlPayloadCiphertextReaderTests
             }), LegacyKey);
 
     [Fact]
-    public void ExistingPendingApprovalCanStillBeReadWithLegacyKey()
+    public void LegacyPendingApprovalIsAlwaysRejected()
     {
         var crypto = new CryptoService();
         var protectedPayload = crypto.EncryptText("{\"sql\":\"UPDATE items SET x=1\"}", LegacyKey);
-        Assert.Equal("{\"sql\":\"UPDATE items SET x=1\"}",
+        Assert.ThrowsAny<CryptographicException>(() =>
             DurableDmlPayloadCiphertextReader.Decrypt(
-                protectedPayload, "approval-123", crypto, LegacyKey));
+                protectedPayload, "approval-123", crypto, LegacyKey, Protector()));
     }
 
     [Fact]
