@@ -230,6 +230,53 @@ module internal RewriteParser =
                     | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
                     | _ -> false
 
+        // A full single-branch searched CASE with a scalar Query in THEN.
+        // Preflight every surrounding token before changing parser control
+        // flow; more complex expressions retain the existing grammar.
+        member _.StandaloneCaseScalarSelectProjection() =
+            let at position = data[min (data.Length - 1) position].Kind
+            if at index <> Keyword "SELECT"
+               || at (index + 1) <> Keyword "CASE"
+               || at (index + 2) <> Keyword "WHEN" then false
+            else
+                let mutable offset = index + 3
+                let mutable thenIndex = -1
+                let mutable scanning = true
+                while scanning && offset < data.Length do
+                    RewriteResourceBudget.checkpoint ()
+                    match at offset with
+                    | Keyword "THEN" ->
+                        thenIndex <- offset
+                        scanning <- false
+                    | End | Keyword "ELSE" | Keyword "END" | Keyword "WHEN" ->
+                        scanning <- false
+                    | Symbol '(' ->
+                        let closing = matchingClose.Value[offset]
+                        if closing < 0 then scanning <- false
+                        else offset <- closing + 1
+                    | _ -> offset <- offset + 1
+                if thenIndex < 0 || at (thenIndex + 1) <> Symbol '(' then false
+                else
+                    let openQuery = thenIndex + 1
+                    let queryHead = at (openQuery + 1)
+                    let close = matchingClose.Value[openQuery]
+                    if (queryHead <> Keyword "SELECT" && queryHead <> Keyword "WITH")
+                       || close < 0 || at (close + 1) <> Keyword "ELSE" then false
+                    else
+                        let literal =
+                            match at (close + 2) with
+                            | IntegerLiteral _ | DecimalLiteral _ | StringLiteral _
+                            | Keyword "NULL" | Keyword "TRUE" | Keyword "FALSE" -> true
+                            | _ -> false
+                        literal && at (close + 3) = Keyword "END"
+                        && (match at (close + 4) with
+                            | End | Symbol ')' | Symbol ';'
+                            | Keyword "FROM" | Keyword "WHERE" | Keyword "GROUP"
+                            | Keyword "HAVING" | Keyword "ORDER" | Keyword "LIMIT"
+                            | Keyword "OFFSET" | Keyword "FETCH"
+                            | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
+                            | _ -> false)
+
         member _.Peek(offset: int) = data[min (data.Length - 1) (index + offset)]
         member _.Advance() =
             RewriteResourceBudget.checkpoint ()
@@ -2196,7 +2243,33 @@ module internal RewriteParser =
                 push (fun () -> complete (NamedTable(name, alias)))
 
         and scheduleSelectWithCtes (ctes: Cte list) (complete: Select * NonNegativeRowCount option -> unit) =
-            if cursor.StandaloneScalarSelectProjection() then
+            if cursor.StandaloneCaseScalarSelectProjection() then
+                let start = cursor.Current.Start
+                expectKeyword "SELECT" cursor
+                let caseStart = cursor.Current.Start
+                expectKeyword "CASE" cursor
+                expectKeyword "WHEN" cursor
+                let condition = parseExpression cursor
+                expectKeyword "THEN" cursor
+                let queryStart = cursor.Current.Start
+                expectSymbol '(' cursor
+                scheduleQuery (fun child ->
+                    expectSymbol ')' cursor
+                    let childExpression = markExpr queryStart cursor (ScalarSubquery child)
+                    expectKeyword "ELSE" cursor
+                    let fallback = parseExpression cursor
+                    expectKeyword "END" cursor
+                    let projected =
+                        SearchedCase(
+                            NonEmpty.ofList "CASE branches"
+                                [ { Condition = condition; Result = childExpression } ],
+                            Some fallback)
+                    let projection = ResizeArray<SelectItem>()
+                    projection.Add
+                        { Expression = markExpr caseStart cursor projected
+                          Alias = None }
+                    scheduleSelectAfterPrefix ctes complete start SelectDistinct.AllRows None projection)
+            elif cursor.StandaloneScalarSelectProjection() then
                 let start = cursor.Current.Start
                 expectKeyword "SELECT" cursor
                 let expressionStart = cursor.Current.Start
