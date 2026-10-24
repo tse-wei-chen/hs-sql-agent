@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -93,6 +94,22 @@ public sealed class CoreCompileQueryWithFactsTests
         var sql = "SELECT id FROM users";
         for (var i = 0; i < 96; i++)
             sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+
+        // The inspection walk is six-dialect. Executable nested-WITH
+        // placement is not: the target capability gate must still reject
+        // unsupported providers, without leaking a partial Query Facts
+        // result or bypassing provider-specific safety.
+        if (provider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird
+            or SqlAgentToolType.MsSqlServer)
+        {
+            var rejected = Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileQueryWithFacts(
+                    sql, provider, provider,
+                    new SqlPlanValidationContext("facts-deep-cte-v1"),
+                    new SqlExecutionPlanPolicy()));
+            Assert.Equal("SQL_TARGET_CAPABILITY_REJECTED", rejected.Diagnostic?.Code);
+            return;
+        }
 
         var combined = SqlCoreFacade.CompileQueryWithFacts(
             sql, provider, provider,
