@@ -109,6 +109,8 @@ public static class HsSqlAgentRuntimeServiceExtensions
             schemaSnapshotSource: provider.GetService<IDmlSchemaSnapshotSource>(),
             targetCommitWitness: provider.GetService<IDmlTargetCommitWitness>(),
             targetExecutionFence: provider.GetService<IDmlTargetExecutionFence>()));
+        // Explicit operator-only service; never registered as a background worker.
+        services.AddScoped<DatabaseSecretMigrationService>();
         services.AddScoped<DurableDmlApprovalLifecycle>();
         services.AddScoped<IDmlApprovalCompletionSink>(provider =>
             provider.GetRequiredService<DurableDmlApprovalLifecycle>());
