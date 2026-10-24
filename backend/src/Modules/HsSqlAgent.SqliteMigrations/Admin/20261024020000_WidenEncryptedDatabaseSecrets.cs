@@ -16,15 +16,11 @@ public sealed class WidenEncryptedDatabaseSecrets : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)
     {
-        migrationBuilder.AlterColumn<string>(
-            name: "PasswordHash",
-            table: "DbManagement",
-            type: "TEXT",
-            nullable: true,
-            oldClrType: typeof(string),
-            oldType: "TEXT",
-            oldMaxLength: 256,
-            oldNullable: true);
+        // SQLite stored PasswordHash as TEXT already. SQLite has no
+        // varchar(256) storage limit; the old bound existed only in the EF
+        // model metadata. An AlterColumn here raises NotSupportedException
+        // in SQLite's migrations SQL generator. Snapshot changes capture the
+        // new unbounded model; no physical table rewrite is necessary.
     }
 
     protected override void Down(MigrationBuilder migrationBuilder) =>
