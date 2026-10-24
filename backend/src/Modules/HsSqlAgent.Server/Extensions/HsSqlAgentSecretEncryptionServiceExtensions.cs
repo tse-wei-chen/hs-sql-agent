@@ -62,10 +62,41 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
             services.TryAddSingleton(new SecretEncryptionWritePolicy(true, true));
             services.TryAddSingleton<ISecretWriteRolloutPolicy>(
                 sp => sp.GetRequiredService<SecretEncryptionWritePolicy>());
-            // There is no v2-product HMAC-derived ciphertext fallback.
-            // Each purpose must use a different AES key, validated by SecretKeyRing.
+            // HMAC fingerprints remain a separate cryptographic primitive.
+            // Reject direct or SHA256-derived HMAC key reuse without enabling
+            // ANY legacy ciphertext decryption.
             services.TryAddSingleton<ISecretProtector>(sp =>
-                new VersionedSecretProtector(sp.GetRequiredService<ISecretKeyRing>()));
+            {
+                var hmac = sp.GetService<IOptions<McpKeySettings>>()?.Value.HmacSecretKey;
+                if (!string.IsNullOrEmpty(hmac))
+                {
+                    var hmacBytes = Encoding.UTF8.GetBytes(hmac);
+                    var derived = SHA256.HashData(hmacBytes);
+                    try
+                    {
+                        foreach (var (purpose, set) in keys)
+                        foreach (var keyId in set.Keys.Keys)
+                        {
+                            var aesKey = ring.GetDecryptionKey(purpose, keyId);
+                            try
+                            {
+                                if (CryptographicOperations.FixedTimeEquals(aesKey, derived) ||
+                                    (aesKey.Length == hmacBytes.Length &&
+                                     CryptographicOperations.FixedTimeEquals(aesKey, hmacBytes)))
+                                    throw new InvalidOperationException(
+                                        "v3 AES keys must not reuse MCP HMAC key material.");
+                            }
+                            finally { CryptographicOperations.ZeroMemory(aesKey); }
+                        }
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(derived);
+                        CryptographicOperations.ZeroMemory(hmacBytes);
+                    }
+                }
+                return new VersionedSecretProtector(sp.GetRequiredService<ISecretKeyRing>());
+            });
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or CryptographicException)
         {
