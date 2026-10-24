@@ -2454,30 +2454,39 @@ module internal RewriteRenderer =
                 + renderConflict ctx insert.Conflict + renderTrailingReturning ctx insert.Returning
 
     let private renderUpdate (ctx: RenderContext) (update: Update) =
-        let assignments = update.Assignments |> List.map (fun (assignment: Assignment) -> renderIdentifier ctx.Provider assignment.Target + " = " + renderExpr ctx assignment.Value) |> String.concat ", "
         let targetAlias =
             match update.TargetAlias with
             | None -> ""
             | Some alias when ctx.Provider = PostgreSql || ctx.Provider = Firebird ->
                 " AS " + renderAlias ctx.Provider alias
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
-        let sql = RenderBuffer(ctx,
-            "UPDATE "
-            + renderIdentifier ctx.Provider update.Target
-            + targetAlias
-            + " SET "
-            + assignments
-            + (if ctx.Provider = SqlServer then
-                   renderSqlServerOutput "INSERTED" ctx update.Returning
-               else
-                   ""))
+
+        // Emit each assignment after checking the output work budget,
+        // instead of constructing both a list of rendered assignments and
+        // a second joined SET clause. Render parameter order is unchanged.
+        let sql = RenderBuffer(ctx, "UPDATE ")
+        sql.Append(renderIdentifier ctx.Provider update.Target)
+           .Append(targetAlias)
+           .Append(" SET ") |> ignore
+        update.Assignments
+        |> List.iteri (fun index assignment ->
+            if index > 0 then sql.Append(", ") |> ignore
+            sql.Append(renderIdentifier ctx.Provider assignment.Target)
+               .Append(" = ")
+               .Append(renderExpr ctx assignment.Value) |> ignore)
+        if ctx.Provider = SqlServer then
+            sql.Append(renderSqlServerOutput "INSERTED" ctx update.Returning) |> ignore
         if not update.From.IsEmpty then
             if ctx.Provider <> PostgreSql
                && ctx.Provider <> SqlServer
                && ctx.Provider <> SQLite
                && ctx.Provider <> Oracle then
                 invalidOp "UPDATE ... FROM is not supported by the target provider."
-            sql.Append(" FROM ").Append(update.From |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
+            sql.Append(" FROM ") |> ignore
+            update.From
+            |> List.iteri (fun index source ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderSource ctx source) |> ignore)
         update.Where
         |> Option.iter (fun predicate ->
             sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
@@ -2522,59 +2531,58 @@ module internal RewriteRenderer =
     let private renderMerge (ctx: RenderContext) (merge: Merge) =
         if ctx.Provider <> SqlServer then
             invalidOp "Validated canonical MERGE reached a non-SQL Server renderer."
-        let sourceColumns =
-            merge.Source.SourceColumns
-            |> NonEmpty.toList
-            |> List.map (renderAlias SqlServer)
-            |> String.concat ", "
-        let sourceValues =
-            merge.Source.SourceValues
-            |> NonEmpty.toList
-            |> List.map (renderExpr ctx)
-            |> String.concat ", "
-        let sql = RenderBuffer(ctx,
-            "MERGE INTO "
-            + renderIdentifier SqlServer merge.Target
-            + " AS "
-            + renderAlias SqlServer merge.TargetAlias
-            + " USING (VALUES ("
-            + sourceValues
-            + ")) AS "
-            + renderAlias SqlServer merge.Source.Alias
-            + " ("
-            + sourceColumns
-            + ") ON "
-            + renderPredicate ctx merge.MatchPredicate)
+        // Source values must bind before ON, matched UPDATE and unmatched
+        // INSERT expressions. One bounded buffer preserves that ordering
+        // without large joined intermediate assignment/value strings.
+        let sql = RenderBuffer(ctx, "MERGE INTO ")
+        sql.Append(renderIdentifier SqlServer merge.Target)
+           .Append(" AS ")
+           .Append(renderAlias SqlServer merge.TargetAlias)
+           .Append(" USING (VALUES (") |> ignore
+        merge.Source.SourceValues
+        |> NonEmpty.toList
+        |> List.iteri (fun index value ->
+            if index > 0 then sql.Append(", ") |> ignore
+            sql.Append(renderExpr ctx value) |> ignore)
+        sql.Append(")) AS ")
+           .Append(renderAlias SqlServer merge.Source.Alias)
+           .Append(" (") |> ignore
+        merge.Source.SourceColumns
+        |> NonEmpty.toList
+        |> List.iteri (fun index column ->
+            if index > 0 then sql.Append(", ") |> ignore
+            sql.Append(renderAlias SqlServer column) |> ignore)
+        sql.Append(") ON ").Append(renderPredicate ctx merge.MatchPredicate) |> ignore
 
         merge.Matched
         |> Option.iter (function
             | MergeDelete ->
                 sql.Append(" WHEN MATCHED THEN DELETE") |> ignore
             | MergeUpdate assignments ->
-                let rendered =
-                    assignments
-                    |> NonEmpty.toList
-                    |> List.map (fun assignment ->
-                        renderIdentifier SqlServer assignment.Target
-                        + " = "
-                        + renderExpr ctx assignment.Value)
-                    |> String.concat ", "
-                sql.Append(" WHEN MATCHED THEN UPDATE SET ").Append(rendered) |> ignore)
+                sql.Append(" WHEN MATCHED THEN UPDATE SET ") |> ignore
+                assignments
+                |> NonEmpty.toList
+                |> List.iteri (fun index assignment ->
+                    if index > 0 then sql.Append(", ") |> ignore
+                    sql.Append(renderIdentifier SqlServer assignment.Target)
+                       .Append(" = ")
+                       .Append(renderExpr ctx assignment.Value) |> ignore))
 
         merge.NotMatched
         |> Option.iter (fun mergeInsert ->
-            let columns =
-                mergeInsert.InsertColumns
-                |> NonEmpty.toList
-                |> List.map (renderIdentifier SqlServer)
-                |> String.concat ", "
-            let values =
-                mergeInsert.InsertValues
-                |> NonEmpty.toList
-                |> List.map (renderExpr ctx)
-                |> String.concat ", "
-            sql.Append(" WHEN NOT MATCHED THEN INSERT (").Append(columns)
-               .Append(") VALUES (").Append(values).Append(')') |> ignore)
+            sql.Append(" WHEN NOT MATCHED THEN INSERT (") |> ignore
+            mergeInsert.InsertColumns
+            |> NonEmpty.toList
+            |> List.iteri (fun index column ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderIdentifier SqlServer column) |> ignore)
+            sql.Append(") VALUES (") |> ignore
+            mergeInsert.InsertValues
+            |> NonEmpty.toList
+            |> List.iteri (fun index value ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderExpr ctx value) |> ignore)
+            sql.Append(')') |> ignore)
 
         sql.Append(';').ToString()
 
