@@ -26,6 +26,17 @@ module internal RewriteStructuralValidation =
         | SetBranchPosition
         | ScalarSubqueryPosition
 
+    // Proof-only frames: strict nested-CTE placement and no-FROM validation
+    // preserve their independent scope/diagnostic rules while sharing the
+    // same Query/CTE/derived traversal strategy.
+    type private CteProofFrame =
+        | CteProofQuery of QueryPosition * Query
+        | CteProofScalarTail of QueryPosition * Query
+        | CteProofSource of TableSource
+        | CteProofJoin of Join
+        | CteProofExpression of Expr
+        | CteProofOrderTail of Query
+
     let private cteScopeError detail =
         raise (SqlCompilationException(
             "SQL capability 'select.cte_scope' is not supported by the native SQL backend: " + detail + "."))
@@ -150,65 +161,76 @@ module internal RewriteStructuralValidation =
         | LateralDerivedTable(query, _) ->
             validateNestedCteQuery targetRuntime DerivedTablePosition query
 
-    and private validateNestedCteSelect targetRuntime position select =
-        validateCtePlacement targetRuntime position select.Ctes
-        select.Ctes |> List.iter (fun cte ->
-            validateNestedCteQuery targetRuntime CteDefinition cte.Query)
-        select.From |> Option.iter (validateNestedCteTable targetRuntime)
-        select.Joins |> List.iter (fun join ->
-            validateNestedCteTable targetRuntime join.Source
-            join.Predicate |> Option.iter (validateNestedCteExpr targetRuntime))
-        iterDistinctOn (validateNestedCteExpr targetRuntime) select
-        select.Projection |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
-        select.Where |> Option.iter (validateNestedCteExpr targetRuntime)
-        select.GroupBy |> List.iter (validateNestedCteExpr targetRuntime)
-        select.Having |> Option.iter (validateNestedCteExpr targetRuntime)
-
-    and private validateNestedCteQuery targetRuntime position query =
-        // Explicit SET-branch continuations keep the same depth-first
-        // validation order without a CLR call per parenthesized branch.
-        // CTE/Source/Expr crossings still use their guarded proof paths.
-        let pending = ResizeArray<unit -> unit>()
-        let rec scheduleBranches branches =
-            for branch in List.rev branches do
-                pending.Add(fun () ->
-                    let child = branch.Query
-                    validateNestedCteSelect targetRuntime SetBranchPosition child.Head
-                    pending.Add(fun () ->
-                        child.OrderBy |> List.iter (fun order ->
-                            validateNestedCteExpr targetRuntime order.Expression))
-                    scheduleBranches child.SetOperations)
-
-        validateNestedCteSelect targetRuntime position query.Head
-
-        if position = ScalarSubqueryPosition
-           && not query.Head.Ctes.IsEmpty
-           && not query.SetOperations.IsEmpty
-           && not query.OrderBy.IsEmpty then
-            let rec portableSetTailOrder expression =
-                match expression with
-                | Spanned(_, inner) -> portableSetTailOrder inner
-                | OrderOrdinal _ -> true
-                | Column identifier
-                | BoundColumn(identifier, ProjectionAlias) ->
-                    Identifier.parts identifier |> List.length = 1
-                | _ -> false
-            if query.OrderBy
-               |> List.exists (fun order -> not (portableSetTailOrder order.Expression)) then
-                cteScopeError (
-                    "scalar/EXISTS subquery with a root CTE and set-operation tail can order only by an output name "
-                    + "or output ordinal; rich ordering expressions would require an unproven scope barrier")
-
-        pending.Add(fun () ->
-            query.OrderBy |> List.iter (fun order ->
-                validateNestedCteExpr targetRuntime order.Expression))
-        scheduleBranches query.SetOperations
+    and private validateNestedCteQuery targetRuntime position root =
+        // The legacy proof recursed through Query -> CTE / Derived / LATERAL
+        // -> Query even for SELECTs containing no scalar subqueries. Keep
+        // the complete source-order walk on heap frames; scalar expression
+        // subqueries retain their own entry callback for now.
+        let pending = ResizeArray<CteProofFrame>()
+        pending.Add(CteProofQuery(position, root))
         while pending.Count > 0 do
             RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
-            let work = pending.[last]
+            let frame = pending.[last]
             pending.RemoveAt(last)
-            work ()
+            match frame with
+            | CteProofQuery(currentPosition, current) ->
+                let select = current.Head
+                validateCtePlacement targetRuntime currentPosition select.Ctes
+                // Push the exact inverse of the old recursive DFS order:
+                // CTEs, FROM, JOIN sources/predicates, scalar expressions,
+                // local scalar SET-tail check, SET branches, ORDER BY.
+                pending.Add(CteProofOrderTail current)
+                for branch in List.rev current.SetOperations do
+                    pending.Add(CteProofQuery(SetBranchPosition, branch.Query))
+                pending.Add(CteProofScalarTail(currentPosition, current))
+                select.Having |> Option.iter (CteProofExpression >> pending.Add)
+                for value in List.rev select.GroupBy do
+                    pending.Add(CteProofExpression value)
+                select.Where |> Option.iter (CteProofExpression >> pending.Add)
+                for item in List.rev select.Projection do
+                    pending.Add(CteProofExpression item.Expression)
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    for value in List.rev (NonEmpty.toList values) do
+                        pending.Add(CteProofExpression value)
+                | _ -> ()
+                for join in List.rev select.Joins do
+                    pending.Add(CteProofJoin join)
+                select.From |> Option.iter (CteProofSource >> pending.Add)
+                for cte in List.rev select.Ctes do
+                    pending.Add(CteProofQuery(CteDefinition, cte.Query))
+            | CteProofSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    pending.Add(CteProofQuery(DerivedTablePosition, query))
+            | CteProofJoin join ->
+                join.Predicate |> Option.iter (CteProofExpression >> pending.Add)
+                pending.Add(CteProofSource join.Source)
+            | CteProofExpression expression ->
+                validateNestedCteExpr targetRuntime expression
+            | CteProofScalarTail(currentPosition, current) ->
+                if currentPosition = ScalarSubqueryPosition
+                   && not current.Head.Ctes.IsEmpty
+                   && not current.SetOperations.IsEmpty
+                   && not current.OrderBy.IsEmpty then
+                    let rec portableSetTailOrder expression =
+                        match expression with
+                        | Spanned(_, inner) -> portableSetTailOrder inner
+                        | OrderOrdinal _ -> true
+                        | Column identifier
+                        | BoundColumn(identifier, ProjectionAlias) ->
+                            Identifier.parts identifier |> List.length = 1
+                        | _ -> false
+                    if current.OrderBy
+                       |> List.exists (fun order -> not (portableSetTailOrder order.Expression)) then
+                        cteScopeError (
+                            "scalar/EXISTS subquery with a root CTE and set-operation tail can order only by an output name "
+                            + "or output ordinal; rich ordering expressions would require an unproven scope barrier")
+            | CteProofOrderTail current ->
+                current.OrderBy |> List.iter (fun order ->
+                    validateNestedCteExpr targetRuntime order.Expression)
 
     let validateNestedCteDocument targetRuntime document =
         match document.Statement with
@@ -246,6 +268,14 @@ module internal RewriteStructuralValidation =
             "Column reference '" + Identifier.text identifier
             + "' requires a FROM source in the portable Core query model."))
 
+    type private NoFromProofFrame =
+        | NoFromProofQuery of Query
+        | NoFromProofSource of TableSource
+        | NoFromProofJoin of Join
+        | NoFromProofExpression of strictNoFrom: bool * expression: Expr
+        | NoFromProofJoinInvariant of Select
+        | NoFromProofOrderTail of Query
+
     let rec private validateNoFromExpression allowWildcard expression =
         walkStructuralExpression
             (fun allowed value ->
@@ -273,68 +303,67 @@ module internal RewriteStructuralValidation =
         | LateralDerivedTable(query, _) ->
             validateNoFromQuery query
 
-    and private validateNoFromSelect select =
-        select.Ctes
-        |> List.iter (fun cte ->
-            validateNoFromQuery cte.Query)
-        select.From |> Option.iter validateNoFromSource
-        select.Joins
-        |> List.iter (fun join ->
-            validateNoFromSource join.Source
-            join.Predicate |> Option.iter visitNestedNoFromExpression)
-
-        match select.From with
-        | Some _ ->
-            iterDistinctOn visitNestedNoFromExpression select
-            select.Projection
-            |> List.iter (fun item ->
-                visitNestedNoFromExpression item.Expression)
-            select.Where |> Option.iter visitNestedNoFromExpression
-            select.GroupBy |> List.iter visitNestedNoFromExpression
-            select.Having |> Option.iter visitNestedNoFromExpression
-        | None ->
-            if not select.Joins.IsEmpty then
-                raise (SqlCompilationException(
-                    "A Core SELECT cannot contain JOIN sources without a primary FROM source."))
-            iterDistinctOn (validateNoFromExpression false) select
-            select.Projection
-            |> List.iter (fun item ->
-                validateNoFromExpression false item.Expression)
-            select.Where |> Option.iter (validateNoFromExpression false)
-            select.GroupBy |> List.iter (validateNoFromExpression false)
-            select.Having |> Option.iter (validateNoFromExpression false)
-
-    and private validateNoFromQuery query =
-        // Validate SELECT heads before their children and ORDER BY tails
-        // after all nested branches, retaining original first-error order.
-        let pending = ResizeArray<unit -> unit>()
-        let scheduleOrder (current: Query) =
-            pending.Add(fun () ->
-                current.OrderBy
-                |> List.iter (fun order ->
+    and private validateNoFromQuery root =
+        // Validate the same proof sequence as the recursive implementation:
+        // CTEs, FROM, JOIN source/predicate, no-FROM invariant, then
+        // DISTINCT/projection/WHERE/GROUP/HAVING, SET branches and tail.
+        let pending = ResizeArray<NoFromProofFrame>()
+        pending.Add(NoFromProofQuery root)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | NoFromProofQuery current ->
+                let select = current.Head
+                pending.Add(NoFromProofOrderTail current)
+                for branch in List.rev current.SetOperations do
+                    pending.Add(NoFromProofQuery branch.Query)
+                let strict = select.From.IsNone
+                select.Having |> Option.iter (fun value ->
+                    pending.Add(NoFromProofExpression(strict, value)))
+                for value in List.rev select.GroupBy do
+                    pending.Add(NoFromProofExpression(strict, value))
+                select.Where |> Option.iter (fun value ->
+                    pending.Add(NoFromProofExpression(strict, value)))
+                for item in List.rev select.Projection do
+                    pending.Add(NoFromProofExpression(strict, item.Expression))
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn expressions ->
+                    for value in List.rev (NonEmpty.toList expressions) do
+                        pending.Add(NoFromProofExpression(strict, value))
+                | _ -> ()
+                pending.Add(NoFromProofJoinInvariant select)
+                for join in List.rev select.Joins do
+                    pending.Add(NoFromProofJoin join)
+                select.From |> Option.iter (NoFromProofSource >> pending.Add)
+                for cte in List.rev select.Ctes do
+                    pending.Add(NoFromProofQuery cte.Query)
+            | NoFromProofSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    pending.Add(NoFromProofQuery query)
+            | NoFromProofJoin join ->
+                join.Predicate |> Option.iter (fun value ->
+                    pending.Add(NoFromProofExpression(false, value)))
+                pending.Add(NoFromProofSource join.Source)
+            | NoFromProofJoinInvariant select ->
+                if select.From.IsNone && not select.Joins.IsEmpty then
+                    raise (SqlCompilationException(
+                        "A Core SELECT cannot contain JOIN sources without a primary FROM source."))
+            | NoFromProofExpression(strict, expression) ->
+                if strict then validateNoFromExpression false expression
+                else visitNestedNoFromExpression expression
+            | NoFromProofOrderTail current ->
+                current.OrderBy |> List.iter (fun order ->
                     match Expr.unspan order.Expression with
                     | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
                     | _ ->
                         if current.Head.From.IsNone then
                             validateNoFromExpression false order.Expression
-                        else
-                            visitNestedNoFromExpression order.Expression))
-        let rec scheduleBranches branches =
-            for branch in List.rev branches do
-                pending.Add(fun () ->
-                    let child = branch.Query
-                    validateNoFromSelect child.Head
-                    scheduleOrder child
-                    scheduleBranches child.SetOperations)
-        validateNoFromSelect query.Head
-        scheduleOrder query
-        scheduleBranches query.SetOperations
-        while pending.Count > 0 do
-            RewriteResourceBudget.checkpoint ()
-            let last = pending.Count - 1
-            let work = pending.[last]
-            pending.RemoveAt(last)
-            work ()
+                        else visitNestedNoFromExpression order.Expression)
 
     let validateNoFromDocument targetRuntime document =
         let _ = targetRuntime

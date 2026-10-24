@@ -1304,3 +1304,20 @@ derived and CTE boundaries. These are *join capability proof* changes,
 not a claim that the Parser or strict Schema/Type mixed graphs are fully
 stack independent. Existing six-provider grammar parity tests remain
 required.
+
+### Structural mixed Query source traversal (R2)
+
+The strict structural passes now use end-to-end heap frames for
+`Query → CTE`, `Query → Derived/LATERAL Source`, JOIN source/predicate,
+SET branches and query tails, rather than calling their own Query
+functions at every mixed source boundary. The former error precedence
+is preserved explicitly: CTEs in declaration order, FROM, each JOIN
+source before predicate, SELECT expressions, SET children, then ORDER BY.
+`validateNestedCteQuery` also preserves its scalar-subquery-specific
+SET tail capability restriction; `validateNoFromQuery` retains the
+projection/no-FROM and JOIN-without-FROM rules. Scalar-expression
+subqueries still cross through the existing iterative scalar visitor
+and its Query callback, so general Query/Expr stack independence is
+**not yet claimed**. Regression coverage includes 96-level mixed
+CTE/derived paths, correlated LATERAL/SET proofs, all-dialect grammar
+and the existing constrained-stack SET gates.
