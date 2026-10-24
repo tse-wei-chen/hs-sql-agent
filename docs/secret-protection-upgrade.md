@@ -1,5 +1,7 @@
 # Secret protection upgrade (breaking change)
 
+The keys in `.env.example` and `appsettings.Example.json` are public samples for local development only. Replace all three with independently generated random values before deployment.
+
 This release replaces the legacy HMAC-derived encryption format. There is no legacy decryption fallback or automatic conversion. MCP key HMACs and JWT signing remain separate from secret encryption.
 
 Before upgrading:
