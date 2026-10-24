@@ -640,7 +640,7 @@ module internal RewriteRenderer =
                           .Append("SELECT ")
                           .Append(renderExpr ctx projected) |> ignore
                     match source with
-                    | Some named -> output.Append(" FROM ").Append(renderSource ctx named) |> ignore
+                    | Some named -> output.Append(" FROM ").Append((renderSource ctx named) : string) |> ignore
                     | None -> output.Append(dummyFrom) |> ignore
                     output.Append(" WHERE ") |> ignore
                     levels <- levels + 1
@@ -1228,7 +1228,7 @@ module internal RewriteRenderer =
                 result.Append(')') |> ignore)
             result.Append(' ').ToString()
 
-    and private renderSource (ctx: RenderContext) source =
+    and private renderSource (ctx: RenderContext) source : string =
         match source with
         | TableSource.NamedTable(identifier, alias) | TableSource.CteTable(identifier, alias) ->
             renderIdentifier ctx.Provider identifier + (alias |> Option.map (fun value -> tableAliasPrefix ctx.Provider + renderAlias ctx.Provider value) |> Option.defaultValue "")
