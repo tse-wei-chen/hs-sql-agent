@@ -43,6 +43,7 @@ public class McpAccessKeyAuthMiddleware(
     private readonly IDbSetterService _dbSetterService = dbSetterService;
     private readonly ICryptoService _cryptoService = cryptoService;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
+
     private readonly ILogger<McpAccessKeyAuthMiddleware> _logger = logger;
 
     public async Task InvokeAsync(HttpContext context, RequestDelegate next)
@@ -81,7 +82,7 @@ public class McpAccessKeyAuthMiddleware(
                 Port = databaseConfiguration.Port,
                 Database = databaseConfiguration.Database,
                 Username = databaseConfiguration.Username,
-                Password = _cryptoService.DecryptText(databaseConfiguration.PasswordHash, _hmacSecret),
+                Password = _cryptoService.DecryptText(databaseConfiguration.PasswordHash, "db-password:" + databaseConfiguration.SecretBindingId),
                 ExtraSettings = databaseConfiguration.ExtraSettings
             }, context.RequestAborted) ?? string.Empty;
         }

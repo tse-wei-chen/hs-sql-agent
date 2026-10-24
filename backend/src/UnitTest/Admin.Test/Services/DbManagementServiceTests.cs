@@ -44,7 +44,6 @@ public class DbManagementServiceTests
         _service = new DbManagementService(
             _contextMock.Object,
             _cryptoServiceMock.Object,
-            _mcpKeySettingsMock.Object,
             _cacheMock.Object);
     }
 
@@ -66,7 +65,7 @@ public class DbManagementServiceTests
         };
 
         var expectedEncryptedPassword = "encrypted-password";
-        _cryptoServiceMock.Setup(c => c.EncryptText(request.Password, _hmacSecretBytes))
+        _cryptoServiceMock.Setup(c => c.EncryptText(request.Password, It.IsAny<string>()))
             .Returns(expectedEncryptedPassword);
 
         // Act
@@ -106,7 +105,7 @@ public class DbManagementServiceTests
 
         Assert.Contains("Password is required", exception.Message);
         _cryptoServiceMock.Verify(
-            c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            c => c.EncryptText(It.IsAny<string>(), It.IsAny<string>()),
             Times.Never);
         _contextMock.Verify(
             c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
@@ -123,7 +122,7 @@ public class DbManagementServiceTests
             Database = "local.db"
         };
         _cryptoServiceMock
-            .Setup(c => c.EncryptText(string.Empty, _hmacSecretBytes))
+            .Setup(c => c.EncryptText(string.Empty, It.IsAny<string>()))
             .Returns("encrypted-empty-password");
 
         await _service.CreateDbAsync(request, TestContext.Current.CancellationToken);
@@ -255,7 +254,7 @@ public class DbManagementServiceTests
         };
 
         var expectedEncryptedPassword = "new-hash";
-        _cryptoServiceMock.Setup(c => c.EncryptText(request.Password, _hmacSecretBytes))
+        _cryptoServiceMock.Setup(c => c.EncryptText(request.Password, It.IsAny<string>()))
             .Returns(expectedEncryptedPassword);
 
         // Act
@@ -335,7 +334,7 @@ public class DbManagementServiceTests
         Assert.Equal("NewName", existingDb.Name);
         Assert.Equal("existing-encrypted-password", existingDb.PasswordHash);
         _cryptoServiceMock.Verify(
-            c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()),
+            c => c.EncryptText(It.IsAny<string>(), It.IsAny<string>()),
             Times.Never);
         _contextMock.Verify(
             c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
@@ -354,7 +353,7 @@ public class DbManagementServiceTests
         await _service.UpdateDbAsync(nonExistentId, request, TestContext.Current.CancellationToken);
 
         // Assert
-        _cryptoServiceMock.Verify(c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()), Times.Never);
+        _cryptoServiceMock.Verify(c => c.EncryptText(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         _contextMock.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never, "SaveChanges should not be called when DB does not exist.");
     }
 

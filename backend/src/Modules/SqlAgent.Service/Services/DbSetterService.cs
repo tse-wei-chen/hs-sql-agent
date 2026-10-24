@@ -19,6 +19,7 @@ namespace SqlAgent.Service.Services
 
             try
             {
+                Common.Services.ConnectionExtraSettings.Validate(request.ExtraSettings);
                 var provider = request.SqlProvider;
                 if (provider == null)
                     return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "Provider is null." };
@@ -39,10 +40,13 @@ namespace SqlAgent.Service.Services
                 await connection.CloseAsync();
                 return new TestDbConnectionVM { IsSuccess = true };
             }
-            catch (Exception ex)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                Console.WriteLine($"[DB Test Error] Provider: {request.SqlProvider}, Message: {ex.Message}");
-                return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = ex.Message };
+                throw;
+            }
+            catch (Exception)
+            {
+                return new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "DB_CONNECTION_FAILED: Unable to connect to the database." };
             }
             finally
             {

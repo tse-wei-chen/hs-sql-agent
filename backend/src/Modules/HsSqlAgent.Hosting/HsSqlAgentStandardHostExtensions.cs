@@ -139,6 +139,7 @@ public static class HsSqlAgentStandardHostExtensions
         HsSqlAgent.Server.Models.HsSqlAgentRuntimeOptions options,
         IConfiguration configuration)
     {
+        configuration.GetSection("SecretProtection").Bind(options.SecretProtection);
         configuration.GetSection("Bootstrap").Bind(options.Bootstrap);
         configuration.GetSection("Operability").Bind(options.Operability);
 

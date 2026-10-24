@@ -121,7 +121,7 @@ public sealed class RuntimeAdminControllerDbConnectionTests
         controllerContext.CryptoService
             .Setup(service => service.DecryptText(
                 "ciphertext",
-                It.IsAny<byte[]>()))
+                It.IsAny<string>()))
             .Returns("secret");
 
         TestDbConnectionBase? captured = null;
@@ -180,7 +180,6 @@ public sealed class RuntimeAdminControllerDbConnectionTests
             auditService.Object,
             dbManagementService.Object,
             cryptoService.Object,
-            settings,
             operabilityService.Object,
             auditRetentionService.Object,
             customSqlToolService.Object);

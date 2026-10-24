@@ -150,6 +150,7 @@ public class HostModeInitializationTests
     {
         AdminDatabaseProvider = "Sqlite",
         AdminConnectionString = $"Data Source={databasePath};Pooling=False",
+        SecretProtection = Common.Services.TestSecrets.Create(),
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
     };
 

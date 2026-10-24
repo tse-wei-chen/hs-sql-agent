@@ -14,6 +14,46 @@ namespace HsSqlAgent.Server.Test.Data;
 
 public sealed class SqliteMigrationIntegrationTests
 {
+    [Theory]
+    [InlineData("Pending")]
+    [InlineData("Executing")]
+    public async Task SecretUpgradeRejectsLiveV3ApprovalAndPreservesExistingPasswords(string status)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(HsSqlAgent.SqliteMigrations.SqliteAdminContextFactory).Assembly.FullName))
+            .Options;
+        await using var context = new AdminContext(options);
+        var token = TestContext.Current.CancellationToken;
+        var authOptions = new DbContextOptionsBuilder<AuthContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(HsSqlAgent.SqliteMigrations.SqliteAuthContextFactory).Assembly.FullName))
+            .Options;
+        await using var auth = new AuthContext(authOptions);
+        await auth.Database.MigrateAsync(token);
+        await context.GetService<IMigrator>().MigrateAsync("20261022190000_V3ApprovalDrainGate", token);
+        await context.Database.ExecuteSqlRawAsync("""
+            INSERT INTO "DbManagement" ("Name", "PasswordHash", "CreatedAt", "UpdatedAt")
+            VALUES ('old-1', 'legacy-ciphertext', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+                   ('old-2', NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+            """, token);
+        var approval = NewConsumedApproval("crypto-upgrade-live");
+        approval.Status = status;
+        approval.AdmissionProtocolVersion = 1;
+        context.DmlApprovalRequests.Add(approval);
+        await context.SaveChangesAsync(token);
+        Assert.NotNull(await Record.ExceptionAsync(() => context.Database.MigrateAsync(token)));
+        approval.Status = "Rejected";
+        await context.SaveChangesAsync(token);
+        await context.Database.MigrateAsync(token);
+        var databases = await context.DbManagement.OrderBy(x => x.Id).ToListAsync(token);
+        Assert.Equal("legacy-ciphertext", databases[0].PasswordHash);
+        Assert.Null(databases[1].PasswordHash);
+        Assert.All(databases, db => Assert.Equal(32, db.SecretBindingId.Length));
+        Assert.Equal(2, databases.Select(db => db.SecretBindingId).Distinct().Count());
+        Assert.False(context.Database.HasPendingModelChanges());
+    }
+
     [Fact]
     public void V3ApprovalDrainMigration_RefusesUnsafeDowngrade()
     {
@@ -70,6 +110,7 @@ public sealed class SqliteMigrationIntegrationTests
             {
                 AdminDatabaseProvider = "Sqlite",
                 AdminConnectionString = connectionString,
+                SecretProtection = Common.Services.TestSecrets.Create(),
                 HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
                 JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
             });

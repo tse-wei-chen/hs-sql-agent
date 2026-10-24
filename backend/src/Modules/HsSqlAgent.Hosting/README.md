@@ -1,5 +1,8 @@
 # HsSqlAgent.Hosting
 
+
+Secret protection now requires independent Base64-encoded random 32-byte keys for database passwords, DML payloads, and DML connection fingerprints. The standard host binds the `SecretProtection` configuration section; custom runtime registrations must set `options.SecretProtection`. Legacy encrypted passwords must be re-entered and approvals drained before upgrade. See the [secret protection upgrade guide](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/docs/secret-protection-upgrade.md).
+
 Official batteries-included ASP.NET Core composition for HsSqlAgent.
 
 Use this package when you want the same capability composition and configuration contract as the first-party `ToolBox` / Docker image. Use `HsSqlAgent.Server` directly when you need to replace individual capabilities, authentication, approval providers, UI, or middleware ordering.

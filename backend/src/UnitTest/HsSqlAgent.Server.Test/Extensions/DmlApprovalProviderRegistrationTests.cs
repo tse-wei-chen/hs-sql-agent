@@ -11,7 +11,7 @@ public sealed class DmlApprovalProviderRegistrationTests
     public void AddHsSqlAgentDmlApproval_RegistersHostProvider()
     {
         var services = new ServiceCollection();
-        var hs = services.AddHsSqlAgentCore();
+        var hs = services.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
 
         hs.AddHsSqlAgentDmlApproval<TestApprovalProvider>();
 
@@ -23,7 +23,7 @@ public sealed class DmlApprovalProviderRegistrationTests
     public void AddHsSqlAgentRuntime_RegistersCompletionSinkWithoutImplicitAdminStore()
     {
         var services = new ServiceCollection();
-        var hs = services.AddHsSqlAgentCore();
+        var hs = services.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
 
         hs.AddHsSqlAgentRuntime();
 
@@ -35,7 +35,7 @@ public sealed class DmlApprovalProviderRegistrationTests
     public void AddHsSqlAgentDmlApproval_RejectsAmbiguousSecondProvider()
     {
         var services = new ServiceCollection();
-        var hs = services.AddHsSqlAgentCore();
+        var hs = services.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
         hs.AddHsSqlAgentDmlApproval<TestApprovalProvider>();
 
         Assert.Throws<InvalidOperationException>(() =>

@@ -83,7 +83,8 @@ public static class HsSqlAgentRuntimeServiceExtensions
             options.OutboundDeliverySync.ConnectionString,
             options.OutboundDeliverySync.KeyPrefix);
 
-        services.AddSingleton<ICryptoService, CryptoService>();
+        services.AddSingleton(options.SecretProtection);
+        services.AddSingleton<ICryptoService>(new CryptoService(options.SecretProtection));
         services.AddSingleton<IQueryValueParserService, QueryValueParserService>();
         services.AddSingleton<HsSqlAgentMetrics>();
         services.AddSingleton<IHsSqlAgentMetrics>(provider => provider.GetRequiredService<HsSqlAgentMetrics>());

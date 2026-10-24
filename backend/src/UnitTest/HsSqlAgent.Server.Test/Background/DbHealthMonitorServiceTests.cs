@@ -157,7 +157,7 @@ public class DbHealthMonitorServiceTests
 
     private sealed class PassthroughCryptoService : ICryptoService
     {
-        public string? EncryptText(string? plainText, byte[] secretKey) => plainText;
-        public string? DecryptText(string? cipherText, byte[] secretKey) => cipherText;
+        public string? EncryptText(string? plainText, string context) => plainText;
+        public string? DecryptText(string? cipherText, string context) => cipherText;
     }
 }

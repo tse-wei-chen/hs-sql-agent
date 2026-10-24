@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Data.Entites;
 using Admin.Service.Models;
@@ -376,6 +375,15 @@ public static class HsSqlAgentApplicationExtensions
         var mcpKeySettings = services.GetRequiredService<IOptions<McpKeySettings>>().Value;
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.HmacSecretKey);
 
+        // Validate secret delivery before changing any bootstrap-managed connection.
+        foreach (var database in bootstrapOptions.Databases)
+        {
+            Common.Services.ConnectionExtraSettings.Validate(database.ExtraSettings);
+            foreach (var key in database.McpKeys)
+                if (string.IsNullOrWhiteSpace(key.Key) && !adminDb.McpAccessKeys.Any(x => x.BootstrapId == (key.BootstrapId ?? string.Empty).Trim()))
+                    throw new InvalidOperationException("New Bootstrap MCP keys require an explicit Key supplied through secure configuration.");
+        }
+
         var databaseIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var keyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var dbConfig in bootstrapOptions.Databases)
@@ -399,9 +407,10 @@ public static class HsSqlAgentApplicationExtensions
             dbEntity.Port = Normalize(dbConfig.Port);
             dbEntity.Database = Normalize(dbConfig.Database);
             dbEntity.Username = Normalize(dbConfig.Username);
+            Common.Services.ConnectionExtraSettings.Validate(dbConfig.ExtraSettings);
             dbEntity.ExtraSettings = Normalize(dbConfig.ExtraSettings);
             if (!string.IsNullOrWhiteSpace(dbConfig.Password))
-                dbEntity.PasswordHash = cryptoService.EncryptText(dbConfig.Password, hmacSecret);
+                dbEntity.PasswordHash = cryptoService.EncryptText(dbConfig.Password, "db-password:" + dbEntity.SecretBindingId);
             dbEntity.UpdatedAt = now;
             dbEntity.UpdatedBy = "Bootstrap";
             adminDb.SaveChanges();
@@ -418,11 +427,10 @@ public static class HsSqlAgentApplicationExtensions
                 var rawKey = Normalize(keyConfig.Key);
                 if (isNew)
                 {
-                    rawKey ??= GenerateBootstrapRawKey();
+                    if (rawKey is null)
+                        throw new InvalidOperationException("New Bootstrap MCP keys require an explicit Key supplied through secure configuration.");
                     keyEntity = new McpAccessKey { BootstrapId = keyBootstrapId, CreatedAt = now, CreatedBy = "Bootstrap" };
                     adminDb.McpAccessKeys.Add(keyEntity);
-                    if (string.IsNullOrWhiteSpace(keyConfig.Key))
-                        Console.WriteLine($"[Bootstrap] Generated initial MCP Key for '{keyConfig.Name ?? keyBootstrapId}': {rawKey}");
                 }
                 var managedKey = keyEntity!;
                 if (rawKey != null)
@@ -443,12 +451,4 @@ public static class HsSqlAgentApplicationExtensions
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string GenerateBootstrapRawKey()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(32);
-        return Convert.ToBase64String(bytes)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
-    }
 }

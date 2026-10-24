@@ -58,14 +58,13 @@ public class DbHealthMonitorService(
             await PersistResultsAsync(results, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch (Exception ex) { logger.LogError(ex, "Scheduled database health probe failed."); }
+        catch (Exception) { logger.LogError("Scheduled database health probe failed."); }
     }
 
     private async Task<DbProbeResult> ProbeOneAsync(DbManagement db, CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var crypto = scope.ServiceProvider.GetRequiredService<ICryptoService>();
-        var keySettings = scope.ServiceProvider.GetRequiredService<IOptions<McpKeySettings>>().Value;
         var tester = scope.ServiceProvider.GetRequiredService<IDbSetterService>();
 
         var stopwatch = Stopwatch.StartNew();
@@ -84,15 +83,14 @@ public class DbHealthMonitorService(
                 Port = db.Port,
                 Username = db.Username,
                 Password = crypto.DecryptText(
-                    db.PasswordHash,
-                    Encoding.UTF8.GetBytes(keySettings.HmacSecretKey)),
+                    db.PasswordHash, "db-password:" + db.SecretBindingId),
                 Database = db.Database,
                 ExtraSettings = db.ExtraSettings
             }, timeout.Token);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            result = new TestDbConnectionVM { IsSuccess = false, ErrorMessage = ex.Message };
+            result = new TestDbConnectionVM { IsSuccess = false, ErrorMessage = "DB_CONNECTION_FAILED: Unable to connect to the database." };
         }
 
         return new DbProbeResult(

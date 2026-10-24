@@ -332,8 +332,7 @@ public class CustomSqlToolController(
             cancellationToken);
         if (definitionError != null) return BadRequest(definitionError);
 
-        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(dbPwd.PasswordHash, hmacSecret);
+        var password = cryptoService.DecryptText(dbPwd.PasswordHash, "db-password:" + dbPwd.SecretBindingId);
         var provider = providerFactory.GetProvider(dbType);
         var connectionString = connectionStringFactory.BuildConnectionString(dbType, new BuildDbConnectionModelBase
         {

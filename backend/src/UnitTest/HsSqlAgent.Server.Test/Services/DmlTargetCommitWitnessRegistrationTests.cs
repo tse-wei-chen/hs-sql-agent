@@ -12,12 +12,12 @@ public sealed class DmlTargetCommitWitnessRegistrationTests
     public void WitnessIsOptIn_AndRegisteredWithRuntime()
     {
         var defaultServices = new ServiceCollection();
-        defaultServices.AddHsSqlAgentCore().AddHsSqlAgentRuntime();
+        defaultServices.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
         Assert.DoesNotContain(defaultServices,
             descriptor => descriptor.ServiceType == typeof(IDmlTargetCommitWitness));
 
         var enabled = new ServiceCollection();
-        var builder = enabled.AddHsSqlAgentCore().AddHsSqlAgentTargetCommitWitness();
+        var builder = enabled.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create()).AddHsSqlAgentTargetCommitWitness();
         Assert.Contains(enabled, descriptor =>
             descriptor.ServiceType == typeof(IDmlTargetCommitWitness)
             && descriptor.ImplementationType == typeof(RelationalDmlTargetCommitWitness)
@@ -31,7 +31,7 @@ public sealed class DmlTargetCommitWitnessRegistrationTests
     public void ExecutionFenceRegistration_AutomaticallyIncludesWitnessAndIsSingleRegistration()
     {
         var services = new ServiceCollection();
-        var builder = services.AddHsSqlAgentCore().AddHsSqlAgentTargetExecutionFence();
+        var builder = services.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create()).AddHsSqlAgentTargetExecutionFence();
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(IDmlTargetExecutionFence)
             && descriptor.ImplementationType == typeof(RelationalDmlTargetExecutionFence)

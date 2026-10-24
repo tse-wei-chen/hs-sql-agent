@@ -18,6 +18,37 @@ namespace HsSqlAgent.Server.Test.Extensions;
 public class BootstrapProvisioningTests
 {
     [Fact]
+    public async Task NewBootstrapKeyWithoutExplicitSecretFailsBeforeWritingConnection()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>()
+            .UseSqlite(connection, sqlite => sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
+            .Options;
+        var services = new ServiceCollection();
+        services.AddScoped(_ => new AdminContext(options));
+        services.AddSingleton<ICryptoService>(new CryptoService(TestSecrets.Create()));
+        services.AddSingleton<Admin.Service.Interfaces.ISecurityPolicyRuntimeState, Admin.Service.Services.SecurityPolicyRuntimeState>();
+        services.AddSingleton(Options.Create(new McpKeySettings { HmacSecretKey = new string('h', 32) }));
+        services.AddSingleton(Options.Create(new BootstrapOptions
+        {
+            Enabled = true,
+            Databases = [new BootstrapDatabaseOptions
+            {
+                BootstrapId = "db", Provider = "Sqlite",
+                McpKeys = [new BootstrapMcpKeyOptions { BootstrapId = "key" }]
+            }]
+        }));
+        await using var provider = services.BuildServiceProvider();
+        var app = new ApplicationBuilder(provider);
+        var error = Assert.Throws<InvalidOperationException>(() => app.InitializeHsSqlAgent());
+        Assert.Contains("explicit Key", error.Message);
+        await using var context = new AdminContext(options);
+        Assert.Empty(await context.DbManagement.ToListAsync(TestContext.Current.CancellationToken));
+        Assert.Empty(await context.McpAccessKeys.ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task UseHsSqlAgent_ShouldProvisionDbAndKey_WhenBootstrapEnabled()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -40,6 +71,7 @@ public class BootstrapProvisioningTests
         services.AddScoped(_ => new AdminContext(adminDbOptions));
         services.AddScoped(_ => new Auth.Service.Data.AuthContext(authDbOptions));
         services.AddSingleton<ICryptoService, CryptoService>();
+        services.AddSingleton(Common.Services.TestSecrets.Create());
         services.AddSingleton<Admin.Service.Interfaces.ISecurityPolicyRuntimeState, Admin.Service.Services.SecurityPolicyRuntimeState>();
         services.AddSingleton(Options.Create(new McpKeySettings { HmacSecretKey = hmacKey }));
         var bootstrap = new BootstrapOptions
@@ -82,8 +114,8 @@ public class BootstrapProvisioningTests
         Assert.NotNull(db.PasswordHash);
         Assert.NotEqual("plain-password", db.PasswordHash);
 
-        var crypto = new CryptoService();
-        var decrypted = crypto.DecryptText(db.PasswordHash, Encoding.UTF8.GetBytes(hmacKey));
+        var crypto = new CryptoService(Common.Services.TestSecrets.Create());
+        var decrypted = crypto.DecryptText(db.PasswordHash, "db-password:" + db.SecretBindingId);
         Assert.Equal("plain-password", decrypted);
 
         var key = await verifyContext.McpAccessKeys.FirstOrDefaultAsync(x => x.Name == "Test Key", TestContext.Current.CancellationToken);
@@ -120,6 +152,7 @@ public class BootstrapProvisioningTests
         services.AddScoped(_ => new AdminContext(adminDbOptions));
         services.AddScoped(_ => new Auth.Service.Data.AuthContext(authDbOptions));
         services.AddSingleton<ICryptoService, CryptoService>();
+        services.AddSingleton(Common.Services.TestSecrets.Create());
         services.AddSingleton<Admin.Service.Interfaces.ISecurityPolicyRuntimeState, Admin.Service.Services.SecurityPolicyRuntimeState>();
         services.AddSingleton(Options.Create(new McpKeySettings { HmacSecretKey = hmacKey }));
         var bootstrap = new BootstrapOptions

@@ -42,6 +42,7 @@ public class DbManagementVM : DbManagementBase
 
 public class DbManagementPwdVM : DbManagementBase
 {
+    public string SecretBindingId { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
     public static Expression<Func<DbManagement, DbManagementPwdVM>> Projection => static db => new DbManagementPwdVM
     {
@@ -51,6 +52,7 @@ public class DbManagementPwdVM : DbManagementBase
         Host = db.Host ?? string.Empty,
         Port = db.Port ?? string.Empty,
         Username = db.Username ?? string.Empty,
+        SecretBindingId = db.SecretBindingId,
         PasswordHash = db.PasswordHash ?? string.Empty,
         Database = db.Database ?? string.Empty,
         ExtraSettings = db.ExtraSettings,
