@@ -13,6 +13,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  secret-protection-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify encrypted envelope, AAD isolation, legacy decoding and key rotation
+        run: dotnet test --project backend/src/UnitTest/Common.Test/Common.Test.csproj
+
   infrastructure-test:
     runs-on: ubuntu-latest
     permissions:

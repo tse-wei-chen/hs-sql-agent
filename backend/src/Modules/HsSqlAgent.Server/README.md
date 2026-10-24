@@ -299,6 +299,24 @@ or complete connection strings and is intentionally not logged or returned.
 If a key was previously printed by bootstrap, revoke/replace it and review access
 to retained container and centralized logs.
 
+### Versioned secret protection (infrastructure; not active for persisted records yet)
+
+`Common.Services.VersionedSecretProtector` and `SecretKeyRing` provide an
+auditable AES-256-GCM v2 envelope with purpose-specific 32-byte keys, key IDs,
+immutable-record AAD binding, explicit legacy decryption, and a re-protection
+operation for rotation. The wire format is
+`v2:<key-id>:<base64(nonce + tag + ciphertext)>`.
+
+**This is not yet the active Admin Store encryption path.** The current DB
+password and Durable DML Approval readers/writers still use the original
+unversioned `ICryptoService`. Do not store v2 ciphertext into those columns,
+or remove the existing MCP HMAC secret, before all readers/writers and
+deployments have been migrated. In particular, preserve DML connection
+fingerprints and pending/executing request semantics. Encryption keys must be
+32-byte random values from protected configuration, independent across
+DB passwords / DML payloads / sensitive extra settings; do not reuse HMAC
+signing keys as new AES keys. The dedicated crypto unit tests run in CI.
+
 **Migration note:** This hardening stage does not rotate the shared legacy MCP
 HMAC secret or re-encrypt stored database credentials / pending DML approvals.
 Changing that secret without a coordinated migration can make saved credentials,
