@@ -563,7 +563,7 @@ module internal RewriteSchemaTypeValidation =
             | [], [], _, _, _, _ when current.Head.Joins.Length = 2 ->
                 match current.Head.From, current.Head.Joins with
                 | Some ((NamedTable _ | CteTable _) as first),
-                  [ OnJoin(OnJoinKind.Inner, (NamedTable _ | CteTable _) as firstJoinSource, firstPredicate);
+                  [ OnJoin(OnJoinKind.Inner, ((NamedTable _ | CteTable _) as firstJoinSource), firstPredicate);
                     OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
                     let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
                     let preceding = tableSource catalog inheritedCtes currentParent firstJoinSource
