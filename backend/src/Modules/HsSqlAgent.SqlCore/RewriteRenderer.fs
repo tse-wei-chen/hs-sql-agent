@@ -1402,8 +1402,10 @@ module internal RewriteRenderer =
             sql.Append(" HAVING ").Append(renderPredicate ctx predicate) |> ignore)
         sql.ToString()
 
-    and private renderSetBody (ctx: RenderContext) (query: Query) =
-        let sql = RenderBuffer(ctx, "")
+    // Stream SET arms into an existing bounded buffer. Consumers with
+    // outer paging wrappers need not materialize and then concatenate an
+    // entire intermediate UNION body before enforcing the output budget.
+    and private appendSetBody (ctx: RenderContext) (sql: RenderBuffer) (query: Query) =
         let pending = ResizeArray<SetEmitFrame>()
         pending.Add(EnterSetBody query)
         while pending.Count > 0 do
@@ -1449,6 +1451,10 @@ module internal RewriteRenderer =
                              PreserveSpelling = false
                              Span = { Start = 0; Length = 0 } }) |> ignore
             | CloseNestedSet -> sql.Append(')') |> ignore
+
+    and private renderSetBody (ctx: RenderContext) (query: Query) =
+        let sql = RenderBuffer(ctx, "")
+        appendSetBody ctx sql query
         sql.ToString()
 
     and private renderOrderClause (ctx: RenderContext) setTail orderBy =
@@ -1830,11 +1836,21 @@ module internal RewriteRenderer =
             + renderOrderClause ctx true query.OrderBy
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
-            let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            let wrapper = "SELECT * FROM (" + body + ")" + tableAliasPrefix ctx.Provider + alias
-            let ordered = wrapper + renderOrderClause ctx true query.OrderBy
-            prefix + renderPaging ctx query ordered
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT * FROM (") |> ignore
+            appendSetBody ctx sql query
+            let alias =
+                renderAlias ctx.Provider
+                    { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
+            sql.Append(")")
+               .Append(tableAliasPrefix ctx.Provider)
+               .Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy)
+               // The terminal paging grammar is suffix-only on this path
+               // for every provider; rendering it against "" avoids a
+               // second copy of the entire SELECT/SET SQL text.
+               .Append(renderPaging ctx query "")
+               .ToString()
 
     and private renderQueryCore (ctx: RenderContext) (query: Query) =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
