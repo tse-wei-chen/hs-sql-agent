@@ -52,7 +52,7 @@ module internal RewriteRenderer =
         let mutable driving = false
         let mutable current: RenderFrame option = None
         let mutable inlineDepth = 0
-        let mutable localQuery: Query option = None
+        let mutable activeQuery: Query option = None
         // Structural eligibility only: no SQL, scopes or bindings are cached
         // by Query identity. Emission results remain occurrence-specific.
         let localQueryProofs = Dictionary<Query, bool>(HashIdentity.Reference)
@@ -146,14 +146,18 @@ module internal RewriteRenderer =
                     let value = RewriteAstTraversal.isLocalQuery query
                     localQueryProofs.Add(query, value)
                     value
-            match localQuery with
+            let run () =
+                let previous = activeQuery
+                activeQuery <- Some query
+                try action ()
+                finally activeQuery <- previous
+            match activeQuery with
             | Some active when Object.ReferenceEquals(active, query) -> action ()
-            | _ when isLocal () ->
-                let previous = localQuery
-                localQuery <- Some query
-                try this.ResolveLocal action
-                finally localQuery <- previous
-            | _ -> this.Resolve(action, false)
+            // Entry/core/subquery helpers for one occurrence are a fixed
+            // call chain, not a child Query edge. Schedule that occurrence
+            // once; each actual child Query still crosses the heap driver.
+            | _ when isLocal () -> this.ResolveLocal run
+            | _ -> this.Resolve(run, false)
 
         member _.Resolve(action: unit -> 'T, inlineAllowed: bool) : 'T =
             RewriteResourceBudget.checkpoint ()
