@@ -1460,7 +1460,8 @@ WHERE-after-inner parameter order.
 A typed PostgreSQL regression at depth 128 plus a correlated
 outer-scope EXISTS query ensures neither the metadata proof nor the
 output stream loses correlation. The CI small-stack gate requires
-**successful, fully instrumented 128/512-level** ordinary and typed
-LATERAL source compilation on 256-KiB managed stacks. A 2,048-level
-LATERAL/JOIN/correlated mixed graph is not yet a claim of general
-R2 closure; the frozen acceptance criteria remain open.
+**successful, fully instrumented 512/2,048-level** ordinary and typed
+LATERAL source compilation on 256-KiB managed stacks. The 2,048-level
+total-allocation ceiling is 120 MB, with Rendering under 60 MB and
+nonnegative phase metrics. Joined or deeply correlated LATERAL remains
+a distinct unproven graph, so general R2 remains open.

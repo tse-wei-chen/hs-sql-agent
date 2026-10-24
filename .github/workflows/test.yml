@@ -414,7 +414,7 @@ jobs:
           --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
           --depth-probe --dialects Postgres
           --shapes nested-lateral-derived,nested-lateral-derived-typed-schema
-          --depths 128,512 --stack-bytes 262144
+          --depths 512,2048 --stack-bytes 262144
           --output artifacts/sqlcore-lateral-small-stack-pr.json
       - name: Gate LATERAL rendering and scoped type proof
         shell: bash
@@ -425,7 +425,7 @@ jobs:
               report = json.load(source)
           print(f"LATERAL 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
           if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
-              raise SystemExit("Primary LATERAL source must compile at 128/512 on 256 KiB.")
+              raise SystemExit("Primary LATERAL source must compile at 512/2048 on 256 KiB.")
           required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
           for item in report["observations"]:
               worker = item.get("worker") or {}
@@ -435,6 +435,15 @@ jobs:
               if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(present):
                   raise SystemExit("LATERAL source stack/type regression: " + str(
                       (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), present)))
+              for stage in worker.get("stageMetrics", []):
+                  if any(stage[field] < 0 for field in ("ElapsedMicroseconds", "AllocatedBytes", "WorkUnits")):
+                      raise SystemExit("Negative LATERAL phase telemetry.")
+              if item["depth"] == 2048:
+                  if not isinstance(worker.get("allocatedBytes"), int) or worker["allocatedBytes"] > 120_000_000:
+                      raise SystemExit("2,048-level LATERAL total allocation exceeded 120 MB.")
+                  rendering = [p for p in worker.get("stageMetrics", []) if p["Stage"] == "Rendering"]
+                  if len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 60_000_000:
+                      raise SystemExit("2,048-level LATERAL streaming allocation exceeded 60 MB.")
               print(f"  {item['shape']:34} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(present)}")
           PY
       - name: Measure constrained-stack SQL compilation (observational)
