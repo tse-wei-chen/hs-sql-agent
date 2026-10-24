@@ -158,6 +158,24 @@ module internal RewriteParser =
                     count <- count + 1
                     previousClose <- close
             count
+// The heap Query scheduler may suspend only a complete WHERE EXISTS
+        // operand. Any operator after the matching close belongs to the
+        // ordinary Pratt/recursive-descent expression grammar.
+        member _.StandaloneWhereExists() =
+            if data[index].Kind <> Keyword "EXISTS" ||
+               data[min (data.Length - 1) (index + 1)].Kind <> Symbol '(' then false
+            else
+                let close = matchingClose.Value[index + 1]
+                if close < 0 then false
+                else
+                    let next = data[min (data.Length - 1) (close + 1)]
+                    match next.Kind with
+                    | End | Symbol ')' | Symbol ';' -> true
+                    | Keyword "GROUP" | Keyword "HAVING" | Keyword "ORDER"
+                    | Keyword "LIMIT" | Keyword "OFFSET" | Keyword "FETCH"
+                    | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
+                    | _ -> false
+
         member _.Peek(offset: int) = data[min (data.Length - 1) (index + offset)]
         member _.Advance() =
             RewriteResourceBudget.checkpoint ()
@@ -1775,6 +1793,14 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do joins.Add(CrossJoin(parseTableSource cursor))
             while startsJoin cursor do joins.Add(parseJoin cursor)
             let where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
+            parseSelectWithParsedSources cursor ctes start distinctMode top projection from
+                (joins |> Seq.toList) where
+
+    // The heap Query parser supplies already-completed JOIN sources and a
+    // correlated WHERE EXISTS expression. Preserve GROUP/HAVING and Select
+    // construction in one place for both parser entry routes.
+    and private parseSelectWithParsedSources (cursor: Cursor) (ctes: Cte list)
+        start distinctMode top (projection: ResizeArray<SelectItem>) from joins where =
             let groupBy = ResizeArray<Expr>()
             if acceptKeyword "GROUP" cursor then
                 expectKeyword "BY" cursor
@@ -1786,7 +1812,7 @@ module internal RewriteParser =
                   DistinctMode = distinctMode
                   ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
                   From = from
-                  Joins = joins |> Seq.toList
+                  Joins = joins
                   Where = where
                   GroupBy = groupBy |> Seq.toList
                   Having = having
@@ -2118,8 +2144,52 @@ module internal RewriteParser =
         and scheduleSelectWithCtes (ctes: Cte list) (complete: Select * NonNegativeRowCount option -> unit) =
             let start, distinctMode, top, projection = parseSelectPrefix cursor
             let finish from =
-                push (fun () ->
-                    complete (parseSelectAfterFrom cursor ctes start distinctMode top projection from))
+                let joins = ResizeArray<Join>()
+                let finishWhere where =
+                    push (fun () ->
+                        complete (parseSelectWithParsedSources cursor ctes start distinctMode top
+                                    projection from (joins |> Seq.toList) where))
+                let rec scanCommaSources () =
+                    if acceptSymbol ',' cursor then
+                        scheduleSource (fun source ->
+                            joins.Add(CrossJoin source)
+                            push scanCommaSources)
+                    else push scanJoins
+
+                and scanJoins () =
+                    if startsJoin cursor then
+                        // JOIN LATERAL creates a Query→Source→Query boundary.
+                        // Do not enter the old parseJoin→parseTableSource
+                        // recursive callback path for this proven syntax.
+                        if isKeyword "JOIN" cursor.Current &&
+                           isKeyword "LATERAL" (cursor.Peek 1) then
+                            cursor.Advance()
+                            scheduleSource (fun source ->
+                                expectKeyword "ON" cursor
+                                let predicate = parseExpression cursor
+                                joins.Add(OnJoin(OnJoinKind.Inner, source, predicate))
+                                push scanJoins)
+                        else
+                            joins.Add(parseJoin cursor)
+                            push scanJoins
+                    else push scanWhere
+
+                and scanWhere () =
+                    if acceptKeyword "WHERE" cursor then
+                        if cursor.StandaloneWhereExists() then
+                            // A sole EXISTS operand can re-enter this exact
+                            // heap scheduler; complex expressions keep the
+                            // original parser and precedence rules.
+                            let expressionStart = cursor.Current.Start
+                            cursor.Advance()
+                            expectSymbol '(' cursor
+                            scheduleQuery (fun query ->
+                                expectSymbol ')' cursor
+                                finishWhere (Some(markExpr expressionStart cursor (Exists(query, false)))))
+                        else finishWhere (Some(parseExpression cursor))
+                    else finishWhere None
+
+                push scanCommaSources
             if acceptKeyword "FROM" cursor then
                 scheduleSource (fun source -> finish (Some source))
             else finish None

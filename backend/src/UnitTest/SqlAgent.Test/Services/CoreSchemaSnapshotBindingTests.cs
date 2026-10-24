@@ -126,6 +126,24 @@ public sealed class CoreSchemaSnapshotBindingTests
 
 
 
+
+    [Fact]
+    public void MixedParserHeapContinuation_DoesNotSwallowBooleanAfterExists()
+    {
+        // A standalone WHERE EXISTS may use the heap scheduler; an EXISTS
+        // with a trailing AND still belongs to the expression parser.
+        var dialect = SqlAgentToolType.Postgres;
+        var sql = "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id) AND u.id = 1";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id) AND u.missing = 1";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void CorrelatedWhereExistsChain_PreservesStrictSchemaOrder()
     {
