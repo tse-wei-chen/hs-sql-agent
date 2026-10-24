@@ -1,25 +1,12 @@
 namespace HsSqlAgent.Server.Models;
 
 /// <summary>
-/// Optional, explicit encryption-key configuration. Secrets are Base64-encoded
-/// 32-byte random values, delivered via a host secret store. Disabled until all
-/// persistence readers and writers are enrolled in the rollout.
+/// v3 encryption is mandatory for every host. Each persisted-secret purpose
+/// requires a distinct 32-byte key. Old key IDs remain read-only for v3 rotation.
+/// There is deliberately no off switch, v2 product-data reader, or rollout gate.
 /// </summary>
 public sealed class SecretEncryptionOptions
 {
-    public bool Enabled { get; set; }
-    /// <summary>
-    /// Explicit rollout opt-in. Only Durable DML payloads may be written in v2
-    /// after all nodes have deployed legacy/v2 dual-read support.
-    /// </summary>
-    public bool EnableV2DurableDmlWrites { get; set; }
-    /// <summary>Only new and explicitly updated Admin DB credentials; Bootstrap remains legacy.</summary>
-    public bool EnableV2DatabasePasswordWrites { get; set; }
-    /// <summary>
-    /// Operator attestation; this is NOT a distributed compatibility probe.
-    /// Never set true while an old-only node can read approval state.
-    /// </summary>
-    public bool AllNodesDualReadConfirmed { get; set; }
     public Dictionary<string, SecretEncryptionPurposeOptions> Purposes { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 }

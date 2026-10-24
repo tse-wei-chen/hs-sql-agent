@@ -7,8 +7,8 @@ namespace Common.Services;
 /// <summary>
 /// Versioned AES-256-GCM envelope: v2:{key-id}:{Base64(nonce[12] + tag[16] + ciphertext)}.
 /// AAD binds the version, purpose and immutable record ID. The old unversioned
-/// Base64 layout is accepted for decryption ONLY with an explicitly configured
-/// legacy key; all new encryption emits v2.
+/// Base64 layout is NOT supported. The v2 envelope marker denotes the encrypted
+/// envelope protocol used by v3, not compatibility with product v2.
 /// </summary>
 public sealed class VersionedSecretProtector : ISecretProtector
 {
@@ -16,16 +16,13 @@ public sealed class VersionedSecretProtector : ISecretProtector
     private const int NonceSize = 12;
     private const int TagSize = 16;
     private readonly ISecretKeyRing _keyRing;
-    private readonly ICryptoService _legacyCrypto;
-    private readonly byte[]? _legacyKey;
-
     public VersionedSecretProtector(ISecretKeyRing keyRing, byte[]? legacyKey = null, ICryptoService? legacyCrypto = null)
     {
         _keyRing = keyRing ?? throw new ArgumentNullException(nameof(keyRing));
-        if (legacyKey is { Length: 0 })
-            throw new ArgumentException("Legacy decryption key cannot be empty.", nameof(legacyKey));
-        _legacyKey = legacyKey is null ? null : (byte[])legacyKey.Clone();
-        _legacyCrypto = legacyCrypto ?? new CryptoService();
+        // Historical constructor arguments are ignored: v3 will NEVER
+        // decrypt pre-v3 ciphertext, even if a caller supplies its old key.
+        _ = legacyKey;
+        _ = legacyCrypto;
     }
 
     public string? Protect(string? plaintext, SecretPurpose purpose, string recordId)
@@ -75,20 +72,7 @@ public sealed class VersionedSecretProtector : ISecretProtector
             throw new CryptographicException("Malformed secret envelope.");
 
         if (!ciphertext.StartsWith(Prefix, StringComparison.Ordinal))
-        {
-            // Legacy ciphertexts are plain Base64 with no colon. Unknown/malformed
-            // future envelope versions must never silently downgrade to legacy.
-            if (ciphertext.Contains(':') || _legacyKey is null)
-                throw new CryptographicException("Unsupported or unavailable secret envelope.");
-            try
-            {
-                return _legacyCrypto.DecryptText(ciphertext, _legacyKey);
-            }
-            catch (FormatException ex)
-            {
-                throw new CryptographicException("Malformed legacy ciphertext.", ex);
-            }
-        }
+            throw new CryptographicException("v3 refuses pre-v3 or unknown secret envelopes.");
 
         var keySeparator = ciphertext.IndexOf(':', Prefix.Length);
         if (keySeparator < 0)

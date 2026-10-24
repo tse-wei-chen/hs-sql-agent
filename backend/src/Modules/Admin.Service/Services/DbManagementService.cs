@@ -23,8 +23,8 @@ public class DbManagementService(
     private readonly ICryptoService _cryptoService = cryptoService;
     private readonly ICacheService _cache = cache;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-    private readonly bool _v2PasswordWrites = writePolicy?.EnableV2DatabasePasswordWrites == true;
-    private readonly ISecretProtector? _secretProtector = secretProtector;
+    private readonly ISecretProtector _secretProtector = secretProtector ??
+        throw new InvalidOperationException("v3 requires a purpose-specific database-password encryption key ring.");
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
@@ -42,7 +42,7 @@ public class DbManagementService(
             Host = dbManagement.Host,
             Port = dbManagement.Port,
             Username = dbManagement.Username,
-            PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret),
+            PasswordHash = null,
             Database = dbManagement.Database,
             ExtraSettings = dbManagement.ExtraSettings,
             CreatedBy = dbManagement.CreatedBy,
@@ -51,13 +51,11 @@ public class DbManagementService(
             UpdatedBy = dbManagement.UpdatedBy
         };
 
-        if (_v2PasswordWrites && !string.IsNullOrWhiteSpace(dbManagement.Password))
+        if (!string.IsNullOrWhiteSpace(dbManagement.Password))
         {
-            // The identity/sequence ID is unknown until the first INSERT. Both
-            // database writes MUST be in one transaction: never commit a row
-            // carrying the transitional legacy ciphertext.
-            var protector = _secretProtector ??
-                throw new InvalidOperationException("V2 database password writes require a secret protector.");
+            // Insert without a password to allocate the database ID, then
+            // write authenticated v3 ciphertext in the SAME transaction.
+            var protector = _secretProtector;
             if (_context is not DbContext dbContext || !dbContext.Database.IsRelational())
                 throw new InvalidOperationException("V2 database password writes require a relational Admin Store.");
 
@@ -121,12 +119,9 @@ public class DbManagementService(
             existingDbManagement.Username = dbManagement.Username;
             if (!string.IsNullOrWhiteSpace(dbManagement.Password))
             {
-                existingDbManagement.PasswordHash = _v2PasswordWrites
-                    ? (_secretProtector ?? throw new InvalidOperationException(
-                        "V2 database password writes require a secret protector."))
-                        .Protect(dbManagement.Password, SecretPurpose.DatabasePassword,
-                            id.ToString(CultureInfo.InvariantCulture))
-                    : _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+                existingDbManagement.PasswordHash = _secretProtector.Protect(
+                    dbManagement.Password, SecretPurpose.DatabasePassword,
+                    id.ToString(CultureInfo.InvariantCulture));
             }
             existingDbManagement.Database = dbManagement.Database;
             existingDbManagement.ExtraSettings = dbManagement.ExtraSettings;

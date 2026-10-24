@@ -90,7 +90,6 @@ internal sealed class DurableDmlApprovalLifecycle(
 
         var context = RequireAdminContext();
         var secret = RequireHmacSecret();
-        var crypto = RequireCrypto();
         var now = DateTime.UtcNow;
         var durableUntil = request.DurableUntil?.UtcDateTime
                            ?? throw new InvalidOperationException("DML approval request has no durable completion deadline.");
@@ -112,16 +111,11 @@ internal sealed class DurableDmlApprovalLifecycle(
             runtime.HasTargetExecutionFence ? TargetFenceProtocol : null,
             RequiresCommitWitness: runtime.HasTargetCommitWitness);
         var serializedPayload = DurableDmlResumePayloadCodec.Serialize(payload);
-        // All legacy approvals remain readable. New writes switch only after
-        // every worker has a dual-reader; keep HMAC connection fingerprint
-        // unchanged until a separate, proven rotation protocol exists.
-        var useV2 = services.GetService<SecretEncryptionWritePolicy>()?.EnableV2DurableDmlWrites == true;
-        var protectedPayload = useV2
-            ? (services.GetRequiredService<ISecretProtector>().Protect(
-                serializedPayload, SecretPurpose.DurableDmlPayload, request.RequestId)
-                ?? throw new InvalidOperationException("Could not protect durable DML approval payload."))
-            : (crypto.EncryptText(serializedPayload, secret)
-                ?? throw new InvalidOperationException("Could not protect durable DML approval payload."));
+        // v3 never persists unversioned Durable DML ciphertext.
+        // Connection fingerprints retain their own HMAC semantics.
+        var protectedPayload = services.GetRequiredService<ISecretProtector>().Protect(
+            serializedPayload, SecretPurpose.DurableDmlPayload, request.RequestId)
+            ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
 
         context.DmlApprovalRequests.Add(new DmlApprovalRequestState
         {

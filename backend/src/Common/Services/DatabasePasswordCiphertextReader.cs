@@ -4,7 +4,7 @@ using Common.Interfaces;
 
 namespace Common.Services;
 
-/// <summary>Shared database credential reader for legacy and v2 ciphertexts.</summary>
+/// <summary>v3-only encrypted database credential reader. Never decrypt product-v2 data.</summary>
 public static class DatabasePasswordCiphertextReader
 {
     public static string? Decrypt(
@@ -14,21 +14,12 @@ public static class DatabasePasswordCiphertextReader
         byte[] legacyHmacSecret,
         ISecretProtector? secretProtector = null)
     {
-        ArgumentNullException.ThrowIfNull(legacyCrypto);
-        ArgumentNullException.ThrowIfNull(legacyHmacSecret);
-        if (ciphertext is null || ciphertext.Length == 0)
-            return legacyCrypto.DecryptText(ciphertext, legacyHmacSecret);
-        if (ciphertext.StartsWith("v2:", StringComparison.Ordinal))
-        {
-            if (secretProtector is null || dbManagementId <= 0)
-                throw new CryptographicException(
-                    "Versioned database credentials require an active key ring and stable database ID.");
-            return secretProtector.Unprotect(
-                ciphertext, SecretPurpose.DatabasePassword,
-                dbManagementId.ToString(CultureInfo.InvariantCulture));
-        }
-        if (ciphertext.Contains(':'))
-            throw new CryptographicException("Unsupported database credential envelope.");
-        return legacyCrypto.DecryptText(ciphertext, legacyHmacSecret);
+        _ = legacyCrypto;
+        _ = legacyHmacSecret;
+        if (ciphertext is null || ciphertext.Length == 0) return ciphertext;
+        if (!ciphertext.StartsWith("v2:", StringComparison.Ordinal) || secretProtector is null || dbManagementId <= 0)
+            throw new CryptographicException("v3 requires an authenticated database credential and configured key ring.");
+        return secretProtector.Unprotect(ciphertext, SecretPurpose.DatabasePassword,
+            dbManagementId.ToString(CultureInfo.InvariantCulture));
     }
 }

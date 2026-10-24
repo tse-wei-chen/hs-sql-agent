@@ -24,27 +24,13 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
-        if ((options.EnableV2DurableDmlWrites || options.EnableV2DatabasePasswordWrites) &&
-            (!options.Enabled || !options.AllNodesDualReadConfirmed))
+        // v3 requires both key rings regardless of feature use. Do not
+        // silently degrade to legacy encryption on missing configuration.
+        if (options.Purposes is null || options.Purposes.Count != 2 ||
+            !options.Purposes.ContainsKey(nameof(SecretPurpose.DatabasePassword)) ||
+            !options.Purposes.ContainsKey(nameof(SecretPurpose.DurableDmlPayload)))
             throw new InvalidOperationException(
-                "V2 secret writes require enabled SecretEncryption and explicit full-fleet dual-read confirmation.");
-
-        if (!options.Enabled) return services;
-
-        if (options.EnableV2DurableDmlWrites &&
-            !options.Purposes.Keys.Any(p =>
-                string.Equals(p, nameof(SecretPurpose.DurableDmlPayload), StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidOperationException(
-                "V2 Durable DML writes require a DurableDmlPayload key ring.");
-
-        if (options.EnableV2DatabasePasswordWrites &&
-            (options.Purposes is null || !options.Purposes.Keys.Any(p =>
-                string.Equals(p, nameof(SecretPurpose.DatabasePassword), StringComparison.OrdinalIgnoreCase))))
-            throw new InvalidOperationException(
-                "V2 DB password writes require a DatabasePassword key ring.");
-
-        if (options.Purposes is null || options.Purposes.Count == 0)
-            throw new InvalidOperationException("SecretEncryption:Purposes needs at least one configured purpose.");
+                "v3 requires independent DatabasePassword and DurableDmlPayload encryption key rings.");
 
         try
         {
@@ -73,40 +59,13 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
             // rejects reuse of key material across multiple key IDs/purposes.
             var ring = new SecretKeyRing(keys);
             services.TryAddSingleton<ISecretKeyRing>(ring);
-            services.TryAddSingleton(new SecretEncryptionWritePolicy(
-                options.EnableV2DurableDmlWrites, options.EnableV2DatabasePasswordWrites));
+            services.TryAddSingleton(new SecretEncryptionWritePolicy(true, true));
             services.TryAddSingleton<ISecretWriteRolloutPolicy>(
                 sp => sp.GetRequiredService<SecretEncryptionWritePolicy>());
+            // There is no v2-product HMAC-derived ciphertext fallback.
+            // Each purpose must use a different AES key, validated by SecretKeyRing.
             services.TryAddSingleton<ISecretProtector>(sp =>
-            {
-                var hmac = sp.GetService<IOptions<McpKeySettings>>()?.Value.HmacSecretKey;
-                byte[]? legacySecret = string.IsNullOrEmpty(hmac) ? null : Encoding.UTF8.GetBytes(hmac);
-
-                if (legacySecret is not null)
-                {
-                    byte[] oldAesKey = SHA256.HashData(legacySecret);
-                    foreach (var (purpose, keyset) in keys)
-                        foreach (var keyId in keyset.Keys.Keys)
-                        {
-                            var raw = ring.GetDecryptionKey(purpose, keyId);
-                            try
-                            {
-                                if (CryptographicOperations.FixedTimeEquals(raw, oldAesKey)
-                                    || (legacySecret.Length == raw.Length
-                                        && CryptographicOperations.FixedTimeEquals(raw, legacySecret)))
-                                    throw new InvalidOperationException(
-                                        "SecretEncryption AES keys must not reuse the legacy MCP HMAC encryption key.");
-                            }
-                            finally { CryptographicOperations.ZeroMemory(raw); }
-                        }
-                    CryptographicOperations.ZeroMemory(oldAesKey);
-                }
-
-                return new VersionedSecretProtector(
-                    ring,
-                    legacySecret,
-                    sp.GetService<ICryptoService>());
-            });
+                new VersionedSecretProtector(sp.GetRequiredService<ISecretKeyRing>()));
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or CryptographicException)
         {

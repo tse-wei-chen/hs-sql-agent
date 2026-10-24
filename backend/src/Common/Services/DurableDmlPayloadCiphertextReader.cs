@@ -3,10 +3,7 @@ using Common.Interfaces;
 
 namespace Common.Services;
 
-/// <summary>
-/// Durable approval payload read boundary. It does not alter execution-state
-/// transitions, approval fingerprints, target commit fencing or legacy writes.
-/// </summary>
+/// <summary>v3-only durable approval reader; product v2 ciphertext is not supported.</summary>
 public static class DurableDmlPayloadCiphertextReader
 {
     public static string? Decrypt(
@@ -16,25 +13,12 @@ public static class DurableDmlPayloadCiphertextReader
         byte[] legacyHmacSecret,
         ISecretProtector? secretProtector = null)
     {
-        ArgumentNullException.ThrowIfNull(legacyCrypto);
-        ArgumentNullException.ThrowIfNull(legacyHmacSecret);
+        _ = legacyCrypto;
+        _ = legacyHmacSecret;
         ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
-
-        if (ciphertext is null || ciphertext.Length == 0)
-            return legacyCrypto.DecryptText(ciphertext, legacyHmacSecret);
-
-        if (ciphertext.StartsWith("v2:", StringComparison.Ordinal))
-        {
-            if (secretProtector is null)
-                throw new CryptographicException(
-                    "Versioned approval payload requires an active encryption key ring.");
-            return secretProtector.Unprotect(
-                ciphertext, SecretPurpose.DurableDmlPayload, requestId);
-        }
-
-        if (ciphertext.Contains(':'))
-            throw new CryptographicException("Unsupported approval payload envelope.");
-
-        return legacyCrypto.DecryptText(ciphertext, legacyHmacSecret);
+        if (string.IsNullOrEmpty(ciphertext) || !ciphertext.StartsWith("v2:", StringComparison.Ordinal)
+            || secretProtector is null)
+            throw new CryptographicException("v3 requires an authenticated durable DML payload and configured key ring.");
+        return secretProtector.Unprotect(ciphertext, SecretPurpose.DurableDmlPayload, requestId);
     }
 }
