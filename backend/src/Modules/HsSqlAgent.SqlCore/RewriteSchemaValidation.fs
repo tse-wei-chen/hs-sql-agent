@@ -197,6 +197,26 @@ module internal RewriteSchemaValidation =
             | _ -> None
         else None
 
+
+    // A projection consisting solely of a scalar Query can be resumed
+    // after its inner Query proof. No row source or other expression is
+    // skipped; other projection shapes retain the full proof traversal.
+    let private tryLinearScalarProjection (query: Query) =
+        let head = query.Head
+        if head.Ctes.IsEmpty && query.SetOperations.IsEmpty &&
+           head.DistinctMode = SelectDistinct.AllRows &&
+           head.From.IsNone && head.Joins.IsEmpty &&
+           head.Where.IsNone && head.GroupBy.IsEmpty && head.Having.IsNone &&
+           query.OrderBy.IsEmpty && query.Limit.IsNone && query.Offset.IsNone &&
+           query.FetchPercent.IsNone && not query.FetchWithTies then
+            match head.Projection with
+            | [ { Alias = None; Expression = projection } ] ->
+                match Expr.unspan projection with
+                | ScalarSubquery child -> Some child
+                | _ -> None
+            | _ -> None
+        else None
+
     // Visit scalar children on an explicit heap stack. Query proof still
     // crosses through queryColumns, which has its own stack-reserve guard.
     type private SchemaExprFrame =
@@ -209,6 +229,7 @@ module internal RewriteSchemaValidation =
         | ResumeSchemaJoinedLateral of Map<string, string list> * Scope option * Query * Span * IdentifierPart
         | ResumeSchemaExists of string list
         | ResumeSchemaIn of string list
+        | ResumeSchemaScalarProjection
 
     let rec private expression catalog ctes scope span expr =
         let pending = ResizeArray<SchemaExprFrame>()
@@ -411,8 +432,8 @@ module internal RewriteSchemaValidation =
         let mutable scanning = true
         while scanning do
             RewriteResourceBudget.checkpoint ()
-            match current.Head.Ctes, current.SetOperations, tryLinearExists current, tryLinearIn current with
-            | [], [], Some inner, _ ->
+            match current.Head.Ctes, current.SetOperations, tryLinearExists current, tryLinearIn current, tryLinearScalarProjection current with
+            | [], [], Some inner, _, _ ->
                 // Schema projection/row-source validation precedes WHERE.
                 let withoutWhere = { current.Head with Where = None }
                 let scope, _, columns =
@@ -420,7 +441,7 @@ module internal RewriteSchemaValidation =
                 pending.Add(ResumeSchemaExists columns)
                 currentParent <- Some scope
                 current <- inner
-            | [], [], _, Some(value, inner) ->
+            | [], [], _, Some(value, inner), _ ->
                 let withoutWhere = { current.Head with Where = None }
                 let scope, _, columns =
                     selectColumns catalog ctes currentParent withoutWhere
@@ -428,11 +449,15 @@ module internal RewriteSchemaValidation =
                 pending.Add(ResumeSchemaIn columns)
                 currentParent <- Some scope
                 current <- inner
-            | [ cte ], [], _, _ when not cte.RecursiveScope ->
+            | [], [], _, _, Some inner ->
+                pending.Add ResumeSchemaScalarProjection
+                currentParent <- Some(makeScope currentParent [])
+                current <- inner
+            | [ cte ], [], _, _, _ when not cte.RecursiveScope ->
                 pending.Add(ResumeSchemaCte(ctes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
-            | [], [], _, _ when current.Head.Joins.Length = 1 ->
+            | [], [], _, _, _ when current.Head.Joins.Length = 1 ->
                 match current.Head.From, current.Head.Joins.Head.Source with
                 | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
                     // The joined LATERAL sees exactly the preceding FROM
@@ -442,7 +467,7 @@ module internal RewriteSchemaValidation =
                     currentParent <- Some initial
                     current <- inner
                 | _ -> scanning <- false
-            | [], [], _, _ when current.Head.Joins.IsEmpty ->
+            | [], [], _, _, _ when current.Head.Joins.IsEmpty ->
                 match current.Head.From with
                 | Some (DerivedTable(inner, alias)) ->
                     pending.Add(ResumeSchemaDerived(
@@ -503,6 +528,8 @@ module internal RewriteSchemaValidation =
             | ResumeSchemaExists columns
             | ResumeSchemaIn columns ->
                 projected <- columns
+            | ResumeSchemaScalarProjection ->
+                projected <- [ String.Empty ]
         projected
 
     and private queryColumnsSingle catalog ctes parent (query: Query) =

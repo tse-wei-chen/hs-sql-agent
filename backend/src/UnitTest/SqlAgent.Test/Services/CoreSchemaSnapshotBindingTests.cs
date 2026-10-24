@@ -161,6 +161,27 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
+
+    [Fact]
+    public void DeepProjectionScalarSubquery_ResumesStrictSchemaProof()
+    {
+        const int depth = 96;
+        var valid = "SELECT id FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT (" + valid + ")";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT (" + invalid + ")";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void DeepCorrelatedInSubquery_PreservesStrictSchemaFirstError()
     {

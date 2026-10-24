@@ -207,6 +207,29 @@ module internal RewriteParser =
                     | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
                     | _ -> false
 
+        // Only a complete scalar SELECT-item subquery with no trailing
+        // operator/alias is scheduled on the heap. Nontrivial projections
+        // retain the normal expression grammar and error positions.
+        member _.StandaloneScalarSelectProjection() =
+            let at position = data[min (data.Length - 1) position].Kind
+            if at index <> Keyword "SELECT"
+               || at (index + 1) <> Symbol '(' then false
+            else
+                let isQuery =
+                    match at (index + 2) with
+                    | Keyword "SELECT" | Keyword "WITH" -> true
+                    | _ -> false
+                let close = matchingClose.Value[index + 1]
+                if not isQuery || close < 0 then false
+                else
+                    match at (close + 1) with
+                    | End | Symbol ')' | Symbol ';'
+                    | Keyword "FROM" | Keyword "WHERE" | Keyword "GROUP"
+                    | Keyword "HAVING" | Keyword "ORDER" | Keyword "LIMIT"
+                    | Keyword "OFFSET" | Keyword "FETCH"
+                    | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
+                    | _ -> false
+
         member _.Peek(offset: int) = data[min (data.Length - 1) (index + offset)]
         member _.Advance() =
             RewriteResourceBudget.checkpoint ()
@@ -2173,7 +2196,24 @@ module internal RewriteParser =
                 push (fun () -> complete (NamedTable(name, alias)))
 
         and scheduleSelectWithCtes (ctes: Cte list) (complete: Select * NonNegativeRowCount option -> unit) =
-            let start, distinctMode, top, projection = parseSelectPrefix cursor
+            if cursor.StandaloneScalarSelectProjection() then
+                let start = cursor.Current.Start
+                expectKeyword "SELECT" cursor
+                expectSymbol '(' cursor
+                scheduleQuery (fun child ->
+                    expectSymbol ')' cursor
+                    let projection = ResizeArray<SelectItem>()
+                    projection.Add
+                        { Expression = markExpr start cursor (ScalarSubquery child)
+                          Alias = None }
+                    scheduleSelectAfterPrefix ctes complete start SelectDistinct.AllRows None projection)
+            else
+                let start, distinctMode, top, projection = parseSelectPrefix cursor
+                scheduleSelectAfterPrefix ctes complete start distinctMode top projection
+
+        and scheduleSelectAfterPrefix (ctes: Cte list)
+            (complete: Select * NonNegativeRowCount option -> unit)
+            start distinctMode top (projection: ResizeArray<SelectItem>) =
             let finish from =
                 let joins = ResizeArray<Join>()
                 let finishWhere where =
