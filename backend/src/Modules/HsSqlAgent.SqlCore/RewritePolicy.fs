@@ -58,35 +58,58 @@ module internal RewritePolicy =
         | Literal(ScalarValue.Boolean x), Literal(ScalarValue.Boolean y) -> Some(x = y)
         | _ -> None
 
-    let rec private constantPredicate expression =
-        match expression with
-        | Spanned(_, inner) -> constantPredicate inner
-        | Literal(ScalarValue.Boolean value) -> truth value
-        | Unary(UnaryOperator.Not, inner) ->
-            match constantPredicate inner with
-            | AlwaysTrue -> AlwaysFalse
-            | AlwaysFalse -> AlwaysTrue
-            | UnknownTruth -> UnknownTruth
-        | Binary(BinaryOperator.Equal, left, right) ->
-            literalEquality left right |> Option.map truth |> Option.defaultValue UnknownTruth
-        | Binary(BinaryOperator.NotEqual, left, right) ->
-            literalEquality left right |> Option.map (not >> truth) |> Option.defaultValue UnknownTruth
-        | Binary(BinaryOperator.And, left, right) ->
-            match constantPredicate left, constantPredicate right with
-            | AlwaysFalse, _ | _, AlwaysFalse -> AlwaysFalse
-            | AlwaysTrue, AlwaysTrue -> AlwaysTrue
-            | _ -> UnknownTruth
-        | Binary(BinaryOperator.Or, left, right) ->
-            match constantPredicate left, constantPredicate right with
-            | AlwaysTrue, _ | _, AlwaysTrue -> AlwaysTrue
-            | AlwaysFalse, AlwaysFalse -> AlwaysFalse
-            | _ -> UnknownTruth
-        | IsNull(inner, negated) ->
-            match Expr.unspan inner with
-            | Literal ScalarValue.Null -> truth (not negated)
-            | Literal _ -> truth negated
-            | _ -> UnknownTruth
-        | _ -> UnknownTruth
+    type private PredicateFrame = Visit of Expr | Negate | CombineAnd | CombineOr
+
+    let private constantPredicate expression =
+        let pending = Collections.Generic.Stack<PredicateFrame>()
+        let values = Collections.Generic.Stack<PredicateTruth>()
+        pending.Push(Visit expression)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            match pending.Pop() with
+            | Negate ->
+                let result =
+                    match values.Pop() with
+                    | AlwaysTrue -> AlwaysFalse
+                    | AlwaysFalse -> AlwaysTrue
+                    | UnknownTruth -> UnknownTruth
+                values.Push result
+            | CombineAnd | CombineOr as operation ->
+                let right = values.Pop()
+                let left = values.Pop()
+                let result =
+                    match operation, left, right with
+                    | CombineAnd, AlwaysFalse, _ | CombineAnd, _, AlwaysFalse -> AlwaysFalse
+                    | CombineAnd, AlwaysTrue, AlwaysTrue -> AlwaysTrue
+                    | CombineOr, AlwaysTrue, _ | CombineOr, _, AlwaysTrue -> AlwaysTrue
+                    | CombineOr, AlwaysFalse, AlwaysFalse -> AlwaysFalse
+                    | _ -> UnknownTruth
+                values.Push result
+            | Visit value ->
+                match value with
+                | Spanned(_, inner) -> pending.Push(Visit inner)
+                | Literal(ScalarValue.Boolean value) -> values.Push(truth value)
+                | Unary(UnaryOperator.Not, inner) ->
+                    pending.Push Negate
+                    pending.Push(Visit inner)
+                | Binary(BinaryOperator.And, left, right)
+                | Binary(BinaryOperator.Or, left, right) ->
+                    pending.Push(match value with Binary(BinaryOperator.And, _, _) -> CombineAnd | _ -> CombineOr)
+                    pending.Push(Visit right)
+                    pending.Push(Visit left)
+                | Binary(BinaryOperator.Equal, left, right) ->
+                    values.Push(literalEquality left right |> Option.map truth |> Option.defaultValue UnknownTruth)
+                | Binary(BinaryOperator.NotEqual, left, right) ->
+                    values.Push(literalEquality left right |> Option.map (not >> truth) |> Option.defaultValue UnknownTruth)
+                | IsNull(inner, negated) ->
+                    let result =
+                        match Expr.unspan inner with
+                        | Literal ScalarValue.Null -> truth (not negated)
+                        | Literal _ -> truth negated
+                        | _ -> UnknownTruth
+                    values.Push result
+                | _ -> values.Push UnknownTruth
+        values.Pop()
 
     let private denyUnboundedPredicate code (document: Document) (expression: Expr) =
         let sourceSpan = Expr.span expression
@@ -138,6 +161,7 @@ module internal RewritePolicy =
         { document with Statement = statement }
 
     let authorize policy (validated: RewriteStages.ValidatedSql) =
+        RewriteResourceBudget.checkpoint ()
         let targetRuntime = RewriteStages.Validated.targetRuntime validated
         let document = RewriteStages.Validated.value validated
         ExecutableSql(authorizeDocument policy document, targetRuntime)

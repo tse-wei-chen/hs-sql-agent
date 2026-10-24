@@ -106,7 +106,7 @@ public sealed class TypedDmlTransactionRuntimeTests
 
         Assert.NotEmpty(store.Registered);
         Assert.All(store.Registered, child =>
-            Assert.False(store.Inner.TryConsumeAsync(child).Result));
+            Assert.False(store.Inner.TryConsumeAsync(child, TestContext.Current.CancellationToken).Result));
         Assert.Equal(failDuringRegistration ? 0 : 1, store.AggregateRegistrations);
     }
 

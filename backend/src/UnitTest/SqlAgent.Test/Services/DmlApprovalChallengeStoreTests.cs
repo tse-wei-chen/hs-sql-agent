@@ -95,13 +95,13 @@ public class DmlApprovalChallengeStoreTests
         };
         var aggregate = Challenge("aggregate", now);
         foreach (var child in children)
-            await store.RegisterAsync(child);
+            await store.RegisterAsync(child, TestContext.Current.CancellationToken);
 
-        Assert.True(await store.TryPromoteAsync(children, aggregate));
-        Assert.False(await store.TryConsumeAsync(children[0]));
-        Assert.False(await store.TryConsumeAsync(children[1]));
-        Assert.True(await store.TryConsumeAsync(aggregate));
-        Assert.False(await store.TryConsumeAsync(aggregate));
+        Assert.True(await store.TryPromoteAsync(children, aggregate, TestContext.Current.CancellationToken));
+        Assert.False(await store.TryConsumeAsync(children[0], TestContext.Current.CancellationToken));
+        Assert.False(await store.TryConsumeAsync(children[1], TestContext.Current.CancellationToken));
+        Assert.True(await store.TryConsumeAsync(aggregate, TestContext.Current.CancellationToken));
+        Assert.False(await store.TryConsumeAsync(aggregate, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -112,13 +112,12 @@ public class DmlApprovalChallengeStoreTests
         var first = Challenge("first", now);
         var second = Challenge("second", now);
         var batch = Challenge("batch", now);
-        await store.RegisterAsync(first);
-        await store.RegisterAsync(second);
-        Assert.False(await store.TryPromoteAsync(
-            [first, second with { AffectedRows = 99 }], batch));
-        Assert.False(await store.TryConsumeAsync(batch));
-        Assert.True(await store.TryConsumeAsync(first));
-        Assert.True(await store.TryConsumeAsync(second));
+        await store.RegisterAsync(first, TestContext.Current.CancellationToken);
+        await store.RegisterAsync(second, TestContext.Current.CancellationToken);
+        Assert.False(await store.TryPromoteAsync([first, second with { AffectedRows = 99 }], batch, TestContext.Current.CancellationToken));
+        Assert.False(await store.TryConsumeAsync(batch, TestContext.Current.CancellationToken));
+        Assert.True(await store.TryConsumeAsync(first, TestContext.Current.CancellationToken));
+        Assert.True(await store.TryConsumeAsync(second, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -130,22 +129,22 @@ public class DmlApprovalChallengeStoreTests
         var second = Challenge("second", now);
         var one = Challenge("aggregate-1", now);
         var two = Challenge("aggregate-2", now);
-        await store.RegisterAsync(first);
-        await store.RegisterAsync(second);
+        await store.RegisterAsync(first, TestContext.Current.CancellationToken);
+        await store.RegisterAsync(second, TestContext.Current.CancellationToken);
 
         var results = await Task.WhenAll(
             Task.Run(async () => await store.TryPromoteAsync([first, second], one)),
             Task.Run(async () => await store.TryPromoteAsync([first, second], two)));
 
-        Assert.Single(results.Where(x => x));
-        Assert.False(await store.TryConsumeAsync(first));
-        Assert.False(await store.TryConsumeAsync(second));
+        Assert.Single(results, x => x);
+        Assert.False(await store.TryConsumeAsync(first, TestContext.Current.CancellationToken));
+        Assert.False(await store.TryConsumeAsync(second, TestContext.Current.CancellationToken));
         var aggregateResults = new[]
         {
-            await store.TryConsumeAsync(one),
-            await store.TryConsumeAsync(two)
+            await store.TryConsumeAsync(one, TestContext.Current.CancellationToken),
+            await store.TryConsumeAsync(two, TestContext.Current.CancellationToken)
         };
-        Assert.Single(aggregateResults.Where(x => x));
+        Assert.Single(aggregateResults, x => x);
     }
 
     [Fact]
@@ -154,13 +153,13 @@ public class DmlApprovalChallengeStoreTests
         var store = new InMemoryDmlApprovalChallengeStore();
         var now = DateTimeOffset.UtcNow;
         var first = Challenge("first", now);
-        await store.RegisterAsync(first);
+        await store.RegisterAsync(first, TestContext.Current.CancellationToken);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
         await Assert.ThrowsAsync<OperationCanceledException>(async () =>
             await store.TryPromoteAsync([first], Challenge("batch", now), cancellation.Token));
-        Assert.True(await store.TryConsumeAsync(first));
+        Assert.True(await store.TryConsumeAsync(first, TestContext.Current.CancellationToken));
     }
 
     private static DmlApprovalChallenge Challenge(string nonce, DateTimeOffset now) =>

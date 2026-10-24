@@ -52,6 +52,71 @@ public sealed class CoreDmlConflictUpsertTests
         Assert.DoesNotContain(" * 2", command.Sql, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, 48)]
+    [InlineData(SqlAgentToolType.Sqlite, 48)]
+    [InlineData(SqlAgentToolType.Postgres, 128)]
+    [InlineData(SqlAgentToolType.Sqlite, 128)]
+    public void Compile_DeepConflictArithmetic_PreservesLeftToRightParameterOrder(
+        SqlAgentToolType provider, int depth)
+    {
+        var arithmetic = "quantity"
+            + string.Concat(Enumerable.Range(1, depth).Select(i => $" + {i}"));
+        var sql = "INSERT INTO inventory (id, quantity) VALUES (1, 3) "
+            + "ON CONFLICT (id) DO UPDATE SET quantity = " + arithmetic;
+        var profile = provider == SqlAgentToolType.Sqlite
+            ? new SqlProviderCapabilityProfile(provider, ServerVersion: new Version(3, 24))
+            : null;
+        var command = CompileRaw(sql, provider, provider, profile, profile);
+
+        Assert.Contains("ON CONFLICT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(depth + 2, command.Parameters.Length);
+        Assert.Equal(
+            Enumerable.Range(1, depth).Select(x => (long)x),
+            command.Parameters.Skip(2).Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_DeepConflictArithmeticWithUnlistedProposedColumn_FailsClosed(
+        SqlAgentToolType provider)
+    {
+        var arithmetic = "excluded.unlisted"
+            + string.Concat(Enumerable.Repeat(" + quantity", 96));
+        var sql = "INSERT INTO inventory (id, quantity) VALUES (1, 3) "
+            + "ON CONFLICT (id) DO UPDATE SET quantity = " + arithmetic;
+        var profile = provider == SqlAgentToolType.Sqlite
+            ? new SqlProviderCapabilityProfile(provider, ServerVersion: new Version(3, 24))
+            : null;
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CompileRaw(sql, provider, provider, profile, profile));
+
+        Assert.Contains("Proposed-row column", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unlisted", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void Compile_ConflictNegationAndArithmetic_PreserveParameterOrder(
+        SqlAgentToolType provider)
+    {
+        var sql = "INSERT INTO inventory (id, quantity) VALUES (1, 3) "
+            + "ON CONFLICT (id) DO UPDATE SET quantity = "
+            + "(quantity + excluded.quantity) * -(4 + 5)";
+        var profile = provider == SqlAgentToolType.Sqlite
+            ? new SqlProviderCapabilityProfile(provider, ServerVersion: new Version(3, 24))
+            : null;
+        var command = CompileRaw(sql, provider, provider, profile, profile);
+
+        Assert.Contains("(-", command.Sql, StringComparison.Ordinal);
+        Assert.Equal(new long[] { 1, 3, 4, 5 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     [Fact]
     public void Compile_SqliteConflictUpdate_DeterministicArithmetic_RequiresNativeVersionProof()
     {

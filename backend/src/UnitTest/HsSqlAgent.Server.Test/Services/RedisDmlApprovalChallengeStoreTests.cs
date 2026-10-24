@@ -203,7 +203,7 @@ public class RedisDmlApprovalChallengeStoreTests
         var child = CreateChallenge(now, "duplicate");
         var store = CreateStore(new Mock<IDatabase>(MockBehavior.Strict).Object, now);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await store.TryPromoteAsync([child, child], CreateChallenge(now, "batch")));
+            await store.TryPromoteAsync([child, child], CreateChallenge(now, "batch"), TestContext.Current.CancellationToken));
         Assert.Contains("distinct", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 

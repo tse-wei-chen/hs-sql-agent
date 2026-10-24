@@ -67,6 +67,30 @@ public sealed class CoreAggregateModifierTraversalTests
             command.Sql.Contains("CASE", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(64)]
+    public void Compile_DeepAggregateOrdering_PreservesColumnProofAndLowering(int depth)
+    {
+        var orderingExpression =
+            string.Concat(Enumerable.Repeat("LOWER(", depth)) +
+            "first_name" + new string(')', depth);
+        var parsed = CoreSqlTextParser.ParseQuery(
+            "SELECT STRING_AGG(name, ',' ORDER BY " + orderingExpression + ") FROM users",
+            SqlAgentToolType.Postgres);
+
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("aggregate-iterative-depth-v1"),
+            new SqlExecutionPlanPolicy(),
+            SqlServerProfile(14, 140));
+
+        Assert.Contains("WITHIN GROUP", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LOWER(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(" || ", command.Sql, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Compile_AggregateOrderingScalarCte_FailsClosedOnSqlServer()
     {

@@ -32,23 +32,49 @@ module internal RewritePlanCapabilityValidation =
         | JoinKind.Full -> requireCapability capabilityMessage proofs.FullJoin
         | JoinKind.Inner | JoinKind.Left | JoinKind.Cross -> ()
 
-    let rec private proveJoinSource capabilityMessage proofs source =
+    // This pass needs only a source-ordered structural capability proof:
+    // CTE definitions, the FROM source, each JOIN kind/source, then SET
+    // branches. Heap frames cover mixed CTE/derived/LATERAL/SET graphs,
+    // not merely consecutive SET branches.
+    type private JoinProofFrame =
+        | VisitJoinQuery of Query
+        | VisitJoinSource of TableSource
+        | VisitJoinKindAndSource of Join
+
+    let private proveJoinQuery capabilityMessage proofs root =
+        let pending = ResizeArray<JoinProofFrame>()
+        pending.Add(VisitJoinQuery root)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | VisitJoinQuery query ->
+                // LIFO push order is the inverse of the original recursive
+                // SELECT-first/source-order traversal. SET children are
+                // visited only after all SELECT source proofs succeed.
+                for branch in List.rev query.SetOperations do
+                    pending.Add(VisitJoinQuery branch.Query)
+                for join in List.rev query.Head.Joins do
+                    pending.Add(VisitJoinKindAndSource join)
+                query.Head.From |> Option.iter (VisitJoinSource >> pending.Add)
+                for cte in List.rev query.Head.Ctes do
+                    pending.Add(VisitJoinQuery cte.Query)
+            | VisitJoinSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    pending.Add(VisitJoinQuery query)
+            | VisitJoinKindAndSource join ->
+                proveJoinKind capabilityMessage proofs join.Kind
+                pending.Add(VisitJoinSource join.Source)
+
+    let private proveJoinSource capabilityMessage proofs source =
         match source with
         | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveJoinQuery capabilityMessage proofs query
-
-    and private proveJoinSelect capabilityMessage proofs select =
-        select.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
-        select.From |> Option.iter (proveJoinSource capabilityMessage proofs)
-        select.Joins
-        |> List.iter (fun join ->
-            proveJoinKind capabilityMessage proofs join.Kind
-            proveJoinSource capabilityMessage proofs join.Source)
-
-    and private proveJoinQuery capabilityMessage proofs query =
-        proveJoinSelect capabilityMessage proofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveJoinQuery capabilityMessage proofs branch.Query)
+        | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+            proveJoinQuery capabilityMessage proofs query
 
     let proveJoins capabilityMessage proofs document =
         match document.Statement with
@@ -68,8 +94,9 @@ module internal RewritePlanCapabilityValidation =
         | RejectedCapability rejection ->
             raise (SqlCompilationException(capabilityMessage rejection))
 
-    let rec private returningNodeName = function
-        | Spanned(_, inner) -> returningNodeName inner
+    let private returningNodeName expression =
+        // The diagnostic label does not require recursive Span unwrapping.
+        match Expr.unspan expression with
         | Column _ -> "ColumnExpr"
         | BoundColumn _ -> "BoundColumnExpr"
         | Wildcard _ -> "WildcardExpr"
@@ -95,125 +122,136 @@ module internal RewritePlanCapabilityValidation =
         | Between _ -> "BetweenExpr"
         | IsNull _ -> "IsNullExpr"
         | Exists _ -> "ExistsExpr"
+        | Spanned _ -> invalidOp "Expr.unspan did not remove the span wrapper."
 
     let private returningExpressionError detail =
         raise (SqlCompilationException(
             "SQL capability 'dml.returning.expression' " + detail + " remains fail-closed."))
 
-    let rec private validateRichReturningExpression expression =
-        let validateBoundColumn binding =
-            match binding with
-            | ColumnBinding.LocalRowSource -> ()
-            | ColumnBinding.OuterRowSource ->
-                returningExpressionError "does not admit correlated outer-row references"
-            | ColumnBinding.ProjectionAlias ->
-                returningExpressionError "does not admit projection-alias bindings"
+    // The RETURNING proof accepts a deliberately smaller grammar than SELECT.
+    // Mode-specific frames preserve each expression/predicate boundary and
+    // reject unsupported nodes before execution, even for deep ASTs.
+    [<Struct>]
+    type private RichReturningFrame =
+        | ReturningScalar of scalarExpression: Expr
+        | ReturningPredicate of predicateExpression: Expr
 
-        match expression with
-        | Spanned(_, inner) -> validateRichReturningExpression inner
-        | BoundColumn(_, binding) ->
-            validateBoundColumn binding
-        | Column _ ->
-            returningExpressionError "requires every column reference to bind to a local DML row source"
-        | Literal _ -> ()
-        | DateAdd _
-        | DateDiff _ ->
-            returningExpressionError "does not admit temporal date-math expressions yet"
-        | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
-            validateRichReturningExpression operand
-        | Binary((BinaryOperator.Add
-                 | BinaryOperator.Subtract
-                 | BinaryOperator.Multiply
-                 | BinaryOperator.Divide
-                 | BinaryOperator.Modulo
-                 | BinaryOperator.Concat), left, right) ->
-            validateRichReturningExpression left
-            validateRichReturningExpression right
-        | Cast(value, _) ->
-            validateRichReturningExpression value
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            if FunctionName.hasQuotedParts call.Name then
-                returningExpressionError (
-                    "does not infer portable scalar semantics from quoted native function identity; function '"
-                    + name + "'")
-            match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
-            | Some contract
-                when contract.Kind = SqlCanonicalFunctionKind.Scalar
-                     && contract.IsDirectPortable
-                     && not call.IsDistinct
-                     && contract.AcceptsArgumentCount(call.Arguments.Length) ->
-                call.Arguments |> List.iter validateRichReturningExpression
-            | _ ->
-                returningExpressionError (
-                    "accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '"
-                    + name + "'")
-        | SimpleCase(input, branches, fallback) ->
-            validateRichReturningExpression input
-            branches |> NonEmpty.iter (fun branch ->
-                validateRichReturningExpression branch.Match
-                validateRichReturningExpression branch.Result)
-            fallback |> Option.iter validateRichReturningExpression
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateRichReturningPredicate branch.Condition
-                validateRichReturningExpression branch.Result)
-            fallback |> Option.iter validateRichReturningExpression
-        | Unary(UnaryOperator.Not, _)
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.DistinctFrom
-                 | BinaryOperator.NotDistinctFrom
-                 | BinaryOperator.And
-                 | BinaryOperator.Or), _, _)
-        | Like _
-        | IsNull _
-        | Between _
-        | InList _ ->
-            validateRichReturningPredicate expression
-        | _ ->
-            returningExpressionError (
-                "accepts only the proven target-row scalar/predicate subset; expression node "
-                + returningNodeName expression)
+    let private validateRichReturningWalk (root: RichReturningFrame) =
+        let pending = ResizeArray<RichReturningFrame>()
+        let inline push frame = pending.Add frame
+        let pushScalarList (values: Expr list) =
+            let ordered = List.toArray values
+            for index = ordered.Length - 1 downto 0 do
+                push (ReturningScalar ordered.[index])
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | ReturningScalar expression ->
+                match expression with
+                | Spanned(_, inner) -> push (ReturningScalar inner)
+                | BoundColumn(_, ColumnBinding.LocalRowSource) -> ()
+                | BoundColumn(_, ColumnBinding.OuterRowSource) ->
+                    returningExpressionError "does not admit correlated outer-row references"
+                | BoundColumn(_, ColumnBinding.ProjectionAlias) ->
+                    returningExpressionError "does not admit projection-alias bindings"
+                | Column _ ->
+                    returningExpressionError "requires every column reference to bind to a local DML row source"
+                | Literal _ -> ()
+                | DateAdd _ | DateDiff _ ->
+                    returningExpressionError "does not admit temporal date-math expressions yet"
+                | Unary((UnaryOperator.Positive | UnaryOperator.Negate), operand) ->
+                    push (ReturningScalar operand)
+                | Binary((BinaryOperator.Add
+                         | BinaryOperator.Subtract
+                         | BinaryOperator.Multiply
+                         | BinaryOperator.Divide
+                         | BinaryOperator.Modulo
+                         | BinaryOperator.Concat), left, right) ->
+                    push (ReturningScalar right)
+                    push (ReturningScalar left)
+                | Cast(value, _) -> push (ReturningScalar value)
+                | FunctionCall call ->
+                    let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
+                    if FunctionName.hasQuotedParts call.Name then
+                        returningExpressionError (
+                            "does not infer portable scalar semantics from quoted native function identity; function '"
+                            + name + "'")
+                    match SqlCanonicalFunctionRegistry.Find(name) |> Option.ofObj with
+                    | Some contract
+                        when contract.Kind = SqlCanonicalFunctionKind.Scalar
+                             && contract.IsDirectPortable
+                             && not call.IsDistinct
+                             && contract.AcceptsArgumentCount(call.Arguments.Length) ->
+                        pushScalarList call.Arguments
+                    | _ ->
+                        returningExpressionError (
+                            "accepts only registered direct-portable scalar functions with canonical arity and no DISTINCT; function '"
+                            + name + "'")
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (ReturningScalar value))
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push (ReturningScalar branch.Result)
+                        push (ReturningScalar branch.Match)) branches
+                    push (ReturningScalar input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (ReturningScalar value))
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push (ReturningScalar branch.Result)
+                        push (ReturningPredicate branch.Condition)) branches
+                | Unary(UnaryOperator.Not, _)
+                | Binary((BinaryOperator.Equal
+                         | BinaryOperator.NotEqual
+                         | BinaryOperator.GreaterThan
+                         | BinaryOperator.LessThan
+                         | BinaryOperator.GreaterThanOrEqual
+                         | BinaryOperator.LessThanOrEqual
+                         | BinaryOperator.DistinctFrom
+                         | BinaryOperator.NotDistinctFrom
+                         | BinaryOperator.And
+                         | BinaryOperator.Or), _, _)
+                | Like _ | IsNull _ | Between _ | InList _ ->
+                    push (ReturningPredicate expression)
+                | _ ->
+                    returningExpressionError (
+                        "accepts only the proven target-row scalar/predicate subset; expression node "
+                        + returningNodeName expression)
+            | ReturningPredicate expression ->
+                match expression with
+                | Spanned(_, inner) -> push (ReturningPredicate inner)
+                | Unary(UnaryOperator.Not, operand) ->
+                    push (ReturningPredicate operand)
+                | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
+                    push (ReturningPredicate right)
+                    push (ReturningPredicate left)
+                | Binary((BinaryOperator.Equal
+                         | BinaryOperator.NotEqual
+                         | BinaryOperator.GreaterThan
+                         | BinaryOperator.LessThan
+                         | BinaryOperator.GreaterThanOrEqual
+                         | BinaryOperator.LessThanOrEqual
+                         | BinaryOperator.DistinctFrom
+                         | BinaryOperator.NotDistinctFrom), left, right)
+                | Like(left, right, _, _, _) ->
+                    push (ReturningScalar right)
+                    push (ReturningScalar left)
+                | IsNull(value, _) -> push (ReturningScalar value)
+                | Between(value, lower, upper, _) ->
+                    push (ReturningScalar upper)
+                    push (ReturningScalar lower)
+                    push (ReturningScalar value)
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (fun item -> push (ReturningScalar item)) items
+                    push (ReturningScalar value)
+                | _ ->
+                    returningExpressionError (
+                        "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
+                        + returningNodeName expression)
 
-    and private validateRichReturningPredicate expression =
-        match expression with
-        | Spanned(_, inner) -> validateRichReturningPredicate inner
-        | Unary(UnaryOperator.Not, operand) ->
-            validateRichReturningPredicate operand
-        | Binary((BinaryOperator.And | BinaryOperator.Or), left, right) ->
-            validateRichReturningPredicate left
-            validateRichReturningPredicate right
-        | Binary((BinaryOperator.Equal
-                 | BinaryOperator.NotEqual
-                 | BinaryOperator.GreaterThan
-                 | BinaryOperator.LessThan
-                 | BinaryOperator.GreaterThanOrEqual
-                 | BinaryOperator.LessThanOrEqual
-                 | BinaryOperator.DistinctFrom
-                 | BinaryOperator.NotDistinctFrom), left, right) ->
-            validateRichReturningExpression left
-            validateRichReturningExpression right
-        | Like(value, pattern, _, _, _) ->
-            validateRichReturningExpression value
-            validateRichReturningExpression pattern
-        | IsNull(value, _) ->
-            validateRichReturningExpression value
-        | Between(value, lower, upper, _) ->
-            validateRichReturningExpression value
-            validateRichReturningExpression lower
-            validateRichReturningExpression upper
-        | InList(value, items, _) ->
-            validateRichReturningExpression value
-            items |> NonEmpty.iter validateRichReturningExpression
-        | _ ->
-            returningExpressionError (
-                "accepts only comparison, LIKE/ILIKE, IS NULL, BETWEEN, finite IN-list, AND/OR, and NOT predicates; predicate node "
-                + returningNodeName expression)
+    let private validateRichReturningExpression expression =
+        validateRichReturningWalk (ReturningScalar expression)
 
     let private proveSqlServerOutputAssurance (proofs: DmlProofs) operation target =
         match proofs.SqlServerOutput with
@@ -300,98 +338,125 @@ module internal RewritePlanCapabilityValidation =
             | BoundColumn(_, ProjectionAlias)
             | _ -> raise (nullOrderingCapabilityError targetRuntime)
 
-    let rec private proveOrderingExpr targetRuntime targetOrdering expression =
-        match expression with
-        | Spanned(_, inner) -> proveOrderingExpr targetRuntime targetOrdering inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            proveOrderingExpr targetRuntime targetOrdering amount
-            proveOrderingExpr targetRuntime targetOrdering value
-        | Unary(_, value) -> proveOrderingExpr targetRuntime targetOrdering value
-        | Binary(_, left, right) ->
-            proveOrderingExpr targetRuntime targetOrdering left
-            proveOrderingExpr targetRuntime targetOrdering right
-        | Like(value, pattern, _, _, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | RegexMatch(value, pattern) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering pattern
-        | PostgresJsonAccess(value, _, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | FunctionCall call ->
-            call.Arguments |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
-                proveOrderingExpr targetRuntime targetOrdering order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering predicate
-        | Windowed(value, window) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            window.PartitionBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-            window.OrderBy
-            |> List.iter (fun order ->
-                requireRewriteableNullOrdering targetRuntime targetOrdering false false false order
-                proveOrderingExpr targetRuntime targetOrdering order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | SimpleCase(input, branches, fallback) ->
-            proveOrderingExpr targetRuntime targetOrdering input
-            branches |> NonEmpty.iter (fun branch ->
-                proveOrderingExpr targetRuntime targetOrdering branch.Match
-                proveOrderingExpr targetRuntime targetOrdering branch.Result)
-            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveOrderingExpr targetRuntime targetOrdering branch.Condition
-                proveOrderingExpr targetRuntime targetOrdering branch.Result)
-            fallback |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | InList(value, items, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            items |> NonEmpty.iter (proveOrderingExpr targetRuntime targetOrdering)
-        | InSubquery(value, query, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingQuery targetRuntime targetOrdering query
-        | Between(value, lower, upper, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-            proveOrderingExpr targetRuntime targetOrdering lower
-            proveOrderingExpr targetRuntime targetOrdering upper
-        | IsNull(value, _) ->
-            proveOrderingExpr targetRuntime targetOrdering value
-        | ScalarSubquery query | Exists(query, _) ->
-            proveOrderingQuery targetRuntime targetOrdering query
+    // Ordering/Paging proof is a whole-graph traversal, including window
+    // ORDER BY, aggregate-local ordering, CTEs and nested scalar queries.
+    // A deep Boolean predicate must not spend one CLR stack frame per Expr.
+    [<Struct>]
+    type private OrderingFrame =
+        | OrderingExpr of expression: Expr
+        | OrderingQuery of queryBody: Query
+        | OrderingSelect of selectBody: Select
+        | OrderingAfterCtes of selectTail: Select
+        | OrderingSource of tableSource: TableSource
+        | OrderingOrder of statementTail: bool * distinct: bool * setTail: bool * ordering: OrderBy
 
-    and private proveOrderingSource targetRuntime targetOrdering source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> proveOrderingQuery targetRuntime targetOrdering query
+    let private proveOrderingWalk targetRuntime targetOrdering (root: OrderingFrame) =
+        let pending = ResizeArray<OrderingFrame>()
+        let inline push frame = pending.Add frame
+        let pushExprs (values: Expr list) =
+            let entries = List.toArray values
+            for index = entries.Length - 1 downto 0 do
+                push (OrderingExpr entries.[index])
+        let pushOrders statementTail distinct setTail (orders: OrderBy list) =
+            let entries = List.toArray orders
+            for index = entries.Length - 1 downto 0 do
+                push (OrderingOrder(statementTail, distinct, setTail, entries.[index]))
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | OrderingExpr expr ->
+                match expr with
+                | Spanned(_, inner) -> push (OrderingExpr inner)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | Like(left, right, _, _, _)
+                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+                    push (OrderingExpr right)
+                    push (OrderingExpr left)
+                | Unary(_, value) | PostgresJsonAccess(value, _, _)
+                | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
+                    push (OrderingExpr value)
+                | RawRegexCall(arguments, _) -> pushExprs arguments
+                | FunctionCall call ->
+                    pushOrders false false false call.AggregateOrderBy
+                    pushExprs call.Arguments
+                | Windowed(value, window) ->
+                    pushOrders false false false window.OrderBy
+                    pushExprs window.PartitionBy
+                    push (OrderingExpr value)
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (OrderingExpr value))
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push (OrderingExpr branch.Result)
+                        push (OrderingExpr branch.Match)) branches
+                    push (OrderingExpr input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (OrderingExpr value))
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push (OrderingExpr branch.Result)
+                        push (OrderingExpr branch.Condition)) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (fun item -> push (OrderingExpr item)) items
+                    push (OrderingExpr value)
+                | InSubquery(value, query, _) ->
+                    push (OrderingQuery query)
+                    push (OrderingExpr value)
+                | Between(value, lower, upper, _) ->
+                    push (OrderingExpr upper)
+                    push (OrderingExpr lower)
+                    push (OrderingExpr value)
+                | ScalarSubquery query | Exists(query, _) -> push (OrderingQuery query)
+            | OrderingOrder(statementTail, distinct, setTail, order) ->
+                requireRewriteableNullOrdering
+                    targetRuntime targetOrdering statementTail distinct setTail order
+                push (OrderingExpr order.Expression)
+            | OrderingSource source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (OrderingQuery query)
+            | OrderingQuery query ->
+                pushOrders true query.Head.Distinct
+                    (not query.SetOperations.IsEmpty) query.OrderBy
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (OrderingQuery branches.[index].Query)
+                push (OrderingSelect query.Head)
+            | OrderingSelect select ->
+                push (OrderingAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (OrderingQuery ctes.[index].Query)
+            | OrderingAfterCtes select ->
+                select.Having |> Option.iter (fun value -> push (OrderingExpr value))
+                pushExprs select.GroupBy
+                select.Where |> Option.iter (fun value -> push (OrderingExpr value))
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> push (OrderingExpr predicate)
+                    | None -> ()
+                    push (OrderingSource joins.[index].Source)
+                select.From |> Option.iter (fun source -> push (OrderingSource source))
+                NonEmpty.iterReverse (fun item ->
+                    push (OrderingExpr item.Expression)) select.ProjectionItems
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (fun value -> push (OrderingExpr value)) values
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
 
-    and private proveOrderingSelect targetRuntime targetOrdering select =
-        select.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
-        iterDistinctOn (proveOrderingExpr targetRuntime targetOrdering) select
-        select.Projection |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
-        select.From |> Option.iter (proveOrderingSource targetRuntime targetOrdering)
-        select.Joins |> List.iter (fun join ->
-            proveOrderingSource targetRuntime targetOrdering join.Source
-            join.Predicate |> Option.iter (proveOrderingExpr targetRuntime targetOrdering))
-        select.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
-        select.GroupBy |> List.iter (proveOrderingExpr targetRuntime targetOrdering)
-        select.Having |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)
+    let private proveOrderingExpr targetRuntime targetOrdering expression =
+        proveOrderingWalk targetRuntime targetOrdering (OrderingExpr expression)
 
-    and private proveOrderingQuery targetRuntime targetOrdering query =
-        proveOrderingSelect targetRuntime targetOrdering query.Head
-        query.SetOperations |> List.iter (fun branch -> proveOrderingQuery targetRuntime targetOrdering branch.Query)
-        let isSetTail = not query.SetOperations.IsEmpty
-        query.OrderBy
-        |> List.iter (fun order ->
-            requireRewriteableNullOrdering targetRuntime targetOrdering true query.Head.Distinct isSetTail order
-            proveOrderingExpr targetRuntime targetOrdering order.Expression)
+    let private proveOrderingSource targetRuntime targetOrdering source =
+        proveOrderingWalk targetRuntime targetOrdering (OrderingSource source)
+
+    let private proveOrderingQuery targetRuntime targetOrdering query =
+        proveOrderingWalk targetRuntime targetOrdering (OrderingQuery query)
 
     let private stableProjectionNames context (query: Query) =
         query.Head.Projection
@@ -479,17 +544,43 @@ module internal RewritePlanCapabilityValidation =
                 raise (SqlCompilationException(
                     "SQL Server set-operation OFFSET pagination supports ORDER BY output names or ordinals only."))
 
-    let rec private proveSqlServerPagingQuery query =
-        query.Head.Ctes |> List.iter (fun cte -> proveSqlServerPagingQuery cte.Query)
-        query.Head.From |> Option.iter (function DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
-        query.Head.Joins |> List.iter (fun join ->
-            match join.Source with DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
-        query.SetOperations |> List.iter (fun branch -> proveSqlServerPagingQuery branch.Query)
-        match query.Offset with
-        | Some offset when NonNegativeRowCount.value offset > 0 ->
-            if query.SetOperations.IsEmpty then proveSqlServerSelectPaging query
-            else proveSqlServerSetPaging query
-        | _ -> ()
+    let private proveSqlServerPagingQuery query =
+        // Postorder is essential: check CTEs, derived FROM and joins,
+        // then SET children, only afterwards the parent's paging rule.
+        // Track enter/finish explicitly rather than recursing through
+        // nested Query graphs (including correlated table sources).
+        let pending = ResizeArray<struct (bool * Query)>()
+        pending.Add(struct (false, query))
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let struct (finish, current) = pending.[last]
+            pending.RemoveAt(last)
+            if finish then
+                match current.Offset with
+                | Some offset when NonNegativeRowCount.value offset > 0 ->
+                    if current.SetOperations.IsEmpty then
+                        proveSqlServerSelectPaging current
+                    else proveSqlServerSetPaging current
+                | _ -> ()
+            else
+                pending.Add(struct (true, current))
+                let children = ResizeArray<Query>()
+                for cte in current.Head.Ctes do
+                    children.Add(cte.Query)
+                match current.Head.From with
+                | Some(DerivedTable(inner, _) | LateralDerivedTable(inner, _)) ->
+                    children.Add(inner)
+                | _ -> ()
+                for join in current.Head.Joins do
+                    match join.Source with
+                    | DerivedTable(inner, _) | LateralDerivedTable(inner, _) ->
+                        children.Add(inner)
+                    | _ -> ()
+                for branch in current.SetOperations do
+                    children.Add(branch.Query)
+                for index = children.Count - 1 downto 0 do
+                    pending.Add(struct (false, children.[index]))
 
     let proveOrderingAndPaging targetRuntime targetOrdering document =
         match document.Statement with
@@ -587,21 +678,31 @@ module internal RewritePlanCapabilityValidation =
                 insert.Columns |> List.map (fun column -> column.Value),
                 StringComparer.OrdinalIgnoreCase)
 
-        let rec validateValue = function
-            | ConflictProposedColumn identifier ->
-                let proposed = Identifier.text identifier
-                if not (insertColumns.Contains proposed) then
-                    raise (SqlCompilationException(
-                        "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values."))
-            | ConflictTargetColumn identifier ->
-                if Identifier.parts identifier |> List.length <> 1 then
-                    raise (SqlCompilationException(
-                        "Conflict-update target-row references must be unqualified single-part columns."))
-            | ConflictLiteral _ -> ()
-            | ConflictNegate operand -> validateValue operand
-            | ConflictBinary(_, left, right) ->
-                validateValue left
-                validateValue right
+        // Conflict values form a closed tree. A work stack keeps even
+        // very deep native ON CONFLICT arithmetic off the CLR call stack;
+        // reverse pushes retain left-first failing identifier diagnostics.
+        let validateValue (root: ConflictValue) =
+            let pending = ResizeArray<ConflictValue>()
+            pending.Add(root)
+            while pending.Count > 0 do
+                let last = pending.Count - 1
+                let value = pending.[last]
+                pending.RemoveAt(last)
+                match value with
+                | ConflictProposedColumn identifier ->
+                    let proposed = Identifier.text identifier
+                    if not (insertColumns.Contains proposed) then
+                        raise (SqlCompilationException(
+                            "Proposed-row column '" + proposed + "' must be explicitly present in the INSERT column list; portable upsert does not depend on target-provider default values."))
+                | ConflictTargetColumn identifier ->
+                    if Identifier.parts identifier |> List.length <> 1 then
+                        raise (SqlCompilationException(
+                            "Conflict-update target-row references must be unqualified single-part columns."))
+                | ConflictLiteral _ -> ()
+                | ConflictNegate operand -> pending.Add operand
+                | ConflictBinary(_, left, right) ->
+                    pending.Add right
+                    pending.Add left
 
         let assigned = HashSet<string>(StringComparer.OrdinalIgnoreCase)
         assignments

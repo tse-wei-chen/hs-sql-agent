@@ -265,6 +265,37 @@ published as measured percentages or silently set to 100.
 - [x] Add fail-closed lexical budgets before AST allocation:
       4,194,304 UTF-16 code units per SQL input and 131,072 tokens,
       with source-span, Lexical-stage typed diagnostics.
+- [x] Gate the parsed closed AST before Binder with a 65,536-node
+      resource budget. Count Expr, Query, Select, Source and DML conflict
+      arithmetic nodes using explicit work stacks rather than CLR
+      recursion; include all five statement forms (SELECT, INSERT,
+      UPDATE, DELETE, MERGE), RETURNING and nested QuerySource/DML
+      sources. Typed `SQL_COMPILER_AST_NODE_LIMIT` at Binding/Resource
+      prevents over-budget statements reaching Binder, schema/type
+      validation or Renderer. PostgreSQL and SQLite long-SELECT plus
+      PostgreSQL long-UPDATE tests verify that input can remain below
+      lexical limits while its AST is rejected independently.
+- [x] Refuse compiled SQL larger than 16,777,216 UTF-16 code units
+      using `SQL_COMPILER_RENDERED_OUTPUT_LIMIT` at
+      RenderingInvariant/Resource before it can be sent to execution.
+      This is a post-render *output contract*, not yet a strict
+      peak-allocation ceiling: large intermediate materializations in
+      specialized renderers need further streaming guards.
+- [x] Add an independent, deliberately generous 8,192-level
+      **balanced parenthesis nesting resource ceiling** before Parser
+      allocation. It is 4x the existing 2,048-depth six-provider matrix
+      and does not restrict non-parenthesized AST depth or require a
+      blanket MaxAstDepth. Excess balanced nesting returns typed
+      `SQL_LEXICAL_NESTING_LIMIT` / Lexical / Resource at the first
+      excessive opening parenthesis. Preserve legacy
+      `SQL_LEXICAL_UNBALANCED_PARENTHESIS` / Syntax precedence for
+      malformed unmatched opens. Quoted string content and comments do
+      not consume grouping budget. Tests cover 8,193 balanced/unbalanced
+      levels and 2,048 supported levels in all six dialects.
+      Other budgets already include 4 Mi UTF-16 input chars and 131,072
+      tokens. The 8,192 value is a tunable engineering policy candidate
+      for later profiling, **not** a promise all inputs below it compile.
+
 - [x] Parse arbitrary prefix-NOT chains iteratively and canonicalize
       double-negation with a SQL three-valued-logic proof, retaining UNKNOWN
       semantics and source spans. Six-dialect tests cover 2,049 prefixes,
@@ -282,6 +313,20 @@ published as measured percentages or silently set to 100.
       left-spine walk. Preserve exact parentheses, source operand order, and
       parameters without boolean reassociation. Six-dialect regressions cover
       mixed operator precedence and 512-term chains.
+- [x] Eliminate quadratic SQL prefix copies and recursive render frames for
+      left-deep arithmetic (+, −, ×, ÷) without altering expression grouping,
+      source-order parameter binding or provider-specific MOD/CONCAT/NULL-safe
+      operator rendering. Six-dialect 512-term mixed-arithmetic positives
+      and precedence equality/inequality regressions exercise this path.
+      Renderer remains recursive for right-heavy and general Query graphs.
+- [x] Generalize Boolean rendering to a typed work stack for both left-
+      and right-deep / mixed AND/OR expression trees. Preserve original
+      parentheses and SQL three-valued logic, and render all leaf expressions
+      in source parameter order. Six-dialect 128-operand right-deep mixed
+      Boolean and precedence non-reassociation regressions cover this path.
+      Arbitrary non-Boolean right-heavy and Query rendering still recurse.
+
+
 - [x] Render narrow single-projection nested scalar SELECT wrapper chains in
       linear SQL-string space using an iterative wrapper walk and StringBuilder.
       Preserve parameter ordering, Oracle/Firebird dummy FROM, nontrivial
@@ -303,6 +348,209 @@ published as measured percentages or silently set to 100.
       compilation or this typed fail-closed result; any other failure or crash
       fails the CI syntax-matrix job. This test is about host process safety,
       not an arbitrary SQL nesting-depth limit.
+- [x] Start behavior-preserving stack-independent traversal migration:
+      common explicit heap-backed scalar walker replaces recursive UPDATE/DELETE
+      volatility inspection, INSERT VALUES scope validation and aggregate-order
+      row-column checks. Expr.unspan is iterative.
+- [x] Replace `Expr.equivalent` recursive structural comparison with
+      a typed pair-stack walk: no managed recursion for Unary/Binary,
+      functions, CASE, window, list and BETWEEN expression pairs.
+      Preserve exact CTE/subquery conservatism, span-insensitivity,
+      correlation restrictions and ORDER BY expression matching.
+      SQL Server DISTINCT/OFFSET regression covers 16/64/128 nested
+      computed expression chains, both equivalent and mismatched.
+- [x] Convert query-table policy validation from mutually recursive
+      expression/query/source/select functions to an explicit continuation-frame
+      machine. Preserve CTE-first, FROM-first, projection/WHERE/JOIN and
+      ORDER BY alias-check diagnostic precedence; retain nested subquery
+      whitelist verification with six-dialect positive/negative tests.
+- [x] Replace recursive parent-scope qualifier/source lookup in Binder
+      with iterative ancestry scans. Existing correlated-subquery binding
+      behavior and six-dialect 2,048-level nested scalar probes remain gates.
+- [x] Use value-type continuation frames and avoid per-node intermediate
+      List.map/collect allocations to bound the new policy walk's GC cost.
+- [x] Convert aggregate function/source/query capability validation into
+      an explicit iterative continuation machine, preserving recursive CTE,
+      lateral source, JSON selector, FETCH and aggregate-ordering fail-closed
+      checks and the stage's original diagnostic precedence. Regression cases
+      cover 16/64 nested scalar functions inside cross-dialect STRING_AGG order.
+- [x] Replace Binder recursive CTE self-reference counting and forbidden
+      recursive-member scans with a struct-frame iterative expression/source/
+      select/query proof walker. Preserve direct-vs-nested self-reference,
+      alias, aggregate/window and anchor/UNION restrictions. Existing 128
+      positive and 23 negative four-dialect grammar cases remain required;
+      extra regressions verify deep scalar nesting and hidden duplicate
+      subquery references without weakening any binding diagnostics.
+- [x] Convert metadata-backed schema qualified/unqualified column resolution,
+      wildcard source-qualifier lookup and schema-type ancestor-kind resolution
+      to loops. Preserve nearest-scope alias shadowing and ambiguity/fail-closed
+      diagnostics. Nested correlated SELECT positive/negative regressions
+      verify outer-scope resolution at 8/32 layers.
+- [x] Remove recursive CASE-result Boolean classification in Semantic
+      Validation: iteratively classify only non-NULL CASE results with
+      short-circuiting and original provider-aware predicate rules.
+      Deep 16/32 CASE regressions preserve PostgreSQL acceptance,
+      Oracle boolean projection rejection and numeric-CASE acceptance.
+- [x] Replace source-dialect raw function, operator, NULL ordering and
+      REGEXP capability graph recursion with one explicit SourceWalkFrame
+      machine. Preserve raw REGEXP capability checks *after* its arguments,
+      source function/operator checks *before* children, CTE-before-SELECT,
+      and legacy aggregate-local ORDER BY regex-proof boundaries.
+      Six-provider nested COALESCE positives, deep wrong-source-function
+      negatives, and nested NULLS FIRST rejection are regression gates.
+- [x] Remove Renderer Boolean CASE classification recursion by iterating
+      non-NULL CASE result arms; renderBooleanTruthValue now unwraps spans
+      iteratively. Oracle/SQL Server native predicates retain numeric
+      CASE truth comparison and parameter-binding behavior. General SQL
+      expression rendering remains recursive and separately tracked.
+- [x] Collapse contiguous Unary +/− and Spanned prefix wrappers
+      iteratively in Binder and Normalizer (reverse frames preserve original
+      AST/source-span ordering, unary-plus elimination and sign semantics).
+      Parser now scans unary +/− prefixes iteratively while preserving signed
+      number folding and postfix CAST handling; six-provider 32/128-prefix
+      regressions keep compiled SQL/parameter behavior stable.
+- [x] Replace recursive set-operation branch normalization with a
+      two-phase Enter/Complete Query continuation stack. The SELECT Head
+      still normalizes first, child set branches left-to-right, then query
+      ORDER BY; results are rebuilt post-order on the heap. Six-dialect
+      twelve-branch UNION ALL regressions require preserved SQL branch count,
+      ORDER BY and parameter-binding order. Subquery normalizations within
+      Head expressions remain a separate recursive path.
+- [x] Introduce shared post-order Expression mapping with explicit Enter/Exit
+      frames and typed Expr result stack. Binder resolves columns and wildcard
+      scope on rebuilt nodes; Normalizer applies function canonicalization,
+      CAST translation, unary-positive erasure and raw regex lowering after
+      children. All closed scalar DU cases (binary, CASE, functions, windows,
+      IN/BETWEEN, etc.) are rebuilt iteratively; nested Query still uses its
+      existing CTE/correlation-scope boundary. Six-dialect 256-node arithmetic
+      and mixed CASE/IN/BETWEEN parameter-order regressions guard parity.
+- [x] Replace Semantic Validation's mutually recursive expression/query/
+      SELECT/source traversal with typed continuation frames. The graph
+      handles CTEs, scalar/IN/EXISTS subqueries, derived tables, set branches,
+      nested aggregates/windows and ORDER BY without managed recursion;
+      preserving clause context, projection-width checks and error order.
+      Six-provider nested scalar + set-width fail-closed tests and aggregate
+      placement regressions are required for acceptance.
+- [x] Replace ordering/paging capability Expr/Query/Source recursion with
+      explicit frames. 256-KiB probe artifact identified the previous
+      `proveOrderingExpr` recursion as the exact cause of 8 left-deep AND
+      worker StackOverflows (4 dialects × 2 depths); preserve statement-tail
+      vs aggregate/window-local NULL ordering checks and existing error
+      precedence. Positive six-dialect deep-predicate and negative nested
+      computed NULLS ordering tests cover this new boundary.
+- [x] Rebuild Binder set-operation Query branches with explicit
+      BindQueryEnter/BindQueryComplete continuations. Each branch inherits
+      exactly the parent's correlation scope and the head's visible CTEs;
+      bind order stays head → branches left-to-right → tail ORDER BY. Wide
+      24-branch six-provider CTE/parameter ordering and wrong-branch-alias
+      negative tests guard these contracts. Scalar/derived-subquery binding
+      still crosses a recursive Query callback and is not yet stack independent.
+- [x] Convert DML rich RETURNING subset proof from mutually recursive
+      Scalar/Predicate validation to one typed continuation stack. It retains
+      strict local-row bindings, direct portable scalar-function checks,
+      CASE condition/result context separation, nested Boolean/comparison
+      gates, and fail-closed rejection of aggregates and subqueries.
+      Deep 32/128 arithmetic, 64-predicate CASE and hidden aggregate
+      negative regression tests exercise the previously recursive paths.
+- [x] Avoid binder continuation allocations for the overwhelmingly common
+      non-set Query. The new Query/SetBranch frames are used only when a
+      set-operation tree exists; direct queries reuse original head/scope/
+      projection-alias behavior. The previous 2,048-deep scalar probe grew
+      from ~14.99 MB to ~15.87 MB on the first Binder query-frame version;
+      run the same six-provider depth benchmark before accepting this fast
+      path as a performance fix.
+- [x] Avoid repeated prefix copies and alias-rescanning in Binder JOIN
+      scope construction. Persist source bindings by O(1) prepend and use
+      an insertion-ordered first-display dictionary for duplicate-alias
+      diagnostics. JOIN source correlation and ON-predicate binding still
+      see precisely the preceding sources; six-dialect 16-join parameter
+      ordering and alias collision cases guard these invariants.
+- [x] Flatten pure no-FROM, single-projection Query/ScalarSubquery
+      chains in Binder and Normalizer with explicit continuation frames.
+      Binder creates every intermediate parent Scope to preserve ancestor
+      qualifier binding and lexical CTE visibility; Normalizer keeps each
+      Query's stage check, original outer SourceSpan and projection alias.
+      Clauses, CTEs, joins, multiple projections, set branches and paging
+      remain on the existing guarded path. Six-provider 96-level correlated
+      ancestor and 48-level unknown-qualifier regressions cover the boundary;
+      general mixed Query/Expr/Source continuations remain open.
+- [x] Complete the deterministic native ON CONFLICT arithmetic path's
+      stack-independent AST conversion, portable-conflict capability proof
+      and SQL rendering. `ConflictValue.tryOfExpression/toExpression`,
+      `validateValue`, and `renderConflictValue` now use explicit
+      continuation/work stacks, preserve parentheses, left-to-right
+      literal/parameter order, proposed-column inclusion requirements and
+      fail-closed rejection for unsupported expressions. PostgreSQL/SQLite
+      48/128-operator positives, nested unary/parentheses and 96-level
+      missing-EXCLUDED-column negatives exercise these boundaries.
+- [x] Add a reusable mixed-graph Query/Select/Expr/CTE/Source/Join
+      post-order reconstruction engine and route Normalizer Query and DML
+      Source trees through it. Scalar normalization (function registry,
+      regex, unary positive, CAST) and CTE alias projection lowering run
+      only after child completion. Existing source-order diagnostics are
+      preserved: CTEs, DISTINCT, projection, FROM, JOIN, WHERE, GROUP BY,
+      HAVING; then set branches; finally trailing ORDER BY. The scalar
+      DML expression mapper still uses the existing fast path, delegating
+      nested Query bodies to this mixed graph. Six-provider mixed EXISTS/
+      derived/UNION positive, CTE alias and width fail-closed tests guard
+      the cut-over. Binder scope-aware mixed continuations and general
+      Renderer remain open.
+- [x] Route mixed Binder Query/Select/CTE/Source/JOIN/Expr graphs through
+      an explicit Scope-aware continuation machine. CTE definitions are
+      sequentially bound with recursive self-visibility, FROM sources bind
+      under the enclosing parent scope, LATERAL JOIN sources receive all
+      preceding row sources, non-LATERAL sources do not, and projection/
+      ORDER BY aliases retain head/branch boundaries. Scalar Query callbacks
+      are scheduled as Query frames instead of re-entering bindQuery.
+      Preserve the established pure scalar-chain and ordinary SELECT fast
+      paths. Six-provider correlated IN/EXISTS/derived UNION/CTE cases,
+      PostgreSQL nested LATERAL success/fail-closed cases, and first-invalid
+      qualifier diagnostics cover this boundary. An additional opt-in
+      isolated mixed EXISTS depth shape measures real cross-query nesting
+      without raising the historic 72-case CI depth floor.
+- [x] Rebuild the compositional Scalar Renderer with one typed
+      `ScalarNode / ScalarText` SQL-emission stack, covering right-deep and
+      alternating unary, arithmetic/comparison, CAST, EXTRACT, IS NULL,
+      BETWEEN, IN-list, LIKE, REGEX and PostgreSQL JSON-access nodes.
+      Preserve the Oracle expanded NULL-safe comparison, MySQL/SQL Server
+      native CONCAT, PostgreSQL JSON selector-before-value binding,
+      Postgres/SQLite/Oracle/Firebird EXTRACT lowering and left-to-right
+      parameters. Frame-buffer allocation is bypassed for terminal two-
+      operand predicates, keeping the existing 2,048-deep PostgreSQL
+      left-AND benchmark at ~11.03 MB rather than ~11.46 MB.
+      Six-provider 128-deep right-nested arithmetic/negation, composite
+      predicates and PostgreSQL JSON binding-order tests guard the migration.
+- [x] Record the previously optional mixed Query depth probe in CI as
+      a separate observational artifact: PostgreSQL and Oracle
+      `Expr → EXISTS → Query → WHERE` at 128/512/2048 all compile
+      (6/6, zero crashes on run 39971366954), without altering the
+      original 72 normal-depth / 16 constrained-stack gates.
+- [x] Eliminate quadratic SQL string materialization for inert
+      `EXISTS (SELECT ... WHERE EXISTS (...))` query chains with one
+      provider-aware StringBuilder emission path. Preserve outer-to-inner
+      projection parameter binding, Oracle `FROM DUAL`, Firebird
+      `FROM RDB$DATABASE`, and fallback for CTE, set, paging and
+      nontrivial SELECT shapes. On the same depth-2048 Postgres/Oracle
+      mixed query corpus: 269,330,144 → 27,489,456 bytes (Postgres,
+      -89.8%) and 353,506,448 → 27,632,392 bytes (Oracle, -92.2%);
+      all six isolated samples compiled, zero crashes. Convert this
+      narrow shape into a CI regression gate at 120 MB, more than 4x
+      the optimized footprint yet below the prior quadratic result.
+      Additional six-provider tests assert 128 nested WHERE/EXISTS
+      literal binding order, dummy sources and rich inner-query fallback.
+- [x] Stream SELECT JOINs and set-operation branches through a single
+      StringBuilder rather than repeatedly copying the complete SQL prefix
+      on each additional source/UNION branch. Six-provider 32-JOIN and
+      48-UNION regression tests preserve SQL operators and left-to-right
+      parameter order.
+- [ ] Characterize allocations per compiler stage and remove remaining
+      quadratic Query/Expr output paths for more general mixed CTE,
+      lateral derived-source, paging and set-tail shapes. The improved
+      EXISTS chain is an intentionally narrow, proven streaming subset,
+      not a claim that the entire Query Renderer is non-recursive.
+- [ ] Migrate remaining binder/normalizer/schema/type/semantic and renderer
+      recursive paths; compare SQL output, parameter order, diagnostics and
+      allocations before claiming arbitrary-depth compiler support.
 - [ ] Characterize remaining nested subqueries, expression trees, and AST
       traversals with isolated subprocess probes and stage-wise measurements
       before choosing any recursion budget.
@@ -665,3 +913,555 @@ published as measured percentages or silently set to 100.
   collations, session settings and trigger configuration.
 - Do not merge a feature expansion by shrinking a positive or negative corpus.
 - Never treat a skipped CI job as a passing CI job.
+
+### Renderer transient allocation controls (PR #300)
+
+The compiler rejects SQL output above **16,777,216 UTF-16 characters**
+(`SQL_COMPILER_RENDERED_OUTPUT_LIMIT`, RenderingInvariant/Resource).
+Major append-driven emitters now use a checked buffer: a fragment is rejected
+**before** its StringBuilder expands beyond the output limit. Independently,
+appends through these emitters share a **134,217,728 UTF-16-character cumulative
+work ceiling** per rendering operation
+(`SQL_COMPILER_RENDER_WORK_LIMIT`, RenderingInvariant/Resource). This prevents
+some pathological repeated-emission workloads even when their final output
+would fit. SQL Server OFFSET pagination also appends wide JOINs linearly rather
+than copying a growing SELECT prefix.
+
+These are intentionally distinct from peak resident memory and a complete
+compiler execution-time budget. String concatenations and unconverted
+Query/CTE/derived-table paths can still materialize intermediate strings.
+Neither threshold should be represented as a universal process-memory bound.
+Stage-isolated allocation/time profiling and remaining Query/Parser/Schema
+recursion are further merge gates.
+
+### Strict schema stack reserve (PR #300)
+
+Both metadata-backed `queryColumns` (Binding) and type-family `queryTypes`
+(SemanticValidation) now check the remaining CLR stack at each Query entry.
+This closes a safety gap for deeply nested leaf-only derived tables, CTEs and
+set branches that may not enter expression visitors. A low-stack request must
+fail with the existing typed stack-reserve diagnostic rather than crash.
+This is a **fail-closed fallback**, not proof of stack-independent schema
+validation; replacing remaining recursive Query/Expr/Source calls with
+scope-aware continuation frames remains outstanding.
+
+### Phase budgets, monotonic deadline, and allocation telemetry (PR #300)
+
+The rewrite pipeline now owns one isolated compilation-scope quota. Parser,
+Binder, strict Schema/Type, Normalizer, Validator, Policy, Renderer and the
+inspection path each run within a named stage and publish `StageCompleted`
+events using `DiagnosticListener("HsSqlAgent.SqlCore.Compiler")`. Payload:
+`Stage`, `ElapsedMicroseconds`, `AllocatedBytes`,
+`WorkUnits`, `Success`. It intentionally contains **no SQL text,
+parameters, schema contents or user identifiers**. Allocations are
+**current-thread allocated bytes**, not peak RSS or GC heap retained size.
+
+A stage has an initial ceiling of **8,000,000 deterministic work units**,
+**30 seconds elapsed**, and its compilation attempt has a shared
+**90-second monotonic deadline**. The budget is checked at stage transitions
+and at amortized recursive/token checkpoints (one clock check per 256 units).
+Typed resource errors: `SQL_COMPILER_STAGE_WORK_LIMIT` and
+`SQL_COMPILER_DEADLINE_EXCEEDED`. These are **cooperative** deadlines,
+not preemptive cancellation or database execution timeouts. A CPU-bound
+loop lacking checkpoints is still a known gap. No public ABI or provider
+capability is changed.
+
+The same stage checkpoints also enforce a **512 MiB cumulative managed
+allocation ceiling** (`SQL_COMPILER_STAGE_ALLOCATION_LIMIT`,
+Resource). This is checked before and during stages, including their final
+boundary, but is not a peak resident-memory guarantee. All core AST
+traversal loops charge individual frames; render append buffers charge
+individual writes. A dedicated test subscribes to stage telemetry and
+checks the required six pipeline stages, non-negative timings/allocations
+and a fixed privacy-safe metric property set.
+
+### Nested derived-table SQL emission
+
+Simple `SELECT projection FROM (SELECT ...)` derived-table chains now
+stream outer-to-inner through one checked render buffer. The fast path
+is restricted to no-CTE, no-JOIN, no-WHERE, no-GROUP, no-SET,
+no-pagination wrappers. Rich Query shapes retain the full renderer.
+Six-provider 128-level derived-chain regression exercises this case.
+Complex CTE/LATERAL/SET/ORDER/paging graphs still need convergence.
+
+### Stack-independent strict-schema scalar traversal
+
+Metadata-backed name validation now walks scalar Expr children with
+explicit frames rather than recursive `expression` calls. It preserves
+left-to-right first-rejected-column order and continues to validate
+subquery bodies under the enclosing schema scope. Query/Source/CTE
+evaluation still uses mutually recursive methods with a stack-reserve
+fallback; this does not satisfy the remaining Query/Schema/Type
+stack-independence merge condition.
+
+### Typed scalar continuation
+
+Type-family inference now evaluates arbitrary-length unary and binary
+arithmetic/comparison/Boolean graphs with typed heap continuation frames,
+preserving left-first checks and strict proven type-family mismatch errors.
+Six-provider 384-deep Boolean regression covers valid and invalid numeric/
+text types. Rich CASE, functions, subqueries and Query/CTE/Source transitions
+are **not yet fully stack-independent** and remain on the frozen merge list.
+
+### Isolated phase benchmark artifact
+
+The SQL depth benchmark now records privacy-safe `stageMetrics` for
+each isolated worker (parsing, binding, normalization, validation,
+policy, rendering), plus outer total allocations, elapsed time and
+typed resource diagnostics. New optional shapes `nested-derived-source`
+and `nested-cte` are sampled at 128/512/2048 in the CI artifact
+`sqlcore-query-phases-pr.json`. This set remains **observational**:
+missing metrics for successful compilation and negative measurements
+fail CI, but a path still constrained by CLR stack must first be migrated
+before the deep-shape successful-compilation gate can become mandatory.
+
+### Standalone inspection scope parity
+
+`SqlCoreInspection.GetQueryFacts` from raw SQL and parsed statements now
+shares the compilation-scoped Parsing, Binding and Inspection budget stages,
+rather than bypassing stage accounting through a separate facade.
+`GetDeterminismFacts` also owns one compilation scope with isolated
+Parsing, Binding, Normalization and Inspection stages. This preserves
+existing capability behavior and diagnostics while accounting for work
+entered through public inspection APIs. Recursive F# structural formatting
+in the determinism fingerprint remains an outstanding resource hot path.
+
+### Nested CTE output-memory regression
+
+The CTE emitter now consumes a chain of single, nonrecursive nested CTE
+definitions on one bounded output buffer. It streams the deepest body once,
+then closes inner-to-outer CTE tails; target-specific alias spellings and
+parameter allocation order follow the previous sequential render path.
+Richer recursive, multiple-CTE, SET and paging forms preserve the
+provider-specific fallback. The initial isolated 2,048-nested-CTE
+benchmark measured **474,123,528 rendering-stage allocated bytes**
+(**505,890,832 total**), compared with **28,678,992 total** for simple
+2,048 nested derived queries; the new optimization must be checked against
+the exact same before/after benchmark before promoting a CI ceiling.
+
+### WHERE and tail-bearing derived Query streams
+
+The derived-table continuation now preserves WHERE predicates and
+ORDER BY/paging tails on the same append-before-allocation buffer. For
+PostgreSQL/MySQL/SQLite/Oracle, suffix-only pagination is emitted after
+the inner derived source; SQL Server TOP and Firebird FIRST/SKIP remain
+on their existing provider-specific fallback. JOIN/GROUP/DISTINCT/SET/CTE
+still use the full Query renderer. New six-provider WHERE-chain and
+PostgreSQL paged-chain cases verify exact innermost-first parameter
+ordering, not merely emitted SQL length.
+
+### Parser work accounting and observability isolation
+
+Every parser token consumption (Cursor.Advance/Take), lazy parenthesis-pair
+index visit and grouping-chain inspection now charges a parsing work unit.
+Previously only lexical token emission and selected recursive entries were
+metered. Nested compilation sessions reuse the enclosing quota rather than
+resetting the total deadline. DiagnosticListener notifications are best-effort:
+a throwing telemetry subscriber can no longer mask the compiler's typed
+resource or SQL validation diagnostic. These changes introduce no public
+configuration or SQL semantics changes.
+
+### Bounded INSERT VALUES materialization
+
+Ordinary INSERT VALUES (including PostgreSQL, SQL Server, MySQL, SQLite,
+Oracle and Firebird), Oracle multi-row INSERT ALL and Firebird multi-row
+UNION ALL are now emitted row-major into a checked RenderBuffer without
+allocating a second list of row SQL strings. Conflict and RETURNING
+clauses are appended in original order. A six-provider 64-row positive
+regression compares the entire parameter sequence, not just output text.
+
+### Strict Schema/Type CTE-chain continuations
+
+Both metadata validators now use post-order heap continuation frames
+for single, nonrecursive CTE Query chains without set operations.
+The original nested CTE body is proven before constructing the caller's
+visible alias map and checking its SELECT/ORDER expressions. Each frame
+carries the original correlation parent and CTE scope. The three dialects with declared nested-WITH native target capability
+(PostgreSQL, MySQL and SQLite) exercise 256-level positive strict-schema
+regressions for both name and typed snapshots. SQL Server, Oracle and
+Firebird retain explicit fail-closed negative target-capability tests.
+Mixed multi-CTE, derived/LATERAL/SET and rich expression Query graphs
+continue through stack-reserve fallbacks and are NOT yet globally
+stack-independent.
+
+### Typed Schema CTE isolated-depth gate
+
+The isolated resource harness now includes `nested-cte-typed-schema`:
+it compiles the same nested CTE text with a typed SQL schema snapshot,
+forcing both strict name and type proof stages. CI samples Postgres at
+128/512/2048 levels and requires no unexpected failures/timeouts and
+less than 120 MB cumulative worker allocations at depth 2048, alongside
+the existing derived and untyped CTE shape gates. This is deliberately
+not proof that every Query/Parser/Schema/Type grammar shape is iterative.
+
+### Strict Schema SET-branch traversal
+
+Nested UNION/INTERSECT/EXCEPT branch validation now schedules heap
+continuations instead of recurring through the whole Query graph for
+each SET branch. Each child maintains its own CTE map, parent scope,
+projection-width proof and ORDER BY inspection, with the same depth-first
+first-error precedence as the recursive implementation. CTE body, FROM
+source and scalar-subquery proofs remain separately guarded and are not
+covered by this particular SET-only continuation.
+
+### Strict Type SET branch continuation
+
+The strict type-family evaluator now computes each nested SET-branch
+projection using a per-Query heap accumulator and performs its type-family
+intersection **after** the child subtree finishes. The output family
+for UNION/INTERSECT/EXCEPT uses the original left-to-right proof order;
+unknown family evidence does not become a speculative type. The name and
+type SET continuations are intentionally separate so name-binding errors
+still take precedence over type-family diagnostics.
+
+Positive and negative PostgreSQL 48-level parenthesized nested-SET
+regressions now exercise both strict-schema name resolution and typed
+family validation. The negative cases specifically lock the existing
+`SQL_SCHEMA_COLUMN_NOT_FOUND` and `SQL_SCHEMA_TYPE_MISMATCH`
+diagnostics deep inside a set branch, rather than asserting only that the
+compiler returned some error.
+
+### Lexical scanning work units
+
+Parsing now accounts for scanned UTF-16 characters as well as token
+emission and parser cursor consumption. This covers large comments,
+whitespace and quoted strings that previously consumed CPU without many
+tokens. Scanning quota/deadline checks are amortized in 4,096-character
+chunks; the 4 MiB source cap and existing syntax precedence remain.
+A 1 MiB block-comment regression verifies the `WorkUnits` measurement.
+
+### PostgreSQL nested SET output stream
+
+For a parenthesized PostgreSQL UNION/INTERSECT/EXCEPT branch with no
+branch-local CTE or paging tail, the Query Renderer now emits the entire
+nested branch chain into **one checked RenderBuffer**, using explicit
+enter/branch/close frames. This eliminates one full intermediate rendered
+SQL string per nesting level, preserves branch source order and existing
+binding ordinals, and continues to use the full provider-specific path
+for CTE-bearing branches. A 64-level nested UNION regression locks both
+parenthesis structure and parameter order.
+
+### Nested SET isolated resource baseline
+
+The subprocess harness now enforces 128/512/2048 parenthesized
+PostgreSQL UNION Query chains in both ordinary and strict typed-schema
+modes through `sqlcore-nested-set-pr.json`. All **6/6** samples must
+compile successfully with no crash, timeout or typed resource rejection;
+required per-stage telemetry must be present and nonnegative, and each
+2,048-depth sample must allocate no more than **120 MB** in total.
+The first isolated measurements at depth 2048 were **36,960,800 bytes**
+for ordinary and **44,380,224 bytes** for typed-schema compilation.
+These specific shapes are gated; this does NOT prove that all multi-CTE,
+correlated LATERAL, provider-specific nested SET or paging shapes are
+stack-independent. The larger compiler resource-protection acceptance
+contract remains open.
+
+### Public parser and DML batch quota coverage
+
+The public CLR `CoreSqlTextParser.ParseQuery/ParseDml` entrypoints now
+own a compilation scope, an isolated Parsing stage, and a
+CompatibilityProjection stage. The public `CoreDmlBatchTextParser.ParseDmlBatch`
+entrypoint meters both the batch-wide token scan and the per-statement
+native parser/projection, reusing the same ambient compilation session.
+A separate **32,000,000-unit aggregate compilation work budget**
+(`SQL_COMPILER_TOTAL_WORK_LIMIT`, Resource) prevents multi-statement
+batches or nested inspections from resetting the total quota even when
+each phase stays under its independent 8,000,000-unit limit. No publicly
+configurable bypass or provider semantics change was added.
+
+The quota regressions invoke the real internal F# compilation scope via
+reflection (without exporting a configurable bypass or test API) to
+assert: phase work overage has the correct Parse/Binding exception type,
+the 32,000,000-unit aggregate is independent of 8,000,000-unit per-phase
+limits, a nested DML batch shares the outer budget, and failure does not
+leak state into the following request. The telemetry regression now
+requires public parsing and batch-splitting stage events alongside the
+ordinary compiler/inspection stages.
+
+### Derived-table strict Schema/Type Query continuations
+
+For an uncorrelated, single-source derived-table chain without JOIN,
+CTE at the same level or SET branches, the name and type proof walkers
+now unwind **heap query frames** rather than recurring
+`Query -> Source -> Query`. Each continuation rehydrates the nested
+column names/type families under the declared alias, then validates the
+outer projection, WHERE, GROUP, HAVING and ORDER BY against the original
+correlation parent. Ordinary derived-table alias hiding is preserved.
+Six-provider existing positive name/type regression depths were raised
+from 64 to **256 levels**. LATERAL, JOIN, mixed SET and complex nested
+subquery graphs deliberately remain on guarded full-proof paths.
+
+The parsed-AST compiler now keeps RawSql dialect revalidation,
+compatibility AST conversion, parameter materialization and plan
+fingerprinting inside the same quota session as the closed F# pipeline.
+It emits `Parsing`, `LegacyConversion`, `Materialization` and
+`Fingerprint` stage events on their respective boundaries. A regression
+compiles through the public compatibility parser/compiler surface and
+requires all these stages to be observable; RawSql is never substituted
+for the caller's executable AST.
+
+### CLR compatibility SET round-trip (R2)
+
+Both compatibility AST translators (`RewriteCompatibilityAstAdapter.queryOf`
+and `RewriteLegacyAstAdapter.queryOfStatement`) now traverse nested
+UNION/INTERSECT/EXCEPT Query branches with heap-based DFS postorder
+continuations and reference-identity result tables. This removes CLR recursion
+along the SET-only conversion edge without reordering query heads, branch
+operations, parameter binding, or AST validation failures. The public
+`CoreSqlTextParser.ParseQuery` → `CoreSqlCompiler.Compile` regression
+round-trips **512 nested PostgreSQL UNIONs** and checks parameter order.
+Mixed CTE, nested scalar expression and derived/LATERAL source conversions
+still require a separate recursion audit and must not be claimed complete.
+
+The CLR→F# SET converter explicitly validates each branch operator
+**before** visiting that branch's child Query (the previous recursive
+error-precedence contract), while still resolving sibling branches in
+source order. Both conversion directions preserve the SELECT-head-first
+order and the existing capability fence.
+
+### Parenthesized SET parser heap scheduler (R2)
+
+The source parser's parenthesized SET branch graph now schedules
+`parseQuery`, operands, INTERSECT-precedence chains and query tails
+on a heap continuation work list rather than recursing once per
+parenthesized UNION/EXCEPT/INTERSECT. Each query keeps its own original
+start span, SELECT-head/TOP semantics, branch ordering and per-level
+ORDER BY/OFFSET/FETCH. Crucially a nested operand is fully parsed and
+its closing `)` consumed before the parent may attach following
+INTERSECT, matching the original precedence and first-error order.
+512-layer source parsing is checked independently for **all six dialects**,
+with a parenthesized local ORDER BY + following INTERSECT rejection.
+Mixed Parser Query→Expression, derived/LATERAL source and CTE-body
+recursion is **still open**; only nested SET operands are claimed here.
+
+### 256 KiB stack independent nested SET gate
+
+The isolated SQL depth workflow now gates four additional PostgreSQL
+`nested-set` / `nested-set-typed-schema` × {512, 2048} workers with a
+**262,144-byte managed thread stack**. Unlike the general 16 constrained
+stack probes, a typed stack-reserve refusal is **not sufficient** for
+these four cases: each worker must successfully compile, return exit
+code 0 and emit all expected phase metrics, including SchemaBinding and
+SchemaType for typed-schema runs. Parent test continues to record crashes,
+timeouts and diagnostic failures independently. The gate is specific to
+nested SET, not a claim that mixed CTE/LATERAL/Expr graphs have no
+remaining CLR recursion.
+
+### Structural validation SET branch heap continuations
+
+The new 256-KiB-stack CI gate located two **actual 2,048-depth
+StackOverflowException worker crashes**, not parser errors, inside
+`RewriteStructuralValidation`. Both structural passes
+(`validateNestedCteQuery` target CTE placement and
+`validateNoFromQuery` no-FROM invariant) had recursively descended every
+SET branch even after the parser/binder became iterative.
+They now schedule branch heads and each query's ORDER BY tail as
+**heap DFS continuations**, preserving SELECT-first, branch-order and
+post-branch ORDER BY diagnostic precedence while charging work.
+CTE/derived/Expr crossings remain independently scoped paths.
+The strict small-stack gate is retained: it cannot pass on a crash
+or a typed stack-reserve rejection at the two tested depths.
+
+### Capability validation SET branch heap continuations
+
+The next isolated 2,048-depth small-stack crash was located inside
+`RewriteCapabilityValidation`, after structural validation became
+stack independent. Both `proveFilterQuery` and `proveTargetQuery`
+now traverse nested SET operations through explicit heap DFS frames.
+Filter proofs still validate SELECT, each child, and ORDER BY in order.
+Target proofs still check parent FETCH PERCENT / WITH TIES **before**
+the SELECT head, and each child SET operator capability **before** its
+query body; nested ORDER BY tails follow their children. Existing
+provider-specific rejection paths remain active, and every scheduled
+frame charges the compilation work budget. Complex CTE/derived/LATERAL
+Query crossings remain future R2 work.
+
+### Plan join and SQL Server paging SET proof continuations
+
+The third 256-KiB/2,048-depth worker crash occurred inside
+`RewritePlanCapabilityValidation.proveJoinQuery`, after structural
+and expression capability validation were made stack independent.
+Join proofs now use a heap Query DFS for SET branches, preserving
+SELECT source/join checks and branch order. SQL Server-specific
+pagination proof traversal was separately converted to explicit
+enter/finish Query frames, preserving CTE → FROM-derived → JOIN-derived
+→ SET → local OFFSET validation precedence without CLR graph recursion.
+The strict small-stack probe continues to reject any unexpected crash,
+rather than accepting stack-reserve refusal or silently removing
+a provider capability check.
+
+### Mixed CTE / derived / LATERAL join capability frames
+
+`RewritePlanCapabilityValidation.proveJoinQuery` now schedules a
+**single heap worklist** for Query heads, CTE definitions, derived/LATERAL
+table sources, JOIN capability proofs and SET branches, rather than only
+iterating SET children while recursively entering each CTE and source.
+The original first-error traversal is preserved: all CTE definitions
+in lexical order, FROM, JOIN kind before source, and then SET branches.
+A PostgreSQL regression combines a CTE, correlated LATERAL JOIN,
+derived UNION ALL and ordered parameters; another alternates 96
+derived and CTE boundaries. These are *join capability proof* changes,
+not a claim that the Parser or strict Schema/Type mixed graphs are fully
+stack independent. Existing six-provider grammar parity tests remain
+required.
+
+### Structural mixed Query source traversal (R2)
+
+The strict structural passes now use end-to-end heap frames for
+`Query → CTE`, `Query → Derived/LATERAL Source`, JOIN source/predicate,
+SET branches and query tails, rather than calling their own Query
+functions at every mixed source boundary. The former error precedence
+is preserved explicitly: CTEs in declaration order, FROM, each JOIN
+source before predicate, SELECT expressions, SET children, then ORDER BY.
+`validateNestedCteQuery` also preserves its scalar-subquery-specific
+SET tail capability restriction; `validateNoFromQuery` retains the
+projection/no-FROM and JOIN-without-FROM rules. Scalar-expression
+subqueries still cross through the existing iterative scalar visitor
+and its Query callback, so general Query/Expr stack independence is
+**not yet claimed**. Regression coverage includes 96-level mixed
+CTE/derived paths, correlated LATERAL/SET proofs, all-dialect grammar
+and the existing constrained-stack SET gates.
+
+### Mixed capability graph traversal (R2)
+
+Both `proveFilter*` and `proveTarget*` use the same
+`walkCapabilityGraph` heap stack across Query, Expr, CTE, derived
+and LATERAL sources, JOIN/predicate, nested scalar/EXISTS/IN queries,
+SET branches and tail ORDER BY. This replaces the formerly recursive
+Query callback from `walkCapabilityExpr` and recursive Query crossings
+from CTEs and table sources. Provider-specific target proofs remain
+separate callbacks, including recursive CTE, DISTINCT ON, FETCH,
+LATERAL, NATURAL/USING JOIN and INTERSECT/EXCEPT ALL checks. Filter
+expression features and ordered FILTER aggregate predicate proof
+remain active. Failure ordering remains CTE definitions before
+SELECT projections, FROM/JOIN sources, then SET branch/operator
+before branch body, and tail ORDER BY last.
+
+This change closes only the Filter/Target capability-proof
+Query↔Expr/Source recursion. Parser and strict Schema/Type proof
+mixed-graph traversal must be benchmarked separately.
+
+### Predicate and repeatability stack independence
+
+`proveFilterPredicate` now schedules FILTER aggregate predicate
+children with a dedicated heap worklist (including the
+`IN (subquery)` capability check **after** validating its left value).
+`isRepeatableDistinctOperand`, used for Oracle null-safe CASE
+rewrites, short-circuits fail-closed on a heap worklist instead of
+recursively checking deep arithmetic/cast trees. PostgreSQL's
+512-clause FILTER aggregate regression checks parameter cardinality
+and SQL emission. These changes do not relax target proof requirements.
+
+### CTE parser scheduler and hard 256-KiB gate (R2)
+
+`RewriteParser.parseCtes` now receives the enclosing
+`parseQuery` heap scheduler and a continuation for the lexical CTE
+list. It schedules each WITH-body query and resumes after its closing
+parenthesis; no CTE nesting level recursively calls `parseQuery`.
+This preserves recursive-CTE source capability checks, multiple CTE
+declaration order, alias lists and precise spans. New source-dialect
+parser regressions cover all six providers at 512 nested CTEs, plus
+all-provider multi-CTE alias/projection compilation.
+
+CI adds a strict **success-only** worker gate: PostgreSQL
+`nested-cte` and `nested-cte-typed-schema`, each at depths 512/2048,
+with 256-KiB managed stacks. The gate requires every expected
+compilation stage, including both SchemaBinding and SchemaType for
+typed metadata proofs, with no crashes/timeouts. This is a CTE-only
+parser milestone; it does not claim Derived/LATERAL/Expr parsing is
+stack independent.
+
+### Mixed expression/query structural proof and alternating source probe
+
+Nested CTE-placement and no-FROM structural proofs now use their **own**
+Query/Expr heap frames all the way through scalar/EXISTS/IN subqueries,
+CTE definitions, derived and LATERAL table sources, JOIN predicates and
+SET ordering tails. A single `queueStructuralChildren` preserves
+source-order expression traversal, COUNT(*) wildcard permissions,
+subquery boundaries, and no-FROM error precedence without recursively
+calling a new Query proof from inside an expression visitor.
+
+The isolated `mixed-cte-derived` depth-probe alternates CTE definition
+and derived-source Query crossings at 128/512/2048 with phase telemetry.
+The CI step is **observational** until Parser and strict Schema/Type
+crossings demonstrate genuine 256-KiB full compilation. A typed
+stack-reserve failure is never misreported as a compilation success.
+
+### Derived-FROM Query parser continuations (R2)
+
+`parseQuery` and its parenthesized SET and CTE continuations now
+also schedule **derived and LATERAL FROM Query bodies** on the same
+heap worklist. `parseSelectPrefix` and `parseSelectAfterFrom`
+keep SELECT projection, DISTINCT, SQL Server TOP, JOIN, WHERE,
+GROUP/HAVING and source-span behavior shared with the prior
+synchronous parser. Source LATERAL support checks, alias grammar and
+the source-ordered SET branch/tail parser stay enabled.
+Six-provider 512-depth parser regressions cover derived-FROM chains
+and alternating CTE/derived nesting; no claim is made yet for JOIN
+derived-source or scalar subquery nesting, which still follow their
+existing parsing paths.
+
+### R1 mixed CTE/derived single-buffer SQL emission
+
+The `renderQuery` dispatcher now recognizes a bounded linear mixed
+query graph combining non-recursive one-CTE definitions and ordinary
+derived FROM wrappers, and streams their lexical prefixes, leaf
+query and inverse suffixes through a **single** `RenderBuffer`.
+The specialized grammar excludes SET, paging, grouping, DISTINCT
+and JOIN wrappers; richer or unproven shapes keep the original
+renderer. The binding order is unchanged: derived projections before
+their inner query, CTE query bodies before their referencing SELECT,
+and WHERE after derived-source emission. Bidirectional CTE/derived
+parameter-binding tests are added.
+
+The new CI gate requires 128/512/2048 mixed-query full compilation
+and stage evidence, and bounds 2048-depth total allocations to 120MB
+and Rendering phase to 60MB. The prior observational baseline was
+**459,273,288 bytes total / 426,892,544 bytes Rendering** at
+2048 mixed CTE/derived layers, materially worse than homogeneous
+single-CTE and derived chains. This is a narrow R1 partial improvement,
+not the final streaming-closure claim.
+
+### Strict mixed CTE/derived 256-KiB stack gate
+
+CI requires the alternating CTE/derived full pipeline to **compile
+successfully** at depths 512 and 2,048 on 256-KiB managed worker stacks.
+The gate rejects process crashes, timeouts, stack-reserve/resource
+refusals, missing phase telemetry and total allocations over
+120 MB at 2,048. This advances the previously observational
+mixed-source probe to a hard R2 regression check; it is still
+PostgreSQL only and does not prove mixed LATERAL/JOIN/Expr or
+Schema+Type strict correlation across all six target providers.
+
+### Mixed CTE/derived strict Schema+Type on 256 KiB stacks
+
+The alternating mixed-source probe now includes the
+`mixed-cte-derived-typed-schema` variant backed by a known numeric
+`users.id` schema snapshot. Normal and typed variants both must
+compile at 512 and 2,048 nested boundaries on a 256-KiB managed
+stack; successful typed probes additionally require `SchemaBinding`
+and `SchemaType` telemetry. The existing 2,048-depth 120 MB total
+allocation bound remains enforced. This is an acceptance gate for
+*linear alternating CTE/derived source chains*, not yet for JOIN,
+correlated LATERAL, or arbitrary Expr↔Query crossings.
+
+### Primary FROM LATERAL on scoped heap proofs (R2, 2026-10-24)
+
+The iterative strict-schema projection/type chain now recognizes
+`SELECT ... FROM LATERAL (<query>) AS alias` without JOINs, DISTINCT,
+SET or other non-linear dependencies. Unlike ordinary derived sources,
+the inner LATERAL query **inherits the existing outer correlation scope**.
+The fast path never rewrites JOIN LATERALs: they still use full
+left-source-scoped proof handling. The renderer emits a linear
+chain of LATERAL wrappers into one bounded `RenderBuffer`, retaining
+the target LATERAL capability rejection and projection-before-inner,
+WHERE-after-inner parameter order.
+
+A typed PostgreSQL regression at depth 128 plus a correlated
+outer-scope EXISTS query ensures neither the metadata proof nor the
+output stream loses correlation. The CI small-stack gate requires
+**successful, fully instrumented 512/2,048-level** ordinary and typed
+LATERAL source compilation on 256-KiB managed stacks. The 2,048-level
+total-allocation ceiling is 120 MB, with Rendering under 60 MB and
+nonnegative phase metrics. Joined or deeply correlated LATERAL remains
+a distinct unproven graph, so general R2 remains open.

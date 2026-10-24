@@ -10,6 +10,49 @@ public sealed class CoreDmlConstantPredicatePolicyTests
 {
     private const string DiagnosticKey = "HsSqlAgent.SqlCore.Diagnostic";
 
+    public static IEnumerable<object[]> DeepPolicyCases()
+    {
+        foreach (var provider in Enum.GetValues<SqlAgentToolType>())
+        foreach (var depth in new[] { 128, 512, 2048 })
+        foreach (var selective in new[] { false, true })
+            yield return new object[] { provider, depth, selective };
+    }
+
+    [Theory]
+    [MemberData(nameof(DeepPolicyCases))]
+    public void DeepMutationPredicate_RequiresSamePolicyDecisionOn256KiB(
+        SqlAgentToolType provider, int depth, bool selective)
+    {
+        var predicate = string.Join(" AND ", Enumerable.Repeat("1 = 1", depth));
+        if (selective) predicate += " AND id = 7";
+        Exception? failure = null;
+        string? sql = null;
+        var worker = new Thread(() =>
+        {
+            try
+            {
+                sql = HsSqlAgent.SqlCore.SqlCoreFacade.CompileDml(
+                    "DELETE FROM users WHERE " + predicate, provider, provider,
+                    new SqlPlanValidationContext("deep-policy-proof-v1")).Sql;
+            }
+            catch (Exception error) { failure = error; }
+        }, 262144);
+        worker.Start();
+        Assert.True(worker.Join(TimeSpan.FromSeconds(20)), "Deep policy worker timed out");
+        if (selective)
+        {
+            Assert.Null(failure);
+            Assert.False(string.IsNullOrEmpty(sql));
+        }
+        else
+        {
+            var error = Assert.IsType<UnauthorizedAccessException>(failure);
+            var diagnostic = Assert.IsType<SqlDiagnostic>(error.Data[DiagnosticKey]);
+            Assert.Equal("SQL_POLICY_DELETE_UNBOUNDED_PREDICATE", diagnostic.Code);
+            Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+        }
+    }
+
     public static IEnumerable<object[]> AlwaysTrueCases()
     {
         var predicates = new[]

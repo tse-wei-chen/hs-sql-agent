@@ -384,6 +384,60 @@ public class CoreSourceDialectValidationTests
         Assert.Contains("MySQL", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    public static IEnumerable<object[]> AllSourceDialects() =>
+        Enum.GetValues<SqlAgentToolType>()
+            .Select(provider => new object[] { provider });
+
+    [Theory]
+    [MemberData(nameof(AllSourceDialects))]
+    public void Compile_DeepSourceFunctionWalk_PreservesAcceptedFunctionGrammar(
+        SqlAgentToolType sourceDialect)
+    {
+        // All six providers must reach the normal compiler pipeline without
+        // a recursive source-verification call for each COALESCE node.
+        var expression = "id";
+        for (var depth = 0; depth < 32; depth++)
+            expression = $"COALESCE({expression}, 0)";
+
+        var command = CompileQuery(
+            $"SELECT {expression} FROM users",
+            sourceDialect,
+            sourceDialect);
+        Assert.Contains("COALESCE(", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(32)]
+    public void Compile_DeepWrongSourceFunction_StillFailsBeforeNormalization(int depth)
+    {
+        var expression = "DATE_FORMAT(created_at, '%Y')";
+        for (var index = 0; index < depth; index++)
+            expression = $"COALESCE({expression}, 'fallback')";
+
+        var error = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            $"SELECT {expression} FROM orders",
+            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.MySQL));
+
+        Assert.Contains("DATE_FORMAT", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MsSqlServer", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Compile_NestedQueryOrderStillRejectsSourceNullOrdering()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() => CompileQuery(
+            "WITH recent AS (SELECT amount FROM orders) "
+            + "SELECT (SELECT amount FROM recent ORDER BY amount NULLS FIRST LIMIT 1) FROM orders",
+            SqlAgentToolType.MySQL,
+            SqlAgentToolType.Postgres));
+
+        Assert.Contains("NULLS FIRST", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("source dialect MySQL", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand CompileQuery(
         string sql,
         SqlAgentToolType sourceDialect,

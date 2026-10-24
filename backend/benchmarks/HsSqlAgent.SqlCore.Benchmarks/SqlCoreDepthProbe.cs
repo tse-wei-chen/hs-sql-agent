@@ -16,6 +16,205 @@ internal static class SqlCoreDepthProbe
 {
     private static readonly string[] Shapes =
         ["redundant-grouping", "nested-scalar-subquery", "prefix-not", "left-deep-and"];
+    // Opt-in shape: alternates SELECT/WHERE/EXISTS Query boundaries rather
+    // than only repeating an inert scalar projection. Keep the historic
+    // default 72-case CI depth floor intact; use --shapes to measure this
+    // additional resource class in an isolated subprocess.
+    private static readonly string[] OptionalShapes =
+        ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema",
+         "nested-set", "nested-set-typed-schema", "mixed-cte-derived",
+         "mixed-cte-derived-typed-schema", "nested-lateral-derived",
+         "nested-lateral-derived-typed-schema", "nested-joined-lateral",
+         "nested-joined-lateral-typed-schema", "nested-correlated-exists",
+         "nested-correlated-exists-typed-schema",
+         "nested-correlated-in", "nested-correlated-in-typed-schema",
+         "nested-scalar-subquery-typed-schema", "nested-case-scalar",
+         "nested-case-scalar-typed-schema",
+         "nested-prefixed-joined-lateral", "nested-prefixed-joined-lateral-typed-schema",
+         "nested-double-joined-lateral", "nested-double-joined-lateral-typed-schema",
+         "nested-triple-joined-lateral", "nested-triple-joined-lateral-typed-schema",
+         "two-deep-sibling-lateral", "two-deep-sibling-lateral-typed-schema",
+         "lateral-exists-comb-siblings", "lateral-exists-comb-siblings-typed-schema",
+         "facts-joined-lateral", "facts-joined-lateral-typed-schema",
+         "nested-paging-typed-schema", "invalid-nested-paging"];
+
+    private sealed record StageSample(string Stage, long ElapsedMicroseconds,
+        long AllocatedBytes, long WorkUnits, bool Success);
+
+    private sealed class Observer<T>(Action<T> onNext) : IObserver<T>
+    {
+        public void OnNext(T item) => onNext(item);
+        public void OnCompleted() { }
+        public void OnError(Exception _) { }
+    }
+
+    private static string NestDerived(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT d.id FROM (" + sql + ") d";
+        return sql;
+    }
+
+    private static string NestPaging(int depth, SqlAgentToolType dialect, bool invalid)
+    {
+        var sql = invalid ? "SELECT id FROM users WHERE id = " : "SELECT id FROM users";
+        var suffix = dialect switch
+        {
+            SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird =>
+                " OFFSET 1 ROWS FETCH NEXT 2 ROWS ONLY",
+            _ => " LIMIT 2 OFFSET 1"
+        };
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT d.id FROM (" + sql + ") d ORDER BY d.id" + suffix;
+        return sql;
+    }
+
+    private static string NestLateralDerived(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT l.id FROM LATERAL (" + sql + ") AS l";
+        return sql;
+    }
+
+    // JOINed LATERAL sees the immediately preceding users u at every
+    // level; the innermost query resolves u.id from its parent scope.
+    private static string NestJoinedLateral(int depth)
+    {
+        var sql = "SELECT u.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT l.id FROM users u JOIN LATERAL (" + sql + ") l ON l.id = u.id";
+        return sql;
+    }
+
+    // The innermost SELECT has no FROM, so its u.id is genuinely
+    // correlated with the outer scope, not a local same-named table.
+    // A preceding regular JOIN introduces v, which the second JOIN
+    // LATERAL must see at each level, without losing outer correlation.
+    private static string NestPrefixedJoinedLateral(int depth)
+    {
+        var sql = "SELECT v.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT l.id FROM users u JOIN users v ON v.id = u.id "
+                + "JOIN LATERAL (" + sql + ") l ON l.id = v.id";
+        return sql;
+    }
+
+    // Two sequential correlated LATERALs within every SELECT: the second
+    // body must see the first derived source while resolving through
+    // nested Query ancestors on a constrained CLR thread stack.
+    private static string NestDoubleJoinedLateral(int depth)
+    {
+        var sql = "SELECT a.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT b.id FROM users u "
+                + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
+                + "JOIN LATERAL (" + sql + ") b ON b.id = a.id";
+        return sql;
+    }
+
+    // An arbitrary-length INNER JOIN prefix is resolved in source order:
+    // A sees users u; B sees A; the last LATERAL C sees B and owns the
+    // recursive nested Query edge that must be suspended on the heap.
+    private static string NestTripleJoinedLateral(int depth)
+    {
+        var sql = "SELECT b.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT c.id FROM users u "
+                + "JOIN LATERAL (SELECT u.id AS id) a ON TRUE "
+                + "JOIN LATERAL (SELECT a.id AS id) b ON TRUE "
+                + "JOIN LATERAL (" + sql + ") c ON TRUE";
+        return sql;
+    }
+
+    // Both sibling LATERAL sources are independently deep. A's innermost
+    // query resolves root u; B's innermost query resolves preceding alias a.
+    // Neither is allowed to borrow the other sibling's future row shape.
+    private static string TwoDeepSiblingLateral(int depth)
+    {
+        var left = "SELECT u.id AS id";
+        var right = "SELECT a.id AS id";
+        for (var level = 0; level < depth; level++)
+        {
+            left = "SELECT x.id AS id FROM LATERAL (" + left + ") x";
+            right = "SELECT x.id AS id FROM LATERAL (" + right + ") x";
+        }
+        return "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right + ") b ON TRUE";
+    }
+
+    // At every level, the main Query branches into a lateral Source child
+    // AND a correlated EXISTS Query under WHERE. Both independent sibling
+    // LATERAL trees repeat this mixed Source/Expr graph.
+    private static string LateralExistsCombSiblings(int depth)
+    {
+        static string Comb(string leaf, int count)
+        {
+            var sql = leaf;
+            for (var level = 0; level < count; level++)
+                sql = "SELECT x.id AS id FROM LATERAL (" + sql
+                    + ") x WHERE EXISTS (SELECT x.id)";
+            return sql;
+        }
+
+        var left = Comb("SELECT u.id AS id", depth);
+        var right = Comb("SELECT a.id AS id", depth);
+        return "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right + ") b ON TRUE";
+    }
+
+    private static string NestCorrelatedExists(int depth)
+    {
+        var sql = "SELECT u.id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT u.id FROM users u WHERE EXISTS (" + sql + ")";
+        return sql;
+    }
+
+    private static string NestCorrelatedIn(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT id FROM users WHERE id IN (" + sql + ")";
+        return sql;
+    }
+
+    private static string NestCaseScalar(int depth)
+    {
+        var sql = "SELECT 1";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT CASE WHEN 1 = 1 THEN (" + sql + ") ELSE 0 END";
+        return sql;
+    }
+
+    private static string NestCte(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+        return sql;
+    }
+
+    private static string NestMixedCteDerived(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = (level & 1) == 0
+                ? "WITH c AS (" + sql + ") SELECT id FROM c"
+                : "SELECT d.id FROM (" + sql + ") AS d";
+        return sql;
+    }
+
+    private static string NestSet(int depth)
+    {
+        var sql = "SELECT id FROM users WHERE id = 1";
+        for (var level = 2; level <= depth; level++)
+            sql = "SELECT id FROM users WHERE id = " + level + " UNION (" + sql + ")";
+        return sql;
+    }
 
     public static bool TryRun(string[] args)
     {
@@ -59,15 +258,47 @@ internal static class SqlCoreDepthProbe
         {
             "redundant-grouping" =>
                 "SELECT " + new string('(', depth) + "1" + new string(')', depth),
-            "nested-scalar-subquery" =>
+            "nested-scalar-subquery" or "nested-scalar-subquery-typed-schema" =>
                 "SELECT " + string.Concat(Enumerable.Repeat("(SELECT ", depth)) +
                 "1" + new string(')', depth),
+            "nested-case-scalar" or "nested-case-scalar-typed-schema" =>
+                NestCaseScalar(depth),
             "prefix-not" =>
                 "SELECT id FROM users WHERE " +
                 string.Concat(Enumerable.Repeat("NOT ", depth)) + "id = 7",
             "left-deep-and" =>
                 "SELECT id FROM users WHERE " +
                 string.Join(" AND ", Enumerable.Repeat("id = 7", depth)),
+            "mixed-query-graph" =>
+                "SELECT u.id FROM users u WHERE EXISTS (" +
+                string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth)) +
+                "SELECT u.id" + new string(')', depth + 1),
+            "nested-derived-source" => NestDerived(depth),
+            "nested-paging-typed-schema" => NestPaging(depth, dialect, false),
+            "invalid-nested-paging" => NestPaging(depth, dialect, true),
+            "nested-lateral-derived" or "nested-lateral-derived-typed-schema" =>
+                NestLateralDerived(depth),
+            "nested-joined-lateral" or "nested-joined-lateral-typed-schema"
+                or "facts-joined-lateral" or "facts-joined-lateral-typed-schema" =>
+                NestJoinedLateral(depth),
+            "nested-prefixed-joined-lateral" or "nested-prefixed-joined-lateral-typed-schema" =>
+                NestPrefixedJoinedLateral(depth),
+            "nested-double-joined-lateral" or "nested-double-joined-lateral-typed-schema" =>
+                NestDoubleJoinedLateral(depth),
+            "nested-triple-joined-lateral" or "nested-triple-joined-lateral-typed-schema" =>
+                NestTripleJoinedLateral(depth),
+            "two-deep-sibling-lateral" or "two-deep-sibling-lateral-typed-schema" =>
+                TwoDeepSiblingLateral(depth),
+            "lateral-exists-comb-siblings" or "lateral-exists-comb-siblings-typed-schema" =>
+                LateralExistsCombSiblings(depth),
+            "nested-correlated-exists" or "nested-correlated-exists-typed-schema" =>
+                NestCorrelatedExists(depth),
+            "nested-correlated-in" or "nested-correlated-in-typed-schema" =>
+                NestCorrelatedIn(depth),
+            "nested-cte" => NestCte(depth),
+            "nested-cte-typed-schema" => NestCte(depth),
+            "mixed-cte-derived" or "mixed-cte-derived-typed-schema" => NestMixedCteDerived(depth),
+            "nested-set" or "nested-set-typed-schema" => NestSet(depth),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
 
@@ -75,14 +306,64 @@ internal static class SqlCoreDepthProbe
         var exitCode = 0;
         void CompileOnThisThread()
         {
+            var stages = new List<StageSample>();
+            var subscriptions = new List<IDisposable>();
+            using var all = DiagnosticListener.AllListeners.Subscribe(
+                new Observer<DiagnosticListener>(source =>
+                {
+                    if (source.Name != "HsSqlAgent.SqlCore.Compiler") return;
+                    subscriptions.Add(source.Subscribe(
+                        new Observer<KeyValuePair<string, object?>>(measurement =>
+                        {
+                            if (measurement.Key != "StageCompleted" || measurement.Value is null)
+                                return;
+                            var value = measurement.Value;
+                            object? Prop(string property) =>
+                                value.GetType().GetProperty(property)?.GetValue(value);
+                            stages.Add(new StageSample(
+                                (string?)Prop("Stage") ?? "Unknown",
+                                Convert.ToInt64(Prop("ElapsedMicroseconds")),
+                                Convert.ToInt64(Prop("AllocatedBytes")),
+                                Convert.ToInt64(Prop("WorkUnits")),
+                                Convert.ToBoolean(Prop("Success"))));
+                        })));
+                }));
             var stopwatch = Stopwatch.StartNew();
             var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
             try
             {
-                var compiled = SqlCoreFacade.CompileQuery(
-                    query, dialect, dialect,
-                    new SqlPlanValidationContext("depth-probe-v1"),
-                    new SqlExecutionPlanPolicy());
+                var context = new SqlPlanValidationContext("depth-probe-v1");
+                if (shape is "nested-cte-typed-schema" or "nested-set-typed-schema"
+                    or "mixed-cte-derived-typed-schema"
+                    or "nested-lateral-derived-typed-schema"
+                    or "nested-joined-lateral-typed-schema"
+                    or "facts-joined-lateral-typed-schema"
+                    or "nested-prefixed-joined-lateral-typed-schema"
+                    or "nested-double-joined-lateral-typed-schema"
+                    or "nested-triple-joined-lateral-typed-schema"
+                    or "two-deep-sibling-lateral-typed-schema"
+                    or "lateral-exists-comb-siblings-typed-schema"
+                    or "nested-correlated-exists-typed-schema"
+                    or "nested-correlated-in-typed-schema"
+                    or "nested-scalar-subquery-typed-schema"
+                    or "nested-case-scalar-typed-schema"
+                    or "nested-paging-typed-schema")
+                {
+                    var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
+                    var table = uppercase ? "USERS" : "users";
+                    var column = uppercase ? "ID" : "id";
+                    context = context.WithSchemaSnapshot(new SqlSchemaSnapshot(
+                        dialect, "depth-typed-snapshot-v1",
+                        new[] { SqlSchemaTable.WithTypes(
+                            table, new[] { new SqlSchemaColumn(
+                                column, SqlSchemaValueKind.Numeric) }) }));
+                }
+                var isFactsShape = shape.StartsWith("facts-", StringComparison.Ordinal);
+                var compiled = isFactsShape
+                    ? SqlCoreFacade.CompileQueryWithFacts(
+                        query, dialect, dialect, context, new SqlExecutionPlanPolicy()).Command
+                    : SqlCoreFacade.CompileQuery(
+                        query, dialect, dialect, context, new SqlExecutionPlanPolicy());
                 stopwatch.Stop();
                 report = JsonSerializer.Serialize(new
                 {
@@ -95,6 +376,8 @@ internal static class SqlCoreDepthProbe
                     elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
                     allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
                     renderedChars = compiled.Sql.Length,
+                    parameterCount = compiled.Parameters.Length,
+                    stageMetrics = stages,
                     diagnosticCode = (string?)null,
                     error = (string?)null
                 });
@@ -109,6 +392,16 @@ internal static class SqlCoreDepthProbe
                     SqlCompilationException compileError => compileError.Diagnostic?.Code,
                     _ => null
                 };
+                var diagnostic = (error as SqlParseException)?.Diagnostic;
+                var expectedOffset = query.IndexOf("WHERE id = ", StringComparison.Ordinal)
+                    + "WHERE id = ".Length;
+                var expectedGrammarRejection = shape == "invalid-nested-paging"
+                    && diagnostic?.Code == "SQL_PARSE_GRAMMAR"
+                    && diagnostic.Category == SqlDiagnosticCategory.Syntax
+                    && diagnostic.Span?.Start == expectedOffset;
+                // Only this named negative accepts the exact original syntax
+                // diagnostic/offset. Resource refusals and crashes still fail.
+                if (expectedGrammarRejection) exitCode = 0;
                 report = JsonSerializer.Serialize(new
                 {
                     success = false,
@@ -120,10 +413,17 @@ internal static class SqlCoreDepthProbe
                     elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
                     allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
                     renderedChars = 0,
+                    stageMetrics = stages,
                     diagnosticCode,
+                    diagnosticOffset = diagnostic?.Span?.Start,
+                    expectedGrammarRejection,
                     error = error.GetType().Name + ": " +
                         error.Message[..Math.Min(250, error.Message.Length)]
                 });
+            }
+            finally
+            {
+                foreach (var subscription in subscriptions) subscription.Dispose();
             }
         }
 
@@ -176,7 +476,8 @@ internal static class SqlCoreDepthProbe
         {
             shapes = requestedShapes.Split(',', StringSplitOptions.RemoveEmptyEntries);
             if (shapes.Length == 0 || shapes.Distinct().Count() != shapes.Length
-                || shapes.Any(value => !Shapes.Contains(value, StringComparer.Ordinal)))
+                || shapes.Any(value => !Shapes.Contains(value, StringComparer.Ordinal)
+                    && !OptionalShapes.Contains(value, StringComparer.Ordinal)))
                 throw new ArgumentException("Unknown or repeated depth-probe shape.");
         }
         var outputIndex = Array.IndexOf(args, "--output");

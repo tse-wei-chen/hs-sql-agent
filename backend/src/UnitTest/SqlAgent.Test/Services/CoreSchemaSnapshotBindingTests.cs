@@ -54,6 +54,436 @@ public sealed class CoreSchemaSnapshotBindingTests
         }
     }
 
+    [Fact]
+    public void NestedSetQueries_UseIterativeSchemaScopeAndPreserveFirstError()
+    {
+        const int depth = 48;
+        var valid = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            valid = $"SELECT id FROM users UNION ({valid})";
+        var result = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT id FROM users UNION ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void DeepSingleCteChain_UsesExplicitSchemaProjectionContinuations(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 256; depth++)
+            sql = $"WITH c AS ({sql}) SELECT id FROM c";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void NestedCte_UnsupportedNativeTargetRemainsFailClosed(
+        SqlAgentToolType dialect)
+    {
+        var sql = "WITH c AS (WITH inner_c AS (SELECT id FROM users) " +
+                  "SELECT id FROM inner_c) SELECT id FROM c";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, dialect, dialect, Context(dialect),
+                new SqlExecutionPlanPolicy()));
+        Assert.Contains("select.cte_scope", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void NestedDerivedQueries_KeepSchemaBindingAndProjectionNames(
+        SqlAgentToolType dialect)
+    {
+        // Query -> derived Source -> Query must run the stack-reserve
+        // check at each boundary, even with only terminal Column expressions.
+        var query = "SELECT id FROM users";
+        for (var depth = 0; depth < 256; depth++)
+            query = $"SELECT d.id FROM ({query}) d";
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+
+        Assert.NotEmpty(compiled.Sql);
+    }
+
+
+
+
+    [Fact]
+    public void MixedParserHeapContinuation_DoesNotSwallowBooleanAfterExists()
+    {
+        // A standalone WHERE EXISTS may use the heap scheduler; an EXISTS
+        // with a trailing AND still belongs to the expression parser.
+        var dialect = SqlAgentToolType.Postgres;
+        var sql = "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id) AND u.id = 1";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT u.id FROM users u WHERE EXISTS (SELECT u.id) AND u.missing = 1";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+
+
+    [Fact]
+    public void WhereInFollowedByAnd_UsesOriginalBooleanParser()
+    {
+        var dialect = SqlAgentToolType.Postgres;
+        var valid = "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders) AND id = 7";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders) AND missing = 7";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+
+
+    [Fact]
+    public void DeepSearchedCaseScalarSubquery_ReportsMissingInnerColumn()
+    {
+        const int depth = 96;
+        var valid = "SELECT id FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT CASE WHEN 1 = 1 THEN (" + valid + ") ELSE 0 END";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT CASE WHEN 1 = 1 THEN (" + invalid + ") ELSE 0 END";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void DeepProjectionScalarSubquery_ResumesStrictSchemaProof()
+    {
+        const int depth = 96;
+        var valid = "SELECT id FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT (" + valid + ")";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT (" + invalid + ")";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void DeepCorrelatedInSubquery_PreservesStrictSchemaFirstError()
+    {
+        const int depth = 96;
+        var valid = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            valid = $"SELECT id FROM users WHERE id IN ({valid})";
+        var compiled = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(compiled.Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT id FROM users WHERE id IN ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+    [Fact]
+    public void CorrelatedWhereExistsChain_PreservesStrictSchemaOrder()
+    {
+        const int depth = 96;
+        var sql = "SELECT 1 WHERE u.id = 1";
+        for (var level = 0; level < depth; level++)
+            sql = $"SELECT u.id FROM users u WHERE EXISTS ({sql})";
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy());
+        Assert.Equal(depth, compiled.Sql.Split("EXISTS (", StringSplitOptions.None).Length - 1);
+
+        var invalid = "SELECT 1 WHERE u.not_in_schema = 1";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT u.id FROM users u WHERE EXISTS ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+
+
+
+
+
+    [Fact]
+    public void LateralExistsCombSiblings_StrictSchemaProvesBothBranchesAndCorrelatedWhere()
+    {
+        const int depth = 96;
+        static string Comb(string sql)
+        {
+            for (var i = 0; i < depth; i++)
+                sql = "SELECT x.id AS id FROM LATERAL (" + sql
+                    + ") x WHERE EXISTS (SELECT x.id)";
+            return sql;
+        }
+        var left = Comb("SELECT u.id AS id");
+        var right = Comb("SELECT a.id AS id");
+        var sql = "SELECT b.id FROM users u JOIN LATERAL (" + left
+            + ") a ON TRUE JOIN LATERAL (" + right + ") b ON TRUE";
+        var context = Context(SqlAgentToolType.Postgres);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var broken = right.Replace("WHERE EXISTS (SELECT x.id)",
+            "WHERE EXISTS (SELECT x.missing)");
+        var invalid = "SELECT b.id FROM users u JOIN LATERAL (" + left
+            + ") a ON TRUE JOIN LATERAL (" + broken + ") b ON TRUE";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void IndependentlyDeepSiblingLaterals_KeepSequentialScopeAndRejectMissingColumn()
+    {
+        const int depth = 96;
+        static string Wrap(string sql) =>
+            "SELECT x.id AS id FROM LATERAL (" + sql + ") x";
+        var left = "SELECT u.id AS id";
+        var right = "SELECT a.id AS id";
+        for (var i = 0; i < depth; i++)
+        {
+            left = Wrap(left);
+            right = Wrap(right);
+        }
+        var sql = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right + ") b ON TRUE";
+        var context = Context(SqlAgentToolType.Postgres);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right.Replace("SELECT a.id AS id", "SELECT a.missing AS id") + ") b ON TRUE";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void ThreeDependentLaterals_UseOrderedStrictScopeAndProtectFutureAliases()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            "SELECT c.id FROM users u "
+            + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+            + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
+        var valid = "SELECT b.id AS id";
+        for (var i = 0; i < depth; i++) valid = Wrap(valid);
+        var result = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth * 3, result.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var missing = "SELECT b.missing AS id";
+        for (var i = 0; i < depth; i++) missing = Wrap(missing);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(missing, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+
+        var forward = "SELECT c.id FROM users u "
+            + "JOIN LATERAL (SELECT b.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
+            + "JOIN LATERAL (SELECT b.id AS id) c ON c.id = b.id";
+        Assert.NotNull(Record.Exception(() => SqlCoreFacade.CompileQuery(
+            forward, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy())));
+    }
+
+    [Fact]
+    public void TwoJoinedLaterals_SecondSeesFirstWithoutExposingFutureAlias()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            "SELECT b.id FROM users u JOIN LATERAL "
+            + "(SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (" + sql + ") b ON b.id = a.id";
+        var valid = "SELECT a.id AS id";
+        for (var i = 0; i < depth; i++)
+            valid = Wrap(valid);
+        var compiled = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth * 2, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var invalid = "SELECT a.missing AS id";
+        for (var i = 0; i < depth; i++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+
+        // LATERAL A must not see B's alias: the continuation must not
+        // expose all JOIN sources at once merely because the outer
+        // SELECT eventually has both aliases in scope.
+        var futureAlias = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (SELECT b.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id";
+        var hidden = Record.Exception(() =>
+            SqlCoreFacade.CompileQuery(futureAlias, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.NotNull(hidden);
+        Assert.DoesNotContain("SQL_COMPILER_STACK_RESERVE", hidden.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PrefixedSecondJoinLateralChain_ResolvesPriorSourceAndPreservesFirstError()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            "SELECT l.id FROM users u JOIN users v ON v.id = u.id "
+            + "JOIN LATERAL (" + sql + ") l ON l.id = v.id";
+        var valid = "SELECT v.id AS id";
+        for (var level = 0; level < depth; level++)
+            valid = Wrap(valid);
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var invalid = "SELECT v.missing AS id";
+        for (var level = 0; level < depth; level++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void JoinedCorrelatedLateralChain_UsesSchemaContinuationsAndPreservesFirstError()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            $"SELECT l.id FROM users u JOIN LATERAL ({sql}) l ON l.id = u.id";
+        var valid = "SELECT u.id AS id";
+        for (var level = 0; level < depth; level++)
+            valid = Wrap(valid);
+        var compiled = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var invalid = "SELECT u.missing AS id";
+        for (var level = 0; level < depth; level++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
+    [Fact]
+    public void DeepPrimaryLateralSource_KeepsStrictSchemaAndTypeProofIterative()
+    {
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 128; depth++)
+            sql = $"SELECT l.id FROM LATERAL ({sql}) AS l";
+
+        var context = new SqlPlanValidationContext("lateral-schema-heap-v1")
+            .WithSchemaSnapshot(new SqlSchemaSnapshot(
+                SqlAgentToolType.Postgres, "typed-lateral-heap-v1",
+                new[] { SqlSchemaTable.WithTypes("users",
+                    new[] { new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric) }) }));
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+
+        Assert.Equal(128, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public void PrimaryLateralSource_KeepsOuterCorrelationInStrictSchemaAndType()
+    {
+        var sql = "SELECT u.id FROM users AS u WHERE EXISTS ("
+            + "SELECT l.id FROM LATERAL (SELECT u.id AS id) AS l "
+            + "WHERE l.id = u.id)";
+        var context = new SqlPlanValidationContext("lateral-correlated-schema-heap-v1")
+            .WithSchemaSnapshot(new SqlSchemaSnapshot(
+                SqlAgentToolType.Postgres, "typed-lateral-correlation-v1",
+                new[] { SqlSchemaTable.WithTypes("users",
+                    new[] { new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric) }) }));
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Contains("LATERAL", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXISTS", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [MemberData(nameof(SixDialects))]
+    public void DeepConjunction_UsesHeapSchemaExpressionTraversal(SqlAgentToolType dialect)
+    {
+        var conditions = string.Concat(Enumerable.Repeat(" AND id = 1", 256));
+        var query = "SELECT id FROM users WHERE id = 1" + conditions;
+        var result = SqlCoreFacade.CompileQuery(
+            query, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(result.Sql);
+
+        // The first unproven column must still win the left-to-right proof.
+        var invalid = "SELECT id FROM users WHERE missing = 1" + conditions;
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Theory]
     [MemberData(nameof(SixDialects))]
     public void AllDialects_ValidateExistingQualifiedAndUnqualifiedColumns(SqlAgentToolType dialect)
@@ -200,6 +630,37 @@ public sealed class CoreSchemaSnapshotBindingTests
                 SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
                 context, new SqlExecutionPlanPolicy()));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", ex.Diagnostic?.Code);
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(32)]
+    public void Postgres_DeepCorrelatedSubqueries_ResolveAncestorSchemaWithoutRecursiveScopeLookup(
+        int depth)
+    {
+        var nested = string.Concat(Enumerable.Repeat(
+            "EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND ", depth))
+            + "u.id = 7" + new string(')', depth);
+        var sql = "SELECT u.id FROM users u WHERE " + nested;
+        var context = Context(SqlAgentToolType.Postgres);
+
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Contains("EXISTS", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+
+        // An outer alias still resolves, but its missing column must fail
+        // at the original Schema Binding stage, not silently bind locally.
+        var invalidSql = "SELECT u.id FROM users u WHERE "
+            + string.Concat(Enumerable.Repeat(
+                "EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND ", depth))
+            + "u.missing = 7" + new string(')', depth);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalidSql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.Binding, error.Diagnostic?.Stage);
     }
 
     [Fact]

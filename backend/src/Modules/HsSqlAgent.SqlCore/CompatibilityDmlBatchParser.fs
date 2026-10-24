@@ -93,34 +93,41 @@ type CoreDmlBatchTextParser private () =
             raise (SqlParseException("DML SQL text cannot be empty."))
 
         CoreDmlBatchTextParser.ValidateSourceProfile(sourceDialect, sourceProfile)
-        let lexical = CoreDmlBatchTextParser.LexicalSemantics(sourceDialect, sourceProfile)
-        let tokens = RewriteLexer.tokenizeWith lexical sql
-        let statements = ResizeArray<ParsedStatement>()
-        let mutable segmentStart = 0
-        let mutable segmentTokenCount = 0
+        RewriteResourceBudget.withCompilation (fun () ->
+            let lexical = CoreDmlBatchTextParser.LexicalSemantics(sourceDialect, sourceProfile)
+            let tokens =
+                RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                    RewriteLexer.tokenizeWith lexical sql)
+            let statements = ResizeArray<ParsedStatement>()
+            let mutable segmentStart = 0
+            let mutable segmentTokenCount = 0
 
-        let addSegment finish =
-            let raw = sql.Substring(segmentStart, finish - segmentStart)
-            if String.IsNullOrWhiteSpace(raw) then
-                raise (SqlParseException("DML batch contains an empty statement."))
-            let parsed = CoreSqlTextParser.ParseDml(raw.Trim(), sourceDialect, sourceProfile)
-            statements.Add(parsed)
-
-        for token in tokens do
-            match token.Kind with
-            | Symbol ';' ->
-                if segmentTokenCount = 0 then
+            let addSegment finish =
+                let raw = sql.Substring(segmentStart, finish - segmentStart)
+                if String.IsNullOrWhiteSpace(raw) then
                     raise (SqlParseException("DML batch contains an empty statement."))
-                addSegment token.Start
-                segmentStart <- token.Start + token.Length
-                segmentTokenCount <- 0
-            | End ->
-                if segmentTokenCount > 0 then
-                    addSegment token.Start
-            | _ ->
-                segmentTokenCount <- segmentTokenCount + 1
+                // Nested text-parser calls must reuse the enclosing compilation
+                // session so each statement consumes the same aggregate quota.
+                let parsed = CoreSqlTextParser.ParseDml(raw.Trim(), sourceDialect, sourceProfile)
+                statements.Add(parsed)
 
-        if statements.Count = 0 then
-            raise (SqlParseException("DML batch must contain at least one INSERT, UPDATE, or DELETE statement."))
+            RewriteResourceBudget.withStage "BatchSplit" SqlDiagnosticStage.Parse (fun () ->
+                for token in tokens do
+                    RewriteResourceBudget.checkpoint ()
+                    match token.Kind with
+                    | Symbol ';' ->
+                        if segmentTokenCount = 0 then
+                            raise (SqlParseException("DML batch contains an empty statement."))
+                        addSegment token.Start
+                        segmentStart <- token.Start + token.Length
+                        segmentTokenCount <- 0
+                    | End ->
+                        if segmentTokenCount > 0 then
+                            addSegment token.Start
+                    | _ ->
+                        segmentTokenCount <- segmentTokenCount + 1
 
-        ParsedDmlBatch.Create(statements.ToArray())
+                if statements.Count = 0 then
+                    raise (SqlParseException("DML batch must contain at least one INSERT, UPDATE, or DELETE statement."))
+
+                ParsedDmlBatch.Create(statements.ToArray())))

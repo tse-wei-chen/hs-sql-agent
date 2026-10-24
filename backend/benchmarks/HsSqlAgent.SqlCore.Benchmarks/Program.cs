@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
@@ -13,7 +15,11 @@ var cases = new[]
     new BenchmarkCase("query-filter-order", "SELECT id, name FROM users WHERE id >= 42 ORDER BY id", false),
     new BenchmarkCase("query-cte", "WITH filtered AS (SELECT id FROM users WHERE id >= 5) SELECT id FROM filtered", false),
     new BenchmarkCase("dml-update", "UPDATE users SET name = 'Alice' WHERE id = 10", true),
-    new BenchmarkCase("dml-delete", "DELETE FROM users WHERE id = 10", true)
+    new BenchmarkCase("dml-delete", "DELETE FROM users WHERE id = 10", true),
+    new BenchmarkCase("dml-insert", "INSERT INTO users (id, name) VALUES (10, 'Alice')", true),
+    new BenchmarkCase("query-union", "SELECT id FROM users WHERE id = 11 UNION ALL SELECT id FROM users WHERE id = 22", false),
+    new BenchmarkCase("query-derived-32", NestedDerived(32), false),
+    new BenchmarkCase("query-scalar-32", NestedScalar(32), false)
 };
 var results = new List<BenchmarkResult>();
 foreach (var provider in Enum.GetValues<SqlAgentToolType>())
@@ -54,12 +60,16 @@ foreach (var provider in Enum.GetValues<SqlAgentToolType>())
             Iterations: options.Iterations,
             MeanMicroseconds: Math.Round(measurements.Average() * unit, 3),
             P95Microseconds: Math.Round(measurements[p95Index] * unit, 3),
-            MeanAllocatedBytes: Math.Round(bytes.Average(), 1)));
+            MeanAllocatedBytes: Math.Round(bytes.Average(), 1),
+            OutputDigest: Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                JsonSerializer.Serialize(new { expected.Sql,
+                    Parameters = expected.Parameters.Select(p => new {
+                        Type = p.Value?.GetType().FullName, p.Value }) }))))));
     }
 }
 var report = new
 {
-    schemaVersion = 1,
+    schemaVersion = 2,
     startedUtc = DateTimeOffset.UtcNow.ToString("O"),
     framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
     os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
@@ -87,12 +97,28 @@ static void AssertEquivalent(
     string name)
 {
     if (!string.Equals(expected.Sql, actual.Sql, StringComparison.Ordinal) ||
-        expected.Parameters.Length != actual.Parameters.Length ||
+        !expected.Parameters.Select(p => p.Value).SequenceEqual(actual.Parameters.Select(p => p.Value)) ||
         !string.Equals(expected.PlanFingerprint, actual.PlanFingerprint, StringComparison.Ordinal))
     {
         throw new InvalidOperationException(
             $"Non-deterministic SqlCore compilation: {provider}/{name}.");
     }
+}
+
+static string NestedDerived(int depth)
+{
+    var sql = "SELECT id FROM users WHERE id = 11";
+    for (var i = 0; i < depth; i++)
+        sql = $"SELECT d{i}.id FROM ({sql}) d{i}";
+    return sql;
+}
+
+static string NestedScalar(int depth)
+{
+    var sql = "SELECT id FROM users WHERE id = 11";
+    for (var i = 0; i < depth; i++)
+        sql = $"SELECT ({sql}) AS id FROM users";
+    return sql;
 }
 
 internal sealed record BenchmarkCase(string Name, string Sql, bool IsDml);
@@ -102,7 +128,8 @@ internal sealed record BenchmarkResult(
     int Iterations,
     double MeanMicroseconds,
     double P95Microseconds,
-    double MeanAllocatedBytes);
+    double MeanAllocatedBytes,
+    string OutputDigest);
 
 internal sealed record BenchmarkOptions(int Iterations, int Warmup, string? Output)
 {

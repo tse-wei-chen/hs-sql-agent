@@ -48,24 +48,23 @@ type CoreSqlTextParser private () =
         ArgumentNullException.ThrowIfNull(sql)
         CoreSqlTextParser.ValidateSourceProfile(sourceDialect, sourceProfile)
         try
-            let parsed =
-                RewriteFacadeAdapter.parseSourceValidated
-                    sql
-                    sourceDialect
-                    sourceProfile
-            let kind = RewriteCompatibilityAstAdapter.kind parsed
-            if expectQuery && kind <> SqlStatementKind.Query then
-                raise (SqlParseException("ParseQuery requires a SELECT statement."))
-            if not expectQuery && kind = SqlStatementKind.Query then
-                raise (SqlParseException("ParseDml requires an INSERT, UPDATE, or DELETE statement."))
-            let result =
-                ParsedStatement(
-                    RewriteCompatibilityAstAdapter.toStatement parsed,
-                    sourceDialect,
-                    true,
-                    sourceProfile)
-            result.RawSql <- sql
-            result
+            RewriteResourceBudget.withCompilation (fun () ->
+                let parsed =
+                    RewriteResourceBudget.withStage "Parsing" SqlDiagnosticStage.Parse (fun () ->
+                        RewriteFacadeAdapter.parseSourceValidated
+                            sql sourceDialect sourceProfile)
+                let kind = RewriteCompatibilityAstAdapter.kind parsed
+                if expectQuery && kind <> SqlStatementKind.Query then
+                    raise (SqlParseException("ParseQuery requires a SELECT statement."))
+                if not expectQuery && kind = SqlStatementKind.Query then
+                    raise (SqlParseException("ParseDml requires an INSERT, UPDATE, or DELETE statement."))
+                let result =
+                    RewriteResourceBudget.withStage "CompatibilityProjection" SqlDiagnosticStage.Binding (fun () ->
+                        ParsedStatement(
+                            RewriteCompatibilityAstAdapter.toStatement parsed,
+                            sourceDialect, true, sourceProfile))
+                result.RawSql <- sql
+                result)
         with
         | :? SqlParseException -> reraise()
         | :? ArgumentException as ex when String.Equals(ex.ParamName, "sql", StringComparison.Ordinal) ->

@@ -104,6 +104,14 @@ module internal RewriteLexer =
     [<Literal>]
     let MaxTokens = 131072 // non-End lexical tokens
 
+    // A generous structural safety ceiling, deliberately 4x the 2,048-deep
+    // six-provider CI corpus. This is NOT an arbitrary per-expression AST
+    // limit: unary/Boolean iteration is independent of parenthesis depth.
+    // It bounds pathological recursive Query/Source grammar shapes that
+    // still need heap/CPU work after their syntax has become stack-safe.
+    [<Literal>]
+    let MaxGroupingNesting = 8192
+
     let tokenizeWith semantics (sql: string) =
         if Object.ReferenceEquals(sql, null) then nullArg "sql"
         let length = sql.Length
@@ -111,6 +119,16 @@ module internal RewriteLexer =
         let mutable i = 0
         let mutable groupingDepth = 0
         let mutable outermostOpen = -1
+        let mutable overNestingAt = -1
+        let mutable chargedCharPosition = 0
+
+        // Comments and literals have scanning work even without emitted
+        // tokens. Amortize resource deadline checks every 4096 UTF-16 units.
+        let chargeSourceProgress () =
+            let delta = i - chargedCharPosition
+            if delta >= 4096 then
+                RewriteResourceBudget.charge (int64 delta)
+                chargedCharPosition <- i
 
         let lexicalError code message start spanLength : 'T =
             let spanLength = max 1 spanLength
@@ -132,20 +150,41 @@ module internal RewriteLexer =
                  + " UTF-16 code units.")
                 MaxSqlSourceLength 1
 
+        // Distinguish resource exhaustion from malformed syntax. A
+        // balanced but oversized query reports Resource with the first
+        // over-limit opening delimiter's source span.
+        let nestingResourceError offset : 'T =
+            let detail =
+                "SQL grouping nesting exceeds the maximum "
+                + string MaxGroupingNesting
+                + " parenthesis levels. Position " + string offset + "."
+            raise (
+                SqlParseException(
+                    detail,
+                    SqlDiagnostic(
+                        "SQL_LEXICAL_NESTING_LIMIT",
+                        SqlDiagnosticStage.Lexical,
+                        SqlDiagnosticCategory.Resource,
+                        detail,
+                        SqlDiagnosticSpan(offset, 1))))
+
         let add kind start finish =
+            RewriteResourceBudget.checkpoint ()
             if tokens.Count >= MaxTokens then
                 lexicalError
                     "SQL_LEXICAL_TOKEN_LIMIT"
                     ("SQL text exceeds the maximum " + string MaxTokens + " lexical tokens.")
                     start (finish - start)
 
-            // A malformed input with tens of thousands of unmatched open
-            // parentheses must never enter recursive-descent parsing.
-            // This is a grammatical balance check, not a depth limit.
+            // Preserve the original unmatched-parentheses diagnostic
+            // precedence. Depth is checked after complete lexical balance,
+            // while overNestingAt records the first excessive open token.
             match kind with
             | Symbol '(' ->
                 if groupingDepth = 0 then outermostOpen <- start
                 groupingDepth <- groupingDepth + 1
+                if groupingDepth > MaxGroupingNesting && overNestingAt < 0 then
+                    overNestingAt <- start
             | Symbol ')' ->
                 if groupingDepth = 0 then
                     lexicalError
@@ -224,6 +263,7 @@ module internal RewriteLexer =
             let buffer = Text.StringBuilder()
             let mutable closed = false
             while i < length && not closed do
+                if (i &&& 4095) = 0 then chargeSourceProgress ()
                 if sql[i] = '\'' then
                     if i + 1 < length && sql[i + 1] = '\'' then
                         buffer.Append('\'') |> ignore
@@ -240,17 +280,21 @@ module internal RewriteLexer =
             add (StringLiteral(buffer.ToString())) start i
 
         while i < length do
+            chargeSourceProgress ()
             let c = sql[i]
             if Char.IsWhiteSpace(c) then
                 i <- i + 1
             elif c = '-' && i + 1 < length && sql[i + 1] = '-' && isDashDashCommentStart () then
                 i <- i + 2
-                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do i <- i + 1
+                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
+                    i <- i + 1
             elif c = '/' && i + 1 < length && sql[i + 1] = '*' then
                 let start = i
                 i <- i + 2
                 let mutable closed = false
                 while i + 1 < length && not closed do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
                     if sql[i] = '*' && sql[i + 1] = '/' then
                         i <- i + 2
                         closed <- true
@@ -258,7 +302,9 @@ module internal RewriteLexer =
                 if not closed then parseError "Unterminated block comment." start (length - start)
             elif c = '#' && semantics.HashLineComment then
                 i <- i + 1
-                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do i <- i + 1
+                while i < length && sql[i] <> '\r' && sql[i] <> '\n' do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
+                    i <- i + 1
             elif (c = 'q' || c = 'Q') && i + 2 < length && sql[i + 1] = '\'' then
                 let start = i
                 if not semantics.OracleQuotedString then
@@ -549,11 +595,18 @@ module internal RewriteLexer =
                 | _ -> parseError ("Unexpected character '" + string c + "'.") i 1
                 i <- i + 1
 
+        chargeSourceProgress ()
+
         if groupingDepth <> 0 then
             lexicalError
                 "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
                 "SQL text ends with an opening parenthesis that has no matching closing parenthesis."
                 outermostOpen 1
+
+        // Malformed grouping remains a Syntax error, even if the malformed
+        // text also exceeded the resource ceiling (e.g. 25,000 unmatched
+        // opens). Only balanced, excessively nested SQL is Resource.
+        if overNestingAt >= 0 then nestingResourceError overNestingAt
 
         tokens.Add({ Kind = End; Start = length; Length = 0 })
         tokens |> Seq.toList

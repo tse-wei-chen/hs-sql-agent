@@ -2,6 +2,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Models
@@ -119,602 +120,641 @@ module internal RewriteCompatibilityAstAdapter =
                 Nullable(),
                 unknown)
 
-    let rec private exprOf expression : HsSqlAgent.SqlCore.Core.Ast.SqlExpr =
-        let expressionSpan = expression |> Expr.span |> spanOf
-        match Expr.unspan expression with
-        | Expr.Column identifier
-        | Expr.BoundColumn(identifier, _) ->
-            HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, expressionSpan)
+    /// Per-projection identity maps; no ambient/global cache or recursive
+    /// CLR traversal is needed to build the public compatibility AST.
+    let private createProjection () =
+        let expressions = Dictionary<Expr, HsSqlAgent.SqlCore.Core.Ast.SqlExpr>(HashIdentity.Reference)
+        let queries = Dictionary<Query, HsSqlAgent.SqlCore.Core.Ast.SqlStatement>(HashIdentity.Reference)
+        let rec exprOf expression : HsSqlAgent.SqlCore.Core.Ast.SqlExpr =
+            match expressions.TryGetValue expression with
+            | true, value -> value
+            | _ ->
+                prepare (RewriteAstTraversal.ExprNode expression)
+                expressions.[expression]
 
-        | Expr.Wildcard qualifier ->
-            let parts =
-                match qualifier with
-                | None -> []
-                | Some value -> value |> Identifier.parts |> List.map partOf
-            let parts =
-                parts @ [ HsSqlAgent.SqlCore.Core.Ast.IdentifierPart("*", false, expressionSpan) ]
-                |> ImmutableArray.CreateRange
-            HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(
-                HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(parts, expressionSpan),
-                expressionSpan)
+        and exprOfCore expression : HsSqlAgent.SqlCore.Core.Ast.SqlExpr =
+            let expressionSpan = expression |> Expr.span |> spanOf
+            match Expr.unspan expression with
+            | Expr.Column identifier
+            | Expr.BoundColumn(identifier, _) ->
+                HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, expressionSpan)
 
-        | Expr.OrderOrdinal ordinal ->
-            HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
-                HsSqlAgent.SqlCore.Core.Ast.OrderByOrdinalValue(PositiveRowCount.value ordinal),
-                expressionSpan)
+            | Expr.Wildcard qualifier ->
+                let parts =
+                    match qualifier with
+                    | None -> []
+                    | Some value -> value |> Identifier.parts |> List.map partOf
+                let parts =
+                    parts @ [ HsSqlAgent.SqlCore.Core.Ast.IdentifierPart("*", false, expressionSpan) ]
+                    |> ImmutableArray.CreateRange
+                HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(
+                    HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(parts, expressionSpan),
+                    expressionSpan)
 
-        | Expr.Literal value ->
-            HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(scalarValue value, expressionSpan)
+            | Expr.OrderOrdinal ordinal ->
+                HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
+                    HsSqlAgent.SqlCore.Core.Ast.OrderByOrdinalValue(PositiveRowCount.value ordinal),
+                    expressionSpan)
 
-        | Expr.Interval literal ->
-            HsSqlAgent.SqlCore.Core.Ast.IntervalExpr(IntervalLiteral.value literal, expressionSpan)
+            | Expr.Literal value ->
+                HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(scalarValue value, expressionSpan)
 
-        | Expr.DateAdd(unit, amount, value) ->
-            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                identifierFromText "CORE_DATE_ADD",
-                [ HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
-                      SqlDateMathUnit.Keyword unit,
-                      expressionSpan) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
-                  exprOf amount
-                  exprOf value ]
-                |> ImmutableArray.CreateRange,
-                false,
-                expressionSpan)
+            | Expr.Interval literal ->
+                HsSqlAgent.SqlCore.Core.Ast.IntervalExpr(IntervalLiteral.value literal, expressionSpan)
 
-        | Expr.DateDiff(unit, startValue, finishValue) ->
-            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                identifierFromText "CORE_DATE_DIFF",
-                [ HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
-                      SqlDateMathUnit.Keyword unit,
-                      expressionSpan) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
-                  exprOf startValue
-                  exprOf finishValue ]
-                |> ImmutableArray.CreateRange,
-                false,
-                expressionSpan)
+            | Expr.DateAdd(unit, amount, value) ->
+                HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
+                    identifierFromText "CORE_DATE_ADD",
+                    [ HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
+                          SqlDateMathUnit.Keyword unit,
+                          expressionSpan) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+                      exprOf amount
+                      exprOf value ]
+                    |> ImmutableArray.CreateRange,
+                    false,
+                    expressionSpan)
 
-        | Expr.Unary(operator, operand) ->
-            let text =
-                match operator with
-                | UnaryOperator.Not -> "NOT"
-                | UnaryOperator.Negate -> "-"
-                | UnaryOperator.Positive -> "+"
-            HsSqlAgent.SqlCore.Core.Ast.UnaryExpr(text, exprOf operand, expressionSpan)
+            | Expr.DateDiff(unit, startValue, finishValue) ->
+                HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
+                    identifierFromText "CORE_DATE_DIFF",
+                    [ HsSqlAgent.SqlCore.Core.Ast.LiteralExpr(
+                          SqlDateMathUnit.Keyword unit,
+                          expressionSpan) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+                      exprOf startValue
+                      exprOf finishValue ]
+                    |> ImmutableArray.CreateRange,
+                    false,
+                    expressionSpan)
 
-        | Expr.Binary(operator, left, right) ->
-            HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
-                exprOf left,
-                binaryOperator operator,
-                exprOf right,
-                expressionSpan)
+            | Expr.Unary(operator, operand) ->
+                let text =
+                    match operator with
+                    | UnaryOperator.Not -> "NOT"
+                    | UnaryOperator.Negate -> "-"
+                    | UnaryOperator.Positive -> "+"
+                HsSqlAgent.SqlCore.Core.Ast.UnaryExpr(text, exprOf operand, expressionSpan)
 
-        | Expr.Like(value, pattern, escape, negated, insensitive) ->
-            let op = if insensitive then "ILIKE" else "LIKE"
-            let escapeText =
-                escape
-                |> Option.map (LikeEscape.value >> string)
-                |> Option.defaultValue (Unchecked.defaultof<_>)
-            let like =
+            | Expr.Binary(operator, left, right) ->
+                HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
+                    exprOf left,
+                    binaryOperator operator,
+                    exprOf right,
+                    expressionSpan)
+
+            | Expr.Like(value, pattern, escape, negated, insensitive) ->
+                let op = if insensitive then "ILIKE" else "LIKE"
+                let escapeText =
+                    escape
+                    |> Option.map (LikeEscape.value >> string)
+                    |> Option.defaultValue (Unchecked.defaultof<_>)
+                let like =
+                    HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
+                        exprOf value,
+                        op,
+                        exprOf pattern,
+                        expressionSpan,
+                        escapeText) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+                if negated then
+                    HsSqlAgent.SqlCore.Core.Ast.UnaryExpr("NOT", like, expressionSpan)
+                    :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
+                else
+                    like
+
+            | Expr.RawRegexCall(arguments, distinct) ->
+                HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
+                    identifierFromText "REGEXP_LIKE",
+                    arguments |> List.map exprOf |> ImmutableArray.CreateRange,
+                    distinct,
+                    expressionSpan)
+
+            | Expr.RegexMatch(value, pattern) ->
+                HsSqlAgent.SqlCore.Core.Ast.RegexExpr(
+                    exprOf value,
+                    exprOf pattern,
+                    expressionSpan)
+
+            | Expr.PostgresJsonAccess(value, selector, resultKind) ->
+                let selectorKind, propertyKey, arrayIndex =
+                    match selector with
+                    | PostgresJsonProperty key ->
+                        HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property,
+                        (key : string | null),
+                        Nullable<int>()
+                    | PostgresJsonArrayIndex index ->
+                        HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex,
+                        (null : string | null),
+                        Nullable<int>(index)
+                let result =
+                    match resultKind with
+                    | JsonResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Json
+                    | TextResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Text
+                HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr(
+                    exprOf value,
+                    selectorKind,
+                    propertyKey,
+                    arrayIndex,
+                    result,
+                    expressionSpan)
+
+            | Expr.FunctionCall call ->
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
+                        functionIdentifierOf call.Name,
+                        call.Arguments |> List.map exprOf |> ImmutableArray.CreateRange,
+                        call.IsDistinct,
+                        expressionSpan)
+                result.AggregateOrderBy <- call.AggregateOrderBy |> List.map orderByOf |> ImmutableArray.CreateRange
+                result.AggregateOrderSyntax <- aggregateOrderSyntax call.AggregateOrderSyntax
+                result.AggregateSeparatorClause <- call.AggregateSeparator |> Option.defaultValue (Unchecked.defaultof<_>)
+                result
+
+            | Expr.FilteredAggregate(value, predicate) ->
+                HsSqlAgent.SqlCore.Core.Ast.FilterExpr(exprOf value, exprOf predicate, expressionSpan)
+
+            | Expr.Windowed(value, window) ->
+                HsSqlAgent.SqlCore.Core.Ast.WindowedExpr(exprOf value, windowOf window, expressionSpan)
+
+            | Expr.Cast(value, typeName) ->
+                HsSqlAgent.SqlCore.Core.Ast.CastExpr(exprOf value, CastType.value typeName, expressionSpan)
+
+            | Expr.Extract(field, value) ->
+                HsSqlAgent.SqlCore.Core.Ast.ExtractExpr(ExtractField.value field, exprOf value, expressionSpan)
+
+            | Expr.SimpleCase(input, branches, fallback) ->
+                let inputExpr = exprOf input
+                let mapped =
+                    branches
+                    |> NonEmpty.toList
+                    |> List.map (fun branch ->
+                        let condition =
+                            HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
+                                inputExpr,
+                                "=",
+                                exprOf branch.Match,
+                                expressionSpan)
+                        HsSqlAgent.SqlCore.Core.Ast.CaseBranch(condition, exprOf branch.Result))
+                    |> ImmutableArray.CreateRange
+                HsSqlAgent.SqlCore.Core.Ast.SimpleCaseExpr(
+                    mapped,
+                    fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    expressionSpan)
+
+            | Expr.SearchedCase(branches, fallback) ->
+                HsSqlAgent.SqlCore.Core.Ast.CaseExpr(
+                    branches
+                    |> NonEmpty.toList
+                    |> List.map (fun branch ->
+                        HsSqlAgent.SqlCore.Core.Ast.CaseBranch(
+                            exprOf branch.Condition,
+                            exprOf branch.Result))
+                    |> ImmutableArray.CreateRange,
+                    fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    expressionSpan)
+
+            | Expr.InList(value, items, negated) ->
+                HsSqlAgent.SqlCore.Core.Ast.InExpr(
+                    exprOf value,
+                    items |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
+                    negated,
+                    expressionSpan)
+
+            | Expr.InSubquery(value, query, negated) ->
                 HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
                     exprOf value,
-                    op,
-                    exprOf pattern,
-                    expressionSpan,
-                    escapeText) :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
-            if negated then
-                HsSqlAgent.SqlCore.Core.Ast.UnaryExpr("NOT", like, expressionSpan)
-                :> HsSqlAgent.SqlCore.Core.Ast.SqlExpr
-            else
-                like
-
-        | Expr.RawRegexCall(arguments, distinct) ->
-            HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                identifierFromText "REGEXP_LIKE",
-                arguments |> List.map exprOf |> ImmutableArray.CreateRange,
-                distinct,
-                expressionSpan)
-
-        | Expr.RegexMatch(value, pattern) ->
-            HsSqlAgent.SqlCore.Core.Ast.RegexExpr(
-                exprOf value,
-                exprOf pattern,
-                expressionSpan)
-
-        | Expr.PostgresJsonAccess(value, selector, resultKind) ->
-            let selectorKind, propertyKey, arrayIndex =
-                match selector with
-                | PostgresJsonProperty key ->
-                    HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.Property,
-                    (key : string | null),
-                    Nullable<int>()
-                | PostgresJsonArrayIndex index ->
-                    HsSqlAgent.SqlCore.Core.Ast.PostgresJsonSelectorKind.ArrayIndex,
-                    (null : string | null),
-                    Nullable<int>(index)
-            let result =
-                match resultKind with
-                | JsonResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Json
-                | TextResult -> HsSqlAgent.SqlCore.Core.Ast.JsonExtractionResultKind.Text
-            HsSqlAgent.SqlCore.Core.Ast.PostgresJsonAccessExpr(
-                exprOf value,
-                selectorKind,
-                propertyKey,
-                arrayIndex,
-                result,
-                expressionSpan)
-
-        | Expr.FunctionCall call ->
-            let result =
-                HsSqlAgent.SqlCore.Core.Ast.FunctionCallExpr(
-                    functionIdentifierOf call.Name,
-                    call.Arguments |> List.map exprOf |> ImmutableArray.CreateRange,
-                    call.IsDistinct,
+                    (if negated then "NOT IN" else "IN"),
+                    HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, expressionSpan),
                     expressionSpan)
-            result.AggregateOrderBy <- call.AggregateOrderBy |> List.map orderByOf |> ImmutableArray.CreateRange
-            result.AggregateOrderSyntax <- aggregateOrderSyntax call.AggregateOrderSyntax
-            result.AggregateSeparatorClause <- call.AggregateSeparator |> Option.defaultValue (Unchecked.defaultof<_>)
-            result
 
-        | Expr.FilteredAggregate(value, predicate) ->
-            HsSqlAgent.SqlCore.Core.Ast.FilterExpr(exprOf value, exprOf predicate, expressionSpan)
+            | Expr.Between(value, lower, upper, negated) ->
+                HsSqlAgent.SqlCore.Core.Ast.BetweenExpr(
+                    exprOf value,
+                    exprOf lower,
+                    exprOf upper,
+                    negated,
+                    expressionSpan)
 
-        | Expr.Windowed(value, window) ->
-            HsSqlAgent.SqlCore.Core.Ast.WindowedExpr(exprOf value, windowOf window, expressionSpan)
+            | Expr.IsNull(value, negated) ->
+                HsSqlAgent.SqlCore.Core.Ast.IsNullExpr(exprOf value, negated, expressionSpan)
 
-        | Expr.Cast(value, typeName) ->
-            HsSqlAgent.SqlCore.Core.Ast.CastExpr(exprOf value, CastType.value typeName, expressionSpan)
+            | Expr.ScalarSubquery query ->
+                HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, expressionSpan)
 
-        | Expr.Extract(field, value) ->
-            HsSqlAgent.SqlCore.Core.Ast.ExtractExpr(ExtractField.value field, exprOf value, expressionSpan)
+            | Expr.Exists(query, negated) ->
+                HsSqlAgent.SqlCore.Core.Ast.ExistsExpr(queryOf query, negated, expressionSpan)
 
-        | Expr.SimpleCase(input, branches, fallback) ->
-            let inputExpr = exprOf input
-            let mapped =
-                branches
-                |> NonEmpty.toList
-                |> List.map (fun branch ->
-                    let condition =
-                        HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
-                            inputExpr,
-                            "=",
-                            exprOf branch.Match,
-                            expressionSpan)
-                    HsSqlAgent.SqlCore.Core.Ast.CaseBranch(condition, exprOf branch.Result))
-                |> ImmutableArray.CreateRange
-            HsSqlAgent.SqlCore.Core.Ast.SimpleCaseExpr(
-                mapped,
-                fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                expressionSpan)
+            | Expr.Spanned _ ->
+                invalidOp "Expr.unspan returned a spanned expression."
 
-        | Expr.SearchedCase(branches, fallback) ->
-            HsSqlAgent.SqlCore.Core.Ast.CaseExpr(
-                branches
-                |> NonEmpty.toList
-                |> List.map (fun branch ->
-                    HsSqlAgent.SqlCore.Core.Ast.CaseBranch(
-                        exprOf branch.Condition,
-                        exprOf branch.Result))
-                |> ImmutableArray.CreateRange,
-                fallback |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                expressionSpan)
-
-        | Expr.InList(value, items, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.InExpr(
-                exprOf value,
-                items |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
-                negated,
-                expressionSpan)
-
-        | Expr.InSubquery(value, query, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.BinaryExpr(
-                exprOf value,
-                (if negated then "NOT IN" else "IN"),
-                HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, expressionSpan),
-                expressionSpan)
-
-        | Expr.Between(value, lower, upper, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.BetweenExpr(
-                exprOf value,
-                exprOf lower,
-                exprOf upper,
-                negated,
-                expressionSpan)
-
-        | Expr.IsNull(value, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.IsNullExpr(exprOf value, negated, expressionSpan)
-
-        | Expr.ScalarSubquery query ->
-            HsSqlAgent.SqlCore.Core.Ast.SubqueryExpr(queryOf query, expressionSpan)
-
-        | Expr.Exists(query, negated) ->
-            HsSqlAgent.SqlCore.Core.Ast.ExistsExpr(queryOf query, negated, expressionSpan)
-
-        | Expr.Spanned _ ->
-            invalidOp "Expr.unspan returned a spanned expression."
-
-    and private orderByOf (order: OrderBy) =
-        HsSqlAgent.SqlCore.Core.Ast.OrderByItem(
-            exprOf order.Expression,
-            order.Descending,
-            nullOrdering order.NullOrdering,
-            unknown)
-
-    and private windowOf (window: WindowSpec) =
-        let frame =
-            window.Frame
-            |> Option.map (fun value ->
-                let unit =
-                    match value.Unit with
-                    | WindowFrameUnit.Rows -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows
-                    | WindowFrameUnit.Range -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range
-                let start = frameBound value.Start
-                let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
-                HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, unknown))
-            |> Option.defaultValue (Unchecked.defaultof<_>)
-        HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
-            window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
-            window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-            frame,
-            unknown)
-
-    and private tableSourceOf source : HsSqlAgent.SqlCore.Core.Ast.TableSource =
-        match source with
-        | TableSource.NamedTable(identifier, alias)
-        | TableSource.CteTable(identifier, alias) ->
-            HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
-                identifierOf identifier,
-                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+        and orderByOf (order: OrderBy) =
+            HsSqlAgent.SqlCore.Core.Ast.OrderByItem(
+                exprOf order.Expression,
+                order.Descending,
+                nullOrdering order.NullOrdering,
                 unknown)
-        | TableSource.DerivedTable(query, alias) ->
-            HsSqlAgent.SqlCore.Core.Ast.DerivedTableSource(
-                queryOf query,
-                partOf alias,
+
+        and windowOf (window: WindowSpec) =
+            let frame =
+                window.Frame
+                |> Option.map (fun value ->
+                    let unit =
+                        match value.Unit with
+                        | WindowFrameUnit.Rows -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows
+                        | WindowFrameUnit.Range -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range
+                    let start = frameBound value.Start
+                    let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
+                    HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, unknown))
+                |> Option.defaultValue (Unchecked.defaultof<_>)
+            HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
+                window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
+                window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                frame,
                 unknown)
-        | TableSource.LateralDerivedTable(query, alias) ->
-            let result =
+
+        and tableSourceOf source : HsSqlAgent.SqlCore.Core.Ast.TableSource =
+            match source with
+            | TableSource.NamedTable(identifier, alias)
+            | TableSource.CteTable(identifier, alias) ->
+                HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                    identifierOf identifier,
+                    alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    unknown)
+            | TableSource.DerivedTable(query, alias) ->
                 HsSqlAgent.SqlCore.Core.Ast.DerivedTableSource(
                     queryOf query,
                     partOf alias,
                     unknown)
-            result.IsLateral <- true
-            result
+            | TableSource.LateralDerivedTable(query, alias) ->
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.DerivedTableSource(
+                        queryOf query,
+                        partOf alias,
+                        unknown)
+                result.IsLateral <- true
+                result
 
-    and private joinOf join =
-        match join with
-        | Join.CrossJoin source ->
-            HsSqlAgent.SqlCore.Core.Ast.JoinSource(
-                "CROSS",
-                tableSourceOf source,
-                Unchecked.defaultof<_>,
-                unknown)
-        | Join.NaturalJoin(kind, source) ->
-            let text =
-                match kind with
-                | OnJoinKind.Inner -> "INNER"
-                | OnJoinKind.Left -> "LEFT"
-                | OnJoinKind.Right -> "RIGHT"
-                | OnJoinKind.Full -> "FULL"
-            let result =
+        and joinOf join =
+            match join with
+            | Join.CrossJoin source ->
                 HsSqlAgent.SqlCore.Core.Ast.JoinSource(
-                    text,
+                    "CROSS",
                     tableSourceOf source,
                     Unchecked.defaultof<_>,
                     unknown)
-            result.IsNatural <- true
-            result
-        | Join.OnJoin(kind, source, predicate) ->
-            let text =
-                match kind with
-                | OnJoinKind.Inner -> "INNER"
-                | OnJoinKind.Left -> "LEFT"
-                | OnJoinKind.Right -> "RIGHT"
-                | OnJoinKind.Full -> "FULL"
-            HsSqlAgent.SqlCore.Core.Ast.JoinSource(
-                text,
-                tableSourceOf source,
-                exprOf predicate,
-                unknown)
-        | Join.UsingJoin(kind, source, columns) ->
-            let text =
-                match kind with
-                | OnJoinKind.Inner -> "INNER"
-                | OnJoinKind.Left -> "LEFT"
-                | OnJoinKind.Right -> "RIGHT"
-                | OnJoinKind.Full -> "FULL"
-            let result =
+            | Join.NaturalJoin(kind, source) ->
+                let text =
+                    match kind with
+                    | OnJoinKind.Inner -> "INNER"
+                    | OnJoinKind.Left -> "LEFT"
+                    | OnJoinKind.Right -> "RIGHT"
+                    | OnJoinKind.Full -> "FULL"
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.JoinSource(
+                        text,
+                        tableSourceOf source,
+                        Unchecked.defaultof<_>,
+                        unknown)
+                result.IsNatural <- true
+                result
+            | Join.OnJoin(kind, source, predicate) ->
+                let text =
+                    match kind with
+                    | OnJoinKind.Inner -> "INNER"
+                    | OnJoinKind.Left -> "LEFT"
+                    | OnJoinKind.Right -> "RIGHT"
+                    | OnJoinKind.Full -> "FULL"
                 HsSqlAgent.SqlCore.Core.Ast.JoinSource(
                     text,
                     tableSourceOf source,
-                    Unchecked.defaultof<_>,
+                    exprOf predicate,
                     unknown)
-            result.UsingColumns <-
-                columns
-                |> NonEmpty.toList
-                |> List.map (fun column ->
+            | Join.UsingJoin(kind, source, columns) ->
+                let text =
+                    match kind with
+                    | OnJoinKind.Inner -> "INNER"
+                    | OnJoinKind.Left -> "LEFT"
+                    | OnJoinKind.Right -> "RIGHT"
+                    | OnJoinKind.Full -> "FULL"
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.JoinSource(
+                        text,
+                        tableSourceOf source,
+                        Unchecked.defaultof<_>,
+                        unknown)
+                result.UsingColumns <-
+                    columns
+                    |> NonEmpty.toList
+                    |> List.map (fun column ->
+                        HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+                            ImmutableArray.Create(partOf column),
+                            unknown))
+                    |> ImmutableArray.CreateRange
+                result
+
+        and selectItemOf (item: SelectItem) =
+            HsSqlAgent.SqlCore.Core.Ast.SelectItem(
+                exprOf item.Expression,
+                item.Alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                unknown)
+
+        and cteOf (cte: Cte) =
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.CteDefinition(
                     HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
-                        ImmutableArray.Create(partOf column),
-                        unknown))
-                |> ImmutableArray.CreateRange
+                        ImmutableArray.Create(partOf cte.Name),
+                        unknown),
+                    cte.ColumnAliases
+                    |> List.map (fun alias ->
+                        HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+                            ImmutableArray.Create(partOf alias),
+                            unknown))
+                    |> ImmutableArray.CreateRange,
+                    queryOf cte.Query,
+                    spanOf cte.Span)
+            result.RecursiveScope <- cte.RecursiveScope
             result
 
-    and private selectItemOf (item: SelectItem) =
-        HsSqlAgent.SqlCore.Core.Ast.SelectItem(
-            exprOf item.Expression,
-            item.Alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
-            unknown)
-
-    and private cteOf (cte: Cte) =
-        let result =
-            HsSqlAgent.SqlCore.Core.Ast.CteDefinition(
-                HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
-                    ImmutableArray.Create(partOf cte.Name),
-                    unknown),
-                cte.ColumnAliases
-                |> List.map (fun alias ->
-                    HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
-                        ImmutableArray.Create(partOf alias),
-                        unknown))
-                |> ImmutableArray.CreateRange,
-                queryOf cte.Query,
-                spanOf cte.Span)
-        result.RecursiveScope <- cte.RecursiveScope
-        result
-
-    and private selectOf (select: Select) orderBy limit offset fetchPercent fetchWithTies selectSpan =
-        let result =
-            HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
-                select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
-                select.Distinct,
-                select.Projection |> List.map selectItemOf |> ImmutableArray.CreateRange,
-                select.From |> Option.map tableSourceOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                select.Joins |> List.map joinOf |> ImmutableArray.CreateRange,
-                select.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                select.GroupBy |> List.map exprOf |> ImmutableArray.CreateRange,
-                select.Having |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                orderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-                limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                selectSpan)
-        result.DistinctOn <-
-            select.DistinctOn
-            |> Option.map (List.map exprOf >> ImmutableArray.CreateRange)
-            |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlExpr>.Empty
-        result.FetchPercent <-
-            fetchPercent
-            |> Option.map (NonNegativePercentage.value >> Nullable)
-            |> Option.defaultValue (Nullable())
-        result.FetchWithTies <- fetchWithTies
-        result
-
-    and private setOperator = function
-        | SetOperator.Union -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union
-        | SetOperator.UnionAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.UnionAll
-        | SetOperator.Intersect -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Intersect
-        | SetOperator.IntersectAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.IntersectAll
-        | SetOperator.Except -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Except
-        | SetOperator.ExceptAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.ExceptAll
-
-    and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
-        match query.SetOperations with
-        | [] ->
-            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchPercent query.FetchWithTies (spanOf query.Span)
-        | operations ->
-            let head = selectOf query.Head [] None None None false (spanOf query.Head.Span)
+        and selectOf (select: Select) orderBy limit offset fetchPercent fetchWithTies selectSpan =
             let result =
-                HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
-                head,
-                operations
-                |> List.map (fun branch ->
-                    HsSqlAgent.SqlCore.Core.Ast.SetOperation(
-                        setOperator branch.Operator,
-                        queryOf branch.Query,
-                        unknown))
-                |> ImmutableArray.CreateRange,
-                query.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-                query.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                query.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                spanOf query.Span)
+                HsSqlAgent.SqlCore.Core.Ast.SelectStatement(
+                    select.Ctes |> List.map cteOf |> ImmutableArray.CreateRange,
+                    select.Distinct,
+                    select.Projection |> List.map selectItemOf |> ImmutableArray.CreateRange,
+                    select.From |> Option.map tableSourceOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    select.Joins |> List.map joinOf |> ImmutableArray.CreateRange,
+                    select.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    select.GroupBy |> List.map exprOf |> ImmutableArray.CreateRange,
+                    select.Having |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    orderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                    limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                    offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                    selectSpan)
+            result.DistinctOn <-
+                select.DistinctOn
+                |> Option.map (List.map exprOf >> ImmutableArray.CreateRange)
+                |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlExpr>.Empty
             result.FetchPercent <-
-                query.FetchPercent
+                fetchPercent
                 |> Option.map (NonNegativePercentage.value >> Nullable)
                 |> Option.defaultValue (Nullable())
-            result.FetchWithTies <- query.FetchWithTies
+            result.FetchWithTies <- fetchWithTies
             result
 
-    let private returningOf item : HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem =
-        match item with
-        | ReturningItem.ReturningColumn(identifier, None) ->
-            HsSqlAgent.SqlCore.Core.Ast.DmlReturningColumnItem(identifierOf identifier, unknown)
-        | ReturningItem.ReturningWildcard None ->
-            HsSqlAgent.SqlCore.Core.Ast.DmlReturningWildcardItem(unknown)
-        | ReturningItem.ReturningColumn(identifier, alias) ->
-            HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
-                HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, unknown),
-                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                unknown)
-        | ReturningItem.ReturningWildcard alias ->
-            HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
-                exprOf (Expr.Wildcard None),
-                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                unknown)
-        | ReturningItem.ReturningExpression(expression, alias) ->
-            HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
-                exprOf expression,
-                alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                unknown)
+        and setOperator = function
+            | SetOperator.Union -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Union
+            | SetOperator.UnionAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.UnionAll
+            | SetOperator.Intersect -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Intersect
+            | SetOperator.IntersectAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.IntersectAll
+            | SetOperator.Except -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.Except
+            | SetOperator.ExceptAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.ExceptAll
 
-    let private conflictOf (conflict: InsertConflict) =
-        let action, assignments =
-            match conflict.Action with
-            | InsertConflictAction.DoNothing ->
-                HsSqlAgent.SqlCore.Core.Ast.InsertConflictActionKind.DoNothing,
-                ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.InsertConflictAssignment>.Empty
-            | InsertConflictAction.UpdateProposedValues values ->
-                HsSqlAgent.SqlCore.Core.Ast.InsertConflictActionKind.UpdateProposedValues,
-                (values
-                 |> NonEmpty.toList
-                 |> List.map (fun assignment ->
-                    let proposed =
-                        assignment.Value
-                        |> ConflictValue.trySimpleProposed
-                        |> Option.map identifierOf
-                        |> Option.defaultValue (Unchecked.defaultof<_>)
-                    let result =
-                        HsSqlAgent.SqlCore.Core.Ast.InsertConflictAssignment(
-                            identifierOf assignment.Target,
-                            proposed,
-                            unknown)
-                    if Option.isNone (ConflictValue.trySimpleProposed assignment.Value) then
-                        result.Value <- assignment.Value |> ConflictValue.toExpression |> exprOf
-                    result)
-                 |> ImmutableArray.CreateRange)
-        HsSqlAgent.SqlCore.Core.Ast.InsertConflictClause(
-            conflict.TargetColumns
-            |> Option.map (NonEmpty.toList >> List.map identifierOf >> ImmutableArray.CreateRange)
-            |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier>.Empty,
-            action,
-            assignments,
-            unknown)
+        and queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
+            match queries.TryGetValue query with
+            | true, value -> value
+            | _ ->
+                prepare (RewriteAstTraversal.QueryNode query)
+                queries.[query]
 
-    let private statementOf statementSpan = function
-        | Statement.QueryStatement query ->
-            queryOf query
-
-        | Statement.InsertStatement insert ->
-            let source =
-                match insert.Input with
-                | InsertInput.Values rows ->
-                    HsSqlAgent.SqlCore.Core.Ast.InsertValuesSource(
-                        rows
-                        |> NonEmpty.toList
-                        |> List.map (fun row ->
-                            row |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange)
+        and queryOfCore (current: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
+            match current.SetOperations with
+            | [] ->
+                selectOf current.Head current.OrderBy current.Limit current.Offset
+                    current.FetchPercent current.FetchWithTies (spanOf current.Span)
+                :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+            | operations ->
+                let head = selectOf current.Head [] None None None false (spanOf current.Head.Span)
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
+                        head,
+                        operations
+                        |> List.map (fun branch ->
+                            HsSqlAgent.SqlCore.Core.Ast.SetOperation(
+                                setOperator branch.Operator, queryOf branch.Query, unknown))
                         |> ImmutableArray.CreateRange,
-                        unknown)
-                    :> HsSqlAgent.SqlCore.Core.Ast.InsertSource
-                | InsertInput.QuerySource query ->
-                    HsSqlAgent.SqlCore.Core.Ast.InsertQuerySource(queryOf query, unknown)
-                    :> HsSqlAgent.SqlCore.Core.Ast.InsertSource
-                | InsertInput.DefaultValues ->
-                    raise (SqlParseException(
-                        "INSERT DEFAULT VALUES is parsed by the F# core but is not exposed through the temporary legacy AST compatibility surface."))
+                        current.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                        current.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                        current.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                        spanOf current.Span)
+                result.FetchPercent <-
+                    current.FetchPercent
+                    |> Option.map (NonNegativePercentage.value >> Nullable)
+                    |> Option.defaultValue (Nullable())
+                result.FetchWithTies <- current.FetchWithTies
+                result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
-            let result =
-                HsSqlAgent.SqlCore.Core.Ast.InsertStatement(
+        and prepare root =
+            // A reverse preorder is a child-before-parent topological order for
+            // this immutable graph. All conversion callbacks below are cache
+            // lookups, including Query <-> Expr <-> Source boundaries.
+            let frames = ResizeArray<RewriteAstTraversal.Frame>()
+            RewriteAstTraversal.iterIncludingQueries (fun frame ->
+                match frame with
+                | RewriteAstTraversal.ExprNode _ | RewriteAstTraversal.QueryNode _ -> frames.Add frame
+                | _ -> ()) root
+            for index = frames.Count - 1 downto 0 do
+                RewriteResourceBudget.checkpoint ()
+                match frames.[index] with
+                | RewriteAstTraversal.ExprNode expression when not (expressions.ContainsKey expression) ->
+                    expressions.[expression] <- exprOfCore expression
+                | RewriteAstTraversal.QueryNode query when not (queries.ContainsKey query) ->
+                    queries.[query] <- queryOfCore query
+                | _ -> ()
+        let returningOf item : HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem =
+            match item with
+            | ReturningItem.ReturningColumn(identifier, None) ->
+                HsSqlAgent.SqlCore.Core.Ast.DmlReturningColumnItem(identifierOf identifier, unknown)
+            | ReturningItem.ReturningWildcard None ->
+                HsSqlAgent.SqlCore.Core.Ast.DmlReturningWildcardItem(unknown)
+            | ReturningItem.ReturningColumn(identifier, alias) ->
+                HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
+                    HsSqlAgent.SqlCore.Core.Ast.ColumnExpr(identifierOf identifier, unknown),
+                    alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    unknown)
+            | ReturningItem.ReturningWildcard alias ->
+                HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
+                    exprOf (Expr.Wildcard None),
+                    alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    unknown)
+            | ReturningItem.ReturningExpression(expression, alias) ->
+                HsSqlAgent.SqlCore.Core.Ast.DmlReturningExpressionItem(
+                    exprOf expression,
+                    alias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                    unknown)
+
+        let conflictOf (conflict: InsertConflict) =
+            let action, assignments =
+                match conflict.Action with
+                | InsertConflictAction.DoNothing ->
+                    HsSqlAgent.SqlCore.Core.Ast.InsertConflictActionKind.DoNothing,
+                    ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.InsertConflictAssignment>.Empty
+                | InsertConflictAction.UpdateProposedValues values ->
+                    HsSqlAgent.SqlCore.Core.Ast.InsertConflictActionKind.UpdateProposedValues,
+                    (values
+                     |> NonEmpty.toList
+                     |> List.map (fun assignment ->
+                        let proposed =
+                            assignment.Value
+                            |> ConflictValue.trySimpleProposed
+                            |> Option.map identifierOf
+                            |> Option.defaultValue (Unchecked.defaultof<_>)
+                        let result =
+                            HsSqlAgent.SqlCore.Core.Ast.InsertConflictAssignment(
+                                identifierOf assignment.Target,
+                                proposed,
+                                unknown)
+                        if Option.isNone (ConflictValue.trySimpleProposed assignment.Value) then
+                            result.Value <- assignment.Value |> ConflictValue.toExpression |> exprOf
+                        result)
+                     |> ImmutableArray.CreateRange)
+            HsSqlAgent.SqlCore.Core.Ast.InsertConflictClause(
+                conflict.TargetColumns
+                |> Option.map (NonEmpty.toList >> List.map identifierOf >> ImmutableArray.CreateRange)
+                |> Option.defaultValue ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier>.Empty,
+                action,
+                assignments,
+                unknown)
+
+        let statementOf statementSpan = function
+            | Statement.QueryStatement query ->
+                queryOf query
+
+            | Statement.InsertStatement insert ->
+                let source =
+                    match insert.Input with
+                    | InsertInput.Values rows ->
+                        HsSqlAgent.SqlCore.Core.Ast.InsertValuesSource(
+                            rows
+                            |> NonEmpty.toList
+                            |> List.map (fun row ->
+                                row |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange)
+                            |> ImmutableArray.CreateRange,
+                            unknown)
+                        :> HsSqlAgent.SqlCore.Core.Ast.InsertSource
+                    | InsertInput.QuerySource query ->
+                        HsSqlAgent.SqlCore.Core.Ast.InsertQuerySource(queryOf query, unknown)
+                        :> HsSqlAgent.SqlCore.Core.Ast.InsertSource
+                    | InsertInput.DefaultValues ->
+                        raise (SqlParseException(
+                            "INSERT DEFAULT VALUES is parsed by the F# core but is not exposed through the temporary legacy AST compatibility surface."))
+
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.InsertStatement(
+                        HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                            identifierOf insert.Target,
+                            null,
+                            unknown),
+                        insert.Columns
+                        |> List.map (fun column ->
+                            HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
+                                ImmutableArray.Create(partOf column),
+                                unknown))
+                        |> ImmutableArray.CreateRange,
+                        source,
+                        statementSpan)
+                result.Conflict <- insert.Conflict |> Option.map conflictOf |> Option.defaultValue (Unchecked.defaultof<_>)
+                result.Returning <- insert.Returning |> List.map returningOf |> ImmutableArray.CreateRange
+                result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+
+            | Statement.UpdateStatement update ->
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.UpdateStatement(
+                        HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                            identifierOf update.Target,
+                            update.TargetAlias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                            unknown),
+                        update.Assignments
+                        |> List.map (fun assignment ->
+                            HsSqlAgent.SqlCore.Core.Ast.Assignment(
+                                identifierOf assignment.Target,
+                                exprOf assignment.Value,
+                                unknown))
+                        |> ImmutableArray.CreateRange,
+                        update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                        statementSpan)
+                let fromSources = update.From |> List.map tableSourceOf
+                result.FromSources <- fromSources |> ImmutableArray.CreateRange
+                if fromSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
+                    result.From <-
+                        fromSources
+                        |> List.map (fun source -> source :?> HsSqlAgent.SqlCore.Core.Ast.NamedTableSource)
+                        |> ImmutableArray.CreateRange
+                result.Returning <- update.Returning |> List.map returningOf |> ImmutableArray.CreateRange
+                result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+
+            | Statement.MergeStatement merge ->
+                let matched =
+                    merge.Matched
+                    |> Option.map (function
+                        | MergeDelete ->
+                            HsSqlAgent.SqlCore.Core.Ast.MergeMatchedClause(
+                                HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Delete,
+                                ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.Assignment>.Empty,
+                                unknown)
+                        | MergeUpdate assignments ->
+                            HsSqlAgent.SqlCore.Core.Ast.MergeMatchedClause(
+                                HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Update,
+                                assignments
+                                |> NonEmpty.toList
+                                |> List.map (fun assignment ->
+                                    HsSqlAgent.SqlCore.Core.Ast.Assignment(
+                                        identifierOf assignment.Target,
+                                        exprOf assignment.Value,
+                                        unknown))
+                                |> ImmutableArray.CreateRange,
+                                unknown))
+                    |> Option.defaultValue (Unchecked.defaultof<_>)
+                let notMatched =
+                    merge.NotMatched
+                    |> Option.map (fun insert ->
+                        HsSqlAgent.SqlCore.Core.Ast.MergeInsertClause(
+                            insert.InsertColumns |> NonEmpty.toList |> List.map identifierOf |> ImmutableArray.CreateRange,
+                            insert.InsertValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
+                            unknown))
+                    |> Option.defaultValue (Unchecked.defaultof<_>)
+                HsSqlAgent.SqlCore.Core.Ast.MergeStatement(
                     HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
-                        identifierOf insert.Target,
-                        null,
+                        identifierOf merge.Target,
+                        partOf merge.TargetAlias,
                         unknown),
-                    insert.Columns
+                    partOf merge.Source.Alias,
+                    merge.Source.SourceColumns
+                    |> NonEmpty.toList
                     |> List.map (fun column ->
                         HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
                             ImmutableArray.Create(partOf column),
                             unknown))
                     |> ImmutableArray.CreateRange,
-                    source,
+                    merge.Source.SourceValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
+                    exprOf merge.MatchPredicate,
+                    matched,
+                    notMatched,
                     statementSpan)
-            result.Conflict <- insert.Conflict |> Option.map conflictOf |> Option.defaultValue (Unchecked.defaultof<_>)
-            result.Returning <- insert.Returning |> List.map returningOf |> ImmutableArray.CreateRange
-            result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+                :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
-        | Statement.UpdateStatement update ->
-            let result =
-                HsSqlAgent.SqlCore.Core.Ast.UpdateStatement(
-                    HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
-                        identifierOf update.Target,
-                        update.TargetAlias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                        unknown),
-                    update.Assignments
-                    |> List.map (fun assignment ->
-                        HsSqlAgent.SqlCore.Core.Ast.Assignment(
-                            identifierOf assignment.Target,
-                            exprOf assignment.Value,
-                            unknown))
-                    |> ImmutableArray.CreateRange,
-                    update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                    statementSpan)
-            let fromSources = update.From |> List.map tableSourceOf
-            result.FromSources <- fromSources |> ImmutableArray.CreateRange
-            if fromSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
-                result.From <-
-                    fromSources
-                    |> List.map (fun source -> source :?> HsSqlAgent.SqlCore.Core.Ast.NamedTableSource)
-                    |> ImmutableArray.CreateRange
-            result.Returning <- update.Returning |> List.map returningOf |> ImmutableArray.CreateRange
-            result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+            | Statement.DeleteStatement delete ->
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
+                        HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
+                            identifierOf delete.Target,
+                            delete.TargetAlias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                            unknown),
+                        delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
+                        statementSpan)
+                let usingSources = delete.Using |> List.map tableSourceOf
+                result.UsingSources <- usingSources |> ImmutableArray.CreateRange
+                if usingSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
+                    result.Using <-
+                        usingSources
+                        |> List.map (fun source -> source :?> HsSqlAgent.SqlCore.Core.Ast.NamedTableSource)
+                        |> ImmutableArray.CreateRange
+                result.Returning <- delete.Returning |> List.map returningOf |> ImmutableArray.CreateRange
+                result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
-        | Statement.MergeStatement merge ->
-            let matched =
-                merge.Matched
-                |> Option.map (function
-                    | MergeDelete ->
-                        HsSqlAgent.SqlCore.Core.Ast.MergeMatchedClause(
-                            HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Delete,
-                            ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.Assignment>.Empty,
-                            unknown)
-                    | MergeUpdate assignments ->
-                        HsSqlAgent.SqlCore.Core.Ast.MergeMatchedClause(
-                            HsSqlAgent.SqlCore.Core.Ast.MergeMatchedActionKind.Update,
-                            assignments
-                            |> NonEmpty.toList
-                            |> List.map (fun assignment ->
-                                HsSqlAgent.SqlCore.Core.Ast.Assignment(
-                                    identifierOf assignment.Target,
-                                    exprOf assignment.Value,
-                                    unknown))
-                            |> ImmutableArray.CreateRange,
-                            unknown))
-                |> Option.defaultValue (Unchecked.defaultof<_>)
-            let notMatched =
-                merge.NotMatched
-                |> Option.map (fun insert ->
-                    HsSqlAgent.SqlCore.Core.Ast.MergeInsertClause(
-                        insert.InsertColumns |> NonEmpty.toList |> List.map identifierOf |> ImmutableArray.CreateRange,
-                        insert.InsertValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
-                        unknown))
-                |> Option.defaultValue (Unchecked.defaultof<_>)
-            HsSqlAgent.SqlCore.Core.Ast.MergeStatement(
-                HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
-                    identifierOf merge.Target,
-                    partOf merge.TargetAlias,
-                    unknown),
-                partOf merge.Source.Alias,
-                merge.Source.SourceColumns
-                |> NonEmpty.toList
-                |> List.map (fun column ->
-                    HsSqlAgent.SqlCore.Core.Ast.SqlIdentifier(
-                        ImmutableArray.Create(partOf column),
-                        unknown))
-                |> ImmutableArray.CreateRange,
-                merge.Source.SourceValues |> NonEmpty.toList |> List.map exprOf |> ImmutableArray.CreateRange,
-                exprOf merge.MatchPredicate,
-                matched,
-                notMatched,
-                statementSpan)
-            :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
-        | Statement.DeleteStatement delete ->
-            let result =
-                HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
-                    HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
-                        identifierOf delete.Target,
-                        delete.TargetAlias |> Option.map partOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                        unknown),
-                    delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
-                    statementSpan)
-            let usingSources = delete.Using |> List.map tableSourceOf
-            result.UsingSources <- usingSources |> ImmutableArray.CreateRange
-            if usingSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
-                result.Using <-
-                    usingSources
-                    |> List.map (fun source -> source :?> HsSqlAgent.SqlCore.Core.Ast.NamedTableSource)
-                    |> ImmutableArray.CreateRange
-            result.Returning <- delete.Returning |> List.map returningOf |> ImmutableArray.CreateRange
-            result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+        statementOf
 
     let toStatement (parsed: ParsedSql) =
         let document = Parsed.value parsed
-        let statement = statementOf (spanOf document.Span) document.Statement
+        let statement = (createProjection ()) (spanOf document.Span) document.Statement
         // Preserve the full statement source span at the public boundary.
         match statement with
         | :? HsSqlAgent.SqlCore.Core.Ast.SelectStatement as select ->

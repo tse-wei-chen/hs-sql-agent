@@ -156,44 +156,13 @@ module internal RewriteStages =
                 "SQL capability 'aggregate.string.ordering' rejects this raw aggregate-local ORDER BY source shape; "
                 + "provider-specific aggregate ordering remains fail-closed.")
 
-    let rec private expressionReferencesColumn expression =
-        match expression with
-        | Spanned(_, inner) -> expressionReferencesColumn inner
-        | Column _ | BoundColumn _ -> true
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            expressionReferencesColumn amount || expressionReferencesColumn value
-        | Unary(_, value) | Cast(value, _) | Extract(_, value) | PostgresJsonAccess(value, _, _) | IsNull(value, _) ->
-            expressionReferencesColumn value
-        | Binary(_, left, right) | RegexMatch(left, right) ->
-            expressionReferencesColumn left || expressionReferencesColumn right
-        | Like(value, pattern, _, _, _) ->
-            expressionReferencesColumn value || expressionReferencesColumn pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.exists expressionReferencesColumn
-        | FunctionCall call ->
-            call.Arguments |> List.exists expressionReferencesColumn
-        | FilteredAggregate(value, predicate) ->
-            expressionReferencesColumn value || expressionReferencesColumn predicate
-        | Windowed(value, window) ->
-            expressionReferencesColumn value
-            || (window.PartitionBy |> List.exists expressionReferencesColumn)
-            || (window.OrderBy |> List.exists (fun order -> expressionReferencesColumn order.Expression))
-        | SimpleCase(input, branches, fallback) ->
-            expressionReferencesColumn input
-            || (branches |> NonEmpty.toList |> List.exists (fun branch ->
-                expressionReferencesColumn branch.Match || expressionReferencesColumn branch.Result))
-            || (fallback |> Option.exists expressionReferencesColumn)
-        | SearchedCase(branches, fallback) ->
-            (branches |> NonEmpty.toList |> List.exists (fun branch ->
-                expressionReferencesColumn branch.Condition || expressionReferencesColumn branch.Result))
-            || (fallback |> Option.exists expressionReferencesColumn)
-        | InList(value, items, _) ->
-            expressionReferencesColumn value || (items |> NonEmpty.toList |> List.exists expressionReferencesColumn)
-        | InSubquery(value, _, _) | Between(value, _, _, _) ->
-            expressionReferencesColumn value
-        | ScalarSubquery _ | Exists _ -> true
-        | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> false
+    // Aggregate ordering asks whether an expression contains a row-column
+    // reference. As before, subquery bodies are not searched and BETWEEN
+    // only checks its value operand for this specific proof.
+    let private expressionReferencesColumn expression =
+        RewriteAstTraversal.exists false (function
+            | Column _ | BoundColumn _ | ScalarSubquery _ | Exists _ -> true
+            | _ -> false) expression
 
     let private validateAggregateCall enforceSource source sourceProfile target targetProfile (call: FunctionCall) =
         let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
@@ -223,137 +192,187 @@ module internal RewriteStages =
                 raise (SqlCompilationException(
                     "SQL Server STRING_AGG WITHIN GROUP ordering requires non-constant expressions; Core requires each ordering expression to reference a column."))
 
-    let rec private validateAggregateExpr enforceSource source sourceProfile target targetProfile expression =
-        match expression with
-        | Spanned(_, inner) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile inner
-        | FunctionCall call ->
-            validateAggregateCall enforceSource source sourceProfile target targetProfile call
-            call.Arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-            call.AggregateOrderBy
-            |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
-        | Unary(_, value) | Cast(value, _) | Extract(_, value) | IsNull(value, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-        | Binary(_, left, right) | RegexMatch(left, right) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile left
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile right
-        | PostgresJsonAccess(value, _, _) ->
-            match SqlJsonCapabilityRules.PostgresArrowSourceValidationError(source, sourceProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            match SqlJsonCapabilityRules.PostgresArrowTargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-        | Like(value, pattern, _, _, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | FilteredAggregate(value, predicate) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile predicate
-        | Windowed(value, window) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            window.PartitionBy |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-            window.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
-        | SimpleCase(input, branches, fallback) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile input
-            branches |> NonEmpty.iter (fun branch ->
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Match
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Result)
-            fallback |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Condition
-                validateAggregateExpr enforceSource source sourceProfile target targetProfile branch.Result)
-            fallback |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | InList(value, items, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            items |> NonEmpty.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        | InSubquery(value, query, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
-        | Between(value, lower, upper, _) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile lower
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile upper
-        | ScalarSubquery query | Exists(query, _) ->
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile amount
-            validateAggregateExpr enforceSource source sourceProfile target targetProfile value
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
+    // Aggregate capability validation must walk the complete query graph,
+    // including scalar/derived subqueries, without recursive CLR frames.
+    // This stage has a deliberately different visitation order from table
+    // policy validation. Keep that order and its first-failure diagnostics.
+    [<Struct>]
+    type private AggregateFrame =
+        | AggregateExpr of expression: Expr
+        | AggregateSource of sourceBody: TableSource
+        | AggregateQuery of queryBody: Query
+        | AggregateSelect of selectBody: Select
+        | AggregateSelectAfterCtes of selectionBody: Select
 
-    and private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
-        match table with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) ->
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
-        | LateralDerivedTable(query, _) ->
-            if enforceSource then
-                match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-            validateAggregateQuery enforceSource source sourceProfile target targetProfile query
+    let private validateAggregateWalk enforceSource source sourceProfile target targetProfile root =
+        let pending = ResizeArray<AggregateFrame>()
+        let inline push frame = pending.Add frame
+        let pushExprs (values: Expr list) =
+            let values = List.toArray values
+            for index = values.Length - 1 downto 0 do
+                push (AggregateExpr values.[index])
+        let pushOrders (orders: OrderBy list) =
+            let orders = List.toArray orders
+            for index = orders.Length - 1 downto 0 do
+                push (AggregateExpr orders.[index].Expression)
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | AggregateExpr expression ->
+                match expression with
+                | Spanned(_, inner) -> push (AggregateExpr inner)
+                | FunctionCall call ->
+                    validateAggregateCall enforceSource source sourceProfile target targetProfile call
+                    pushOrders call.AggregateOrderBy
+                    pushExprs call.Arguments
+                | Unary(_, value)
+                | Cast(value, _)
+                | Extract(_, value)
+                | IsNull(value, _) ->
+                    push (AggregateExpr value)
+                | Binary(_, left, right)
+                | RegexMatch(left, right)
+                | Like(left, right, _, _, _)
+                | FilteredAggregate(left, right)
+                | DateAdd(_, left, right)
+                | DateDiff(_, left, right) ->
+                    push (AggregateExpr right)
+                    push (AggregateExpr left)
+                | PostgresJsonAccess(value, _, _) ->
+                    match SqlJsonCapabilityRules.PostgresArrowSourceValidationError(source, sourceProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    match SqlJsonCapabilityRules.PostgresArrowTargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    push (AggregateExpr value)
+                | RawRegexCall(arguments, _) -> pushExprs arguments
+                | Windowed(value, window) ->
+                    pushOrders window.OrderBy
+                    pushExprs window.PartitionBy
+                    push (AggregateExpr value)
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (AggregateExpr value))
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        push (AggregateExpr branch.Result)
+                        push (AggregateExpr branch.Match)) branches
+                    push (AggregateExpr input)
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter (fun value -> push (AggregateExpr value))
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        push (AggregateExpr branch.Result)
+                        push (AggregateExpr branch.Condition)) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse (fun item ->
+                        push (AggregateExpr item)) items
+                    push (AggregateExpr value)
+                | InSubquery(value, query, _) ->
+                    push (AggregateQuery query)
+                    push (AggregateExpr value)
+                | Between(value, lower, upper, _) ->
+                    push (AggregateExpr upper)
+                    push (AggregateExpr lower)
+                    push (AggregateExpr value)
+                | ScalarSubquery query
+                | Exists(query, _) -> push (AggregateQuery query)
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+            | AggregateSource table ->
+                match table with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) -> push (AggregateQuery query)
+                | LateralDerivedTable(query, _) ->
+                    if enforceSource then
+                        match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlLateralDerivedTableCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    push (AggregateQuery query)
+            | AggregateSelect select ->
+                if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+                    if enforceSource then
+                        match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    if source <> target then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.recursive_cte' is currently native-only; cross-provider recursive evaluation semantics are not proven. Source provider "
+                            + string source + ", target provider " + string target + "."))
+                    match SqlRecursiveCteCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                push (AggregateSelectAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (AggregateQuery ctes.[index].Query)
+            | AggregateSelectAfterCtes select ->
+                // Original visitation order: distinct, projection, FROM,
+                // JOIN source/predicate, WHERE, GROUP BY, HAVING.
+                select.Having |> Option.iter (fun value -> push (AggregateExpr value))
+                pushExprs select.GroupBy
+                select.Where |> Option.iter (fun value -> push (AggregateExpr value))
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> push (AggregateExpr predicate)
+                    | None -> ()
+                    push (AggregateSource joins.[index].Source)
+                select.From |> Option.iter (fun table -> push (AggregateSource table))
+                NonEmpty.iterReverse (fun item ->
+                    push (AggregateExpr item.Expression)) select.ProjectionItems
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (fun value ->
+                        push (AggregateExpr value)) values
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+            | AggregateQuery query ->
+                if query.FetchPercent.IsSome then
+                    if query.Limit.IsSome then
+                        raise (SqlCompilationException(
+                            "FETCH row count and FETCH percentage cannot coexist in one canonical Query."))
+                    if enforceSource then
+                        match SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlFetchPercentCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                if query.FetchWithTies then
+                    if query.Limit.IsNone && query.FetchPercent.IsNone then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.fetch_with_ties' requires a FETCH row count or percentage."))
+                    if query.OrderBy.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.fetch_with_ties' requires ORDER BY so tie equality has a defined sort key."))
+                    if enforceSource then
+                        match SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlFetchWithTiesCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                pushOrders query.OrderBy
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (AggregateQuery branches.[index].Query)
+                push (AggregateSelect query.Head)
 
-    and private validateAggregateSelect enforceSource source sourceProfile target targetProfile select =
-        if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            if enforceSource then
-                match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            if source <> target then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.recursive_cte' is currently native-only; cross-provider recursive evaluation semantics are not proven. Source provider "
-                    + string source + ", target provider " + string target + "."))
-            match SqlRecursiveCteCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        select.Ctes |> List.iter (fun cte -> validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
-        iterDistinctOn (validateAggregateExpr enforceSource source sourceProfile target targetProfile) select
-        select.Projection |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
-        select.From |> Option.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
-        select.Joins |> List.iter (fun join ->
-            validateAggregateSource enforceSource source sourceProfile target targetProfile join.Source
-            join.Predicate |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile))
-        select.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        select.GroupBy |> List.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
-        select.Having |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
+    let private validateAggregateExpr enforceSource source sourceProfile target targetProfile expression =
+        validateAggregateWalk enforceSource source sourceProfile target targetProfile
+            (AggregateExpr expression)
 
-    and private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
-        if query.FetchPercent.IsSome then
-            if query.Limit.IsSome then
-                raise (SqlCompilationException(
-                    "FETCH row count and FETCH percentage cannot coexist in one canonical Query."))
-            if enforceSource then
-                match SqlFetchPercentCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            match SqlFetchPercentCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        if query.FetchWithTies then
-            if query.Limit.IsNone && query.FetchPercent.IsNone then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.fetch_with_ties' requires a FETCH row count or percentage."))
-            if query.OrderBy.IsEmpty then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.fetch_with_ties' requires ORDER BY so tie equality has a defined sort key."))
-            if enforceSource then
-                match SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            match SqlFetchWithTiesCapabilityRules.TargetValidationError(target, targetProfile) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        validateAggregateSelect enforceSource source sourceProfile target targetProfile query.Head
-        query.SetOperations |> List.iter (fun branch -> validateAggregateQuery enforceSource source sourceProfile target targetProfile branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateAggregateExpr enforceSource source sourceProfile target targetProfile order.Expression)
+    let private validateAggregateSource enforceSource source sourceProfile target targetProfile table =
+        validateAggregateWalk enforceSource source sourceProfile target targetProfile
+            (AggregateSource table)
+
+    let private validateAggregateQuery enforceSource source sourceProfile target targetProfile query =
+        validateAggregateWalk enforceSource source sourceProfile target targetProfile
+            (AggregateQuery query)
 
     let private hasRichReturning items =
         items
@@ -471,84 +490,41 @@ module internal RewriteStages =
                 AggregateSeparator = None }
 
     let rec private normalizeExpr source target expression =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        match expression with
-        | Spanned(span, inner) -> normalizeExpr source target inner |> Expr.withSpan span
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> expression
-        | DateAdd(unit, amount, value) ->
-            DateAdd(unit, normalizeExpr source target amount, normalizeExpr source target value)
-        | DateDiff(unit, startValue, finishValue) ->
-            DateDiff(unit, normalizeExpr source target startValue, normalizeExpr source target finishValue)
-        | Unary(Positive, operand) -> normalizeExpr source target operand
-        | Unary(op, operand) -> Unary(op, normalizeExpr source target operand)
-        | Binary(op, left, right) -> Binary(op, normalizeExpr source target left, normalizeExpr source target right)
-        | Like(value, pattern, escape, negated, insensitive) ->
-            Like(normalizeExpr source target value, normalizeExpr source target pattern, escape, negated, insensitive)
+        // Standalone DML expression trees use the existing scalar mapper.
+        // Its Query callback delegates to the mixed graph mapper below,
+        // so nested Query/Select/Source subgraphs do not recurse.
+        RewriteAstTraversal.mapPostOrder
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            (normalizeScalarNode source target)
+            (normalizeQuery source target)
+            expression
+
+    and private normalizeScalarNode source target (rebuilt: Expr) =
+        match rebuilt with
+        | Unary(Positive, operand) -> operand
         | RawRegexCall(arguments, _) ->
-            let normalized = arguments |> List.map (normalizeExpr source target)
-            match normalized with
+            match arguments with
             | [ value; pattern ] -> RegexMatch(value, pattern)
             | values ->
                 compilationError (
                     "Function 'CORE_REGEX_MATCH' requires 2 argument(s); received "
-                    + string values.Length
-                    + ".")
-        | RegexMatch(value, pattern) ->
-            RegexMatch(normalizeExpr source target value, normalizeExpr source target pattern)
-        | PostgresJsonAccess(value, selector, resultKind) ->
-            PostgresJsonAccess(normalizeExpr source target value, selector, resultKind)
-        | FunctionCall call ->
-            normalizeFunction source target call
-        | FilteredAggregate(value, predicate) ->
-            FilteredAggregate(normalizeExpr source target value, normalizeExpr source target predicate)
-        | Windowed(value, window) ->
-            Windowed(normalizeExpr source target value, normalizeWindow source target window)
+                    + string values.Length + ".")
+        | FunctionCall call -> normalizeFunctionPrepared source target call
         | Cast(value, targetType) ->
             Cast(
-                normalizeExpr source target value,
-                RewriteCastTypes.normalize (sourceProvider source) (TargetRuntime.provider target) targetType)
-        | Extract(field, value) -> Extract(field, normalizeExpr source target value)
-        | SimpleCase(input, branches, fallback) ->
-            SimpleCase(
-                normalizeExpr source target input,
-                branches
-                |> NonEmpty.map (fun (branch: SimpleCaseBranch) ->
-                    { Match = normalizeExpr source target branch.Match
-                      Result = normalizeExpr source target branch.Result }),
-                fallback |> Option.map (normalizeExpr source target))
-        | SearchedCase(branches, fallback) ->
-            SearchedCase(
-                branches
-                |> NonEmpty.map (fun (branch: SearchedCaseBranch) ->
-                    { Condition = normalizeExpr source target branch.Condition
-                      Result = normalizeExpr source target branch.Result }),
-                fallback |> Option.map (normalizeExpr source target))
-        | InList(value, items, negated) ->
-            InList(
-                normalizeExpr source target value,
-                items |> NonEmpty.map (normalizeExpr source target),
-                negated)
-        | InSubquery(value, query, negated) ->
-            InSubquery(
-                normalizeExpr source target value,
-                normalizeQuery source target query,
-                negated)
-        | Between(value, lower, upper, negated) ->
-            Between(
-                normalizeExpr source target value,
-                normalizeExpr source target lower,
-                normalizeExpr source target upper,
-                negated)
-        | IsNull(value, negated) -> IsNull(normalizeExpr source target value, negated)
-        | ScalarSubquery query -> ScalarSubquery(normalizeQuery source target query)
-        | Exists(query, negated) -> Exists(normalizeQuery source target query, negated)
+                value,
+                RewriteCastTypes.normalize
+                    (sourceProvider source)
+                    (TargetRuntime.provider target)
+                    targetType)
+        | _ -> rebuilt
 
-    and private normalizeFunction source target (call: FunctionCall) =
+    and private normalizeFunctionPrepared source target (call: FunctionCall) =
+        // Child arguments and aggregate ORDER BY are already normalized by
+        // the shared post-order walker, in the original source order.
         let sourceTool = sourceProvider source
         let targetTool = TargetRuntime.provider target
-        let arguments = call.Arguments |> List.map (normalizeExpr source target)
-        let orderBy = call.AggregateOrderBy |> List.map (normalizeOrderBy source target)
-        let call = { call with Arguments = arguments; AggregateOrderBy = orderBy }
+        let arguments = call.Arguments
         let sourceName = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
         let sourceRegistryName =
             let postgresCatalogPrefix = "PG_CATALOG."
@@ -850,74 +826,133 @@ module internal RewriteStages =
                             FunctionName.create sourceName
                     FunctionCall { call with Name = renderedName; Arguments = arguments }
 
-    and private normalizeWindow source target (window: WindowSpec) =
-        { window with
-            PartitionBy = window.PartitionBy |> List.map (normalizeExpr source target)
-            OrderBy = window.OrderBy |> List.map (normalizeOrderBy source target) }
-
-    and private normalizeOrderBy source target (orderBy: OrderBy) =
-        { orderBy with Expression = normalizeExpr source target orderBy.Expression }
-
-    and private normalizeSource sourceDialect target (source: TableSource) =
-        match source with
-        | NamedTable _ | CteTable _ -> source
-        | DerivedTable(query, alias) -> DerivedTable(normalizeQuery sourceDialect target query, alias)
-        | LateralDerivedTable(query, alias) ->
-            LateralDerivedTable(normalizeQuery sourceDialect target query, alias)
-
-    and private normalizeJoin sourceDialect target (join: Join) =
-        match join with
-        | CrossJoin source -> CrossJoin(normalizeSource sourceDialect target source)
-        | NaturalJoin(kind, source) -> NaturalJoin(kind, normalizeSource sourceDialect target source)
-        | OnJoin(kind, source, predicate) ->
-            OnJoin(
-                kind,
-                normalizeSource sourceDialect target source,
-                normalizeExpr sourceDialect target predicate)
-        | UsingJoin(kind, source, columns) ->
-            UsingJoin(
-                kind,
-                normalizeSource sourceDialect target source,
-                columns)
-
-    and private normalizeCte sourceDialect target (cte: Cte) =
-        let query = normalizeQuery sourceDialect target cte.Query
-        if cte.ColumnAliases.IsEmpty then { cte with Query = query }
+    and private normalizeCteAliases (cte: Cte) =
+        // The Query has already been normalized by the mixed post-order
+        // mapper, so aliases are lowered after the CTE body completes.
+        if cte.ColumnAliases.IsEmpty then cte
         else
-            let projection = query.Head.Projection
-            if projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then
-                invalidOp ("CTE '" + cte.Name.Value + "' column aliases cannot be lowered safely when the CTE projection contains a wildcard.")
+            let projection = cte.Query.Head.Projection
+            if projection |> List.exists (fun item ->
+                match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then
+                invalidOp (
+                    "CTE '" + cte.Name.Value
+                    + "' column aliases cannot be lowered safely when the CTE projection contains a wildcard.")
             if projection.Length <> cte.ColumnAliases.Length then
-                invalidOp ("CTE '" + cte.Name.Value + "' declares " + string cte.ColumnAliases.Length + " column alias(es) but its statically modeled projection has " + string projection.Length + " column(s).")
+                invalidOp (
+                    "CTE '" + cte.Name.Value + "' declares "
+                    + string cte.ColumnAliases.Length
+                    + " column alias(es) but its statically modeled projection has "
+                    + string projection.Length + " column(s).")
             let rewritten =
                 (projection, cte.ColumnAliases)
                 ||> List.map2 (fun item alias -> { item with Alias = Some alias })
                 |> NonEmpty.ofList "CTE projection"
-            { cte with ColumnAliases = []; Query = { query with Head = { query.Head with ProjectionItems = rewritten } } }
-
-    and private normalizeSelect sourceDialect target (select: Select) =
-        { select with
-            Ctes = select.Ctes |> List.map (normalizeCte sourceDialect target)
-            DistinctMode = select.DistinctMode |> mapDistinctOn (normalizeExpr sourceDialect target)
-            ProjectionItems =
-                select.ProjectionItems
-                |> NonEmpty.map (fun (item: SelectItem) ->
-                    { item with Expression = normalizeExpr sourceDialect target item.Expression })
-            From = select.From |> Option.map (normalizeSource sourceDialect target)
-            Joins = select.Joins |> List.map (normalizeJoin sourceDialect target)
-            Where = select.Where |> Option.map (normalizeExpr sourceDialect target)
-            GroupBy = select.GroupBy |> List.map (normalizeExpr sourceDialect target)
-            Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
+            { cte with
+                ColumnAliases = []
+                Query =
+                    { cte.Query with
+                        Head = { cte.Query.Head with ProjectionItems = rewritten } } }
 
     and private normalizeQuery sourceDialect target (query: Query) =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        { query with
-            Head = normalizeSelect sourceDialect target query.Head
-            SetOperations =
-                query.SetOperations
-                |> List.map (fun (branch: SetBranch) ->
-                    { branch with Query = normalizeQuery sourceDialect target branch.Query })
-            OrderBy = query.OrderBy |> List.map (normalizeOrderBy sourceDialect target) }
+        // Deep, inert scalar wrappers were already proven safe for peeling
+        // and rebuilding; retain that optimization instead of allocating a
+        // full mixed-graph frame set at each of thousands of nested SELECTs.
+        if RewriteAstTraversal.trySimpleScalarChain query |> Option.isSome then
+            let wrappers = ResizeArray<struct (Query * SelectItem)>()
+            let mutable current = query
+            let mutable peeling = true
+            while peeling do
+                match RewriteAstTraversal.trySimpleScalarChain current with
+                | Some(item, child) ->
+                    RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                    wrappers.Add(struct (current, item))
+                    current <- child
+                | None -> peeling <- false
+            let mutable normalized = normalizeQuery sourceDialect target current
+            for index = wrappers.Count - 1 downto 0 do
+                let struct (outer, item) = wrappers.[index]
+                normalized <- RewriteAstTraversal.rebuildSimpleScalarChain outer item normalized
+            normalized
+        else
+            let select = query.Head
+            let plainSource = function
+                | NamedTable _ | CteTable _ -> true
+                | DerivedTable _ | LateralDerivedTable _ -> false
+            let queryFree expression =
+                not (RewriteAstTraversal.exists true
+                    (function
+                     | ScalarSubquery _ | Exists _ | InSubquery _ -> true
+                     | _ -> false) expression)
+            let isFlat =
+                // This branch has no child Query anywhere, including CASE,
+                // aggregate-local ORDER BY, join ON or statement ORDER BY.
+                // Scanning AST expressions is iterative and has no semantic
+                // effects, so the old scalar fast path retains its exact
+                // source-order error and parameter behavior.
+                query.SetOperations.IsEmpty
+                && select.Ctes.IsEmpty
+                && (select.From |> Option.map plainSource |> Option.defaultValue true)
+                && (select.Joins |> List.forall (fun join ->
+                    plainSource join.Source
+                    && (join.Predicate |> Option.map queryFree |> Option.defaultValue true)))
+                && (match select.DistinctMode with
+                    | SelectDistinct.DistinctOn values ->
+                        NonEmpty.toList values |> List.forall queryFree
+                    | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> true)
+                && (NonEmpty.toList select.ProjectionItems
+                    |> List.forall (fun item -> queryFree item.Expression))
+                && (select.Where |> Option.map queryFree |> Option.defaultValue true)
+                && (select.GroupBy |> List.forall queryFree)
+                && (select.Having |> Option.map queryFree |> Option.defaultValue true)
+                && (query.OrderBy |> List.forall (fun item -> queryFree item.Expression))
+            if isFlat then
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                let head =
+                    { select with
+                        DistinctMode =
+                            select.DistinctMode
+                            |> mapDistinctOn (normalizeExpr sourceDialect target)
+                        ProjectionItems =
+                            select.ProjectionItems
+                            |> NonEmpty.map (fun item ->
+                                { item with
+                                    Expression =
+                                        normalizeExpr sourceDialect target item.Expression })
+                        Joins =
+                            select.Joins
+                            |> List.map (function
+                                | OnJoin(kind, source, predicate) ->
+                                    OnJoin(kind, source, normalizeExpr sourceDialect target predicate)
+                                | other -> other)
+                        Where = select.Where |> Option.map (normalizeExpr sourceDialect target)
+                        GroupBy = select.GroupBy |> List.map (normalizeExpr sourceDialect target)
+                        Having = select.Having |> Option.map (normalizeExpr sourceDialect target) }
+                { query with
+                    Head = head
+                    OrderBy =
+                        query.OrderBy
+                        |> List.map (fun order ->
+                            { order with
+                                Expression =
+                                    normalizeExpr sourceDialect target order.Expression }) }
+            else
+                // Mixed Query/Expr/Select/CTE/Source/Join edges are handled
+                // by one heap-backed post-order frame machine, never by a
+                // depth-proportional callback chain.
+                RewriteAstTraversal.mapQueryGraphPostOrder
+                    (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+                    (normalizeScalarNode sourceDialect target)
+                    (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+                    normalizeCteAliases
+                    query
+
+    and private normalizeSource sourceDialect target (source: TableSource) =
+        RewriteAstTraversal.mapSourceGraphPostOrder
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            (normalizeScalarNode sourceDialect target)
+            (fun _ -> RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation)
+            normalizeCteAliases
+            source
 
     let private normalizeReturning source target (items: ReturningItem list) =
         items
@@ -1059,8 +1094,8 @@ module internal RewriteStages =
                 error.Data[diagnosticDataKey] <- diagnostic
                 raise error
 
-    let rec private isWildcard = function
-        | Spanned(_, inner) -> isWildcard inner
+    let private isWildcard expression =
+        match Expr.unspan expression with
         | Wildcard _ -> true
         | _ -> false
 
@@ -1068,141 +1103,65 @@ module internal RewriteStages =
         if call.IsDistinct && call.Arguments |> List.exists isWildcard then
             invalidOp "COUNT(DISTINCT *) is not a valid Core aggregate shape."
 
-    let rec private validateExpr allowedTables expression =
-        match expression with
-        | Spanned(_, inner) -> validateExpr allowedTables inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateExpr allowedTables amount
-            validateExpr allowedTables value
-        | Unary(_, operand) -> validateExpr allowedTables operand
-        | Binary(_, left, right) -> validateExpr allowedTables left; validateExpr allowedTables right
-        | Like(value, pattern, _, _, _) ->
-            validateExpr allowedTables value
-            validateExpr allowedTables pattern
-        | RawRegexCall _ ->
-            invalidOp "Raw REGEXP_LIKE reached plan validation before canonicalization."
-        | RegexMatch(value, pattern) ->
-            validateExpr allowedTables value
-            validateExpr allowedTables pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateExpr allowedTables value
-        | FunctionCall call ->
-            ensureNoDistinctWildcard call
-            call.Arguments |> List.iter (validateExpr allowedTables)
-            call.AggregateOrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
-        | FilteredAggregate(value, predicate) -> validateExpr allowedTables value; validateExpr allowedTables predicate
-        | Windowed(value, window) ->
-            validateExpr allowedTables value
-            window.PartitionBy |> List.iter (validateExpr allowedTables)
-            window.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
-        | Cast(value, _) -> validateExpr allowedTables value
-        | Extract(_, value) -> validateExpr allowedTables value
-        | SimpleCase(input, branches, fallback) ->
-            validateExpr allowedTables input
-            branches |> NonEmpty.iter (fun branch -> validateExpr allowedTables branch.Match; validateExpr allowedTables branch.Result)
-            fallback |> Option.iter (validateExpr allowedTables)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch -> validateExpr allowedTables branch.Condition; validateExpr allowedTables branch.Result)
-            fallback |> Option.iter (validateExpr allowedTables)
-        | InList(value, items, _) -> validateExpr allowedTables value; items |> NonEmpty.iter (validateExpr allowedTables)
-        | InSubquery(value, query, _) -> validateExpr allowedTables value; validateQuery allowedTables query
-        | Between(value, lower, upper, _) -> validateExpr allowedTables value; validateExpr allowedTables lower; validateExpr allowedTables upper
-        | IsNull(value, _) -> validateExpr allowedTables value
-        | ScalarSubquery query -> validateQuery allowedTables query
-        | Exists(query, _) -> validateQuery allowedTables query
+    // All policy checks run as an explicit continuation-machine traversal.
+    // Preserve the legacy recursive walk's first-error order, notably CTEs
+    // before SELECT, query alias checks before UNION tails, and ON predicates.
+    let private validateWalk allowedTables frame =
+        RewriteAstTraversal.iterIncludingQueries (function
+            | RewriteAstTraversal.ExprNode(RawRegexCall _) ->
+                invalidOp "Raw REGEXP_LIKE reached plan validation before canonicalization."
+            | RewriteAstTraversal.ExprNode(FunctionCall call) ->
+                ensureNoDistinctWildcard call
+            | RewriteAstTraversal.SourceNode(NamedTable(identifier, _)) ->
+                ensureTableAllowed allowedTables identifier
+            | RewriteAstTraversal.AfterCtes select ->
+                if select.From.IsNone && select.Joins.IsEmpty
+                   && (select.Projection |> List.exists (fun item -> isWildcard item.Expression)) then
+                    invalidOp "Column reference '*' requires a FROM source in the portable Core query model."
+            | RewriteAstTraversal.AfterQueryHead query ->
+                let duplicateAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                let seenAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                for item in query.Head.Projection do
+                    match item.Alias with
+                    | Some alias when not (seenAliases.Add alias.Value) ->
+                        duplicateAliases.Add alias.Value |> ignore
+                    | _ -> ()
+                if duplicateAliases.Count > 0 then
+                    for order in query.OrderBy do
+                        match Expr.unspan order.Expression with
+                        | Column identifier
+                        | BoundColumn(identifier, ProjectionAlias)
+                            when Identifier.parts identifier |> List.length = 1 ->
+                            let name = identifierText identifier
+                            if duplicateAliases.Contains name then
+                                if query.Head.From.IsNone && query.Head.Joins.IsEmpty then
+                                    invalidOp ("ORDER BY projection alias '" + name + "' is ambiguous in a no-FROM query.")
+                                else
+                                    invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
+                        | _ -> ()
+            | _ -> ()) frame
 
-    and private validateSource allowedTables source =
-        match source with
-        | NamedTable(identifier, _) -> ensureTableAllowed allowedTables identifier
-        | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> validateQuery allowedTables query
+    let private validateExpr allowedTables expression =
+        validateWalk allowedTables (RewriteAstTraversal.ExprNode expression)
 
-    and private validateSelect allowedTables select =
-        for cte in select.Ctes do validateQuery allowedTables cte.Query
-        if select.From.IsNone && select.Joins.IsEmpty && select.Projection |> List.exists (fun item -> isWildcard item.Expression) then
-            invalidOp "Column reference '*' requires a FROM source in the portable Core query model."
-        select.From |> Option.iter (validateSource allowedTables)
-        iterDistinctOn (validateExpr allowedTables) select
-        select.ProjectionItems |> NonEmpty.iter (fun item -> validateExpr allowedTables item.Expression)
-        select.Where |> Option.iter (validateExpr allowedTables)
-        select.GroupBy |> List.iter (validateExpr allowedTables)
-        select.Having |> Option.iter (validateExpr allowedTables)
-        select.Joins
-        |> List.iter (function
-            | CrossJoin source
-            | NaturalJoin(_, source)
-            | UsingJoin(_, source, _) ->
-                validateSource allowedTables source
-            | OnJoin(_, source, predicate) ->
-                validateSource allowedTables source
-                validateExpr allowedTables predicate)
+    let private validateSource allowedTables source =
+        validateWalk allowedTables (RewriteAstTraversal.SourceNode source)
 
-    and private validateQuery allowedTables query =
-        validateSelect allowedTables query.Head
-        let duplicateAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        let seenAliases = HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        for item in query.Head.Projection do
-            match item.Alias with
-            | Some alias when not (seenAliases.Add alias.Value) -> duplicateAliases.Add alias.Value |> ignore
-            | _ -> ()
-        if duplicateAliases.Count > 0 then
-            for order in query.OrderBy do
-                match Expr.unspan order.Expression with
-                | Column identifier
-                | BoundColumn(identifier, ProjectionAlias)
-                    when Identifier.parts identifier |> List.length = 1 ->
-                    let name = identifierText identifier
-                    if duplicateAliases.Contains name then
-                        if query.Head.From.IsNone && query.Head.Joins.IsEmpty then
-                            invalidOp ("ORDER BY projection alias '" + name + "' is ambiguous in a no-FROM query.")
-                        else
-                            invalidOp ("ORDER BY alias '" + name + "' is ambiguous.")
-                | _ -> ()
-        query.SetOperations |> List.iter (fun branch -> validateQuery allowedTables branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateExpr allowedTables order.Expression)
+    let private validateQuery allowedTables query =
+        validateWalk allowedTables (RewriteAstTraversal.QueryNode query)
 
-    let rec private validateInsertValueScope expression =
-        match expression with
-        | Spanned(_, inner) -> validateInsertValueScope inner
-        | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateInsertValueScope amount
-            validateInsertValueScope value
-        | ScalarSubquery _ | Exists _ -> ()
-        | Column identifier
-        | BoundColumn(identifier, _) ->
-            invalidOp ("INSERT VALUES scalar expression cannot reference column '" + identifierText identifier + "' outside a scalar subquery; use INSERT ... SELECT when the inserted value depends on a source row.")
-        | Wildcard _ | OrderOrdinal _ -> invalidOp "INSERT VALUES scalar expression cannot contain a wildcard or ORDER BY ordinal."
-        | Unary(_, operand) -> validateInsertValueScope operand
-        | Binary(_, left, right) -> validateInsertValueScope left; validateInsertValueScope right
-        | Like(value, pattern, _, _, _) -> validateInsertValueScope value; validateInsertValueScope pattern
-        | RawRegexCall _ -> invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
-        | RegexMatch(value, pattern) -> validateInsertValueScope value; validateInsertValueScope pattern
-        | PostgresJsonAccess(value, _, _) -> validateInsertValueScope value
-        | FunctionCall call ->
-            call.Arguments |> List.iter validateInsertValueScope
-            call.AggregateOrderBy |> List.iter (fun order -> validateInsertValueScope order.Expression)
-        | FilteredAggregate(value, predicate) -> validateInsertValueScope value; validateInsertValueScope predicate
-        | Windowed(value, window) ->
-            validateInsertValueScope value
-            window.PartitionBy |> List.iter validateInsertValueScope
-            window.OrderBy |> List.iter (fun order -> validateInsertValueScope order.Expression)
-        | Cast(value, _) | Extract(_, value) -> validateInsertValueScope value
-        | SimpleCase(input, branches, fallback) ->
-            validateInsertValueScope input
-            branches |> NonEmpty.iter (fun branch -> validateInsertValueScope branch.Match; validateInsertValueScope branch.Result)
-            fallback |> Option.iter validateInsertValueScope
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch -> validateInsertValueScope branch.Condition; validateInsertValueScope branch.Result)
-            fallback |> Option.iter validateInsertValueScope
-        | InList(value, items, _) -> validateInsertValueScope value; items |> NonEmpty.iter validateInsertValueScope
-        | InSubquery(value, _, _) -> validateInsertValueScope value
-        | Between(value, lower, upper, _) -> validateInsertValueScope value; validateInsertValueScope lower; validateInsertValueScope upper
-        | IsNull(value, _) -> validateInsertValueScope value
+    // Use heap-backed work frames rather than consuming a CLR call frame
+    // for every nested INSERT VALUES scalar expression.
+    let private validateInsertValueScope expression =
+        RewriteAstTraversal.iter (function
+            | Column identifier
+            | BoundColumn(identifier, _) ->
+                invalidOp ("INSERT VALUES scalar expression cannot reference column '" + identifierText identifier + "' outside a scalar subquery; use INSERT ... SELECT when the inserted value depends on a source row.")
+            | Wildcard _ | OrderOrdinal _ ->
+                invalidOp "INSERT VALUES scalar expression cannot contain a wildcard or ORDER BY ordinal."
+            | RawRegexCall _ ->
+                invalidOp "Raw REGEXP_LIKE reached INSERT validation before canonicalization."
+            | _ -> ()) expression
 
     let private projectionWidth query =
         if query.Head.Projection |> List.exists (fun item -> isWildcard item.Expression) then None
@@ -1296,45 +1255,60 @@ module internal RewriteStages =
         | AssignmentClause -> "UPDATE SET"
         | InsertValueClause -> "UPDATE SET/INSERT VALUES"
 
-    let rec private isDefinitelyBoolean targetRuntime expression =
-        match expression with
-        | Spanned(_, inner) -> isDefinitelyBoolean targetRuntime inner
-        | Literal(ScalarValue.Boolean _) -> true
-        | IsNull _ | InList _ | InSubquery _ | Between _ | Exists _ | Like _ -> true
-        | RegexMatch _ ->
-            SqlRegexCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime, null)
-        | Unary(UnaryOperator.Not, _) -> true
-        | Binary(operator, _, _) ->
-            match operator with
-            | BinaryOperator.Equal | BinaryOperator.NotEqual
-            | BinaryOperator.GreaterThan | BinaryOperator.LessThan
-            | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
-            | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom
-            | BinaryOperator.And | BinaryOperator.Or -> true
-            | _ -> false
-        | SimpleCase(_, branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+    // Boolean CASE classification only needs to inspect result expressions.
+    // Use explicit work frames rather than recursive CASE -> CASE calls. Do
+    // not inspect branch WHEN predicates: this is a result-type proof, not
+    // full semantic validation.
+    let private isDefinitelyBoolean targetRuntime expression =
+        let pending = ResizeArray<Expr>()
+        pending.Add expression
+        let mutable valid = true
+        while valid && pending.Count > 0 do
+            let last = pending.Count - 1
+            let current = Expr.unspan pending.[last]
+            pending.RemoveAt(last)
+            match current with
+            | Literal(ScalarValue.Boolean _) -> ()
+            | IsNull _ | InList _ | InSubquery _ | Between _
+            | Exists _ | Like _ -> ()
+            | RegexMatch _ ->
+                valid <- SqlRegexCapabilityRules.SupportsTarget(TargetRuntime.provider targetRuntime, null)
+            | Unary(UnaryOperator.Not, _) -> ()
+            | Binary(operator, _, _) ->
+                valid <-
+                    match operator with
+                    | BinaryOperator.Equal | BinaryOperator.NotEqual
+                    | BinaryOperator.GreaterThan | BinaryOperator.LessThan
+                    | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
+                    | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom
+                    | BinaryOperator.And | BinaryOperator.Or -> true
+                    | _ -> false
+            | SimpleCase(_, branches, fallback) ->
+                let mutable nonNull = 0
+                let pushResult value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
-        | SearchedCase(branches, fallback) ->
-            let values =
-                (branches |> NonEmpty.toList |> List.map (fun branch -> branch.Result))
-                @ (fallback |> Option.toList)
-            let nonNull =
-                values
-                |> List.filter (fun value ->
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter pushResult
+                NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                    pushResult branch.Result) branches
+                if nonNull = 0 then valid <- false
+            | SearchedCase(branches, fallback) ->
+                let mutable nonNull = 0
+                let pushResult value =
                     match Expr.unspan value with
-                    | Literal ScalarValue.Null -> false
-                    | _ -> true)
-            not nonNull.IsEmpty && nonNull |> List.forall (isDefinitelyBoolean targetRuntime)
-        | _ -> false
+                    | Literal ScalarValue.Null -> ()
+                    | _ ->
+                        nonNull <- nonNull + 1
+                        pending.Add value
+                fallback |> Option.iter pushResult
+                NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                    pushResult branch.Result) branches
+                if nonNull = 0 then valid <- false
+            | _ -> valid <- false
+        valid
 
     let private validateBooleanScalar targetRuntime capability expression =
         if isDefinitelyBoolean targetRuntime expression then
@@ -1672,142 +1646,7 @@ module internal RewriteStages =
                 "Scalar subquery must project exactly one expression; projected "
                 + string projection.Length + "."))
 
-    let rec private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        match context with
-        | ProjectionClause -> validateBooleanScalar targetRuntime "expression.boolean_select" expression
-        | AssignmentClause -> validateBooleanScalar targetRuntime "dml.update.boolean_assignment" expression
-        | InsertValueClause -> validateBooleanScalar targetRuntime "dml.insert.boolean_value" expression
-        | _ -> ()
-
-        match expression with
-        | Spanned(_, inner) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow inner
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow amount
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | Unary(_, operand) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow operand
-        | Binary(_, left, right) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow left
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow right
-        | Like(value, pattern, _, _, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | RegexMatch(value, pattern) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow pattern
-        | PostgresJsonAccess(value, _, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | FunctionCall call ->
-            validateCanonicalFunction targetRuntime withinWindow call
-            let name, isAggregate, isWindowFunction = canonicalFunctionKind call
-            if isAggregate then
-                let allowed =
-                    if withinWindow then
-                        context = ProjectionClause || context = OrderByClause
-                    else
-                        context = ProjectionClause
-                        || context = HavingClause
-                        || context = OrderByClause
-                        || (context = WindowSpecificationClause
-                            && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(TargetRuntime.provider targetRuntime))
-                if not allowed then
-                    raise (SqlCompilationException(
-                        "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
-                if insideSetFunction then
-                    raise (SqlCompilationException(
-                        "Aggregate function '" + name + "' cannot be nested inside another aggregate or window function."))
-            if isWindowFunction then
-                if context <> ProjectionClause && context <> OrderByClause then
-                    raise (SqlCompilationException(
-                        "Window function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
-                if insideSetFunction then
-                    raise (SqlCompilationException(
-                        "Window function '" + name + "' cannot be nested inside another aggregate or window function."))
-            let nested = insideSetFunction || isAggregate || isWindowFunction
-            call.Arguments |> List.iter (validateSemanticExpr targetRuntime context nested false)
-            call.AggregateOrderBy
-            |> List.iter (fun order ->
-                validateSemanticExpr targetRuntime OrderByClause nested false order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            validateFilterTarget value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime PredicateClause false false predicate
-        | Windowed(value, window) ->
-            validateWindowTarget targetRuntime value window
-            if context <> ProjectionClause && context <> OrderByClause then
-                raise (SqlCompilationException(
-                    "Window expressions are not allowed in SQL clause '" + clauseName context + "'."))
-            if insideSetFunction then
-                raise (SqlCompilationException("Window functions cannot be nested inside aggregate or window functions."))
-            validateSemanticExpr targetRuntime context false true value
-            window.PartitionBy
-            |> List.iter (validateSemanticExpr targetRuntime WindowSpecificationClause false false)
-            window.OrderBy
-            |> List.iter (fun order ->
-                validateSemanticExpr targetRuntime WindowSpecificationClause false false order.Expression)
-        | Cast(value, _) | Extract(_, value) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | SimpleCase(input, branches, fallback) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow input
-            branches |> NonEmpty.iter (fun branch ->
-                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Match
-                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Result)
-            fallback |> Option.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                validateSemanticExpr targetRuntime PredicateClause false false branch.Condition
-                validateSemanticExpr targetRuntime context insideSetFunction withinWindow branch.Result)
-            fallback |> Option.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | InList(value, items, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            items |> NonEmpty.iter (validateSemanticExpr targetRuntime context insideSetFunction withinWindow)
-        | InSubquery(value, query, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateScalarSubqueryShape query
-            validateSemanticQuery targetRuntime query
-        | Between(value, lower, upper, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow lower
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow upper
-        | IsNull(value, _) ->
-            validateSemanticExpr targetRuntime context insideSetFunction withinWindow value
-        | ScalarSubquery query ->
-            validateScalarSubqueryShape query
-            validateSemanticQuery targetRuntime query
-        | Exists(query, _) ->
-            validateSemanticQuery targetRuntime query
-
-    and private validateSemanticTable targetRuntime source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) -> validateSemanticQuery targetRuntime query
-
-    and private validateSemanticSelect targetRuntime select =
-        select.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
-        select.From |> Option.iter (validateSemanticTable targetRuntime)
-        select.Joins |> List.iter (fun join ->
-            validateSemanticTable targetRuntime join.Source
-            join.Predicate
-            |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false))
-        iterDistinctOn (validateSemanticExpr targetRuntime ProjectionClause false false) select
-        select.Projection
-        |> List.iter (fun item ->
-            validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
-        select.Where
-        |> Option.iter (validateSemanticExpr targetRuntime PredicateClause false false)
-        select.GroupBy
-        |> List.iter (validateSemanticExpr targetRuntime GroupByClause false false)
-        select.Having
-        |> Option.iter (validateSemanticExpr targetRuntime HavingClause false false)
-
-    and private identifierPartEquivalent targetRuntime (left: IdentifierPart) (right: IdentifierPart) =
+    let private identifierPartEquivalent targetRuntime (left: IdentifierPart) (right: IdentifierPart) =
         let normalize (part: IdentifierPart) =
             if part.WasQuoted || part.PreserveSpelling then
                 part.Value
@@ -1823,7 +1662,7 @@ module internal RewriteStages =
             | _ -> StringComparer.OrdinalIgnoreCase
         comparer.Equals(normalize left, normalize right)
 
-    and private projectionOutputNames (select: Select) =
+    let private projectionOutputNames (select: Select) =
         let names =
             select.Projection
             |> List.map (fun item ->
@@ -1835,7 +1674,7 @@ module internal RewriteStages =
         if names |> List.exists Option.isNone then None
         else Some(names |> List.choose id)
 
-    and private validateSetOrderReference targetRuntime outputNames identifier =
+    let private validateSetOrderReference targetRuntime outputNames identifier =
         let parts = Identifier.parts identifier
         if parts.Length <> 1 then
             raise (SqlCompilationException(
@@ -1855,119 +1694,253 @@ module internal RewriteStages =
                     "Set-operation ORDER BY reference '" + reference.Value
                     + "' is ambiguous in the combined output projection; use an output position."))
 
-    and private validateSemanticQuery targetRuntime query =
-        RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
-        validateSemanticSelect targetRuntime query.Head
-        let expectedWidth =
-            if query.Head.Projection |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None
-            else Some query.Head.Projection.Length
-        query.SetOperations
-        |> List.iter (fun branch ->
-            validateSemanticQuery targetRuntime branch.Query
-            match expectedWidth with
-            | Some expected ->
-                let actual =
-                    if branch.Query.Head.Projection
-                       |> List.exists (fun item -> match Expr.unspan item.Expression with Wildcard _ -> true | _ -> false) then None
-                    else Some branch.Query.Head.Projection.Length
-                match actual with
-                | Some value when value <> expected ->
-                    raise (SqlCompilationException(
-                        "Set operation projection width " + string value
-                        + " does not match head projection width " + string expected + "."))
-                | _ -> ()
-            | None -> ())
-        let headHasWildcard =
-            query.Head.Projection
-            |> List.exists (fun item ->
+    // One explicit frame machine validates Expr, Query, Select and source
+    // subgraphs. In particular, a scalar subquery no longer recursively
+    // enters validateSemanticQuery -> validateSemanticSelect -> Expr.
+    // Continuation frames preserve the old diagnostic-first order.
+    [<Struct>]
+    type private SemanticFrame =
+        | SemanticExpr of clause: ClauseContext * inSet: bool * inWindow: bool * expression: Expr
+        | SemanticTable of tableSource: TableSource
+        | SemanticSelect of selectBody: Select
+        | SemanticAfterCtes of selectTail: Select
+        | SemanticQuery of queryBody: Query
+        | SemanticAfterHead of queryTail: Query
+        | SemanticAfterBranch of expectedWidth: int option * branchQuery: Query
+        | SemanticAfterBranches of queryTail: Query
+        | SemanticOrder of orderQuery: Query * outputNames: IdentifierPart list option * headHasWildcard: bool * order: OrderBy
+        | SemanticInSubquery of queryBody: Query
+
+    let private validateSemanticWalk targetRuntime (root: SemanticFrame) =
+        let pending = ResizeArray<SemanticFrame>()
+        let inline push frame = pending.Add frame
+        let inline pushExpr context inSet inWindow expression =
+            push (SemanticExpr(context, inSet, inWindow, expression))
+        let pushExprs context inSet inWindow (values: Expr list) =
+            let ordered = List.toArray values
+            for index = ordered.Length - 1 downto 0 do
+                pushExpr context inSet inWindow ordered.[index]
+        let pushOrders context inSet inWindow (orders: OrderBy list) =
+            let ordered = List.toArray orders
+            for index = ordered.Length - 1 downto 0 do
+                pushExpr context inSet inWindow ordered.[index].Expression
+        let hasWildcard (select: Select) =
+            select.Projection |> List.exists (fun item ->
                 match Expr.unspan item.Expression with
                 | Wildcard _ -> true
                 | _ -> false)
-        let outputNames = projectionOutputNames query.Head
-        query.OrderBy
-        |> List.iter (fun order ->
-            match Expr.unspan order.Expression with
-            | OrderOrdinal ordinal
-                when not headHasWildcard
-                     && PositiveRowCount.value ordinal > query.Head.Projection.Length ->
-                raise (SqlCompilationException(
-                    "ORDER BY output position " + string (PositiveRowCount.value ordinal)
-                    + " exceeds projection width " + string query.Head.Projection.Length + "."))
-            | BoundColumn(identifier, ColumnBinding.ProjectionAlias)
-                when not query.SetOperations.IsEmpty ->
-                validateSetOrderReference targetRuntime outputNames identifier
-            | BoundColumn(identifier, ColumnBinding.ProjectionAlias) ->
-                let aliases = query.Head.Projection |> List.choose (fun item -> item.Alias)
-                match Identifier.parts identifier |> List.tryHead with
-                | Some reference when aliases |> List.exists (identifierPartEquivalent targetRuntime reference) -> ()
-                | Some reference when query.Head.From.IsNone ->
-                    raise (SqlCompilationException(
-                        "Column reference '" + reference.Value
-                        + "' requires a FROM source in the portable Core query model."))
-                | Some reference ->
-                    raise (SqlCompilationException(
-                        "ORDER BY projection alias '" + reference.Value
-                        + "' does not resolve under target identifier semantics."))
+        push root
+        while pending.Count > 0 do
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | SemanticExpr(context, insideSetFunction, withinWindow, expression) ->
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                match context with
+                | ProjectionClause ->
+                    validateBooleanScalar targetRuntime "expression.boolean_select" expression
+                | AssignmentClause ->
+                    validateBooleanScalar targetRuntime "dml.update.boolean_assignment" expression
+                | InsertValueClause ->
+                    validateBooleanScalar targetRuntime "dml.insert.boolean_value" expression
+                | _ -> ()
+                let inline visit expr = pushExpr context insideSetFunction withinWindow expr
+                match expression with
+                | Spanned(_, inner) -> visit inner
+                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+                | Literal _ | Interval _ -> ()
+                | DateAdd(_, amount, value)
+                | DateDiff(_, amount, value)
+                | Binary(_, amount, value)
+                | Like(amount, value, _, _, _)
+                | RegexMatch(amount, value) ->
+                    visit value
+                    visit amount
+                | Unary(_, operand)
+                | PostgresJsonAccess(operand, _, _)
+                | Cast(operand, _) | Extract(_, operand)
+                | IsNull(operand, _) -> visit operand
+                | RawRegexCall(arguments, _) ->
+                    pushExprs context insideSetFunction withinWindow arguments
+                | FunctionCall call ->
+                    validateCanonicalFunction targetRuntime withinWindow call
+                    let name, isAggregate, isWindowFunction = canonicalFunctionKind call
+                    if isAggregate then
+                        let allowed =
+                            if withinWindow then
+                                context = ProjectionClause || context = OrderByClause
+                            else
+                                context = ProjectionClause
+                                || context = HavingClause
+                                || context = OrderByClause
+                                || (context = WindowSpecificationClause
+                                    && SqlWindowCapabilityRules.SupportsAggregateInWindowSpecification(TargetRuntime.provider targetRuntime))
+                        if not allowed then
+                            raise (SqlCompilationException(
+                                "Aggregate function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
+                        if insideSetFunction then
+                            raise (SqlCompilationException(
+                                "Aggregate function '" + name + "' cannot be nested inside another aggregate or window function."))
+                    if isWindowFunction then
+                        if context <> ProjectionClause && context <> OrderByClause then
+                            raise (SqlCompilationException(
+                                "Window function '" + name + "' is not allowed in SQL clause '" + clauseName context + "'."))
+                        if insideSetFunction then
+                            raise (SqlCompilationException(
+                                "Window function '" + name + "' cannot be nested inside another aggregate or window function."))
+                    let nested = insideSetFunction || isAggregate || isWindowFunction
+                    pushOrders OrderByClause nested false call.AggregateOrderBy
+                    pushExprs context nested false call.Arguments
+                | FilteredAggregate(value, predicate) ->
+                    validateFilterTarget value
+                    pushExpr PredicateClause false false predicate
+                    visit value
+                | Windowed(value, window) ->
+                    validateWindowTarget targetRuntime value window
+                    if context <> ProjectionClause && context <> OrderByClause then
+                        raise (SqlCompilationException(
+                            "Window expressions are not allowed in SQL clause '" + clauseName context + "'."))
+                    if insideSetFunction then
+                        raise (SqlCompilationException("Window functions cannot be nested inside aggregate or window functions."))
+                    pushOrders WindowSpecificationClause false false window.OrderBy
+                    pushExprs WindowSpecificationClause false false window.PartitionBy
+                    pushExpr context false true value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter visit
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                        visit branch.Result
+                        visit branch.Match) branches
+                    visit input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter visit
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                        visit branch.Result
+                        pushExpr PredicateClause false false branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse visit items
+                    visit value
+                | InSubquery(value, query, _) ->
+                    push (SemanticInSubquery query)
+                    visit value
+                | Between(value, lower, upper, _) ->
+                    visit upper
+                    visit lower
+                    visit value
+                | ScalarSubquery query ->
+                    validateScalarSubqueryShape query
+                    push (SemanticQuery query)
+                | Exists(query, _) -> push (SemanticQuery query)
+            | SemanticInSubquery query ->
+                validateScalarSubqueryShape query
+                push (SemanticQuery query)
+            | SemanticTable source ->
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    push (SemanticQuery query)
+            | SemanticSelect select ->
+                push (SemanticAfterCtes select)
+                let ctes = List.toArray select.Ctes
+                for index = ctes.Length - 1 downto 0 do
+                    push (SemanticQuery ctes.[index].Query)
+            | SemanticAfterCtes select ->
+                // FROM, JOIN source/predicate, DISTINCT, projection, WHERE,
+                // GROUP, HAVING -- identical order to original validator.
+                select.Having |> Option.iter (pushExpr HavingClause false false)
+                pushExprs GroupByClause false false select.GroupBy
+                select.Where |> Option.iter (pushExpr PredicateClause false false)
+                NonEmpty.iterReverse (fun item ->
+                    pushExpr ProjectionClause false false item.Expression) select.ProjectionItems
+                match select.DistinctMode with
+                | SelectDistinct.DistinctOn values ->
+                    NonEmpty.iterReverse (pushExpr ProjectionClause false false) values
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+                let joins = List.toArray select.Joins
+                for index = joins.Length - 1 downto 0 do
+                    match joins.[index].Predicate with
+                    | Some predicate -> pushExpr PredicateClause false false predicate
+                    | None -> ()
+                    push (SemanticTable joins.[index].Source)
+                select.From |> Option.iter (fun source -> push (SemanticTable source))
+            | SemanticQuery query ->
+                RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
+                push (SemanticAfterHead query)
+                push (SemanticSelect query.Head)
+            | SemanticAfterHead query ->
+                let width =
+                    if hasWildcard query.Head then None
+                    else Some query.Head.Projection.Length
+                push (SemanticAfterBranches query)
+                let branches = List.toArray query.SetOperations
+                for index = branches.Length - 1 downto 0 do
+                    push (SemanticAfterBranch(width, branches.[index].Query))
+                    push (SemanticQuery branches.[index].Query)
+            | SemanticAfterBranch(expectedWidth, query) ->
+                match expectedWidth with
+                | Some expected ->
+                    if not (hasWildcard query.Head)
+                       && query.Head.Projection.Length <> expected then
+                        raise (SqlCompilationException(
+                            "Set operation projection width " + string query.Head.Projection.Length
+                            + " does not match head projection width " + string expected + "."))
                 | None -> ()
-            | Column identifier
-            | BoundColumn(identifier, _)
-                when not query.SetOperations.IsEmpty ->
-                validateSetOrderReference targetRuntime outputNames identifier
-            | _ -> ()
-            validateSemanticExpr targetRuntime OrderByClause false false order.Expression)
+            | SemanticAfterBranches query ->
+                let headWildcard = hasWildcard query.Head
+                let names = projectionOutputNames query.Head
+                let orders = List.toArray query.OrderBy
+                for index = orders.Length - 1 downto 0 do
+                    push (SemanticOrder(query, names, headWildcard, orders.[index]))
+            | SemanticOrder(query, outputNames, headHasWildcard, order) ->
+                match Expr.unspan order.Expression with
+                | OrderOrdinal ordinal
+                    when not headHasWildcard
+                         && PositiveRowCount.value ordinal > query.Head.Projection.Length ->
+                    raise (SqlCompilationException(
+                        "ORDER BY output position " + string (PositiveRowCount.value ordinal)
+                        + " exceeds projection width " + string query.Head.Projection.Length + "."))
+                | BoundColumn(identifier, ColumnBinding.ProjectionAlias)
+                    when not query.SetOperations.IsEmpty ->
+                    validateSetOrderReference targetRuntime outputNames identifier
+                | BoundColumn(identifier, ColumnBinding.ProjectionAlias) ->
+                    let aliases = query.Head.Projection |> List.choose (fun item -> item.Alias)
+                    match Identifier.parts identifier |> List.tryHead with
+                    | Some reference when aliases |> List.exists (identifierPartEquivalent targetRuntime reference) -> ()
+                    | Some reference when query.Head.From.IsNone ->
+                        raise (SqlCompilationException(
+                            "Column reference '" + reference.Value
+                            + "' requires a FROM source in the portable Core query model."))
+                    | Some reference ->
+                        raise (SqlCompilationException(
+                            "ORDER BY projection alias '" + reference.Value
+                            + "' does not resolve under target identifier semantics."))
+                    | None -> ()
+                | Column identifier
+                | BoundColumn(identifier, _)
+                    when not query.SetOperations.IsEmpty ->
+                    validateSetOrderReference targetRuntime outputNames identifier
+                | _ -> ()
+                pushExpr OrderByClause false false order.Expression
 
-    let rec private containsVolatileRandom expression =
-        match expression with
-        | Spanned(_, inner) -> containsVolatileRandom inner
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            containsVolatileRandom amount || containsVolatileRandom value
-        | FunctionCall call ->
-            let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-            let isKnownRandom =
+    let private validateSemanticExpr targetRuntime context insideSetFunction withinWindow expression =
+        validateSemanticWalk targetRuntime
+            (SemanticExpr(context, insideSetFunction, withinWindow, expression))
+
+    let private validateSemanticTable targetRuntime source =
+        validateSemanticWalk targetRuntime (SemanticTable source)
+
+    let private validateSemanticQuery targetRuntime query =
+        validateSemanticWalk targetRuntime (SemanticQuery query)
+
+    // The EXISTS-style traversal short-circuits at the first known volatile
+    // function. As before, scalar-subquery bodies are not inspected here.
+    let private containsVolatileRandom expression =
+        RewriteAstTraversal.exists true (function
+            | FunctionCall call ->
+                let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
                 not (FunctionName.hasQuotedParts call.Name)
                 && (name = "RAND" || name = "RANDOM")
-            isKnownRandom
-            || (call.Arguments |> List.exists containsVolatileRandom)
-            || (call.AggregateOrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
-        | Unary(_, operand) -> containsVolatileRandom operand
-        | Binary(_, left, right) -> containsVolatileRandom left || containsVolatileRandom right
-        | Like(value, pattern, _, _, _) | RegexMatch(value, pattern) ->
-            containsVolatileRandom value || containsVolatileRandom pattern
-        | PostgresJsonAccess(value, _, _) ->
-            containsVolatileRandom value
-        | RawRegexCall(arguments, _) -> arguments |> List.exists containsVolatileRandom
-        | FilteredAggregate(value, predicate) ->
-            containsVolatileRandom value || containsVolatileRandom predicate
-        | Windowed(value, window) ->
-            containsVolatileRandom value
-            || (window.PartitionBy |> List.exists containsVolatileRandom)
-            || (window.OrderBy |> List.exists (fun order -> containsVolatileRandom order.Expression))
-        | Cast(value, _) | Extract(_, value) -> containsVolatileRandom value
-        | SimpleCase(input, branches, fallback) ->
-            containsVolatileRandom input
-            || (branches
-                |> NonEmpty.toList
-                |> List.exists (fun branch ->
-                    containsVolatileRandom branch.Match || containsVolatileRandom branch.Result))
-            || (fallback |> Option.exists containsVolatileRandom)
-        | SearchedCase(branches, fallback) ->
-            (branches
-             |> NonEmpty.toList
-             |> List.exists (fun branch ->
-                 containsVolatileRandom branch.Condition || containsVolatileRandom branch.Result))
-            || (fallback |> Option.exists containsVolatileRandom)
-        | InList(value, items, _) ->
-            containsVolatileRandom value
-            || (items |> NonEmpty.toList |> List.exists containsVolatileRandom)
-        | InSubquery(value, _, _) -> containsVolatileRandom value
-        | Between(value, lower, upper, _) ->
-            containsVolatileRandom value
-            || containsVolatileRandom lower
-            || containsVolatileRandom upper
-        | IsNull(value, _) -> containsVolatileRandom value
-        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _ | Literal _ | Interval _
-        | ScalarSubquery _ | Exists _ -> false
+            | _ -> false) expression
 
     let private rejectVolatileMutationPredicate expression =
         if containsVolatileRandom expression then
