@@ -10,6 +10,40 @@ public sealed class CoreSqlRendererValuesBudgetTests
     public static IEnumerable<object[]> SixDialects()
         => Enum.GetValues<SqlAgentToolType>().Select(x => new object[] { x });
 
+    [Fact]
+    public void SqlServerRowNumberPaging_PreservesPredicateThenPagingParameterOrder()
+    {
+        const string sql = "SELECT u.id FROM users u "
+            + "JOIN users v ON u.id = v.id "
+            + "WHERE v.id = 11 ORDER BY u.id OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("bounded-sqlserver-offset-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[results_wrapper]", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 11, 6, 15 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Fact]
+    public void SqlServerSetRowNumberPaging_PreservesBranchThenPagingParameterOrder()
+    {
+        const string sql = "SELECT id FROM users WHERE id = 11 "
+            + "UNION ALL SELECT id FROM users WHERE id = 22 "
+            + "ORDER BY 1 OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("bounded-sqlserver-set-offset-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("ROW_NUMBER() OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 11, 22, 6, 15 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     [Theory]
     [MemberData(nameof(SixDialects))]
     public void MultiRowInsert_RendersParametersInRowMajorOrder(SqlAgentToolType dialect)
