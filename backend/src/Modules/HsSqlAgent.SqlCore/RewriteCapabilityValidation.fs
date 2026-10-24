@@ -136,44 +136,46 @@ module internal RewriteCapabilityValidation =
         | Exists _ ->
             requireFilterCapability capabilityMessage proofs.Subquery
 
-    // Source-order scalar proof traversal. Query callbacks remain scoped to
-    // the owning capability pass, but no Expr branch consumes a CLR call
-    // frame proportional to AST nesting depth.
-    [<Struct>]
-    type private CapabilityExprFrame =
-        | CapabilityExpr of value: Expr
-        | CapabilityQuery of body: Query
+    // A capability traversal never needs to rebuild the tree or propagate
+    // query scope. Keep *all* Query/Expr/CTE/Source/JOIN edges on one heap
+    // stack instead of re-entering a Query from expression/source callbacks.
+    // Pre-order source diagnostics and per-query SET-tail order are stable.
+    type private CapabilityGraphFrame =
+        | VisitCapabilityExpr of Expr
+        | VisitCapabilityQuery of Query
+        | VisitCapabilitySource of TableSource
+        | VisitCapabilityJoin of Join
+        | VisitCapabilityDistinct of SelectDistinct
+        | VisitCapabilitySetBranch of SetBranch
+        | VisitCapabilityTail of Query
 
-    let private walkCapabilityExpr onExpr onQuery root =
-        let pending = ResizeArray<CapabilityExprFrame>()
-        let inline push value = pending.Add(CapabilityExpr value)
+    let private walkCapabilityGraph
+        onExpr onQuery onSelect onDistinct onSource onJoin onSet root =
+        let pending = ResizeArray<CapabilityGraphFrame>()
+        let pushExpr value = pending.Add(VisitCapabilityExpr value)
         let pushExprs (values: Expr list) =
-            let entries = List.toArray values
-            for index = entries.Length - 1 downto 0 do
-                push entries.[index]
-        let pushOrders (orders: OrderBy list) =
-            let entries: OrderBy array = List.toArray orders
-            for index = entries.Length - 1 downto 0 do
-                push entries.[index].Expression
-        push root
+            for value in List.rev values do pushExpr value
+        let pushOrders (values: OrderBy list) =
+            for order in List.rev values do pushExpr order.Expression
+        pending.Add(root)
         while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
             let frame = pending.[last]
             pending.RemoveAt last
             match frame with
-            | CapabilityQuery query -> onQuery query
-            | CapabilityExpr expression ->
+            | VisitCapabilityExpr expression ->
                 onExpr expression
                 match expression with
-                | Spanned(_, inner) -> push inner
+                | Spanned(_, inner) -> pushExpr inner
                 | DateAdd(_, left, right) | DateDiff(_, left, right)
                 | Binary(_, left, right) | Like(left, right, _, _, _)
                 | RegexMatch(left, right) | FilteredAggregate(left, right) ->
-                    push right
-                    push left
+                    pushExpr right
+                    pushExpr left
                 | Unary(_, inner) | Cast(inner, _) | Extract(_, inner)
                 | PostgresJsonAccess(inner, _, _) | IsNull(inner, _) ->
-                    push inner
+                    pushExpr inner
                 | RawRegexCall(args, _) -> pushExprs args
                 | FunctionCall call ->
                     pushOrders call.AggregateOrderBy
@@ -181,101 +183,107 @@ module internal RewriteCapabilityValidation =
                 | Windowed(value, window) ->
                     pushOrders window.OrderBy
                     pushExprs window.PartitionBy
-                    push value
+                    pushExpr value
                 | SimpleCase(input, branches, fallback) ->
-                    fallback |> Option.iter push
+                    fallback |> Option.iter pushExpr
                     NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
-                        push branch.Result
-                        push branch.Match) branches
-                    push input
+                        pushExpr branch.Result
+                        pushExpr branch.Match) branches
+                    pushExpr input
                 | SearchedCase(branches, fallback) ->
-                    fallback |> Option.iter push
+                    fallback |> Option.iter pushExpr
                     NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
-                        push branch.Result
-                        push branch.Condition) branches
+                        pushExpr branch.Result
+                        pushExpr branch.Condition) branches
                 | InList(value, items, _) ->
-                    NonEmpty.iterReverse push items
-                    push value
+                    NonEmpty.iterReverse pushExpr items
+                    pushExpr value
                 | InSubquery(value, query, _) ->
-                    pending.Add(CapabilityQuery query)
-                    push value
+                    pending.Add(VisitCapabilityQuery query)
+                    pushExpr value
                 | Between(value, lower, upper, _) ->
-                    push upper
-                    push lower
-                    push value
+                    pushExpr upper
+                    pushExpr lower
+                    pushExpr value
                 | ScalarSubquery query | Exists(query, _) ->
-                    pending.Add(CapabilityQuery query)
+                    pending.Add(VisitCapabilityQuery query)
                 | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
                 | Literal _ | Interval _ -> ()
+            | VisitCapabilityQuery query ->
+                // Target-only FETCH and recursive-CTE checks execute before
+                // SELECT proof, as before. The Filter pass supplies no-ops.
+                onQuery query
+                let select = query.Head
+                onSelect select
+                pending.Add(VisitCapabilityTail query)
+                for branch in List.rev query.SetOperations do
+                    pending.Add(VisitCapabilitySetBranch branch)
+                select.Having |> Option.iter pushExpr
+                pushExprs select.GroupBy
+                select.Where |> Option.iter pushExpr
+                for join in List.rev select.Joins do
+                    pending.Add(VisitCapabilityJoin join)
+                select.From |> Option.iter (VisitCapabilitySource >> pending.Add)
+                for item in List.rev select.Projection do
+                    pushExpr item.Expression
+                pending.Add(VisitCapabilityDistinct select.DistinctMode)
+                for cte in List.rev select.Ctes do
+                    pending.Add(VisitCapabilityQuery cte.Query)
+            | VisitCapabilityDistinct mode ->
+                onDistinct mode
+                match mode with
+                | SelectDistinct.DistinctOn expressions ->
+                    NonEmpty.iterReverse pushExpr expressions
+                | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+            | VisitCapabilitySource source ->
+                onSource source
+                match source with
+                | NamedTable _ | CteTable _ -> ()
+                | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
+                    pending.Add(VisitCapabilityQuery query)
+            | VisitCapabilityJoin join ->
+                onJoin join
+                join.Predicate |> Option.iter pushExpr
+                pending.Add(VisitCapabilitySource join.Source)
+            | VisitCapabilitySetBranch branch ->
+                onSet branch.Operator
+                pending.Add(VisitCapabilityQuery branch.Query)
+            | VisitCapabilityTail query ->
+                pushOrders query.OrderBy
 
-    let rec private proveFilterExpr capabilityMessage (expressionProofs: ExpressionProofs) expression =
-        let validate node =
-            match node with
-            | Interval _ ->
-                requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
-            | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), _, _) ->
-                requireFilterCapability capabilityMessage expressionProofs.DistinctFrom
-            | Like(_, _, _, _, true) ->
-                requireFilterCapability capabilityMessage expressionProofs.ILike
-            | FunctionCall call ->
-                if FunctionName.hasQuotedParts call.Name then
-                    requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
-                if FunctionName.isQualified call.Name then
-                    requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
-            | FilteredAggregate(_, predicate) ->
-                requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
-                // Predicate-specific proof precedes the ordinary value walk,
-                // exactly as in the original recursive validation.
-                proveFilterPredicate capabilityMessage expressionProofs.FilterPredicate predicate
-            | _ -> ()
-        walkCapabilityExpr validate
-            (proveFilterQuery capabilityMessage expressionProofs) expression
+    let private proveFilterNode capabilityMessage (expressionProofs: ExpressionProofs) node =
+        match node with
+        | Interval _ ->
+            requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
+        | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), _, _) ->
+            requireFilterCapability capabilityMessage expressionProofs.DistinctFrom
+        | Like(_, _, _, _, true) ->
+            requireFilterCapability capabilityMessage expressionProofs.ILike
+        | FunctionCall call ->
+            if FunctionName.hasQuotedParts call.Name then
+                requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
+            if FunctionName.isQualified call.Name then
+                requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
+        | FilteredAggregate(_, predicate) ->
+            requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
+            // Predicate check precedes the scalar-operand traversal.
+            proveFilterPredicate capabilityMessage expressionProofs.FilterPredicate predicate
+        | _ -> ()
 
-    and private proveFilterSource capabilityMessage expressionProofs source =
-        match source with
-        | NamedTable _
-        | CteTable _ -> ()
-        | DerivedTable(query, _)
-        | LateralDerivedTable(query, _) ->
-            proveFilterQuery capabilityMessage expressionProofs query
+    let private proveFilterGraph capabilityMessage expressionProofs frame =
+        walkCapabilityGraph
+            (proveFilterNode capabilityMessage expressionProofs)
+            (fun _ -> ()) (fun _ -> ()) (fun _ -> ())
+            (fun _ -> ()) (fun _ -> ()) (fun _ -> ()) frame
 
-    and private proveFilterSelect capabilityMessage expressionProofs select =
-        select.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs cte.Query)
-        iterDistinctOn (proveFilterExpr capabilityMessage expressionProofs) select
-        select.Projection |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
-        select.From |> Option.iter (proveFilterSource capabilityMessage expressionProofs)
-        select.Joins |> List.iter (fun join ->
-            proveFilterSource capabilityMessage expressionProofs join.Source
-            join.Predicate |> Option.iter (proveFilterExpr capabilityMessage expressionProofs))
-        select.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-        select.GroupBy |> List.iter (proveFilterExpr capabilityMessage expressionProofs)
-        select.Having |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
+    let private proveFilterExpr capabilityMessage expressionProofs expression =
+        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityExpr expression)
 
-    and private proveFilterQuery capabilityMessage expressionProofs query =
-        // SET subtree proofs are DFS in source order, with ORDER BY
-        // validated only after all child branches. Heap frames keep that
-        // diagnostic precedence without proportional CLR stack consumption.
-        let pending = ResizeArray<unit -> unit>()
-        let rec scheduleBranches branches =
-            for branch in List.rev branches do
-                pending.Add(fun () ->
-                    let child = branch.Query
-                    proveFilterSelect capabilityMessage expressionProofs child.Head
-                    pending.Add(fun () ->
-                        child.OrderBy |> List.iter (fun order ->
-                            proveFilterExpr capabilityMessage expressionProofs order.Expression))
-                    scheduleBranches child.SetOperations)
-        proveFilterSelect capabilityMessage expressionProofs query.Head
-        pending.Add(fun () ->
-            query.OrderBy |> List.iter (fun order ->
-                proveFilterExpr capabilityMessage expressionProofs order.Expression))
-        scheduleBranches query.SetOperations
-        while pending.Count > 0 do
-            RewriteResourceBudget.checkpoint ()
-            let last = pending.Count - 1
-            let task = pending.[last]
-            pending.RemoveAt(last)
-            task ()
+    let private proveFilterSource capabilityMessage expressionProofs source =
+        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilitySource source)
+
+    let private proveFilterQuery capabilityMessage expressionProofs query =
+        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityQuery query)
 
     let proveFilterDocument capabilityMessage expressionProofs document =
         match document.Statement with
@@ -328,165 +336,115 @@ module internal RewriteCapabilityValidation =
             isRepeatableDistinctOperand left && isRepeatableDistinctOperand right
         | _ -> false
 
-    let rec private proveTargetExpr targetRuntime (expressionProofs: ExpressionProofs) expression =
-        let validate node =
-            match node with
-            | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
-            | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
-            | DateAdd(unit, _, _) ->
-                match SqlDateMathCapabilityRules.TargetValidationError(
-                          unit, TargetRuntime.provider targetRuntime, "CORE_DATE_ADD") with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            | DateDiff(unit, _, _) ->
-                match SqlDateMathCapabilityRules.TargetValidationError(
-                          unit, TargetRuntime.provider targetRuntime, "CORE_DATE_DIFF") with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-            | Binary(BinaryOperator.Concat, _, _) ->
-                proveSqlServerConcat targetRuntime
-            | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
-                requireExpressionCapability expressionProofs.DistinctFrom
-                if TargetRuntime.provider targetRuntime = SqlAgentToolType.Oracle
-                   && (not (isRepeatableDistinctOperand left)
-                       || not (isRepeatableDistinctOperand right)) then
-                    raise (SqlCompilationException(
-                        "Oracle null-safe distinct lowering requires repeatable scalar operands because the proven CASE lowering may reference each operand more than once; volatile functions, windows, and subqueries remain fail-closed."))
-            | Like(_, _, _, _, true) ->
-                requireExpressionCapability expressionProofs.ILike
-            | RawRegexCall _ ->
-                invalidOp "Raw REGEXP_LIKE reached target validation before canonicalization."
-            | RegexMatch _ ->
-                requireExpressionCapability expressionProofs.RegexMatch
-            | FunctionCall call ->
-                if FunctionName.hasQuotedParts call.Name then
-                    requireExpressionCapability expressionProofs.QuotedFunction
-                if FunctionName.isQualified call.Name then
-                    requireExpressionCapability expressionProofs.QualifiedFunction
-            | Cast(_, targetType) ->
-                match targetRuntime, CastType.semantic targetType with
-                | FirebirdRuntime, Some(SqlTime(_, true))
-                | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
-                    requireExpressionCapability expressionProofs.FirebirdTimeZoneType
-                | _, Some _ -> ()
-                | _, None ->
-                    invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
-                RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
-            | _ -> ()
-        walkCapabilityExpr validate
-            (proveTargetQuery targetRuntime expressionProofs) expression
-
-    and private proveTargetSource targetRuntime expressionProofs source =
-        match source with
-        | NamedTable _ | CteTable _ -> ()
-        | DerivedTable(query, _) -> proveTargetQuery targetRuntime expressionProofs query
-        | LateralDerivedTable(query, _) ->
-            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                      TargetRuntime.provider targetRuntime,
-                      null) with
-            | null -> proveTargetQuery targetRuntime expressionProofs query
-            | message -> raise (SqlCompilationException(message))
-
-    and private proveTargetSelect targetRuntime expressionProofs select =
-        if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            let provider = TargetRuntime.provider targetRuntime
-            if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
-                raise (SqlCompilationException(
-                    "SQL capability 'select.recursive_cte' is not supported by target provider "
-                    + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
-        select.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime expressionProofs cte.Query)
-        match select.DistinctMode with
-        | SelectDistinct.DistinctOn expressions ->
-            match SqlDistinctOnCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime) with
+    let private proveTargetNode targetRuntime (expressionProofs: ExpressionProofs) node =
+        match node with
+        | Literal value -> proveTargetLiteral targetRuntime expressionProofs value
+        | Interval _ -> requireExpressionCapability expressionProofs.IntervalLiteral
+        | DateAdd(unit, _, _) ->
+            match SqlDateMathCapabilityRules.TargetValidationError(
+                      unit, TargetRuntime.provider targetRuntime, "CORE_DATE_ADD") with
             | null -> ()
             | message -> raise (SqlCompilationException(message))
-            expressions |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
-        | SelectDistinct.AllRows
-        | SelectDistinct.DistinctRows -> ()
-        select.ProjectionItems |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
-        select.From |> Option.iter (proveTargetSource targetRuntime expressionProofs)
-        select.Joins
-        |> List.iter (function
-            | CrossJoin source ->
-                proveTargetSource targetRuntime expressionProofs source
-            | NaturalJoin(_, source) ->
-                match SqlNaturalJoinCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-                proveTargetSource targetRuntime expressionProofs source
-            | OnJoin(_, source, predicate) ->
-                proveTargetSource targetRuntime expressionProofs source
-                proveTargetExpr targetRuntime expressionProofs predicate
-            | UsingJoin(_, source, _) ->
-                match SqlUsingJoinCapabilityRules.TargetValidationError(TargetRuntime.provider targetRuntime) with
-                | null -> ()
-                | message -> raise (SqlCompilationException(message))
-                proveTargetSource targetRuntime expressionProofs source)
-        select.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-        select.GroupBy |> List.iter (proveTargetExpr targetRuntime expressionProofs)
-        select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
+        | DateDiff(unit, _, _) ->
+            match SqlDateMathCapabilityRules.TargetValidationError(
+                      unit, TargetRuntime.provider targetRuntime, "CORE_DATE_DIFF") with
+            | null -> ()
+            | message -> raise (SqlCompilationException(message))
+        | Binary(BinaryOperator.Concat, _, _) -> proveSqlServerConcat targetRuntime
+        | Binary((BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom), left, right) ->
+            requireExpressionCapability expressionProofs.DistinctFrom
+            if TargetRuntime.provider targetRuntime = SqlAgentToolType.Oracle
+               && (not (isRepeatableDistinctOperand left)
+                   || not (isRepeatableDistinctOperand right)) then
+                raise (SqlCompilationException(
+                    "Oracle null-safe distinct lowering requires repeatable scalar operands because the proven CASE lowering may reference each operand more than once; volatile functions, windows, and subqueries remain fail-closed."))
+        | Like(_, _, _, _, true) ->
+            requireExpressionCapability expressionProofs.ILike
+        | RawRegexCall _ ->
+            invalidOp "Raw REGEXP_LIKE reached target validation before canonicalization."
+        | RegexMatch _ -> requireExpressionCapability expressionProofs.RegexMatch
+        | FunctionCall call ->
+            if FunctionName.hasQuotedParts call.Name then
+                requireExpressionCapability expressionProofs.QuotedFunction
+            if FunctionName.isQualified call.Name then
+                requireExpressionCapability expressionProofs.QualifiedFunction
+        | Cast(_, targetType) ->
+            match targetRuntime, CastType.semantic targetType with
+            | FirebirdRuntime, Some(SqlTime(_, true))
+            | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
+                requireExpressionCapability expressionProofs.FirebirdTimeZoneType
+            | _, Some _ -> ()
+            | _, None ->
+                invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
+            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
+        | _ -> ()
 
-    and private proveTargetQuery targetRuntime expressionProofs query =
-        // Check each SET node's FETCH policy before its SELECT and each
-        // branch's operator capability before entering that child query.
-        // Queue branch tails on the heap to preserve diagnostic precedence.
-        let pending = ResizeArray<unit -> unit>()
-        let proveHead (node: Query) =
+    let private proveTargetGraph targetRuntime expressionProofs root =
+        let provider = TargetRuntime.provider targetRuntime
+        let onQuery (node: Query) =
             if node.FetchPercent.IsSome then
-                match SqlFetchPercentCapabilityRules.TargetValidationError(
-                          TargetRuntime.provider targetRuntime,
-                          null) with
+                match SqlFetchPercentCapabilityRules.TargetValidationError(provider, null) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             if node.FetchWithTies then
-                match SqlFetchWithTiesCapabilityRules.TargetValidationError(
-                          TargetRuntime.provider targetRuntime,
-                          null) with
+                match SqlFetchWithTiesCapabilityRules.TargetValidationError(provider, null) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
-            proveTargetSelect targetRuntime expressionProofs node.Head
-
-        let proveOperator operator =
+        let onSelect (select: Select) =
+            if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+                if not (SqlRecursiveCteCapabilityRules.SupportsWithRecursiveSyntax(provider)) then
+                    raise (SqlCompilationException(
+                        "SQL capability 'select.recursive_cte' is not supported by target provider "
+                        + string provider + "; this provider does not use the modeled WITH RECURSIVE syntax contract."))
+        let onDistinct mode =
+            match mode with
+            | SelectDistinct.DistinctOn _ ->
+                match SqlDistinctOnCapabilityRules.TargetValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | SelectDistinct.AllRows | SelectDistinct.DistinctRows -> ()
+        let onSource source =
+            match source with
+            | LateralDerivedTable _ ->
+                match SqlLateralDerivedTableCapabilityRules.TargetValidationError(provider, null) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | NamedTable _ | CteTable _ | DerivedTable _ -> ()
+        let onJoin join =
+            match join with
+            | NaturalJoin _ ->
+                match SqlNaturalJoinCapabilityRules.TargetValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | UsingJoin _ ->
+                match SqlUsingJoinCapabilityRules.TargetValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            | CrossJoin _ | OnJoin _ -> ()
+        let onSet operator =
             match operator with
             | SetOperator.IntersectAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError(
-                          "INTERSECT",
-                          TargetRuntime.provider targetRuntime) with
+                match SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.ExceptAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError(
-                          "EXCEPT",
-                          TargetRuntime.provider targetRuntime) with
+                match SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
-            | SetOperator.Union
-            | SetOperator.UnionAll
-            | SetOperator.Intersect
-            | SetOperator.Except -> ()
+            | SetOperator.Union | SetOperator.UnionAll
+            | SetOperator.Intersect | SetOperator.Except -> ()
+        walkCapabilityGraph
+            (proveTargetNode targetRuntime expressionProofs)
+            onQuery onSelect onDistinct onSource onJoin onSet root
 
-        let rec scheduleBranches branches =
-            for branch in List.rev branches do
-                pending.Add(fun () ->
-                    proveOperator branch.Operator
-                    let child = branch.Query
-                    proveHead child
-                    pending.Add(fun () ->
-                        child.OrderBy |> List.iter (fun order ->
-                            proveTargetExpr targetRuntime expressionProofs order.Expression))
-                    scheduleBranches child.SetOperations)
+    let private proveTargetExpr targetRuntime expressionProofs expression =
+        proveTargetGraph targetRuntime expressionProofs (VisitCapabilityExpr expression)
 
-        proveHead query
-        pending.Add(fun () ->
-            query.OrderBy |> List.iter (fun order ->
-                proveTargetExpr targetRuntime expressionProofs order.Expression))
-        scheduleBranches query.SetOperations
-        while pending.Count > 0 do
-            RewriteResourceBudget.checkpoint ()
-            let last = pending.Count - 1
-            let task = pending.[last]
-            pending.RemoveAt(last)
-            task ()
+    let private proveTargetSource targetRuntime expressionProofs source =
+        proveTargetGraph targetRuntime expressionProofs (VisitCapabilitySource source)
+
+    let private proveTargetQuery targetRuntime expressionProofs query =
+        proveTargetGraph targetRuntime expressionProofs (VisitCapabilityQuery query)
 
     let proveTargetDocument targetRuntime expressionProofs document =
         match document.Statement with

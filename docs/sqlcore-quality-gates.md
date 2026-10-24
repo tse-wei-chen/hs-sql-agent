@@ -1321,3 +1321,22 @@ and its Query callback, so general Query/Expr stack independence is
 **not yet claimed**. Regression coverage includes 96-level mixed
 CTE/derived paths, correlated LATERAL/SET proofs, all-dialect grammar
 and the existing constrained-stack SET gates.
+
+### Mixed capability graph traversal (R2)
+
+Both `proveFilter*` and `proveTarget*` use the same
+`walkCapabilityGraph` heap stack across Query, Expr, CTE, derived
+and LATERAL sources, JOIN/predicate, nested scalar/EXISTS/IN queries,
+SET branches and tail ORDER BY. This replaces the formerly recursive
+Query callback from `walkCapabilityExpr` and recursive Query crossings
+from CTEs and table sources. Provider-specific target proofs remain
+separate callbacks, including recursive CTE, DISTINCT ON, FETCH,
+LATERAL, NATURAL/USING JOIN and INTERSECT/EXCEPT ALL checks. Filter
+expression features and ordered FILTER aggregate predicate proof
+remain active. Failure ordering remains CTE definitions before
+SELECT projections, FROM/JOIN sources, then SET branch/operator
+before branch body, and tail ORDER BY last.
+
+This change closes only the Filter/Target capability-proof
+Query↔Expr/Source recursion. Parser and strict Schema/Type proof
+mixed-graph traversal must be benchmarked separately.
