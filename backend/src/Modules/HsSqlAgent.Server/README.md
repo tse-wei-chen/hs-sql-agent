@@ -299,37 +299,55 @@ or complete connection strings and is intentionally not logged or returned.
 If a key was previously printed by bootstrap, revoke/replace it and review access
 to retained container and centralized logs.
 
-### v3 secret encryption (explicit rollout)
+### v3 mandatory encryption (breaking product release)
 
-`SecretEncryption:Enabled` registers independent purpose-specific AES-256-GCM
-keys for database passwords and Durable DML resume payloads. Each Base64 key
-must decode to **32 random bytes**; do not reuse the legacy MCP HMAC key.
+v3 requires a **fresh Admin Store**. Existing v2 Admin Stores are rejected
+before any migration or data write, without truncating the existing database.
+Re-provision v3 identities, MCP access keys, managed connections and approval
+policies; there is intentionally **no v2-to-v3 data migration**.
 
-**New ciphertext writes are OFF by default.** The separate
-`EnableV2DatabasePasswordWrites` and `EnableV2DurableDmlWrites` switches
-require `AllNodesDualReadConfirmed` plus the corresponding key ring. This
-confirmation is an **operator assertion, not a fleet probe**: update all
-workers, standby nodes and approval handlers to dual-read first. Never allow
-an old-only node to return after v2 ciphertext is written.
+Both `DatabasePassword` and `DurableDmlPayload` must have independent
+random 32-byte Base64 AES-256-GCM keys. Missing keys, invalid IDs, reused key
+material, or absent purpose rings cause startup to fail closed. These requirements
+apply to Standalone, Embedded and modular .NET integration alike.
 
-The operator-only security endpoints are:
+```json
+{
+  "SecretEncryption": {
+    "Purposes": {
+      "DatabasePassword": {
+        "ActiveKeyId": "db_k1",
+        "Keys": { "db_k1": "<32-byte-random-base64-secret>" }
+      },
+      "DurableDmlPayload": {
+        "ActiveKeyId": "dml_k1",
+        "Keys": { "dml_k1": "<different-32-byte-random-base64-secret>" }
+      }
+    }
+  }
+}
+```
+
+There are **no rollout booleans**, optional encryption switches or legacy
+ciphertext readers. The `v2:<key-id>:<Base64>` prefix is the *envelope format*
+used by v3, **not** the product v2 compatibility contract. Every new credential
+and durable DML payload uses authenticated purpose+record-ID-bound encryption.
+
+The read-only key inventory / retirement preflight endpoints remain:
 
 - `GET /api/runtime/security/secret-migration/inventory`
-- `POST /api/runtime/security/secret-migration/database-passwords/batch`
 - `GET /api/runtime/security/secret-migration/retirement/{purpose}/{keyId}`
 
-They require a human administrator with `/runtime/security.edit`. Password
-migration uses per-row ciphertext compare-and-swap, authenticated verification
-and a transactionally coupled audit event. It refuses Pending/Executing DML
-approvals; it does **not** stop other workers, replay DML, migrate approval
-payloads or automatically delete old keys. Preserve the legacy MCP HMAC secret
-for issued access-key hashes and existing DML connection fingerprints.
+The historical `POST .../database-passwords/batch` API has been **removed**.
+Key ID rotation **within v3** uses a new active key while retaining the previous
+ID and key as decrypt-only on all nodes. Do not remove prior keys while ciphertext,
+pending DML, distributed readers, or backups still depend on them. These endpoints
+require a human security editor (`/runtime/security.edit`), never a Management
+API key, and they do not delete or re-encrypt records.
 
-`ExtraSettings` is not a secret store: new Admin and Bootstrap writes reject
-credential-bearing JSON. Existing plaintext values require separately
-authorized cleanup. PostgreSQL's `DbManagement.PasswordHash` schema must be
-widened from `varchar(256)` to `text` before v2 writes or migrations; SQLite
-already uses unbounded `TEXT`.
+MCP `HMAC_KEY` remains a separate secret for access-key hashes and DML
+connection fingerprints. Never reuse it for either AES purpose. `ExtraSettings`
+is not a secret store; new credential-bearing JSON is rejected.
 
 **Canonical v3 documentation lives on the documentation website**, not here:
 
