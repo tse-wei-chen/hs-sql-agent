@@ -514,6 +514,20 @@ module internal RewriteSchemaValidation =
                     pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 1))
                     currentParent <- Some visible
                     current <- inner
+                | Some ((NamedTable _ | CteTable _) as first),
+                  [ OnJoin(OnJoinKind.Inner, (LateralDerivedTable _ as firstLateral), firstPredicate);
+                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
+                    // Prove A with only the initial FROM source visible.
+                    // B may see A, but must not inherit its own alias or
+                    // any later source. The second LATERAL is suspended
+                    // on the same heap continuation as a prefixed JOIN.
+                    let initial = makeScope currentParent [ source catalog ctes currentParent first ]
+                    let preceding = source catalog ctes (Some initial) firstLateral
+                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
+                    expression catalog ctes visible Span.unknown firstPredicate
+                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 1))
+                    currentParent <- Some visible
+                    current <- inner
                 | _ -> scanning <- false
             | [], [], _, _, _, _ when current.Head.Joins.IsEmpty ->
                 match current.Head.From with

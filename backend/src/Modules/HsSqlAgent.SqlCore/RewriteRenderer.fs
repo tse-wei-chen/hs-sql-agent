@@ -1951,6 +1951,18 @@ module internal RewriteRenderer =
                             sawLateral <- true
                             current <- inner
                         | message -> raise (SqlCompilationException(message))
+                    | [ (OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable _, _) as early);
+                        OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) ] ->
+                        // A is rendered normally (with its own source
+                        // capability proof); only B crosses the deeply
+                        // nested Query edge on this streaming continuation.
+                        match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                                  providerTool ctx.Provider, null) with
+                        | null ->
+                            frames.Add(FinishMixedPrefixedJoinedLateral(current, preceding, early, alias, predicate))
+                            sawLateral <- true
+                            current <- inner
+                        | message -> raise (SqlCompilationException(message))
                     | _ -> scanning <- false
                 | _ -> scanning <- false
             else

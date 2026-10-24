@@ -572,6 +572,16 @@ module internal RewriteSchemaTypeValidation =
                     pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias, 1))
                     currentParent <- Some visible
                     current <- inner
+                | Some ((NamedTable _ | CteTable _) as first),
+                  [ OnJoin(OnJoinKind.Inner, (LateralDerivedTable _ as firstLateral), firstPredicate);
+                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
+                    let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
+                    let preceding = tableSource catalog inheritedCtes (Some initial) firstLateral
+                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
+                    expression catalog inheritedCtes visible Span.unknown firstPredicate |> ignore
+                    pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias, 1))
+                    currentParent <- Some visible
+                    current <- inner
                 | _ -> scanning <- false
             | [], [], _, _, _, _ when current.Head.Joins.IsEmpty ->
                 match current.Head.From with
