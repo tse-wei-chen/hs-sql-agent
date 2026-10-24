@@ -50,6 +50,7 @@ for envname, compose in (
             f"=${{{keyvar}:-}}"
             in docker_src
         ), f"{compose}: missing dynamic key-ID binding"
+    assert env.get("HS_SQL_AGENT_IMAGE") == "ghcr.io/tse-wei-chen/hs-sql-agent:v2.0.6"
     assert "HS_SQL_AGENT_IMAGE:-ghcr.io/tse-wei-chen/hs-sql-agent:v2.0.6" in docker_src
     assert env.get("HMAC_KEY"), "Original MCP HMAC key must stay available"
     assert "McpKeySettings__HmacSecretKey=${HMAC_KEY}" in docker_src
