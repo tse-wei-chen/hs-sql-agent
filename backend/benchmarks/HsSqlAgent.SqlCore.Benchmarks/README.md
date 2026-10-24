@@ -90,6 +90,12 @@ rejections are still printed explicitly in the uploaded report.
   Typed schema and policy stages must complete; stack refusals do NOT
   satisfy the gate. Other non-linear CASE/Query shapes remain unproven.
 
+- Two dependent JOIN LATERAL sources in one SELECT: the second
+  body resolves the first derived alias, while strict schema/type proof uses
+  only previously visible sources. The opt-in `nested-double-joined-lateral`
+  workers MUST compile 6/6 at 128/512/2048 on 256-KiB stacks (including
+  typed phases), with 2048-depth ceilings of 220 MB total / 90 MB rendering.
+
 - Cross-dialect translation, huge inputs, pathological nesting, type metadata, I/O,
   and database execution are **not** measured by this initial harness.
 - No performance percentage or regression threshold is asserted before establishing a

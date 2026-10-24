@@ -247,6 +247,33 @@ public sealed class CoreSchemaSnapshotBindingTests
     }
 
 
+
+    [Fact]
+    public void TwoJoinedLaterals_SecondSeesFirstWithoutExposingFutureAlias()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            "SELECT b.id FROM users u JOIN LATERAL "
+            + "(SELECT u.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (" + sql + ") b ON b.id = a.id";
+        var valid = "SELECT a.id AS id";
+        for (var i = 0; i < depth; i++)
+            valid = Wrap(valid);
+        var compiled = SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth * 2, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var invalid = "SELECT a.missing AS id";
+        for (var i = 0; i < depth; i++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void PrefixedSecondJoinLateralChain_ResolvesPriorSourceAndPreservesFirstError()
     {
