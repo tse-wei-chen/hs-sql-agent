@@ -252,9 +252,30 @@ module internal RewriteCapabilityValidation =
         select.Having |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
 
     and private proveFilterQuery capabilityMessage expressionProofs query =
+        // SET subtree proofs are DFS in source order, with ORDER BY
+        // validated only after all child branches. Heap frames keep that
+        // diagnostic precedence without proportional CLR stack consumption.
+        let pending = ResizeArray<unit -> unit>()
+        let rec scheduleBranches branches =
+            for branch in List.rev branches do
+                pending.Add(fun () ->
+                    let child = branch.Query
+                    proveFilterSelect capabilityMessage expressionProofs child.Head
+                    pending.Add(fun () ->
+                        child.OrderBy |> List.iter (fun order ->
+                            proveFilterExpr capabilityMessage expressionProofs order.Expression))
+                    scheduleBranches child.SetOperations)
         proveFilterSelect capabilityMessage expressionProofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveFilterQuery capabilityMessage expressionProofs branch.Query)
-        query.OrderBy |> List.iter (fun order -> proveFilterExpr capabilityMessage expressionProofs order.Expression)
+        pending.Add(fun () ->
+            query.OrderBy |> List.iter (fun order ->
+                proveFilterExpr capabilityMessage expressionProofs order.Expression))
+        scheduleBranches query.SetOperations
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let task = pending.[last]
+            pending.RemoveAt(last)
+            task ()
 
     let proveFilterDocument capabilityMessage expressionProofs document =
         match document.Statement with
@@ -406,22 +427,27 @@ module internal RewriteCapabilityValidation =
         select.Having |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
 
     and private proveTargetQuery targetRuntime expressionProofs query =
-        if query.FetchPercent.IsSome then
-            match SqlFetchPercentCapabilityRules.TargetValidationError(
-                      TargetRuntime.provider targetRuntime,
-                      null) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        if query.FetchWithTies then
-            match SqlFetchWithTiesCapabilityRules.TargetValidationError(
-                      TargetRuntime.provider targetRuntime,
-                      null) with
-            | null -> ()
-            | message -> raise (SqlCompilationException(message))
-        proveTargetSelect targetRuntime expressionProofs query.Head
-        query.SetOperations
-        |> List.iter (fun branch ->
-            match branch.Operator with
+        // Check each SET node's FETCH policy before its SELECT and each
+        // branch's operator capability before entering that child query.
+        // Queue branch tails on the heap to preserve diagnostic precedence.
+        let pending = ResizeArray<unit -> unit>()
+        let proveHead (node: Query) =
+            if node.FetchPercent.IsSome then
+                match SqlFetchPercentCapabilityRules.TargetValidationError(
+                          TargetRuntime.provider targetRuntime,
+                          null) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            if node.FetchWithTies then
+                match SqlFetchWithTiesCapabilityRules.TargetValidationError(
+                          TargetRuntime.provider targetRuntime,
+                          null) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
+            proveTargetSelect targetRuntime expressionProofs node.Head
+
+        let proveOperator operator =
+            match operator with
             | SetOperator.IntersectAll ->
                 match SqlSetAllCapabilityRules.TargetValidationError(
                           "INTERSECT",
@@ -438,8 +464,29 @@ module internal RewriteCapabilityValidation =
             | SetOperator.UnionAll
             | SetOperator.Intersect
             | SetOperator.Except -> ()
-            proveTargetQuery targetRuntime expressionProofs branch.Query)
-        query.OrderBy |> List.iter (fun order -> proveTargetExpr targetRuntime expressionProofs order.Expression)
+
+        let rec scheduleBranches branches =
+            for branch in List.rev branches do
+                pending.Add(fun () ->
+                    proveOperator branch.Operator
+                    let child = branch.Query
+                    proveHead child
+                    pending.Add(fun () ->
+                        child.OrderBy |> List.iter (fun order ->
+                            proveTargetExpr targetRuntime expressionProofs order.Expression))
+                    scheduleBranches child.SetOperations)
+
+        proveHead query
+        pending.Add(fun () ->
+            query.OrderBy |> List.iter (fun order ->
+                proveTargetExpr targetRuntime expressionProofs order.Expression))
+        scheduleBranches query.SetOperations
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let task = pending.[last]
+            pending.RemoveAt(last)
+            task ()
 
     let proveTargetDocument targetRuntime expressionProofs document =
         match document.Statement with

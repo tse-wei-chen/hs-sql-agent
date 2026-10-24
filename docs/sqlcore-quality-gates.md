@@ -1261,3 +1261,17 @@ post-branch ORDER BY diagnostic precedence while charging work.
 CTE/derived/Expr crossings remain independently scoped paths.
 The strict small-stack gate is retained: it cannot pass on a crash
 or a typed stack-reserve rejection at the two tested depths.
+
+### Capability validation SET branch heap continuations
+
+The next isolated 2,048-depth small-stack crash was located inside
+`RewriteCapabilityValidation`, after structural validation became
+stack independent. Both `proveFilterQuery` and `proveTargetQuery`
+now traverse nested SET operations through explicit heap DFS frames.
+Filter proofs still validate SELECT, each child, and ORDER BY in order.
+Target proofs still check parent FETCH PERCENT / WITH TIES **before**
+the SELECT head, and each child SET operator capability **before** its
+query body; nested ORDER BY tails follow their children. Existing
+provider-specific rejection paths remain active, and every scheduled
+frame charges the compilation work budget. Complex CTE/derived/LATERAL
+Query crossings remain future R2 work.
