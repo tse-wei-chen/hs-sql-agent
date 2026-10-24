@@ -1619,17 +1619,16 @@ module internal RewriteRenderer =
             internalNames
             |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
             |> String.concat ", "
-        let middleSql =
-            "SELECT "
-            + middleOutputs
-            + ", ROW_NUMBER() OVER ("
-            + windowOrder
-            + ") AS "
-            + rowAlias
-            + " FROM ("
-            + baseSql.ToString()
-            + ") AS "
-            + baseAlias
+        let middleSql = RenderBuffer(ctx, "SELECT ")
+        middleSql.Append(middleOutputs)
+                 .Append(", ROW_NUMBER() OVER (")
+                 .Append(windowOrder)
+                 .Append(") AS ")
+                 .Append(rowAlias)
+                 .Append(" FROM (")
+                 .Append(baseSql.ToString())
+                 .Append(") AS ")
+                 .Append(baseAlias) |> ignore
         let outerOutputs =
             (internalNames, outputNames)
             ||> List.map2 (fun internalName externalName ->
@@ -1651,20 +1650,23 @@ module internal RewriteRenderer =
                 + ctx.Bind(box (int64 offset + 1L))
                 + " AND "
                 + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
-        renderCtes ctx query.Head.Ctes
-        + "SELECT "
-        + outerOutputs
-        + " FROM ("
-        + middleSql
-        + ") AS "
-        + wrapperAlias
-        + " WHERE "
-        + predicate
-        + " ORDER BY "
-        + wrapperAlias
-        + "."
-        + rowAlias
-        + " ASC"
+        // Budget every wrapper segment before its next allocation,
+        // instead of creating an unbounded second copy of the page SQL.
+        let output = RenderBuffer(ctx, renderCtes ctx query.Head.Ctes)
+        output.Append("SELECT ")
+              .Append(outerOutputs)
+              .Append(" FROM (")
+              .Append(middleSql.ToString())
+              .Append(") AS ")
+              .Append(wrapperAlias)
+              .Append(" WHERE ")
+              .Append(predicate)
+              .Append(" ORDER BY ")
+              .Append(wrapperAlias)
+              .Append(".")
+              .Append(rowAlias)
+              .Append(" ASC")
+              .ToString()
 
     and private renderSqlServerSetOffset (ctx: RenderContext) (query: Query) =
         let outputNames = query.Head.Projection |> List.map projectionOutputName
@@ -1689,8 +1691,12 @@ module internal RewriteRenderer =
                 + " AS "
                 + renderAlias ctx.Provider internalName)
             |> String.concat ", "
-        let pageSource =
-            "SELECT " + pageSourceOutputs + " FROM (" + body + ") AS " + setAlias
+        let pageSource = RenderBuffer(ctx, "SELECT ")
+        pageSource.Append(pageSourceOutputs)
+                  .Append(" FROM (")
+                  .Append(body)
+                  .Append(") AS ")
+                  .Append(setAlias) |> ignore
 
         let resolveOrder (order: OrderBy) =
             let index =
@@ -1718,17 +1724,16 @@ module internal RewriteRenderer =
             internalNames
             |> List.map (fun alias -> baseAlias + "." + renderAlias ctx.Provider alias)
             |> String.concat ", "
-        let middleSql =
-            "SELECT "
-            + middleOutputs
-            + ", ROW_NUMBER() OVER ("
-            + windowOrder
-            + ") AS "
-            + rowAlias
-            + " FROM ("
-            + pageSource
-            + ") AS "
-            + baseAlias
+        let middleSql = RenderBuffer(ctx, "SELECT ")
+        middleSql.Append(middleOutputs)
+                 .Append(", ROW_NUMBER() OVER (")
+                 .Append(windowOrder)
+                 .Append(") AS ")
+                 .Append(rowAlias)
+                 .Append(" FROM (")
+                 .Append(pageSource.ToString())
+                 .Append(") AS ")
+                 .Append(baseAlias) |> ignore
         let outerOutputs =
             (internalNames, outputNames)
             ||> List.map2 (fun internalName externalName ->
@@ -1750,20 +1755,23 @@ module internal RewriteRenderer =
                 + ctx.Bind(box (int64 offset + 1L))
                 + " AND "
                 + ctx.Bind(box (int64 offset + int64 (NonNegativeRowCount.value limit)))
-        renderCtes ctx query.Head.Ctes
-        + "SELECT "
-        + outerOutputs
-        + " FROM ("
-        + middleSql
-        + ") AS "
-        + wrapperAlias
-        + " WHERE "
-        + predicate
-        + " ORDER BY "
-        + wrapperAlias
-        + "."
-        + rowAlias
-        + " ASC"
+        // Budget every wrapper segment before its next allocation,
+        // instead of creating an unbounded second copy of the page SQL.
+        let output = RenderBuffer(ctx, renderCtes ctx query.Head.Ctes)
+        output.Append("SELECT ")
+              .Append(outerOutputs)
+              .Append(" FROM (")
+              .Append(middleSql.ToString())
+              .Append(") AS ")
+              .Append(wrapperAlias)
+              .Append(" WHERE ")
+              .Append(predicate)
+              .Append(" ORDER BY ")
+              .Append(wrapperAlias)
+              .Append(".")
+              .Append(rowAlias)
+              .Append(" ASC")
+              .ToString()
 
     and private renderSetTailWrapper (ctx: RenderContext) (query: Query) =
         match ctx.Provider, query.Offset, query.Limit with
