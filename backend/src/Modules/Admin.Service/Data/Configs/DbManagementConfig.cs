@@ -14,7 +14,9 @@ public class DbManagementConfig : IEntityTypeConfiguration<DbManagement>
         builder.Property(x => x.Host).HasMaxLength(100);
         builder.Property(x => x.Port).HasMaxLength(10);
         builder.Property(x => x.Username).HasMaxLength(100);
-        builder.Property(x => x.PasswordHash).HasMaxLength(256);
+        // Versioned AES-GCM envelopes include nonce, tag, key ID and Base64.
+        // A fixed 256-character bound truncates valid longer credentials.
+        builder.Property(x => x.PasswordHash);
         builder.Property(x => x.Database).HasMaxLength(100);
         builder.Property(x => x.CreatedAt).IsRequired();
         builder.Property(x => x.CreatedBy).HasMaxLength(100);

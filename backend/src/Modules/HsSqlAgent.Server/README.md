@@ -327,6 +327,17 @@ Store ciphertext writer in this phase. Deployment needs a coordinated
 dual-reader rollout before v2 writes are activated; a mixed-version fleet
 must not encounter v2 ciphertext on an old-only reader.
 
+### Required schema expansion for versioned database secrets
+
+The Admin Store `DbManagement.PasswordHash` now maps to unrestricted
+`text` for PostgreSQL (and `TEXT` for SQLite). Versioned AES-GCM
+envelopes can exceed the legacy 256-character field limit, even for valid
+database credentials. The new provider-specific EF migrations expand the
+column without changing existing ciphertext. **Run migrations before
+enabling v2 password writes or running any legacy-row migration.**
+Downgrading to the 256-character schema is intentionally unsupported once
+longer ciphertexts have been stored.
+
 ### Opt-in v2 Admin database password writes
 
 `SecretEncryption:EnableV2DatabasePasswordWrites=true` works only together

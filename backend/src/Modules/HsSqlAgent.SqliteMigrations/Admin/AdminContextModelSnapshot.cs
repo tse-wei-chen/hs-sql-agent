@@ -322,7 +322,6 @@ namespace HsSqlAgent.SqliteMigrations.Admin
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PasswordHash")
-                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Port")

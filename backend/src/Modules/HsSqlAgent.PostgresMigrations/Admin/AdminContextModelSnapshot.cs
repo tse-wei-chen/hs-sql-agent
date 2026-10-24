@@ -337,8 +337,7 @@ namespace HsSqlAgent.PostgresMigrations.Admin
                         .HasColumnType("character varying(100)");
 
                     b.Property<string>("PasswordHash")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Port")
                         .HasMaxLength(10)
