@@ -1,5 +1,6 @@
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Models;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -11,7 +12,7 @@ public sealed class DmlApprovalProviderRegistrationTests
     public void AddHsSqlAgentDmlApproval_RegistersHostProvider()
     {
         var services = new ServiceCollection();
-        var hs = services.AddHsSqlAgentCore();
+        var hs = services.AddHsSqlAgentCore(V3TestEncryption.Prepare(new HsSqlAgentServiceOptions()));
 
         hs.AddHsSqlAgentDmlApproval<TestApprovalProvider>();
 
@@ -23,7 +24,7 @@ public sealed class DmlApprovalProviderRegistrationTests
     public void AddHsSqlAgentRuntime_RegistersCompletionSinkWithoutImplicitAdminStore()
     {
         var services = new ServiceCollection();
-        var hs = services.AddHsSqlAgentCore();
+        var hs = services.AddHsSqlAgentCore(V3TestEncryption.Prepare(new HsSqlAgentServiceOptions()));
 
         hs.AddHsSqlAgentRuntime(V3TestEncryption.Configure);
 
@@ -35,7 +36,7 @@ public sealed class DmlApprovalProviderRegistrationTests
     public void AddHsSqlAgentDmlApproval_RejectsAmbiguousSecondProvider()
     {
         var services = new ServiceCollection();
-        var hs = services.AddHsSqlAgentCore();
+        var hs = services.AddHsSqlAgentCore(V3TestEncryption.Prepare(new HsSqlAgentServiceOptions()));
         hs.AddHsSqlAgentDmlApproval<TestApprovalProvider>();
 
         Assert.Throws<InvalidOperationException>(() =>

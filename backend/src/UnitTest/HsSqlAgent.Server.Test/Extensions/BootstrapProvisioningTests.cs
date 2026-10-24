@@ -84,8 +84,9 @@ public class BootstrapProvisioningTests
         Assert.NotNull(db.PasswordHash);
         Assert.NotEqual("plain-password", db.PasswordHash);
 
-        var crypto = new CryptoService();
-        var decrypted = crypto.DecryptText(db.PasswordHash, Encoding.UTF8.GetBytes(hmacKey));
+        var decrypted = V3TestEncryption.Protector().Unprotect(
+            db.PasswordHash, SecretPurpose.DatabasePassword,
+            db.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal("plain-password", decrypted);
 
         var key = await verifyContext.McpAccessKeys.FirstOrDefaultAsync(x => x.Name == "Test Key", TestContext.Current.CancellationToken);

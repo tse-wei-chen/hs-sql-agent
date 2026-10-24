@@ -20,7 +20,7 @@ public class ComposableRegistrationTests
         // A second package can call AddHsSqlAgentCore independently without
         // installing duplicate runtimes, options, policies or hosted services.
         var second = services.AddHsSqlAgentCore();
-        second.AddHsSqlAgentRuntime(V3TestEncryption.Configure);
+        second.AddHsSqlAgentRuntime();
         Assert.Equal(descriptorsAfterFirst, services.Count);
         Assert.Single(services, d => d.ServiceType == typeof(HsSqlAgentRuntimeOptions));
     }

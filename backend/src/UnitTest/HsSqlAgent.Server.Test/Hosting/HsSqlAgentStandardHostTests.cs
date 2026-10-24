@@ -113,6 +113,12 @@ public sealed class HsSqlAgentStandardHostTests
         builder.Configuration["JwtSettings:SecretKey"] = new string('J', 64);
         builder.Configuration["McpKeySettings:HmacSecretKey"] = new string('H', 64);
         builder.Configuration["Mcp:PublicEndpoint"] = "http://localhost:8080/mcp";
+        builder.Configuration["SecretEncryption:Purposes:DatabasePassword:ActiveKeyId"] = "db_test";
+        builder.Configuration["SecretEncryption:Purposes:DatabasePassword:Keys:db_test"] =
+            Convert.ToBase64String(Enumerable.Repeat((byte)0x27, 32).ToArray());
+        builder.Configuration["SecretEncryption:Purposes:DurableDmlPayload:ActiveKeyId"] = "dml_test";
+        builder.Configuration["SecretEncryption:Purposes:DurableDmlPayload:Keys:dml_test"] =
+            Convert.ToBase64String(Enumerable.Repeat((byte)0x28, 32).ToArray());
         return builder;
     }
 

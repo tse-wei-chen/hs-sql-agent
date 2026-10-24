@@ -124,10 +124,9 @@ public sealed class DurableDmlApprovalLifecycleTests
                 x => x.RequestId == approval.RequestId,
                 TestContext.Current.CancellationToken);
 
-        var crypto = services.GetRequiredService<ICryptoService>();
-        var json = crypto.DecryptText(
-            state.ProtectedExecutionPayload,
-            System.Text.Encoding.UTF8.GetBytes(HmacSecret));
+        var protector = services.GetRequiredService<ISecretProtector>();
+        var json = protector.Unprotect(
+            state.ProtectedExecutionPayload, SecretPurpose.DurableDmlPayload, state.RequestId);
         Assert.NotNull(json);
         using var document = System.Text.Json.JsonDocument.Parse(json);
         Assert.Equal(DurableDmlResumePayloadCodec.CurrentSchemaVersion,
@@ -174,10 +173,21 @@ public sealed class DurableDmlApprovalLifecycleTests
     }
 
     [Fact]
-    public async Task V2PendingApproval_OldOnlyReaderDoesNotExecuteTarget()
+    public async Task ProductV2CiphertextNeverExecutesAgainstV3Target()
     {
-        await using var fixture = await Fixture.CreateAsync(v2Writes: true);
+        await using var fixture = await Fixture.CreateAsync();
         var approval = await PersistPendingInsertAsync(fixture);
+        // An old ciphertext is explicitly unsupported by product v3.
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var services = scope.ServiceProvider;
+            var db = services.GetRequiredService<AdminContext>();
+            var state = await db.DmlApprovalRequests.SingleAsync(
+                x => x.RequestId == approval.RequestId, TestContext.Current.CancellationToken);
+            state.ProtectedExecutionPayload = services.GetRequiredService<ICryptoService>()
+                .EncryptText("old-approval", System.Text.Encoding.UTF8.GetBytes(HmacSecret))!;
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
         await using var restarted = fixture.CreateRestartedServices();
         await using var scope = restarted.CreateAsyncScope();
         var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
@@ -201,13 +211,14 @@ public sealed class DurableDmlApprovalLifecycleTests
             var state = await db.DmlApprovalRequests.SingleAsync(
                 x => x.RequestId == approval.RequestId,
                 TestContext.Current.CancellationToken);
-            var crypto = services.GetRequiredService<ICryptoService>();
-            var secret = System.Text.Encoding.UTF8.GetBytes(HmacSecret);
-            var json = crypto.DecryptText(state.ProtectedExecutionPayload, secret);
+            var protector = services.GetRequiredService<ISecretProtector>();
+            var json = protector.Unprotect(
+                state.ProtectedExecutionPayload, SecretPurpose.DurableDmlPayload, state.RequestId);
             Assert.NotNull(json);
             var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
             root["SchemaVersion"] = DurableDmlResumePayloadCodec.CurrentSchemaVersion + 1;
-            state.ProtectedExecutionPayload = crypto.EncryptText(root.ToJsonString(), secret)
+            state.ProtectedExecutionPayload = protector.Protect(
+                root.ToJsonString(), SecretPurpose.DurableDmlPayload, state.RequestId)
                 ?? throw new InvalidOperationException("Could not reencrypt test fixture.");
             await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
