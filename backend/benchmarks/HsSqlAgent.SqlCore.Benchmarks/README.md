@@ -80,6 +80,14 @@ rejections are still printed explicitly in the uploaded report.
   telemetry and measured 2,048-depth allocation ceilings; stack-reserve
   refusals or crashes fail this capability gate.
 
+- Scalar projection Query continuations: `nested-scalar-subquery` now **must** compile
+  with and without strict typed metadata at depths 128/512/2048 on a 256-KiB
+  managed stack (6/6 success and complete stage metrics). Depth-2048
+  budgets: 32 MB cumulative allocation and 4 MB Renderer allocation.
+  `nested-case-scalar` remains an explicitly **unclosed** Query↔CASE Parser
+  subproblem; its 6 probes may compile or fail closed with a typed stack
+  refusal, but crashes or unexpected failures are never accepted.
+
 - Cross-dialect translation, huge inputs, pathological nesting, type metadata, I/O,
   and database execution are **not** measured by this initial harness.
 - No performance percentage or regression threshold is asserted before establishing a

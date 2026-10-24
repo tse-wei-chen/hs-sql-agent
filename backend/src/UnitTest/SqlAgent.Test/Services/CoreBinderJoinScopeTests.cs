@@ -95,6 +95,34 @@ public sealed class CoreBinderJoinScopeTests
             compiled.Parameters.Select(p => Convert.ToInt64(p.Value)));
     }
 
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_ScalarProjectionHeapChain_PreservesInnermostBinding(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT (SELECT (SELECT 13))";
+        var command = Compile(sql, dialect);
+        Assert.Single(command.Parameters);
+        Assert.Equal(13L, Convert.ToInt64(command.Parameters[0].Value));
+        Assert.NotEmpty(command.Sql);
+    }
+
+    [Fact]
+    public void Compile_ComplexScalarProjection_RetainsExpressionAndAliasGrammar()
+    {
+        var expression = Compile("SELECT (SELECT 5) + 7", SqlAgentToolType.Postgres);
+        Assert.Equal(new long[] { 5, 7 },
+            expression.Parameters.Select(p => Convert.ToInt64(p.Value)));
+        var alias = Compile("SELECT (SELECT 5) AS projected", SqlAgentToolType.Postgres);
+        Assert.Contains("projected", alias.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, provider),
