@@ -33,7 +33,8 @@ internal static class SqlCoreDepthProbe
          "nested-prefixed-joined-lateral", "nested-prefixed-joined-lateral-typed-schema",
          "nested-double-joined-lateral", "nested-double-joined-lateral-typed-schema",
          "nested-triple-joined-lateral", "nested-triple-joined-lateral-typed-schema",
-         "two-deep-sibling-lateral", "two-deep-sibling-lateral-typed-schema"];
+         "two-deep-sibling-lateral", "two-deep-sibling-lateral-typed-schema",
+         "lateral-exists-comb-siblings", "lateral-exists-comb-siblings-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -123,6 +124,27 @@ internal static class SqlCoreDepthProbe
             left = "SELECT x.id AS id FROM LATERAL (" + left + ") x";
             right = "SELECT x.id AS id FROM LATERAL (" + right + ") x";
         }
+        return "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right + ") b ON TRUE";
+    }
+
+    // At every level, the main Query branches into a lateral Source child
+    // AND a correlated EXISTS Query under WHERE. Both independent sibling
+    // LATERAL trees repeat this mixed Source/Expr graph.
+    private static string LateralExistsCombSiblings(int depth)
+    {
+        static string Comb(string leaf, int count)
+        {
+            var sql = leaf;
+            for (var level = 0; level < count; level++)
+                sql = "SELECT x.id AS id FROM LATERAL (" + sql
+                    + ") x WHERE EXISTS (SELECT x.id)";
+            return sql;
+        }
+
+        var left = Comb("SELECT u.id AS id", depth);
+        var right = Comb("SELECT a.id AS id", depth);
         return "SELECT b.id FROM users u "
             + "JOIN LATERAL (" + left + ") a ON TRUE "
             + "JOIN LATERAL (" + right + ") b ON TRUE";
@@ -248,6 +270,8 @@ internal static class SqlCoreDepthProbe
                 NestTripleJoinedLateral(depth),
             "two-deep-sibling-lateral" or "two-deep-sibling-lateral-typed-schema" =>
                 TwoDeepSiblingLateral(depth),
+            "lateral-exists-comb-siblings" or "lateral-exists-comb-siblings-typed-schema" =>
+                LateralExistsCombSiblings(depth),
             "nested-correlated-exists" or "nested-correlated-exists-typed-schema" =>
                 NestCorrelatedExists(depth),
             "nested-correlated-in" or "nested-correlated-in-typed-schema" =>
@@ -298,6 +322,7 @@ internal static class SqlCoreDepthProbe
                     or "nested-double-joined-lateral-typed-schema"
                     or "nested-triple-joined-lateral-typed-schema"
                     or "two-deep-sibling-lateral-typed-schema"
+                    or "lateral-exists-comb-siblings-typed-schema"
                     or "nested-correlated-exists-typed-schema"
                     or "nested-correlated-in-typed-schema"
                     or "nested-scalar-subquery-typed-schema"

@@ -250,6 +250,36 @@ public sealed class CoreSchemaSnapshotBindingTests
 
 
 
+
+    [Fact]
+    public void LateralExistsCombSiblings_StrictSchemaProvesBothBranchesAndCorrelatedWhere()
+    {
+        const int depth = 96;
+        static string Comb(string sql)
+        {
+            for (var i = 0; i < depth; i++)
+                sql = "SELECT x.id AS id FROM LATERAL (" + sql
+                    + ") x WHERE EXISTS (SELECT x.id)";
+            return sql;
+        }
+        var left = Comb("SELECT u.id AS id");
+        var right = Comb("SELECT a.id AS id");
+        var sql = "SELECT b.id FROM users u JOIN LATERAL (" + left
+            + ") a ON TRUE JOIN LATERAL (" + right + ") b ON TRUE";
+        var context = Context(SqlAgentToolType.Postgres);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var broken = right.Replace("WHERE EXISTS (SELECT x.id)",
+            "WHERE EXISTS (SELECT x.missing)");
+        var invalid = "SELECT b.id FROM users u JOIN LATERAL (" + left
+            + ") a ON TRUE JOIN LATERAL (" + broken + ") b ON TRUE";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void IndependentlyDeepSiblingLaterals_KeepSequentialScopeAndRejectMissingColumn()
     {

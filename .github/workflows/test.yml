@@ -644,6 +644,44 @@ jobs:
               print(f"  {item['shape']:43} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
           print("Two independently deep sibling LATERALs 256 KiB: compiled=6/6")
           PY
+      - name: Verify mixed Source and WHERE EXISTS lateral comb on 256 KiB
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes lateral-exists-comb-siblings,lateral-exists-comb-siblings-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-lateral-exists-comb-pr.json
+      - name: Gate mixed Query Source Expr comb branches and typed safety
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-lateral-exists-comb-pr.json").open(encoding="utf-8") as source:
+              report = json.load(source)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Mixed LATERAL/EXISTS comb must compile 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          base = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              required = base | ({"SchemaBinding", "SchemaType"} if typed else set())
+              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
+                  raise SystemExit("Comb Query crossed stage without proof: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
+              if item["depth"] == 2048:
+                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 280_000_000
+                      or len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 120_000_000):
+                      raise SystemExit("LATERAL/EXISTS comb allocation regression: " + item["shape"])
+              print(f"  {item['shape']:44} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("LATERAL / EXISTS mixed comb 256 KiB: compiled=6/6")
+          PY
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -769,6 +807,7 @@ jobs:
             artifacts/sqlcore-double-joined-lateral-pr.json
             artifacts/sqlcore-triple-joined-lateral-pr.json
             artifacts/sqlcore-two-deep-sibling-lateral-pr.json
+            artifacts/sqlcore-lateral-exists-comb-pr.json
             artifacts/sqlcore-in-small-stack-pr.json
             artifacts/sqlcore-scalar-case-small-stack-pr.json
           if-no-files-found: warn

@@ -220,6 +220,36 @@ public sealed class CoreBinderJoinScopeTests
             compiled.Parameters.Select(p => Convert.ToInt64(p.Value)));
     }
 
+
+    [Fact]
+    public void Compile_LateralExistsCombSiblings_KeepsBothBranchParametersAndUnwindOrder()
+    {
+        const int depth = 24;
+        static string Comb(string sql)
+        {
+            for (var i = 0; i < depth; i++)
+                sql = "SELECT x.id AS id FROM LATERAL (" + sql
+                    + ") x WHERE EXISTS (SELECT 1 WHERE x.id = 9)";
+            return sql;
+        }
+        var left = Comb("SELECT 11 AS id WHERE u.id = 22");
+        var right = Comb("SELECT 33 AS id WHERE a.id = 44");
+        var sql = "SELECT 5 FROM users u JOIN LATERAL (" + left
+            + ") a ON a.id = 55 JOIN LATERAL (" + right
+            + ") b ON b.id = 66 WHERE u.id = 77";
+        var compiled = Compile(sql, SqlAgentToolType.Postgres);
+        var expected = new List<long> { 5, 11, 22 };
+        expected.AddRange(Enumerable.Repeat(1L, depth).Zip(
+            Enumerable.Repeat(9L, depth), (one, nine) => new[] { one, nine })
+            .SelectMany(values => values));
+        expected.AddRange(new long[] { 55, 33, 44 });
+        expected.AddRange(Enumerable.Repeat(1L, depth).Zip(
+            Enumerable.Repeat(9L, depth), (one, nine) => new[] { one, nine })
+            .SelectMany(values => values));
+        expected.AddRange(new long[] { 66, 77 });
+        Assert.Equal(expected, compiled.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, provider),
