@@ -27,11 +27,14 @@ public sealed class DatabasePasswordCiphertextReaderTests
     }
 
     [Fact]
-    public void LegacyPasswordsRemainReadableWithoutKeyRing()
+    public void LegacyPasswordsAreRejectedEvenWithFormerHmacKey()
     {
         var crypto = new CryptoService();
         var old = crypto.EncryptText("db-password", LegacyKey);
-        Assert.Equal("db-password", DatabasePasswordCiphertextReader.Decrypt(old, 42, crypto, LegacyKey));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            DatabasePasswordCiphertextReader.Decrypt(old, 42, crypto, LegacyKey));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            DatabasePasswordCiphertextReader.Decrypt(old, 42, crypto, LegacyKey, Protector()));
     }
 
     [Fact]
