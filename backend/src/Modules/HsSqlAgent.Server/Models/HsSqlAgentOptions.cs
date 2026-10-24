@@ -73,6 +73,7 @@ public sealed class HsSqlAgentRuntimeOptions
 {
     public BootstrapOptions Bootstrap { get; } = new();
     public OperabilityOptions Operability { get; } = new();
+    public SecretEncryptionOptions SecretEncryption { get; } = new();
     public CacheOptions Cache { get; } = new();
     public RateLimiterOptions RateLimiter { get; } = new();
     public SecurityPolicySyncOptions SecurityPolicySync { get; } = new();

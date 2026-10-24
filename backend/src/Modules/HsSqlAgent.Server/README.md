@@ -299,6 +299,34 @@ or complete connection strings and is intentionally not logged or returned.
 If a key was previously printed by bootstrap, revoke/replace it and review access
 to retained container and centralized logs.
 
+### Configure an independent encryption key ring (inactive read/write rollout)
+
+The **opt-in** `SecretEncryption` configuration supports a separate AES-256-GCM
+key ring per purpose. A Base64 key must decode to **32 random bytes**, never
+reused across key IDs or purposes or sourced from the MCP HMAC signing key.
+
+For the StandardHost, configure via protected environment variables or mounted
+secrets (examples use placeholders, not production keys):
+
+```text
+SecretEncryption__Enabled=true
+SecretEncryption__Purposes__DatabasePassword__ActiveKeyId=db_k1
+SecretEncryption__Purposes__DatabasePassword__Keys__db_k1=<BASE64_32_BYTE_RANDOM_KEY>
+SecretEncryption__Purposes__DurableDmlPayload__ActiveKeyId=dml_k1
+SecretEncryption__Purposes__DurableDmlPayload__Keys__dml_k1=<DIFFERENT_BASE64_32_BYTE_RANDOM_KEY>
+```
+
+For embedded hosts, configure `options.SecretEncryption` in
+`AddHsSqlAgentRuntime(options => ...)`. This registers the new protector in DI
+only when enabled, validates key shape at registration, and rejects the legacy
+MCP HMAC-derived AES key if the MCP settings are present. Do **not** remove
+previous key IDs until all old records have been safely migrated and verified.
+
+**Important:** Enabling the key ring does not change the persisted Admin
+Store ciphertext writer in this phase. Deployment needs a coordinated
+dual-reader rollout before v2 writes are activated; a mixed-version fleet
+must not encounter v2 ciphertext on an old-only reader.
+
 ### Versioned secret protection (infrastructure; not active for persisted records yet)
 
 `Common.Services.VersionedSecretProtector` and `SecretKeyRing` provide an

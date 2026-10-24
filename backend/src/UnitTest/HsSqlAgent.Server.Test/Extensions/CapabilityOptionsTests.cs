@@ -1,4 +1,8 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
+using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,7 +81,56 @@ public sealed class CapabilityOptionsTests
         Assert.Null(provider.GetService<HsSqlAgentServiceOptions>());
     }
 
-    private static void AssertJsonEqual<T>(T expected, T actual)
+    [Fact]
+    public void EncryptionKeys_AreRegisteredOnlyWhenExplicitlyConfigured()
+    {
+        var noKeys = new ServiceCollection();
+        noKeys.AddHsSqlAgentCore().AddHsSqlAgentRuntime();
+        using (var provider = noKeys.BuildServiceProvider())
+            Assert.Null(provider.GetService<ISecretProtector>());
+
+        var configured = new ServiceCollection();
+        configured.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options =>
+        {
+            options.SecretEncryption.Enabled = true;
+            options.SecretEncryption.Purposes["DatabasePassword"] = new SecretEncryptionPurposeOptions
+            {
+                ActiveKeyId = "db_key_1",
+                Keys = new Dictionary<string, string>
+                {
+                    ["db_key_1"] = Convert.ToBase64String(Enumerable.Repeat((byte)0x7a, 32).ToArray())
+                }
+            };
+        });
+        using var enabled = configured.BuildServiceProvider();
+        var protector = enabled.GetRequiredService<ISecretProtector>();
+        var encoded = protector.Protect("password", SecretPurpose.DatabasePassword, "id-1");
+        Assert.StartsWith("v2:db_key_1:", encoded);
+        Assert.Equal("password", protector.Unprotect(encoded, SecretPurpose.DatabasePassword, "id-1"));
+    }
+
+    [Fact]
+    public void InvalidEncryptionConfiguration_FailsAtRegistration()
+    {
+        var empty = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            empty.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options =>
+                options.SecretEncryption.Enabled = true));
+
+        var shortKey = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            shortKey.AddHsSqlAgentCore().AddHsSqlAgentRuntime(options =>
+            {
+                options.SecretEncryption.Enabled = true;
+                options.SecretEncryption.Purposes["DatabasePassword"] = new SecretEncryptionPurposeOptions
+                {
+                    ActiveKeyId = "db_key",
+                    Keys = new Dictionary<string, string> { ["db_key"] = Convert.ToBase64String(new byte[16]) }
+                };
+            }));
+    }
+
+    private static void AssertJsonEqual<T>(T expected, T actual>
     {
         var expectedJson = JsonSerializer.Serialize(expected);
         var actualJson = JsonSerializer.Serialize(actual);

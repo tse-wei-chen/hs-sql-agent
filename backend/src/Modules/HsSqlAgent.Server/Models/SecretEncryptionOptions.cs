@@ -1,0 +1,19 @@
+namespace HsSqlAgent.Server.Models;
+
+/// <summary>
+/// Optional, explicit encryption-key configuration. Secrets are Base64-encoded
+/// 32-byte random values, delivered via a host secret store. Disabled until all
+/// persistence readers and writers are enrolled in the rollout.
+/// </summary>
+public sealed class SecretEncryptionOptions
+{
+    public bool Enabled { get; set; }
+    public Dictionary<string, SecretEncryptionPurposeOptions> Purposes { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class SecretEncryptionPurposeOptions
+{
+    public string ActiveKeyId { get; set; } = string.Empty;
+    public Dictionary<string, string> Keys { get; set; } = new(StringComparer.Ordinal);
+}

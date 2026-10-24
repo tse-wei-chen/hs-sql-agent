@@ -141,6 +141,7 @@ public static class HsSqlAgentStandardHostExtensions
     {
         configuration.GetSection("Bootstrap").Bind(options.Bootstrap);
         configuration.GetSection("Operability").Bind(options.Operability);
+        configuration.GetSection("SecretEncryption").Bind(options.SecretEncryption);
 
         if (int.TryParse(configuration["RateLimiting:PermitLimit"], out var permitLimit))
             options.RateLimiter.PermitLimit = permitLimit;
