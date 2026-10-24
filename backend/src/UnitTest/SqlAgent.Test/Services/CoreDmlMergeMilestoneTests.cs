@@ -34,6 +34,29 @@ public sealed class CoreDmlMergeMilestoneTests
     }
 
     [Fact]
+    public void Compile_SqlServerMerge_StreamedSourceAndBothActions_PreserveParameterOrder()
+    {
+        const string sql = "MERGE INTO inventory AS t "
+            + "USING (VALUES (1, 20, 30)) AS s (id, quantity, updated_by) "
+            + "ON t.id = s.id "
+            + "WHEN MATCHED THEN UPDATE SET quantity = s.quantity, updated_by = s.updated_by "
+            + "WHEN NOT MATCHED THEN INSERT (id, quantity, updated_by) "
+            + "VALUES (s.id, s.quantity, s.updated_by);";
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer),
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("streamed-merge-v1"),
+            conflictTargetAssurance: DmlConflictTargetAssurance.FromPrimaryKey(["id"]));
+
+        Assert.Equal(SqlStatementKind.Merge, command.Kind);
+        Assert.Contains("WHEN MATCHED THEN UPDATE SET", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHEN NOT MATCHED THEN INSERT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 1, 20, 30 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+        Assert.EndsWith(";", command.Sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Compile_SqlServerSingleRowMerge_WithPrimaryKeyAssurance_EmitsNativeParameterizedMerge()
     {
         var parsed = CoreSqlTextParser.ParseDml(UpdateAndInsert, SqlAgentToolType.MsSqlServer);
