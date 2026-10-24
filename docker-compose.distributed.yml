@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
 
   hs-sql-agent:
-    image: ghcr.io/tse-wei-chen/hs-sql-agent:v2.0.6
+    image: ${HS_SQL_AGENT_IMAGE:-ghcr.io/tse-wei-chen/hs-sql-agent:v2.0.6}
     container_name: hs-sql-agent
     depends_on:
       - postgres
@@ -40,6 +40,17 @@ services:
       - CacheConfig__ConnectionString=${CACHE_CONNECTION_STRING:-redis:6379}
       - CacheConfig__KeyPrefix=${CACHE_KEY_PREFIX:-hsqlagent:cache:}
       - McpKeySettings__HmacSecretKey=${HMAC_KEY}
+      # v3 only. Disabled by default; blank key placeholders intentionally fail
+      # if enabled without real 32-byte Base64 keys and coordinated dual-read.
+      # Active key IDs are also part of the env config key names, for rotation.
+      - SecretEncryption__Enabled=${SECRET_ENCRYPTION_ENABLED:-false}
+      - SecretEncryption__AllNodesDualReadConfirmed=${SECRET_ENCRYPTION_ALL_NODES_DUAL_READ_CONFIRMED:-false}
+      - SecretEncryption__EnableV2DatabasePasswordWrites=${SECRET_ENCRYPTION_V2_DATABASE_PASSWORD_WRITES:-false}
+      - SecretEncryption__EnableV2DurableDmlWrites=${SECRET_ENCRYPTION_V2_DURABLE_DML_WRITES:-false}
+      - SecretEncryption__Purposes__DatabasePassword__ActiveKeyId=${SECRET_ENCRYPTION_DB_ACTIVE_KEY_ID:-db_k1}
+      - SecretEncryption__Purposes__DatabasePassword__Keys__${SECRET_ENCRYPTION_DB_ACTIVE_KEY_ID:-db_k1}=${SECRET_ENCRYPTION_DB_KEY_B64:-}
+      - SecretEncryption__Purposes__DurableDmlPayload__ActiveKeyId=${SECRET_ENCRYPTION_DML_ACTIVE_KEY_ID:-dml_k1}
+      - SecretEncryption__Purposes__DurableDmlPayload__Keys__${SECRET_ENCRYPTION_DML_ACTIVE_KEY_ID:-dml_k1}=${SECRET_ENCRYPTION_DML_KEY_B64:-}
       - Mcp__PublicEndpoint=${MCP_PUBLIC_ENDPOINT:-http://localhost:8080/mcp}
       - DmlApproval__Provider=${DML_APPROVAL_PROVIDER:-McpElicitation}
       - DmlApproval__Webhook__Endpoint=${DML_APPROVAL_WEBHOOK_ENDPOINT:-}
