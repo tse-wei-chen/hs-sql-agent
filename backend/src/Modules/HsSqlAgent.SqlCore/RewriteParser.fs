@@ -1734,58 +1734,69 @@ module internal RewriteParser =
                     else complete (ctes |> Seq.toList))
             scheduleOne ()
 
-    and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
-        let start = cursor.Current.Start
-        expectKeyword "SELECT" cursor
-        let distinctMode =
-            if acceptKeyword "DISTINCT" cursor then
-                if acceptKeyword "ON" cursor then
-                    match SqlDistinctOnCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
-                    | null -> ()
-                    | message -> fail cursor.Current message
-                    expectSymbol '(' cursor
-                    let expressions = ResizeArray<Expr>()
-                    expressions.Add(parseExpression cursor)
-                    while acceptSymbol ',' cursor do expressions.Add(parseExpression cursor)
-                    expectSymbol ')' cursor
-                    SelectDistinct.DistinctOn(
-                        expressions
-                        |> Seq.toList
-                        |> NonEmpty.ofList "DISTINCT ON expressions")
+    // Keep SELECT prefix and suffix semantics shared with the normal
+    // parser; the Query scheduler only changes how a derived FROM body
+    // suspends and resumes these two otherwise identical steps.
+    and private parseSelectPrefix (cursor: Cursor) =
+            let start = cursor.Current.Start
+            expectKeyword "SELECT" cursor
+            let distinctMode =
+                if acceptKeyword "DISTINCT" cursor then
+                    if acceptKeyword "ON" cursor then
+                        match SqlDistinctOnCapabilityRules.SourceValidationError(sourceDialectToolType cursor.Dialect) with
+                        | null -> ()
+                        | message -> fail cursor.Current message
+                        expectSymbol '(' cursor
+                        let expressions = ResizeArray<Expr>()
+                        expressions.Add(parseExpression cursor)
+                        while acceptSymbol ',' cursor do expressions.Add(parseExpression cursor)
+                        expectSymbol ')' cursor
+                        SelectDistinct.DistinctOn(
+                            expressions
+                            |> Seq.toList
+                            |> NonEmpty.ofList "DISTINCT ON expressions")
+                    else
+                        SelectDistinct.DistinctRows
                 else
-                    SelectDistinct.DistinctRows
-            else
-                acceptKeyword "ALL" cursor |> ignore
-                SelectDistinct.AllRows
-        let mutable top = None
-        if cursor.Dialect = SourceDialect.SqlServer && acceptKeyword "TOP" cursor then
-            let value = if acceptSymbol '(' cursor then let v = parseNonNegativeRowCount "TOP" cursor in expectSymbol ')' cursor; v else parseNonNegativeRowCount "TOP" cursor
-            top <- Some value
-        let projection = ResizeArray<SelectItem>()
-        projection.Add(parseSelectItem cursor)
-        while acceptSymbol ',' cursor do projection.Add(parseSelectItem cursor)
+                    acceptKeyword "ALL" cursor |> ignore
+                    SelectDistinct.AllRows
+            let mutable top = None
+            if cursor.Dialect = SourceDialect.SqlServer && acceptKeyword "TOP" cursor then
+                let value = if acceptSymbol '(' cursor then let v = parseNonNegativeRowCount "TOP" cursor in expectSymbol ')' cursor; v else parseNonNegativeRowCount "TOP" cursor
+                top <- Some value
+            let projection = ResizeArray<SelectItem>()
+            projection.Add(parseSelectItem cursor)
+            while acceptSymbol ',' cursor do projection.Add(parseSelectItem cursor)
+            start, distinctMode, top, projection
+
+    and private parseSelectAfterFrom (cursor: Cursor) (ctes: Cte list)
+        start distinctMode top (projection: ResizeArray<SelectItem>) from =
+            let joins = ResizeArray<Join>()
+            while acceptSymbol ',' cursor do joins.Add(CrossJoin(parseTableSource cursor))
+            while startsJoin cursor do joins.Add(parseJoin cursor)
+            let where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
+            let groupBy = ResizeArray<Expr>()
+            if acceptKeyword "GROUP" cursor then
+                expectKeyword "BY" cursor
+                groupBy.Add(parseExpression cursor)
+                while acceptSymbol ',' cursor do groupBy.Add(parseExpression cursor)
+            let having = if acceptKeyword "HAVING" cursor then Some(parseExpression cursor) else None
+            let select =
+                { Ctes = ctes
+                  DistinctMode = distinctMode
+                  ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
+                  From = from
+                  Joins = joins |> Seq.toList
+                  Where = where
+                  GroupBy = groupBy |> Seq.toList
+                  Having = having
+                  Span = parsedSpan start cursor }
+            select, top
+
+    and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
+        let start, distinctMode, top, projection = parseSelectPrefix cursor
         let from = if acceptKeyword "FROM" cursor then Some(parseTableSource cursor) else None
-        let joins = ResizeArray<Join>()
-        while acceptSymbol ',' cursor do joins.Add(CrossJoin(parseTableSource cursor))
-        while startsJoin cursor do joins.Add(parseJoin cursor)
-        let where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
-        let groupBy = ResizeArray<Expr>()
-        if acceptKeyword "GROUP" cursor then
-            expectKeyword "BY" cursor
-            groupBy.Add(parseExpression cursor)
-            while acceptSymbol ',' cursor do groupBy.Add(parseExpression cursor)
-        let having = if acceptKeyword "HAVING" cursor then Some(parseExpression cursor) else None
-        let select =
-            { Ctes = ctes
-              DistinctMode = distinctMode
-              ProjectionItems = projection |> Seq.toList |> NonEmpty.ofList "projection"
-              From = from
-              Joins = joins |> Seq.toList
-              Where = where
-              GroupBy = groupBy |> Seq.toList
-              Having = having
-              Span = parsedSpan start cursor }
-        select, top
+        parseSelectAfterFrom cursor ctes start distinctMode top projection from
 
     and private parseOrderItem allowOrdinal (cursor: Cursor) =
         let ordinalBoundary next =
@@ -2008,61 +2019,110 @@ module internal RewriteParser =
                 RewriteStackSafety.parse cursor.Current.Start
                 let start = cursor.Current.Start
                 parseCtes cursor scheduleQuery (fun ctes ->
-                    let head, top = parseSelectWithCtes cursor ctes
-                    let initial: Query =
-                        { Head = head
-                          SetOperations = []
-                          OrderBy = []
-                          Limit = top
-                          Offset = None
-                          FetchPercent = None
-                          FetchWithTies = false
-                          Span = head.Span }
-                    let intersects = ResizeArray<SetBranch>()
-                    let lowerBranches = ResizeArray<SetBranch>()
+                    scheduleSelectWithCtes ctes (fun (head, top) ->
+                        let initial: Query =
+                            { Head = head
+                              SetOperations = []
+                              OrderBy = []
+                              Limit = top
+                              Offset = None
+                              FetchPercent = None
+                              FetchWithTies = false
+                              Span = head.Span }
+                        let intersects = ResizeArray<SetBranch>()
+                        let lowerBranches = ResizeArray<SetBranch>()
 
-                    let rec scanInitialIntersects () =
-                        if isKeyword "INTERSECT" cursor.Current then
-                            match parseSetOperator cursor with
-                            | Some operator ->
-                                scheduleOperand (fun branch ->
-                                    intersects.Add { Operator = operator; Query = branch }
-                                    push scanInitialIntersects)
-                            | None -> push scanLowerBranches
-                        else push scanLowerBranches
+                        let rec scanInitialIntersects () =
+                            if isKeyword "INTERSECT" cursor.Current then
+                                match parseSetOperator cursor with
+                                | Some operator ->
+                                    scheduleOperand (fun branch ->
+                                        intersects.Add { Operator = operator; Query = branch }
+                                        push scanInitialIntersects)
+                                | None -> push scanLowerBranches
+                            else push scanLowerBranches
 
-                    and scanLowerBranches () =
-                        if isKeyword "UNION" cursor.Current
-                           || isKeyword "EXCEPT" cursor.Current then
-                            match parseSetOperator cursor with
-                            | Some operator ->
-                                scheduleOperandWithIntersects (fun branch ->
-                                    lowerBranches.Add { Operator = operator; Query = branch }
-                                    push scanLowerBranches)
-                            | None -> push finish
-                        else push finish
+                        and scanLowerBranches () =
+                            if isKeyword "UNION" cursor.Current
+                               || isKeyword "EXCEPT" cursor.Current then
+                                match parseSetOperator cursor with
+                                | Some operator ->
+                                    scheduleOperandWithIntersects (fun branch ->
+                                        lowerBranches.Add { Operator = operator; Query = branch }
+                                        push scanLowerBranches)
+                                | None -> push finish
+                            else push finish
 
-                    and finish () =
-                        let orderBy, tailLimit, offset, fetchPercent, fetchWithTies =
-                            parseQueryTail cursor
-                        let limit =
-                            match initial.Limit, tailLimit with
-                            | Some value, None -> Some value
-                            | None, value -> value
-                            | Some _, Some _ ->
-                                fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
-                        complete
-                            { initial with
-                                SetOperations =
-                                    (intersects |> Seq.toList) @ (lowerBranches |> Seq.toList)
-                                OrderBy = orderBy
-                                Limit = limit
-                                Offset = offset
-                                FetchPercent = fetchPercent
-                                FetchWithTies = fetchWithTies
-                                Span = parsedSpan start cursor }
+                        and finish () =
+                            let orderBy, tailLimit, offset, fetchPercent, fetchWithTies =
+                                parseQueryTail cursor
+                            let limit =
+                                match initial.Limit, tailLimit with
+                                | Some value, None -> Some value
+                                | None, value -> value
+                                | Some _, Some _ ->
+                                    fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
+                            complete
+                                { initial with
+                                    SetOperations =
+                                        (intersects |> Seq.toList) @ (lowerBranches |> Seq.toList)
+                                    OrderBy = orderBy
+                                    Limit = limit
+                                    Offset = offset
+                                    FetchPercent = fetchPercent
+                                    FetchWithTies = fetchWithTies
+                                    Span = parsedSpan start cursor }
 
-                    push scanInitialIntersects))
+                        push scanInitialIntersects)))
+
+        // A derived FROM is an ordinary Query boundary. The inner query
+        // completes through the same heap scheduler, then resumes SELECT
+        // suffix parsing without re-entering parseQuery on the CLR stack.
+        and scheduleSource (complete: TableSource -> unit) =
+            let lateralToken = cursor.Current
+            let isLateral = acceptKeyword "LATERAL" cursor
+            if isLateral then
+                requireSourceParseCapability lateralToken cursor.SourceLateralDerivedTable
+            if acceptSymbol '(' cursor then
+                scheduleQuery (fun query ->
+                    expectSymbol ')' cursor
+                    acceptKeyword "AS" cursor |> ignore
+                    let alias =
+                        match cursor.Current.Kind with
+                        | Identifier _ -> identifierPart cursor
+                        | Keyword value when isContextualIdentifierKeyword value ->
+                            identifierPart cursor
+                        | _ -> fail cursor.Current "Derived table requires an alias"
+                    let source =
+                        if isLateral then LateralDerivedTable(query, alias)
+                        else DerivedTable(query, alias)
+                    push (fun () -> complete source))
+            elif isLateral then
+                fail cursor.Current "Core currently models LATERAL only for derived subqueries"
+            else
+                // Named tables have no nested Query boundary, and retain the
+                // same alias/identifier parser as the existing source path.
+                let name = identifier cursor
+                let alias =
+                    if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+                    else
+                        match cursor.Current.Kind with
+                        | Identifier _ -> Some(identifierPart cursor)
+                        | Keyword "FETCH" when not (isKeyword "FIRST" (cursor.Peek 1) || isKeyword "NEXT" (cursor.Peek 1)) ->
+                            Some(identifierPart cursor)
+                        | Keyword value when value <> "FETCH" && isContextualIdentifierKeyword value ->
+                            Some(identifierPart cursor)
+                        | _ -> None
+                push (fun () -> complete (NamedTable(name, alias)))
+
+        and scheduleSelectWithCtes (ctes: Cte list) (complete: Select * NonNegativeRowCount option -> unit) =
+            let start, distinctMode, top, projection = parseSelectPrefix cursor
+            let finish from =
+                push (fun () ->
+                    complete (parseSelectAfterFrom cursor ctes start distinctMode top projection from))
+            if acceptKeyword "FROM" cursor then
+                scheduleSource (fun source -> finish (Some source))
+            else finish None
 
         and scheduleOperand (complete: Query -> unit) =
             if acceptSymbol '(' cursor then
@@ -2070,16 +2130,16 @@ module internal RewriteParser =
                     expectSymbol ')' cursor
                     complete query)
             else
-                let head, top = parseSelectWithCtes cursor []
-                complete
-                    { Head = head
-                      SetOperations = []
-                      OrderBy = []
-                      Limit = top
-                      Offset = None
-                      FetchPercent = None
-                      FetchWithTies = false
-                      Span = head.Span }
+                scheduleSelectWithCtes [] (fun (head, top) ->
+                    complete
+                        { Head = head
+                          SetOperations = []
+                          OrderBy = []
+                          Limit = top
+                          Offset = None
+                          FetchPercent = None
+                          FetchWithTies = false
+                          Span = head.Span })
 
         and scheduleOperandWithIntersects (complete: Query -> unit) =
             scheduleOperand (fun baseQuery ->

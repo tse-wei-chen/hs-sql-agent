@@ -65,6 +65,34 @@ public sealed class CoreSqlNestedExpressionStressTests
         Assert.Equal(1, result.Parameters.Length);
     }
 
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void DeepDerivedFromChains_ParseWithQueryHeapScheduler(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users";
+        for (var i = 0; i < 512; i++)
+            sql = "SELECT d.id FROM (" + sql + ") AS d";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        Assert.NotNull(parsed.Statement);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void AlternatingCteAndDerivedQueryBoundaries_ParseFromHeap(
+        SqlAgentToolType dialect)
+    {
+        var sql = "SELECT id FROM users";
+        for (var i = 0; i < 512; i++)
+            sql = i % 2 == 0
+                ? "WITH c AS (" + sql + ") SELECT id FROM c"
+                : "SELECT d.id FROM (" + sql + ") AS d";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        Assert.NotNull(parsed.Statement);
+    }
+
     [Fact]
     public void NestedSetOperand_RejectsLocalOrderByBeforeFollowingIntersect()
     {

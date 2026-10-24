@@ -1386,3 +1386,17 @@ and derived-source Query crossings at 128/512/2048 with phase telemetry.
 The CI step is **observational** until Parser and strict Schema/Type
 crossings demonstrate genuine 256-KiB full compilation. A typed
 stack-reserve failure is never misreported as a compilation success.
+
+### Derived-FROM Query parser continuations (R2)
+
+`parseQuery` and its parenthesized SET and CTE continuations now
+also schedule **derived and LATERAL FROM Query bodies** on the same
+heap worklist. `parseSelectPrefix` and `parseSelectAfterFrom`
+keep SELECT projection, DISTINCT, SQL Server TOP, JOIN, WHERE,
+GROUP/HAVING and source-span behavior shared with the prior
+synchronous parser. Source LATERAL support checks, alias grammar and
+the source-ordered SET branch/tail parser stay enabled.
+Six-provider 512-depth parser regressions cover derived-FROM chains
+and alternating CTE/derived nesting; no claim is made yet for JOIN
+derived-source or scalar subquery nesting, which still follow their
+existing parsing paths.
