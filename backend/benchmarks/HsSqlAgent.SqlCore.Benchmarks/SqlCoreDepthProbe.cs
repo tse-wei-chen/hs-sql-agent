@@ -104,9 +104,9 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT b.id AS id";
         for (var level = 0; level < depth; level++)
             sql = "SELECT c.id FROM users u "
-                + "JOIN LATERAL (SELECT u.id AS id) a ON a.id = u.id "
-                + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id "
-                + "JOIN LATERAL (" + sql + ") c ON c.id = b.id";
+                + "JOIN LATERAL (SELECT u.id AS id) a ON TRUE "
+                + "JOIN LATERAL (SELECT a.id AS id) b ON TRUE "
+                + "JOIN LATERAL (" + sql + ") c ON TRUE";
         return sql;
     }
 
