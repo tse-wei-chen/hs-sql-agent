@@ -45,6 +45,30 @@ public sealed class CoreSqlRendererValuesBudgetTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void SetPagingWrapper_StreamsUnionBodyAndPreservesBranchParameterOrder(
+        SqlAgentToolType target)
+    {
+        const string sql =
+            "SELECT id FROM users WHERE id = 11 "
+            + "UNION ALL SELECT id FROM users WHERE id = 22 "
+            + "ORDER BY 1 LIMIT 7 OFFSET 3";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, target,
+            new SqlPlanValidationContext("streamed-set-tail-v1"),
+            new SqlExecutionPlanPolicy());
+
+        Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.True(command.Parameters.Length >= 2);
+        Assert.Equal(new long[] { 11, 22 },
+            command.Parameters.Take(2).Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
     [MemberData(nameof(SixDialects))]
     public void MultiRowInsert_RendersParametersInRowMajorOrder(SqlAgentToolType dialect)
     {
