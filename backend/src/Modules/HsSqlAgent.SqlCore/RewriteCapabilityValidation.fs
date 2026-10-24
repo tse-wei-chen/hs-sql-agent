@@ -112,13 +112,13 @@ module internal RewriteCapabilityValidation =
                     push value
                 | SimpleCase(input, branches, fallback) ->
                     fallback |> Option.iter push
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
                         push branch.Result
                         push branch.Match) branches
                     push input
                 | SearchedCase(branches, fallback) ->
                     fallback |> Option.iter push
-                    NonEmpty.iterReverse (fun branch ->
+                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
                         push branch.Result
                         push branch.Condition) branches
                 | InList(value, items, _) ->
