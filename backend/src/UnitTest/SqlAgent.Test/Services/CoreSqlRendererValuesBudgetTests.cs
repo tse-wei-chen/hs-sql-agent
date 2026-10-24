@@ -69,6 +69,46 @@ public sealed class CoreSqlRendererValuesBudgetTests
     }
 
     [Theory]
+    [InlineData("LIMIT 0 OFFSET 3", "FIRST", new long[] { 0, 3, 11, 22 })]
+    [InlineData("LIMIT 7", "FIRST", new long[] { 7, 11, 22 })]
+    [InlineData("OFFSET 3", "SKIP", new long[] { 3, 11, 22 })]
+    public void FirebirdSetPrefixPaging_PreservesPagingBeforeBranchBindings(
+        string tail, string prefix, long[] expected)
+    {
+        var command = SqlCoreFacade.CompileQuery(
+            "SELECT id FROM users WHERE id = 11 UNION ALL " +
+            "SELECT id FROM users WHERE id = 22 ORDER BY 1 " + tail,
+            SqlAgentToolType.Postgres, SqlAgentToolType.Firebird,
+            new SqlPlanValidationContext("firebird-set-prefix-stream-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("SELECT " + prefix, command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNION ALL", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(expected, command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void JoinedDelete_StreamsSourcesInParameterOrder(SqlAgentToolType target)
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "DELETE FROM users USING " +
+            "(SELECT id FROM profiles WHERE id = 11) AS p, " +
+            "(SELECT id FROM profiles WHERE id = 22) AS q " +
+            "WHERE users.id = p.id AND p.id = q.id AND users.id = 33",
+            SqlAgentToolType.Postgres);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, target,
+            new SqlPlanValidationContext("joined-delete-source-stream-v1"),
+            targetProfile: target == SqlAgentToolType.Oracle
+                ? new SqlProviderCapabilityProfile(target, ServerVersion: new Version(26, 0))
+                : null);
+        Assert.Equal(new long[] { 11, 22, 33 },
+            command.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
+    [Theory]
     [MemberData(nameof(SixDialects))]
     public void MultiRowInsert_RendersParametersInRowMajorOrder(SqlAgentToolType dialect)
     {

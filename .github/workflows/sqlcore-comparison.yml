@@ -1,0 +1,60 @@
+name: SqlCore baseline comparison
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sqlcore-comparison-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sqlcore-baseline-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: head
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          path: base
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Use identical benchmark workload against both compiler revisions
+        shell: bash
+        run: |
+          cp head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/Program.cs base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/Program.cs
+          mkdir -p artifacts
+          git -C base rev-parse HEAD > artifacts/base-sha.txt
+          git -C head rev-parse HEAD > artifacts/head-sha.txt
+          dotnet build -c Release base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks
+          dotnet build -c Release head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks
+      - name: Run three interleaved pairs on the same runner and runtime
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --iterations 300 --warmup 100 --output "artifacts/$revision-$round.json"
+            done
+          done
+      - name: Enforce full corpus, output parity and broad regression ceilings
+        run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sqlcore-baseline-comparison
+          path: artifacts/
+          if-no-files-found: error

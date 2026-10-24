@@ -10,10 +10,26 @@ Use `--smoke` for a **quick compilation/determinism check only**; do not compare
 latency numbers. The manual workflow `SqlCore benchmark` runs in Release and uploads its
 JSON report. PR CI runs just the smoke mode inside the existing syntax job.
 
-The runner measures **end-to-end parse -> bind -> normalize -> validate -> render** on four
+The runner measures **end-to-end parse -> bind -> normalize -> validate -> render** on eight
 stable representative shapes across all six source/target-matched dialects. For each case
 it emits mean and p95 elapsed microseconds, plus mean current-thread allocated bytes.
 It also checks SQL text, parameter count, and plan fingerprint for determinism.
+
+The `SqlCore baseline comparison` PR workflow builds the exact PR head and base
+commit in Release on the same runner. It copies the candidate benchmark source
+into the base checkout so both compilers receive identical workloads: ordinary
+SELECT, CTE, UPDATE, DELETE, INSERT, UNION ALL, and depth-32 derived/scalar queries
+on all six providers (48 cases). Three interleaved pairs use 100 warmups and 300
+measured compilations per case, with tiered compilation disabled. Reports include
+a SHA-256 digest of emitted SQL and ordered typed parameter values; the comparison
+fails on missing cases, runtime/settings mismatch, output drift, or invalid data.
+
+Median-of-three broad regression ceilings are 2x base allocation + 4 KiB, 3x mean
+latency + 50 microseconds, and 3x p95 + 100 microseconds. These initial ceilings
+detect large regressions; they are not a speedup claim or full R4 acceptance.
+The artifact includes raw samples, comparison ratios and both commit SHAs.
+Deep 128/512/2048 and constrained-stack capability gates remain separate; this
+matched shallow corpus does not establish arbitrary SQL stack independence.
 
 ## Isolated SQL nesting diagnostics
 

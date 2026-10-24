@@ -1807,33 +1807,30 @@ module internal RewriteRenderer =
                     " SKIP " + ctx.Bind(box (NonNegativeRowCount.value value))
                 | _ -> ""
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT FIRST " + first + skip
-            + " * FROM (" + body + ")"
-            + tableAliasPrefix ctx.Provider + alias
-            + renderOrderClause ctx true query.OrderBy
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT FIRST ").Append(first).Append(skip).Append(" * FROM (") |> ignore
+            appendSetBody ctx sql query
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy).ToString()
         | Firebird, None, Some limit ->
             let first = ctx.Bind(box (NonNegativeRowCount.value limit))
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT FIRST " + first
-            + " * FROM (" + body + ")"
-            + tableAliasPrefix ctx.Provider + alias
-            + renderOrderClause ctx true query.OrderBy
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT FIRST ").Append(first).Append(" * FROM (") |> ignore
+            appendSetBody ctx sql query
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy).ToString()
         | Firebird, Some offset, None when NonNegativeRowCount.value offset > 0 ->
             let skip = ctx.Bind(box (NonNegativeRowCount.value offset))
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT SKIP " + skip
-            + " * FROM (" + body + ")"
-            + tableAliasPrefix ctx.Provider + alias
-            + renderOrderClause ctx true query.OrderBy
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT SKIP ").Append(skip).Append(" * FROM (") |> ignore
+            appendSetBody ctx sql query
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy).ToString()
         | _ ->
             let prefix = renderCtes ctx query.Head.Ctes
             let sql = RenderBuffer(ctx, prefix)
@@ -2527,18 +2524,21 @@ module internal RewriteRenderer =
         if not delete.Using.IsEmpty then
             match ctx.Provider with
             | PostgreSql ->
-                sql.Append(" USING ").Append(delete.Using |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
+                sql.Append(" USING ") |> ignore
             | SqlServer ->
                 if delete.TargetAlias.IsSome then
                     invalidOp "SQL Server joined DELETE target aliases require FROM-scope alias declaration and are not represented by the current Core DML target-alias shape."
-                sql.Append(" FROM ").Append(renderedTarget).Append(", ")
-                   .Append(delete.Using |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
+                sql.Append(" FROM ").Append(renderedTarget).Append(", ") |> ignore
             | Oracle ->
                 if delete.TargetAlias.IsSome then
                     invalidOp "Oracle direct-join DELETE target aliases are not represented by the current Core target-alias lowering."
-                sql.Append(" FROM ").Append(delete.Using |> List.map (renderSource ctx) |> String.concat ", ") |> ignore
+                sql.Append(" FROM ") |> ignore
             | _ ->
                 invalidOp "Joined DELETE is not supported by the target provider."
+            delete.Using
+            |> List.iteri (fun index source ->
+                if index > 0 then sql.Append(", ") |> ignore
+                sql.Append(renderSource ctx source) |> ignore)
         delete.Where
         |> Option.iter (fun predicate ->
             sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)

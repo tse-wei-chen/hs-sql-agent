@@ -73,11 +73,21 @@ module internal RewriteResourceBudget =
             match session.Current with
             | Some phase ->
                 if units < 0L then invalidArg "units" "Compiler work units must be nonnegative."
+                let previousWork = phase.Work
+                // Compare before addition so a very large charge cannot wrap
+                // either counter and turn a resource denial into acceptance.
+                if units > MaxStageWork - phase.Work then
+                    fail "SQL_COMPILER_STAGE_WORK_LIMIT" phase.DiagnosticStage
+                        ("Compiler stage " + phase.Name + " exceeded its deterministic work-unit budget.")
+                if units > MaxCompilationWork - session.TotalWork then
+                    fail "SQL_COMPILER_TOTAL_WORK_LIMIT" phase.DiagnosticStage
+                        ("Compilation exceeded its aggregate deterministic work-unit budget.")
                 phase.Work <- phase.Work + units
                 session.TotalWork <- session.TotalWork + units
-                if phase.Work > MaxStageWork
-                   || session.TotalWork > MaxCompilationWork
-                   || (phase.Work &&& 255L) = 0L then
+                // Charges can span many tokens/characters. Check whenever a
+                // sampling boundary is crossed, even if the sum is not an
+                // exact multiple of 256 (e.g. 1 -> 257).
+                if (previousWork >>> 8) <> (phase.Work >>> 8) then
                     enforce session phase
             | None -> ()
         | None -> ()

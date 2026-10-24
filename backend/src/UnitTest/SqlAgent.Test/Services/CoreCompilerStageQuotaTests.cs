@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Runtime.ExceptionServices;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
@@ -52,6 +53,101 @@ public sealed class CoreCompilerStageQuotaTests
     private static object? Stage(
         string name, SqlDiagnosticStage stage, Func<object?> callback) =>
         Invoke(Method("withStage"), name, stage, new Function(callback));
+
+    private static object CurrentSession()
+    {
+        var ambient = BudgetModule.GetProperty("ambient",
+            BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.GetValue(null)!;
+        var option = ambient.GetType().GetProperty("Value")!.GetValue(ambient)!;
+        return option.GetType().GetProperty("Value")!.GetValue(option)!;
+    }
+
+    [Theory]
+    [InlineData("string")]
+    [InlineData("parsed")]
+    [InlineData("inspection")]
+    [InlineData("facts")]
+    [InlineData("dml")]
+    [InlineData("batch")]
+    public void PublicEntryPoints_InheritExpiredCompilationDeadlineAndRecover(string route)
+    {
+        var parsed = CoreSqlTextParser.ParseQuery("SELECT id FROM users", SqlAgentToolType.Postgres);
+        var context = new SqlPlanValidationContext("public-deadline-v1");
+        var error = Assert.ThrowsAny<Exception>(() => Compilation(() =>
+        {
+            var session = CurrentSession();
+            session.GetType().GetField("started", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(session, Stopwatch.GetTimestamp() - 120L * Stopwatch.Frequency);
+            return route switch
+            {
+                "string" => SqlCoreFacade.CompileQuery("SELECT id FROM users",
+                    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()),
+                "parsed" => CoreSqlCompiler.CreateDefault().Compile(parsed,
+                    SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()),
+                "inspection" => SqlCoreInspection.GetQueryFacts("SELECT id FROM users", SqlAgentToolType.Postgres),
+                "facts" => SqlCoreFacade.CompileQueryWithFacts("SELECT id FROM users",
+                    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()),
+                "dml" => SqlCoreFacade.CompileDml("DELETE FROM users WHERE id = 1",
+                    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context),
+                "batch" => CoreDmlBatchTextParser.ParseDmlBatch("DELETE FROM users WHERE id = 1", SqlAgentToolType.Postgres),
+                _ => throw new ArgumentOutOfRangeException(nameof(route))
+            };
+        }));
+        var diagnostic = error switch
+        {
+            SqlParseException parse => parse.Diagnostic,
+            SqlCompilationException compile => compile.Diagnostic,
+            _ => throw new InvalidOperationException("Untyped deadline failure", error)
+        };
+        Assert.Equal("SQL_COMPILER_DEADLINE_EXCEEDED", diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticCategory.Resource, diagnostic?.Category);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery("SELECT id FROM users",
+            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+    }
+
+    [Fact]
+    public void LargeCharge_CannotOverflowPreviouslyChargedWork()
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compilation(() => Stage("Binding", SqlDiagnosticStage.Binding, () =>
+            {
+                Invoke(Method("charge"), 1L);
+                Invoke(Method("charge"), long.MaxValue);
+                return null;
+            })));
+        Assert.Equal("SQL_COMPILER_STAGE_WORK_LIMIT", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticCategory.Resource, error.Diagnostic?.Category);
+    }
+
+    [Theory]
+    [InlineData(256L)]
+    [InlineData(513L)]
+    [InlineData(4096L)]
+    public void BatchedCharge_ChecksDeadlineWhenCrossingSamplingBoundary(long units)
+    {
+        var checkedInsideAction = false;
+        Compilation(() => Stage("Binding", SqlDiagnosticStage.Binding, () =>
+        {
+            Invoke(Method("charge"), 1L);
+            // Age only this attempt's phase. No sleeps or process-global
+            // clock/quota changes: the failure must happen inside charge,
+            // rather than being deferred until withStage exits.
+            var session = CurrentSession();
+            var current = session.GetType().GetProperty("Current",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(session)!;
+            var phase = current.GetType().GetProperty("Value")!.GetValue(current)!;
+            var started = phase.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic)
+                .Single(field => field.Name == "start");
+            started.SetValue(phase, Stopwatch.GetTimestamp() - 60L * Stopwatch.Frequency);
+            var error = Assert.Throws<SqlCompilationException>(() => Invoke(Method("charge"), units));
+            Assert.Equal("SQL_COMPILER_DEADLINE_EXCEEDED", error.Diagnostic?.Code);
+            checkedInsideAction = true;
+            // Restore phase time so its normal exit can complete.
+            started.SetValue(phase, Stopwatch.GetTimestamp());
+            return null;
+        }));
+        Assert.True(checkedInsideAction);
+    }
 
     [Fact]
     public void StageWorkLimit_FailsClosedWithResourceDiagnosticInBinding()
