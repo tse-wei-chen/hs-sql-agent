@@ -17,6 +17,34 @@ internal static class V3TestEncryption
     public static void Configure(HsSqlAgentRuntimeOptions options) =>
         Install(options.SecretEncryption);
 
+    public static Common.Interfaces.ISecretProtector Protector() =>
+        new Common.Services.VersionedSecretProtector(
+            new Common.Services.SecretKeyRing(
+                new Dictionary<Common.Interfaces.SecretPurpose, Common.Services.SecretKeySet>
+                {
+                    [Common.Interfaces.SecretPurpose.DatabasePassword] = new Common.Services.SecretKeySet
+                    {
+                        ActiveKeyId = "test_db_k1",
+                        Keys = new Dictionary<string,byte[]> {
+                            ["test_db_k1"] = Enumerable.Repeat((byte)0x27,32).ToArray()
+                        }
+                    },
+                    [Common.Interfaces.SecretPurpose.DurableDmlPayload] = new Common.Services.SecretKeySet
+                    {
+                        ActiveKeyId = "test_dml_k1",
+                        Keys = new Dictionary<string,byte[]> {
+                            ["test_dml_k1"] = Enumerable.Repeat((byte)0x28,32).ToArray()
+                        }
+                    }
+                }));
+
+    public static string? ProtectDb(string? password, int dbId) =>
+        Protector().Protect(password, Common.Interfaces.SecretPurpose.DatabasePassword,
+            dbId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    public static void AddTo(Microsoft.Extensions.DependencyInjection.IServiceCollection services) =>
+        services.AddSingleton<Common.Interfaces.ISecretProtector>(Protector());
+
     private static void Install(SecretEncryptionOptions settings)
     {
         settings.Purposes["DatabasePassword"] = new SecretEncryptionPurposeOptions

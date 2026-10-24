@@ -1442,7 +1442,8 @@ public sealed class DurableDmlApprovalLifecycleTests
                 scopedServices.GetRequiredService<IOptions<McpKeySettings>>(),
                 ProviderFactory.Object,
                 ConnectionStringFactory.Object,
-                witness);
+                witness,
+                scopedServices.GetRequiredService<ISecretProtector>());
 
         public DurableDmlApprovalLifecycle CreateLifecycle(
             IServiceProvider scopedServices,

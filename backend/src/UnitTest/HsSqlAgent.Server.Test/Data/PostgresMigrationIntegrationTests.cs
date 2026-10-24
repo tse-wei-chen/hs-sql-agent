@@ -67,13 +67,13 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
     public async Task Migrations_ShouldApplyToRealPostgres_AndBeIdempotent()
     {
         var services = new ServiceCollection();
-        services.AddHsSqlAgent(new HsSqlAgentServiceOptions
+        services.AddHsSqlAgent(V3TestEncryption.Prepare(new HsSqlAgentServiceOptions
         {
             AdminDatabaseProvider = "Postgres",
             AdminConnectionString = fixture.ConnectionString,
             HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
             JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-        });
+        }));
 
         await using var provider = services.BuildServiceProvider();
         await using var scope = provider.CreateAsyncScope();

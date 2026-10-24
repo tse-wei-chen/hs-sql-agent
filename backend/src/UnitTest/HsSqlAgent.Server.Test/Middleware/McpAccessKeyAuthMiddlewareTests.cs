@@ -58,7 +58,8 @@ public class McpAccessKeyAuthMiddlewareTests
             _dbSetterServiceMock.Object,
             _cryptoServiceMock.Object,
             _settings,
-            _loggerMock.Object
+            _loggerMock.Object,
+            V3TestEncryption.Protector()
         );
     }
 
@@ -133,7 +134,7 @@ public class McpAccessKeyAuthMiddlewareTests
                 Port = "5432",
                 Database = "testdb",
                 Username = "admin",
-                PasswordHash = "encrypted-password"
+                PasswordHash = V3TestEncryption.ProtectDb("decrypted", 10)
             },
             AllowedTools = "execute_query_sql,get_tables",
             CorsAllowedOrigins = "http://localhost:3000",

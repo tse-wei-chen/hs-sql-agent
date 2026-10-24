@@ -113,7 +113,7 @@ public sealed class RuntimeAdminControllerDbConnectionTests
                 Host = "db.internal",
                 Port = "5432",
                 Username = "agent",
-                PasswordHash = "ciphertext",
+                PasswordHash = V3TestEncryption.ProtectDb("secret", 1),
                 Database = "app",
                 ExtraSettings = null
             });
@@ -183,7 +183,8 @@ public sealed class RuntimeAdminControllerDbConnectionTests
             settings,
             operabilityService.Object,
             auditRetentionService.Object,
-            customSqlToolService.Object);
+            customSqlToolService.Object,
+            V3TestEncryption.Protector());
 
         return new ControllerContextFixture(
             controller,

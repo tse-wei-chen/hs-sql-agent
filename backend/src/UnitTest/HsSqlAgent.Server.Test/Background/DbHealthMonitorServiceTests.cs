@@ -39,7 +39,7 @@ public class DbHealthMonitorServiceTests
                     Host = "localhost",
                     Port = "5432",
                     Username = "user",
-                    PasswordHash = "encrypted",
+                    PasswordHash = V3TestEncryption.ProtectDb("test-password", i),
                     Database = "test",
                     ExtraSettings = string.Empty,
                     CreatedAt = DateTime.UtcNow,
@@ -54,6 +54,7 @@ public class DbHealthMonitorServiceTests
         var services = new ServiceCollection();
         services.AddScoped<IAdminContext>(_ => new CountingAdminContext(dbOptions, persistence));
         services.AddSingleton<ICryptoService, PassthroughCryptoService>();
+        V3TestEncryption.AddTo(services);
         services.AddSingleton(Options.Create(new McpKeySettings
         {
             HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
@@ -107,7 +108,7 @@ public class DbHealthMonitorServiceTests
                 Id = 1,
                 Name = "test-db",
                 SqlProvider = "Postgres",
-                PasswordHash = "encrypted",
+                PasswordHash = V3TestEncryption.ProtectDb("test-password", 1),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             });
@@ -117,6 +118,7 @@ public class DbHealthMonitorServiceTests
         var services = new ServiceCollection();
         services.AddScoped<IAdminContext>(_ => new AdminContext(options));
         services.AddSingleton<ICryptoService, PassthroughCryptoService>();
+        V3TestEncryption.AddTo(services);
         services.AddSingleton(Options.Create(new McpKeySettings
         {
             HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"

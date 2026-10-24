@@ -92,7 +92,7 @@ public sealed class SecretMigrationAuthorizationTests
         var inventory = Assert.IsType<OkObjectResult>(
             await controller.Inventory(TestContext.Current.CancellationToken));
         var before = Assert.IsType<SecretMigrationInventory>(inventory.Value);
-        Assert.Equal(1, before.LegacyDatabasePasswords);
+        Assert.Equal(1, before.EmptyDatabasePasswords);
 
         Assert.DoesNotContain(plaintext, System.Text.Json.JsonSerializer.Serialize(inventory.Value));
         Assert.Null(typeof(SecretMigrationController).GetMethod("MigrateDatabasePasswords"));

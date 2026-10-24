@@ -35,6 +35,7 @@ public class BootstrapProvisioningTests
 
         var hmacKey = "test-hmac-key-that-is-at-least-32-bytes";
         var services = new ServiceCollection();
+        V3TestEncryption.AddTo(services);
 
         services.AddAuthorization();
         services.AddAuthentication();
@@ -127,6 +128,7 @@ public class BootstrapProvisioningTests
             }), Encoding.UTF8.GetBytes(hmacKey));
 
         var services = new ServiceCollection();
+        V3TestEncryption.AddTo(services);
         services.AddAuthorization();
         services.AddAuthentication();
         services.AddScoped(_ => new AdminContext(adminDbOptions));
@@ -194,6 +196,7 @@ public class BootstrapProvisioningTests
 
         var hmacKey = "test-hmac-key-that-is-at-least-32-bytes";
         var services = new ServiceCollection();
+        V3TestEncryption.AddTo(services);
 
         services.AddAuthorization();
         services.AddAuthentication();
@@ -267,6 +270,7 @@ public class BootstrapProvisioningTests
             .Options;
 
         var services = new ServiceCollection();
+        V3TestEncryption.AddTo(services);
         services.AddAuthorization();
         services.AddAuthentication();
         services.AddScoped(_ => new AdminContext(adminDbOptions));

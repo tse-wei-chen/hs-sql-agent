@@ -22,7 +22,8 @@ public class CustomSqlToolControllerTests
 
     private CustomSqlToolController CreateController()
     {
-        var controller = new CustomSqlToolController(_toolServiceMock.Object, _auditServiceMock.Object)
+        var controller = new CustomSqlToolController(_toolServiceMock.Object, _auditServiceMock.Object,
+            secretProtector: V3TestEncryption.Protector())
         {
             ControllerContext = new ControllerContext
             {
@@ -372,7 +373,7 @@ public class CustomSqlToolControllerTests
                 Host = "localhost",
                 Database = "test",
                 Username = "user",
-                PasswordHash = "encrypted"
+                PasswordHash = V3TestEncryption.ProtectDb("password", id)
             });
         return dbService;
     }

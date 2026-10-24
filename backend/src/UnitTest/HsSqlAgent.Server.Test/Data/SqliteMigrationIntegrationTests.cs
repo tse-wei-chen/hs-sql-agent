@@ -66,13 +66,13 @@ public sealed class SqliteMigrationIntegrationTests
         try
         {
             var services = new ServiceCollection();
-            services.AddHsSqlAgent(new HsSqlAgentServiceOptions
+            services.AddHsSqlAgent(V3TestEncryption.Prepare(new HsSqlAgentServiceOptions
             {
                 AdminDatabaseProvider = "Sqlite",
                 AdminConnectionString = connectionString,
                 HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
                 JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-            });
+            }));
 
             await using (var provider = services.BuildServiceProvider())
             await using (var scope = provider.CreateAsyncScope())
