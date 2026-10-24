@@ -482,6 +482,23 @@ public sealed class CoreSqlNestedExpressionStressTests
     }
 
     [Fact]
+    public void DeepFilterAggregatePredicate_ValidatesAndRendersWithoutRecursiveProof()
+    {
+        // FILTER predicate capability proof must walk a left-deep Boolean
+        // chain on heap frames. The rest of compilation and rendering still
+        // validate the exact Postgres SQL semantics and parameter order.
+        var predicate = string.Join(" AND ",
+            Enumerable.Repeat("id = 7", 512));
+        var sql = "SELECT SUM(id) FILTER (WHERE " + predicate + ") FROM users";
+        var command = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("iterative-filter-predicate-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("FILTER", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(512, command.Parameters.Length);
+    }
+
+    [Fact]
     public void MixedBinderGraph_LateralJoinOnlySeesPrecedingSources()
     {
         var sql = "SELECT u.id, q.id, r.id FROM users AS u "

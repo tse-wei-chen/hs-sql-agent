@@ -64,77 +64,75 @@ module internal RewriteCapabilityValidation =
         | RejectedCapability rejection ->
             raise (SqlCompilationException(capabilityMessage rejection))
 
-    let rec private proveFilterPredicate capabilityMessage (proofs: FilterPredicateProofs) expression =
-        match expression with
-        | Spanned(_, inner) -> proveFilterPredicate capabilityMessage proofs inner
-        | BoundColumn(_, OuterRowSource) ->
-            requireFilterCapability capabilityMessage proofs.OuterReference
-        | Column _
-        | BoundColumn(_, LocalRowSource)
-        | BoundColumn(_, ProjectionAlias)
-        | Wildcard _
-        | OrderOrdinal _
-        | Literal _
-        | Interval _ -> ()
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            proveFilterPredicate capabilityMessage proofs amount
-            proveFilterPredicate capabilityMessage proofs value
-        | Unary(_, operand) ->
-            proveFilterPredicate capabilityMessage proofs operand
-        | Binary(_, left, right) ->
-            proveFilterPredicate capabilityMessage proofs left
-            proveFilterPredicate capabilityMessage proofs right
-        | Like(value, pattern, _, _, _) ->
-            proveFilterPredicate capabilityMessage proofs value
-            proveFilterPredicate capabilityMessage proofs pattern
-        | RawRegexCall(arguments, _) ->
-            arguments |> List.iter (proveFilterPredicate capabilityMessage proofs)
-        | RegexMatch(value, pattern) ->
-            proveFilterPredicate capabilityMessage proofs value
-            proveFilterPredicate capabilityMessage proofs pattern
-        | PostgresJsonAccess(value, _, _) ->
-            proveFilterPredicate capabilityMessage proofs value
-        | FunctionCall call ->
-            call.Arguments |> List.iter (proveFilterPredicate capabilityMessage proofs)
-            call.AggregateOrderBy |> List.iter (fun order -> proveFilterPredicate capabilityMessage proofs order.Expression)
-        | FilteredAggregate(value, predicate) ->
-            proveFilterPredicate capabilityMessage proofs value
-            proveFilterPredicate capabilityMessage proofs predicate
-        | Windowed(value, window) ->
-            requireFilterCapability capabilityMessage proofs.WindowFunction
-            proveFilterPredicate capabilityMessage proofs value
-            window.PartitionBy |> List.iter (proveFilterPredicate capabilityMessage proofs)
-            window.OrderBy |> List.iter (fun order -> proveFilterPredicate capabilityMessage proofs order.Expression)
-        | Cast(value, _)
-        | Extract(_, value) ->
-            proveFilterPredicate capabilityMessage proofs value
-        | SimpleCase(input, branches, fallback) ->
-            proveFilterPredicate capabilityMessage proofs input
-            branches |> NonEmpty.iter (fun branch ->
-                proveFilterPredicate capabilityMessage proofs branch.Match
-                proveFilterPredicate capabilityMessage proofs branch.Result)
-            fallback |> Option.iter (proveFilterPredicate capabilityMessage proofs)
-        | SearchedCase(branches, fallback) ->
-            branches |> NonEmpty.iter (fun branch ->
-                proveFilterPredicate capabilityMessage proofs branch.Condition
-                proveFilterPredicate capabilityMessage proofs branch.Result)
-            fallback |> Option.iter (proveFilterPredicate capabilityMessage proofs)
-        | InList(value, items, _) ->
-            proveFilterPredicate capabilityMessage proofs value
-            items |> NonEmpty.iter (proveFilterPredicate capabilityMessage proofs)
-        | InSubquery(value, _, _) ->
-            proveFilterPredicate capabilityMessage proofs value
-            requireFilterCapability capabilityMessage proofs.Subquery
-        | Between(value, lower, upper, _) ->
-            proveFilterPredicate capabilityMessage proofs value
-            proveFilterPredicate capabilityMessage proofs lower
-            proveFilterPredicate capabilityMessage proofs upper
-        | IsNull(value, _) ->
-            proveFilterPredicate capabilityMessage proofs value
-        | ScalarSubquery _
-        | Exists _ ->
-            requireFilterCapability capabilityMessage proofs.Subquery
+    // FILTER aggregate predicates can be deep Boolean/expression trees.
+    // Keep the original left-to-right validation order without recursion,
+    // including the post-operand Subquery proof for IN (SELECT ...).
+    type private FilterPredicateFrame =
+        | VisitFilterPredicate of Expr
+        | CheckFilterSubquery
+
+    let private proveFilterPredicate capabilityMessage (proofs: FilterPredicateProofs) root =
+        let pending = ResizeArray<FilterPredicateFrame>()
+        let push value = pending.Add(VisitFilterPredicate value)
+        let pushReverse (expressions: Expr list) =
+            for expression in List.rev expressions do push expression
+        push root
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt last
+            match frame with
+            | CheckFilterSubquery ->
+                requireFilterCapability capabilityMessage proofs.Subquery
+            | VisitFilterPredicate expression ->
+                match expression with
+                | Spanned(_, inner) -> push inner
+                | BoundColumn(_, OuterRowSource) ->
+                    requireFilterCapability capabilityMessage proofs.OuterReference
+                | Column _ | BoundColumn(_, LocalRowSource)
+                | BoundColumn(_, ProjectionAlias) | Wildcard _
+                | OrderOrdinal _ | Literal _ | Interval _ -> ()
+                | DateAdd(_, left, right) | DateDiff(_, left, right)
+                | Binary(_, left, right) | Like(left, right, _, _, _)
+                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+                    push right
+                    push left
+                | Unary(_, inner) | Cast(inner, _)
+                | Extract(_, inner) | PostgresJsonAccess(inner, _, _)
+                | IsNull(inner, _) -> push inner
+                | RawRegexCall(arguments, _) -> pushReverse arguments
+                | FunctionCall call ->
+                    pushReverse (call.AggregateOrderBy |> List.map (fun order -> order.Expression))
+                    pushReverse call.Arguments
+                | Windowed(value, window) ->
+                    requireFilterCapability capabilityMessage proofs.WindowFunction
+                    pushReverse (window.OrderBy |> List.map (fun order -> order.Expression))
+                    pushReverse window.PartitionBy
+                    push value
+                | SimpleCase(input, branches, fallback) ->
+                    fallback |> Option.iter push
+                    NonEmpty.iterReverse (fun branch ->
+                        push branch.Result
+                        push branch.Match) branches
+                    push input
+                | SearchedCase(branches, fallback) ->
+                    fallback |> Option.iter push
+                    NonEmpty.iterReverse (fun branch ->
+                        push branch.Result
+                        push branch.Condition) branches
+                | InList(value, items, _) ->
+                    NonEmpty.iterReverse push items
+                    push value
+                | InSubquery(value, _, _) ->
+                    pending.Add CheckFilterSubquery
+                    push value
+                | Between(value, lower, upper, _) ->
+                    push upper
+                    push lower
+                    push value
+                | ScalarSubquery _ | Exists _ ->
+                    requireFilterCapability capabilityMessage proofs.Subquery
 
     // A capability traversal never needs to rebuild the tree or propagate
     // query scope. Keep *all* Query/Expr/CTE/Source/JOIN edges on one heap
@@ -316,25 +314,31 @@ module internal RewriteCapabilityValidation =
             |> Option.iter (fun mergeInsert ->
                 mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
 
-    let rec private isRepeatableDistinctOperand expression =
-        match expression with
-        | Spanned(_, inner) -> isRepeatableDistinctOperand inner
-        | Column _ | BoundColumn _ | OrderOrdinal _ | Literal _ -> true
-        | DateAdd(_, amount, value)
-        | DateDiff(_, amount, value) ->
-            isRepeatableDistinctOperand amount && isRepeatableDistinctOperand value
-        | Unary(_, operand)
-        | Cast(operand, _)
-        | Extract(_, operand) ->
-            isRepeatableDistinctOperand operand
-        | Binary((BinaryOperator.Add
-                 | BinaryOperator.Subtract
-                 | BinaryOperator.Multiply
-                 | BinaryOperator.Divide
-                 | BinaryOperator.Modulo
-                 | BinaryOperator.Concat), left, right) ->
-            isRepeatableDistinctOperand left && isRepeatableDistinctOperand right
-        | _ -> false
+    // Oracle CASE-based null-safe lowering may evaluate operands more
+    // than once. Reject any unproven/volatile construct, but traverse
+    // arbitrarily deep *proven* arithmetic/cast operands without CLR recursion.
+    let private isRepeatableDistinctOperand root =
+        let pending = ResizeArray<Expr>()
+        pending.Add(root)
+        let mutable repeatable = true
+        while repeatable && pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let node = pending.[last]
+            pending.RemoveAt last
+            match node with
+            | Spanned(_, inner) -> pending.Add(inner)
+            | Column _ | BoundColumn _ | OrderOrdinal _ | Literal _ -> ()
+            | DateAdd(_, left, right) | DateDiff(_, left, right)
+            | Binary((BinaryOperator.Add | BinaryOperator.Subtract
+                      | BinaryOperator.Multiply | BinaryOperator.Divide
+                      | BinaryOperator.Modulo | BinaryOperator.Concat), left, right) ->
+                pending.Add(right)
+                pending.Add(left)
+            | Unary(_, inner) | Cast(inner, _) | Extract(_, inner) ->
+                pending.Add(inner)
+            | _ -> repeatable <- false
+        repeatable
 
     let private proveTargetNode targetRuntime (expressionProofs: ExpressionProofs) node =
         match node with

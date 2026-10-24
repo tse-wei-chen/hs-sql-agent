@@ -1340,3 +1340,14 @@ before branch body, and tail ORDER BY last.
 This change closes only the Filter/Target capability-proof
 Query↔Expr/Source recursion. Parser and strict Schema/Type proof
 mixed-graph traversal must be benchmarked separately.
+
+### Predicate and repeatability stack independence
+
+`proveFilterPredicate` now schedules FILTER aggregate predicate
+children with a dedicated heap worklist (including the
+`IN (subquery)` capability check **after** validating its left value).
+`isRepeatableDistinctOperand`, used for Oracle null-safe CASE
+rewrites, short-circuits fail-closed on a heap worklist instead of
+recursively checking deep arithmetic/cast trees. PostgreSQL's
+512-clause FILTER aggregate regression checks parameter cardinality
+and SQL emission. These changes do not relax target proof requirements.
