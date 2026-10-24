@@ -491,41 +491,37 @@ module internal RewriteSchemaValidation =
                 pending.Add(ResumeSchemaCte(ctes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
-            | [], [], _, _, _, _ when current.Head.Joins.Length = 1 ->
-                match current.Head.From, current.Head.Joins.Head.Source with
-                | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
-                    // Only previously visible sources are inherited by
-                    // a lateral Query, never later joins or outer aliases
-                    // shadowed by a current-frame table alias.
-                    let initial = makeScope currentParent [ source catalog ctes currentParent first ]
-                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 0))
-                    currentParent <- Some initial
-                    current <- inner
-                | _ -> scanning <- false
-            | [], [], _, _, _, _ when current.Head.Joins.Length = 2 ->
-                match current.Head.From, current.Head.Joins with
+            | [], [], _, _, _, _ when not current.Head.Joins.IsEmpty ->
+                match current.Head.From, List.rev current.Head.Joins with
                 | Some ((NamedTable _ | CteTable _) as first),
-                  [ OnJoin(OnJoinKind.Inner, ((NamedTable _ | CteTable _) as firstJoinSource), firstPredicate);
-                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
-                    let initial = makeScope currentParent [ source catalog ctes currentParent first ]
-                    let preceding = source catalog ctes currentParent firstJoinSource
-                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
-                    expression catalog ctes visible Span.unknown firstPredicate
-                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 1))
-                    currentParent <- Some visible
-                    current <- inner
-                | Some ((NamedTable _ | CteTable _) as first),
-                  [ OnJoin(OnJoinKind.Inner, (LateralDerivedTable _ as firstLateral), firstPredicate);
-                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
-                    // Prove A with only the initial FROM source visible.
-                    // B may see A, but must not inherit its own alias or
-                    // any later source. The second LATERAL is suspended
-                    // on the same heap continuation as a prefixed JOIN.
-                    let initial = makeScope currentParent [ source catalog ctes currentParent first ]
-                    let preceding = source catalog ctes (Some initial) firstLateral
-                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
-                    expression catalog ctes visible Span.unknown firstPredicate
-                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 1))
+                  OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) :: precedingReversed
+                    when precedingReversed |> List.forall (function
+                        | OnJoin(OnJoinKind.Inner, (NamedTable _ | CteTable _ | LateralDerivedTable _), _) -> true
+                        | _ -> false) ->
+                    // Replay arbitrary INNER JOIN prefixes on the current
+                    // row-scope only; the deepest final LATERAL is suspended
+                    // on the Query heap. Earlier LATERALs see only the FROM
+                    // and JOIN sources that precede them, not future aliases.
+                    let mutable visible =
+                        makeScope currentParent [ source catalog ctes currentParent first ]
+                    for preceding in List.rev precedingReversed do
+                        RewriteResourceBudget.checkpoint ()
+                        match preceding with
+                        | OnJoin(_, table, predicate) ->
+                            let sourceParent =
+                                match table with
+                                | LateralDerivedTable _ -> Some visible
+                                | _ -> currentParent
+                            let added = source catalog ctes sourceParent table
+                            let combined =
+                                { visible with
+                                    Sources = visible.Sources @ [ added ]
+                                    Unqualified = visible.Unqualified @ added.Columns }
+                            expression catalog ctes combined Span.unknown predicate
+                            visible <- combined
+                        | _ -> invalidOp "Proven JOIN prefix requires an INNER JOIN ON predicate."
+                    let lastIndex = current.Head.Joins.Length - 1
+                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, lastIndex))
                     currentParent <- Some visible
                     current <- inner
                 | _ -> scanning <- false

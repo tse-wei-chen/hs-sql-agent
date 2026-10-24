@@ -552,34 +552,33 @@ module internal RewriteSchemaTypeValidation =
                 pending.Add(ResumeTypedCte(inheritedCtes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
-            | [], [], _, _, _, _ when current.Head.Joins.Length = 1 ->
-                match current.Head.From, current.Head.Joins.Head.Source with
-                | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
-                    let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
-                    pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias, 0))
-                    currentParent <- Some initial
-                    current <- inner
-                | _ -> scanning <- false
-            | [], [], _, _, _, _ when current.Head.Joins.Length = 2 ->
-                match current.Head.From, current.Head.Joins with
+            | [], [], _, _, _, _ when not current.Head.Joins.IsEmpty ->
+                match current.Head.From, List.rev current.Head.Joins with
                 | Some ((NamedTable _ | CteTable _) as first),
-                  [ OnJoin(OnJoinKind.Inner, ((NamedTable _ | CteTable _) as firstJoinSource), firstPredicate);
-                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
-                    let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
-                    let preceding = tableSource catalog inheritedCtes currentParent firstJoinSource
-                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
-                    expression catalog inheritedCtes visible Span.unknown firstPredicate |> ignore
-                    pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias, 1))
-                    currentParent <- Some visible
-                    current <- inner
-                | Some ((NamedTable _ | CteTable _) as first),
-                  [ OnJoin(OnJoinKind.Inner, (LateralDerivedTable _ as firstLateral), firstPredicate);
-                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
-                    let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
-                    let preceding = tableSource catalog inheritedCtes (Some initial) firstLateral
-                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
-                    expression catalog inheritedCtes visible Span.unknown firstPredicate |> ignore
-                    pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias, 1))
+                  OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) :: precedingReversed
+                    when precedingReversed |> List.forall (function
+                        | OnJoin(OnJoinKind.Inner, (NamedTable _ | CteTable _ | LateralDerivedTable _), _) -> true
+                        | _ -> false) ->
+                    let mutable visible =
+                        makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
+                    for preceding in List.rev precedingReversed do
+                        RewriteResourceBudget.checkpoint ()
+                        match preceding with
+                        | OnJoin(_, table, predicate) ->
+                            let sourceParent =
+                                match table with
+                                | LateralDerivedTable _ -> Some visible
+                                | _ -> currentParent
+                            let added = tableSource catalog inheritedCtes sourceParent table
+                            let combined =
+                                { visible with
+                                    Sources = visible.Sources @ [ added ]
+                                    Unqualified = visible.Unqualified @ sourceOutput added }
+                            expression catalog inheritedCtes combined Span.unknown predicate |> ignore
+                            visible <- combined
+                        | _ -> invalidOp "Proven typed JOIN prefix requires an INNER JOIN ON predicate."
+                    let lastIndex = current.Head.Joins.Length - 1
+                    pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias, lastIndex))
                     currentParent <- Some visible
                     current <- inner
                 | _ -> scanning <- false
