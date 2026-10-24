@@ -150,6 +150,19 @@ public class VersionedSecretProtectorTests
     }
 
     [Fact]
+    public void WhitespaceCredentialIsEncryptedNotPersistedAsPlaintext()
+    {
+        var protector = new VersionedSecretProtector(Ring());
+        var encrypted = protector.Protect("   ", SecretPurpose.DatabasePassword, "42");
+        Assert.NotNull(encrypted);
+        Assert.StartsWith("v2:db_2026:", encrypted);
+        Assert.Equal("   ", protector.Unprotect(encrypted, SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            protector.Unprotect("   ", SecretPurpose.DatabasePassword, "42"));
+        Assert.Equal(string.Empty, protector.Unprotect(string.Empty, SecretPurpose.DatabasePassword, "42"));
+    }
+
+    [Fact]
     public void LegacyMalformedBase64FailsAsCryptographicError()
     {
         var key = Encoding.UTF8.GetBytes("legacy-hmac-key-at-least-32-bytes-long");

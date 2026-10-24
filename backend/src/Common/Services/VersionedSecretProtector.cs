@@ -31,7 +31,8 @@ public sealed class VersionedSecretProtector : ISecretProtector
     public string? Protect(string? plaintext, SecretPurpose purpose, string recordId)
     {
         var aad = BuildAad(purpose, recordId);
-        if (string.IsNullOrWhiteSpace(plaintext)) return plaintext;
+        // Whitespace-only passwords are still credentials, not plaintext sentinels.
+        if (plaintext is null || plaintext.Length == 0) return plaintext;
 
         var (keyId, key) = _keyRing.GetActiveKey(purpose);
         try
@@ -42,17 +43,23 @@ public sealed class VersionedSecretProtector : ISecretProtector
 
             byte[] nonce = RandomNumberGenerator.GetBytes(NonceSize);
             byte[] plainBytes = Encoding.UTF8.GetBytes(plaintext);
-            byte[] ciphertext = new byte[plainBytes.Length];
-            byte[] tag = new byte[TagSize];
-            using (var aes = new AesGcm(key, TagSize))
-                aes.Encrypt(nonce, plainBytes, ciphertext, tag, aad);
+            try
+            {
+                byte[] ciphertext = new byte[plainBytes.Length];
+                byte[] tag = new byte[TagSize];
+                using (var aes = new AesGcm(key, TagSize))
+                    aes.Encrypt(nonce, plainBytes, ciphertext, tag, aad);
 
-            byte[] envelope = new byte[NonceSize + TagSize + ciphertext.Length];
-            Buffer.BlockCopy(nonce, 0, envelope, 0, NonceSize);
-            Buffer.BlockCopy(tag, 0, envelope, NonceSize, TagSize);
-            Buffer.BlockCopy(ciphertext, 0, envelope, NonceSize + TagSize, ciphertext.Length);
-            CryptographicOperations.ZeroMemory(plainBytes);
-            return Prefix + keyId + ":" + Convert.ToBase64String(envelope);
+                byte[] envelope = new byte[NonceSize + TagSize + ciphertext.Length];
+                Buffer.BlockCopy(nonce, 0, envelope, 0, NonceSize);
+                Buffer.BlockCopy(tag, 0, envelope, NonceSize, TagSize);
+                Buffer.BlockCopy(ciphertext, 0, envelope, NonceSize + TagSize, ciphertext.Length);
+                return Prefix + keyId + ":" + Convert.ToBase64String(envelope);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(plainBytes);
+            }
         }
         finally
         {
@@ -63,7 +70,9 @@ public sealed class VersionedSecretProtector : ISecretProtector
     public string? Unprotect(string? ciphertext, SecretPurpose purpose, string recordId)
     {
         var aad = BuildAad(purpose, recordId);
-        if (string.IsNullOrWhiteSpace(ciphertext)) return ciphertext;
+        if (ciphertext is null || ciphertext.Length == 0) return ciphertext;
+        if (string.IsNullOrWhiteSpace(ciphertext))
+            throw new CryptographicException("Malformed secret envelope.");
 
         if (!ciphertext.StartsWith(Prefix, StringComparison.Ordinal))
         {
