@@ -272,6 +272,19 @@ public sealed class CoreSchemaSnapshotBindingTests
             SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+
+        // LATERAL A must not see B's alias: the continuation must not
+        // expose all JOIN sources at once merely because the outer
+        // SELECT eventually has both aliases in scope.
+        var futureAlias = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (SELECT b.id AS id) a ON a.id = u.id "
+            + "JOIN LATERAL (SELECT a.id AS id) b ON b.id = a.id";
+        var hidden = Record.Exception(() =>
+            SqlCoreFacade.CompileQuery(futureAlias, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.NotNull(hidden);
+        Assert.DoesNotContain("SQL_COMPILER_STACK_RESERVE", hidden.ToString(),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
