@@ -7,6 +7,68 @@ namespace HsSqlAgent.Server.Test.Services;
 
 public sealed class RuntimeDoctorAnalyzerTests
 {
+    [Theory]
+    [InlineData("SecretProtection:DatabasePasswords:Keys:db-1", "YourDbEncryptionKeyHere-Base64Encoded32Bytes!")]
+    [InlineData("SecretProtection:DmlPayloads:Keys:dml-1", "YourDmlEncryptionKeyHere-Base64Encoded32Bytes!")]
+    [InlineData("SecretProtection:DmlFingerprintKey", "YourDmlFingerprintKeyHere-Base64Encoded32Bytes!")]
+    public void Analyze_ReadableExamplePlaceholdersProduceExplicitError(string path, string placeholder)
+    {
+        var values = BuildHealthyBase();
+        values[path] = placeholder;
+        var result = RuntimeDoctorAnalyzer.Analyze(BuildConfiguration(values), "Development", 1, 1, 1);
+        var check = Assert.Single(result.Checks, item => item.Id == "security.secret-protection");
+        Assert.Equal("Error", check.Status);
+        Assert.Contains("placeholder", check.Detail);
+        Assert.DoesNotContain(placeholder, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SecretProtection:DatabasePasswords:ActiveKeyId", "unavailable-key-id")]
+    [InlineData("SecretProtection:DmlPayloads:ActiveKeyId", "bad:id")]
+    [InlineData("SecretProtection:DatabasePasswords:Keys:db-1", "")]
+    [InlineData("SecretProtection:DmlPayloads:Keys:dml-1", "not-base64!")]
+    [InlineData("SecretProtection:DmlFingerprintKey", "YWJj")]
+    [InlineData("SecretProtection:DatabasePasswords:Keys:retired", "broken-format-secret-marker")]
+    public void Analyze_InvalidProtectionKeysFailWithoutLeakingValues(string path, string value)
+    {
+        var values = BuildHealthyBase();
+        values[path] = value;
+        var result = RuntimeDoctorAnalyzer.Analyze(BuildConfiguration(values), "Development", 1, 1, 1);
+        Assert.Equal("Error", Assert.Single(result.Checks, check => check.Id == "security.secret-protection").Status);
+        Assert.Equal("Error", result.OverallStatus);
+        if (value.Length > 5) Assert.DoesNotContain(value, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("Development", "Warning", false)]
+    [InlineData("Production", "Error", false)]
+    [InlineData("Production", "Error", true)]
+    public void Analyze_PublicSampleKeysAreFlaggedIncludingRetainedKeys(string environment, string expected, bool retained)
+    {
+        var values = BuildHealthyBase();
+        var sample = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("sample-db-password-key".PadRight(32, '!')));
+        values["SecretProtection:DatabasePasswords:Keys:" + (retained ? "retired" : "db-1")] = sample;
+        var result = RuntimeDoctorAnalyzer.Analyze(BuildConfiguration(values), environment, 1, 1, 1);
+        Assert.Equal(expected, Assert.Single(result.Checks, check => check.Id == "security.secret-protection").Status);
+        Assert.Equal(expected, result.OverallStatus);
+        Assert.DoesNotContain(sample, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("SecretProtection:DmlPayloads:Keys:dml-1")]
+    [InlineData("SecretProtection:DmlFingerprintKey")]
+    [InlineData("McpKeySettings:HmacSecretKey")]
+    [InlineData("JwtSettings:SecretKey")]
+    public void Analyze_ReusedKeysFailWithoutExposingThem(string duplicatePath)
+    {
+        var values = BuildHealthyBase();
+        var key = values["SecretProtection:DatabasePasswords:Keys:db-1"]!;
+        values[duplicatePath] = key;
+        var result = RuntimeDoctorAnalyzer.Analyze(BuildConfiguration(values), "Production", 1, 1, 1);
+        Assert.Equal("Error", Assert.Single(result.Checks, check => check.Id == "security.secret-protection").Status);
+        Assert.DoesNotContain(key, JsonSerializer.Serialize(result), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Analyze_HealthySingleNodeConfiguration_IsHealthyAndDoesNotExposeSecrets()
     {
@@ -31,6 +93,8 @@ public sealed class RuntimeDoctorAnalyzerTests
         var json = JsonSerializer.Serialize(result);
         Assert.DoesNotContain(hmac, json, StringComparison.Ordinal);
         Assert.DoesNotContain(jwt, json, StringComparison.Ordinal);
+        foreach (var value in values.Where(pair => pair.Key.StartsWith("SecretProtection:") && !pair.Key.EndsWith("ActiveKeyId")).Select(pair => pair.Value!))
+            Assert.DoesNotContain(value, json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -116,6 +180,11 @@ public sealed class RuntimeDoctorAnalyzerTests
 
     private static Dictionary<string, string?> BuildHealthyBase() => new()
     {
+        ["SecretProtection:DatabasePasswords:ActiveKeyId"] = "db-1",
+        ["SecretProtection:DatabasePasswords:Keys:db-1"] = Common.Services.TestSecrets.Create().DatabasePasswords.Keys["db-1"],
+        ["SecretProtection:DmlPayloads:ActiveKeyId"] = "dml-1",
+        ["SecretProtection:DmlPayloads:Keys:dml-1"] = Common.Services.TestSecrets.Create().DmlPayloads.Keys["dml-1"],
+        ["SecretProtection:DmlFingerprintKey"] = Common.Services.TestSecrets.Create().DmlFingerprintKey,
         ["McpKeySettings:HmacSecretKey"] = "0123456789abcdef0123456789abcdef",
         ["JwtSettings:SecretKey"] = "fedcba9876543210fedcba9876543210",
         ["Mcp:PublicEndpoint"] = "https://sql.example.com/mcp",

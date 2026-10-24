@@ -1,6 +1,8 @@
 # Secret protection upgrade (breaking change)
 
-The keys in `.env.example` and `appsettings.Example.json` are public samples for local development only. Replace all three with independently generated random values before deployment.
+The `Your...KeyHere-Base64Encoded32Bytes!` values in `.env.example` and `appsettings.Example.json` are visibly marked placeholders, like the HMAC example. They are deliberately invalid keys. Replace all three with independently generated random 32-byte values encoded as Base64 before starting the application.
+
+Runtime Doctor includes `security.secret-protection`. It validates active key IDs, every active/retained key's Base64 encoding and 32-byte length, and independence between protection keys and MCP/JWT signing secrets. Public sample keys produce a Warning outside Production and an Error in Production, including samples retained under inactive IDs. Unreplaced `Your...KeyHere` placeholders, missing or invalid protection configuration produce an Error in every environment. Results contain no key values. Invalid configuration also fails the runtime's startup validation, before the Doctor endpoint becomes available.
 
 This release replaces the legacy HMAC-derived encryption format. There is no legacy decryption fallback or automatic conversion. MCP key HMACs and JWT signing remain separate from secret encryption.
 
