@@ -165,6 +165,20 @@ module internal RewriteStructuralValidation =
         select.Having |> Option.iter (validateNestedCteExpr targetRuntime)
 
     and private validateNestedCteQuery targetRuntime position query =
+        // Explicit SET-branch continuations keep the same depth-first
+        // validation order without a CLR call per parenthesized branch.
+        // CTE/Source/Expr crossings still use their guarded proof paths.
+        let pending = ResizeArray<unit -> unit>()
+        let rec scheduleBranches branches =
+            for branch in List.rev branches do
+                pending.Add(fun () ->
+                    let child = branch.Query
+                    validateNestedCteSelect targetRuntime SetBranchPosition child.Head
+                    pending.Add(fun () ->
+                        child.OrderBy |> List.iter (fun order ->
+                            validateNestedCteExpr targetRuntime order.Expression))
+                    scheduleBranches child.SetOperations)
+
         validateNestedCteSelect targetRuntime position query.Head
 
         if position = ScalarSubqueryPosition
@@ -185,9 +199,16 @@ module internal RewriteStructuralValidation =
                     "scalar/EXISTS subquery with a root CTE and set-operation tail can order only by an output name "
                     + "or output ordinal; rich ordering expressions would require an unproven scope barrier")
 
-        query.SetOperations |> List.iter (fun branch ->
-            validateNestedCteQuery targetRuntime SetBranchPosition branch.Query)
-        query.OrderBy |> List.iter (fun order -> validateNestedCteExpr targetRuntime order.Expression)
+        pending.Add(fun () ->
+            query.OrderBy |> List.iter (fun order ->
+                validateNestedCteExpr targetRuntime order.Expression))
+        scheduleBranches query.SetOperations
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let work = pending.[last]
+            pending.RemoveAt(last)
+            work ()
 
     let validateNestedCteDocument targetRuntime document =
         match document.Statement with
@@ -284,19 +305,36 @@ module internal RewriteStructuralValidation =
             select.Having |> Option.iter (validateNoFromExpression false)
 
     and private validateNoFromQuery query =
+        // Validate SELECT heads before their children and ORDER BY tails
+        // after all nested branches, retaining original first-error order.
+        let pending = ResizeArray<unit -> unit>()
+        let scheduleOrder (current: Query) =
+            pending.Add(fun () ->
+                current.OrderBy
+                |> List.iter (fun order ->
+                    match Expr.unspan order.Expression with
+                    | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
+                    | _ ->
+                        if current.Head.From.IsNone then
+                            validateNoFromExpression false order.Expression
+                        else
+                            visitNestedNoFromExpression order.Expression))
+        let rec scheduleBranches branches =
+            for branch in List.rev branches do
+                pending.Add(fun () ->
+                    let child = branch.Query
+                    validateNoFromSelect child.Head
+                    scheduleOrder child
+                    scheduleBranches child.SetOperations)
         validateNoFromSelect query.Head
-        query.SetOperations
-        |> List.iter (fun branch ->
-            validateNoFromQuery branch.Query)
-        query.OrderBy
-        |> List.iter (fun order ->
-            match Expr.unspan order.Expression with
-            | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
-            | _ ->
-                if query.Head.From.IsNone then
-                    validateNoFromExpression false order.Expression
-                else
-                    visitNestedNoFromExpression order.Expression)
+        scheduleOrder query
+        scheduleBranches query.SetOperations
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let work = pending.[last]
+            pending.RemoveAt(last)
+            work ()
 
     let validateNoFromDocument targetRuntime document =
         let _ = targetRuntime

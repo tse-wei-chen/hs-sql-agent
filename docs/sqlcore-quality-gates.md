@@ -1246,3 +1246,18 @@ SchemaType for typed-schema runs. Parent test continues to record crashes,
 timeouts and diagnostic failures independently. The gate is specific to
 nested SET, not a claim that mixed CTE/LATERAL/Expr graphs have no
 remaining CLR recursion.
+
+### Structural validation SET branch heap continuations
+
+The new 256-KiB-stack CI gate located two **actual 2,048-depth
+StackOverflowException worker crashes**, not parser errors, inside
+`RewriteStructuralValidation`. Both structural passes
+(`validateNestedCteQuery` target CTE placement and
+`validateNoFromQuery` no-FROM invariant) had recursively descended every
+SET branch even after the parser/binder became iterative.
+They now schedule branch heads and each query's ORDER BY tail as
+**heap DFS continuations**, preserving SELECT-first, branch-order and
+post-branch ORDER BY diagnostic precedence while charging work.
+CTE/derived/Expr crossings remain independently scoped paths.
+The strict small-stack gate is retained: it cannot pass on a crash
+or a typed stack-reserve rejection at the two tested depths.
