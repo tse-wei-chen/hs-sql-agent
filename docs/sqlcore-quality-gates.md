@@ -1400,3 +1400,24 @@ Six-provider 512-depth parser regressions cover derived-FROM chains
 and alternating CTE/derived nesting; no claim is made yet for JOIN
 derived-source or scalar subquery nesting, which still follow their
 existing parsing paths.
+
+### R1 mixed CTE/derived single-buffer SQL emission
+
+The `renderQuery` dispatcher now recognizes a bounded linear mixed
+query graph combining non-recursive one-CTE definitions and ordinary
+derived FROM wrappers, and streams their lexical prefixes, leaf
+query and inverse suffixes through a **single** `RenderBuffer`.
+The specialized grammar excludes SET, paging, grouping, DISTINCT
+and JOIN wrappers; richer or unproven shapes keep the original
+renderer. The binding order is unchanged: derived projections before
+their inner query, CTE query bodies before their referencing SELECT,
+and WHERE after derived-source emission. Bidirectional CTE/derived
+parameter-binding tests are added.
+
+The new CI gate requires 128/512/2048 mixed-query full compilation
+and stage evidence, and bounds 2048-depth total allocations to 120MB
+and Rendering phase to 60MB. The prior observational baseline was
+**459,273,288 bytes total / 426,892,544 bytes Rendering** at
+2048 mixed CTE/derived layers, materially worse than homogeneous
+single-CTE and derived chains. This is a narrow R1 partial improvement,
+not the final streaming-closure claim.

@@ -360,6 +360,13 @@ module internal RewriteRenderer =
         | EmitSetBranch of SetBranch
         | CloseNestedSet
 
+    // Used by the mixed CTE / derived source streaming path. A single
+    // output buffer owns every nested Query boundary, so alternating
+    // wrappers never allocate and copy a complete child SQL string.
+    type private MixedQueryEmitFrame =
+        | FinishMixedCte of outer: Query * cte: Cte
+        | FinishMixedDerived of outer: Query * alias: IdentifierPart
+
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
         match expression with
@@ -1875,7 +1882,80 @@ module internal RewriteRenderer =
                 let withOrder = body + renderOrderClause ctx (isSetQuery query) query.OrderBy
                 ctes + renderPaging ctx query withOrder
 
-    and private renderQuery (ctx: RenderContext) query = renderQueryCore ctx query
+    and private tryRenderMixedLinearQuery (ctx: RenderContext) (query: Query) =
+        // Restrict this optimization to a proven, non-recursive linear
+        // grammar: single CTE definition or ordinary derived FROM,
+        // SELECT without SET/paging or GROUP/JOIN/DISTINCT. All richer
+        // cases go through the existing capability-checked renderer.
+        let frames = ResizeArray<MixedQueryEmitFrame>()
+        let mutable current = query
+        let mutable sawCte = false
+        let mutable sawDerived = false
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            if current.SetOperations.IsEmpty && not (hasTail current) then
+                let head = current.Head
+                match head.Ctes, head.From with
+                | [ cte ], Some (TableSource.CteTable _)
+                    when not cte.RecursiveScope ->
+                    frames.Add(FinishMixedCte(current, cte))
+                    sawCte <- true
+                    current <- cte.Query
+                | [], Some (TableSource.DerivedTable(inner, alias))
+                    when head.DistinctMode = SelectDistinct.AllRows
+                         && head.Joins.IsEmpty && head.GroupBy.IsEmpty
+                         && head.Having.IsNone ->
+                    frames.Add(FinishMixedDerived(current, alias))
+                    sawDerived <- true
+                    current <- inner
+                | _ -> scanning <- false
+            else
+                scanning <- false
+
+        if not (sawCte && sawDerived) then None
+        else
+            let sql = RenderBuffer(ctx, "")
+            // Emit the lexical SQL prefixes outside-in. Projection
+            // expressions bind before each derived body, whereas CTE
+            // definitions bind before their referencing SELECT.
+            for frame in frames do
+                RewriteResourceBudget.checkpoint ()
+                match frame with
+                | FinishMixedCte(_, cte) ->
+                    sql.Append("WITH ")
+                       .Append(renderAlias ctx.Provider cte.Name)
+                       .Append(" AS (") |> ignore
+                | FinishMixedDerived(outer, _) ->
+                    sql.Append("SELECT ") |> ignore
+                    outer.Head.Projection
+                    |> List.iteri (fun index item ->
+                        if index > 0 then sql.Append(", ") |> ignore
+                        sql.Append(renderExpr ctx item.Expression) |> ignore
+                        item.Alias |> Option.iter (fun alias ->
+                            sql.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore))
+                    sql.Append(" FROM (") |> ignore
+
+            sql.Append(renderQueryCore ctx current) |> ignore
+            for index = frames.Count - 1 downto 0 do
+                RewriteResourceBudget.checkpoint ()
+                match frames.[index] with
+                | FinishMixedCte(outer, _) ->
+                    sql.Append(") ")
+                       .Append(renderSelectBody ctx { outer.Head with Ctes = [] })
+                    |> ignore
+                | FinishMixedDerived(outer, alias) ->
+                    sql.Append(')')
+                       .Append(tableAliasPrefix ctx.Provider)
+                       .Append(renderAlias ctx.Provider alias) |> ignore
+                    outer.Head.Where |> Option.iter (fun predicate ->
+                        sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+            Some(sql.ToString())
+
+    and private renderQuery (ctx: RenderContext) query =
+        match tryRenderMixedLinearQuery ctx query with
+        | Some sql -> sql
+        | None -> renderQueryCore ctx query
 
     and private renderSubquery (ctx: RenderContext) query =
         if isSetQuery query

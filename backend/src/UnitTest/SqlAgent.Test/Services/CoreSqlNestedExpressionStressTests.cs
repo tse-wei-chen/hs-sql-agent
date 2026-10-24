@@ -522,6 +522,26 @@ public sealed class CoreSqlNestedExpressionStressTests
             result.Parameters.Select(value => Convert.ToInt64(value.Value)));
     }
 
+    [Theory]
+    [InlineData(
+        "WITH c AS (SELECT d.id FROM (SELECT id FROM users WHERE id = 1) AS d WHERE d.id > 2) SELECT id FROM c WHERE id < 3")]
+    [InlineData(
+        "SELECT d.id FROM (WITH c AS (SELECT id FROM users WHERE id = 1) SELECT id FROM c WHERE id > 2) AS d WHERE d.id < 3")]
+    public void MixedCteDerivedSqlStream_PreservesLexicalParameterBinding(string sql)
+    {
+        // Both directions of the CTE/derived crossing must share one
+        // output buffer while preserving the original innermost-first
+        // binding semantics for CTE bodies and WHERE predicates.
+        var result = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("mixed-cte-derived-emitter-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("WITH", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("FROM (", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 1, 2, 3 },
+            result.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     [Fact]
     public void MixedJoinCapabilityProof_DeepDerivedAndCteAlternationPreservesSelection()
     {
