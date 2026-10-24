@@ -31,6 +31,27 @@ The artifact includes raw samples, comparison ratios and both commit SHAs.
 Deep 128/512/2048 and constrained-stack capability gates remain separate; this
 matched shallow corpus does not establish arbitrary SQL stack independence.
 
+First comparison evidence: [run 40088072294](https://github.com/tse-wei-chen/hs-sql-agent/actions/runs/40088072294),
+base `aebee37845d30e6a8994bc910489948501c620f7`, candidate `21cb010733f48f353f3abbf7a2aa8a5b6b31cec1`,
+.NET 10.0.13 / Ubuntu 24.04 / X64. All 48 output digests matched. The table
+shows the range of candidate/base median ratios across the six providers.
+
+| Workload | Allocated bytes ratio | Mean elapsed ratio |
+| --- | --- | --- |
+| DELETE | 1.140–1.170 | 0.981–1.081 |
+| INSERT | 1.145–1.174 | 1.015–1.048 |
+| UPDATE | 1.199–1.239 | 1.039–1.081 |
+| CTE | 1.392–1.458 | 1.167–1.202 |
+| Derived depth 32 | 1.526–1.557 | 1.974–2.097 |
+| Filter/order | 1.297–1.351 | 1.123–1.159 |
+| Scalar depth 32 | 1.836–1.873 | 2.069–2.138 |
+| UNION ALL | 1.375–1.436 | 1.200–1.233 |
+
+These results pass the broad regression ceilings but show real overhead versus
+main, especially at depth 32; they do **not** demonstrate an overall speedup.
+Keep the raw reports and assess these costs alongside the deep-stack safety
+and asymptotic allocation evidence before claiming R1/R4 complete.
+
 ## Isolated SQL nesting diagnostics
 
 Run a subprocess-isolated sweep (results are observational, **not** compiler

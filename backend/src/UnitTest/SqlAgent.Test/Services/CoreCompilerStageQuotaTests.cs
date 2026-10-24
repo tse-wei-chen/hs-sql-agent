@@ -120,6 +120,46 @@ public sealed class CoreCompilerStageQuotaTests
     }
 
     [Theory]
+    [InlineData(SqlDiagnosticStage.Parse)]
+    [InlineData(SqlDiagnosticStage.Binding)]
+    [InlineData(SqlDiagnosticStage.RenderingInvariant)]
+    public void BatchedCharge_ChecksAllocationBeforeStageExit(SqlDiagnosticStage stage)
+    {
+        Compilation(() => Stage("AllocationProbe", stage, () =>
+        {
+            Invoke(Method("charge"), 1L);
+            var session = CurrentSession();
+            var current = session.GetType().GetProperty("Current",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!.GetValue(session)!;
+            var phase = current.GetType().GetProperty("Value")!.GetValue(current)!;
+            var allocation = phase.GetType().GetField("allocated",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var original = allocation.GetValue(phase);
+            try
+            {
+                // Simulate this phase crossing its cumulative allocation
+                // boundary without making the test allocate half a gigabyte.
+                allocation.SetValue(phase, GC.GetAllocatedBytesForCurrentThread() - 536_870_913L);
+                var error = Assert.ThrowsAny<Exception>(() => Invoke(Method("charge"), 256L));
+                var diagnostic = error switch
+                {
+                    SqlParseException parse => parse.Diagnostic,
+                    SqlCompilationException compile => compile.Diagnostic,
+                    _ => throw new InvalidOperationException("Untyped allocation failure", error)
+                };
+                Assert.Equal("SQL_COMPILER_STAGE_ALLOCATION_LIMIT", diagnostic?.Code);
+                Assert.Equal(stage, diagnostic?.Stage);
+                Assert.Equal(SqlDiagnosticCategory.Resource, diagnostic?.Category);
+            }
+            finally
+            {
+                allocation.SetValue(phase, original);
+            }
+            return null;
+        }));
+    }
+
+    [Theory]
     [InlineData(256L)]
     [InlineData(513L)]
     [InlineData(4096L)]

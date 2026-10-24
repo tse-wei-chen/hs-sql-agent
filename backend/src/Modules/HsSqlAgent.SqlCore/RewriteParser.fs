@@ -208,7 +208,8 @@ module internal RewriteParser =
                     | _ -> false
 
         // Only a complete scalar SELECT-item subquery with no trailing
-        // operator/alias is scheduled on the heap. Nontrivial projections
+        // operator is scheduled on the heap. A simple identifier alias is
+        // also preflighted; nontrivial projections
         // retain the normal expression grammar and error positions.
         member _.StandaloneScalarSelectProjection() =
             let at position = data[min (data.Length - 1) position].Kind
@@ -222,7 +223,12 @@ module internal RewriteParser =
                 let close = matchingClose.Value[index + 1]
                 if not isQuery || close < 0 then false
                 else
-                    match at (close + 1) with
+                    let tail =
+                        match at (close + 1), at (close + 2) with
+                        | Keyword "AS", Identifier _ -> close + 3
+                        | Identifier _, _ -> close + 2
+                        | _ -> close + 1
+                    match at tail with
                     | End | Symbol ')' | Symbol ';'
                     | Keyword "FROM" | Keyword "WHERE" | Keyword "GROUP"
                     | Keyword "HAVING" | Keyword "ORDER" | Keyword "LIMIT"
@@ -1581,6 +1587,9 @@ module internal RewriteParser =
 
     and private parseSelectItem cursor =
         let expression = parseExpression cursor
+        { Expression = expression; Alias = parseSelectAlias cursor }
+
+    and private parseSelectAlias cursor =
         let alias =
             if acceptKeyword "AS" cursor then Some(aliasIdentifierPart cursor)
             else
@@ -1591,7 +1600,7 @@ module internal RewriteParser =
                 | Keyword value when value <> "FETCH" && isContextualIdentifierKeyword value ->
                     Some(identifierPart cursor)
                 | _ -> None
-        { Expression = expression; Alias = alias }
+        alias
 
     and private parseSqlServerOutput (operation: DmlOperation) (cursor: Cursor) =
         let outputToken = cursor.Current
@@ -2276,10 +2285,12 @@ module internal RewriteParser =
                 expectSymbol '(' cursor
                 scheduleQuery (fun child ->
                     expectSymbol ')' cursor
+                    let expression = markExpr expressionStart cursor (ScalarSubquery child)
+                    let alias = parseSelectAlias cursor
                     let projection = ResizeArray<SelectItem>()
                     projection.Add
-                        { Expression = markExpr expressionStart cursor (ScalarSubquery child)
-                          Alias = None }
+                        { Expression = expression
+                          Alias = alias }
                     scheduleSelectAfterPrefix ctes complete start SelectDistinct.AllRows None projection)
             else
                 let start, distinctMode, top, projection = parseSelectPrefix cursor

@@ -5,6 +5,11 @@ import statistics
 import sys
 from pathlib import Path
 
+PROVIDERS = {"Sqlite", "MsSqlServer", "MySQL", "Postgres", "Oracle", "Firebird"}
+CASES = {"query-filter-order", "query-cte", "dml-update", "dml-delete", "dml-insert",
+         "query-union", "query-derived-32", "query-scalar-32"}
+EXPECTED_KEYS = {(provider, case) for provider in PROVIDERS for case in CASES}
+
 
 def load_runs(folder, prefix):
     runs = []
@@ -13,9 +18,11 @@ def load_runs(folder, prefix):
         if report["schemaVersion"] != 2 or report["iterations"] < 100 or report["warmup"] < 20:
             raise ValueError(f"Non-comparable benchmark settings: {path}")
         rows = {(r["Provider"], r["Case"]): r for r in report["results"]}
-        if len(rows) != 48 or len(rows) != len(report["results"]):
+        if rows.keys() != EXPECTED_KEYS or len(rows) != len(report["results"]):
             raise ValueError(f"Expected all 6 providers x 8 workloads: {path}")
         for row in rows.values():
+            if row["Iterations"] != report["iterations"]:
+                raise ValueError(f"Per-case iteration mismatch: {path}")
             for metric in ("MeanMicroseconds", "P95Microseconds", "MeanAllocatedBytes"):
                 if not math.isfinite(row[metric]) or row[metric] <= 0:
                     raise ValueError(f"Invalid {metric}: {path}")

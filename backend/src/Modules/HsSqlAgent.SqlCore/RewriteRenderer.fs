@@ -1790,15 +1790,12 @@ module internal RewriteRenderer =
             let body = renderSetBody ctx query
             let top = ctx.Bind(box (NonNegativeRowCount.value limit))
             let alias = renderAlias ctx.Provider { Value = "_set"; WasQuoted = false; PreserveSpelling = false; Span = { Start = 0; Length = 0 } }
-            prefix
-            + "SELECT TOP ("
-            + top
-            + ") * FROM ("
-            + body
-            + ")"
-            + tableAliasPrefix ctx.Provider
-            + alias
-            + renderOrderClause ctx true query.OrderBy
+            // Retain body-before-TOP binding order, while bounding every
+            // wrapper append instead of concatenating another full copy.
+            let sql = RenderBuffer(ctx, prefix)
+            sql.Append("SELECT TOP (").Append(top).Append(") * FROM (")
+               .Append(body).Append(")").Append(tableAliasPrefix ctx.Provider)
+               .Append(alias).Append(renderOrderClause ctx true query.OrderBy).ToString()
         | Firebird, offset, Some limit when NonNegativeRowCount.value limit = 0 ->
             let first = ctx.Bind(box 0)
             let skip =
@@ -2167,9 +2164,10 @@ module internal RewriteRenderer =
            && hasTail query
            && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
             let prefix = renderCtes ctx query.Head.Ctes
-            let body = renderSetBody ctx query
-            let ordered = body + renderOrderClause ctx true query.OrderBy
-            prefix + renderPaging ctx query ordered
+            let sql = RenderBuffer(ctx, prefix)
+            appendSetBody ctx sql query
+            sql.Append(renderOrderClause ctx true query.OrderBy)
+               .Append(renderPaging ctx query "").ToString()
         else
             renderQueryCore ctx query
 
@@ -2178,16 +2176,18 @@ module internal RewriteRenderer =
            && hasTail query
            && not query.Head.Ctes.IsEmpty
            && (ctx.Provider = PostgreSql || ctx.Provider = MySql || ctx.Provider = SQLite) then
-            let inner = renderCtes ctx query.Head.Ctes + renderSetBody ctx query
+            let sql = RenderBuffer(ctx, "SELECT * FROM (")
+            sql.Append(renderCtes ctx query.Head.Ctes) |> ignore
+            appendSetBody ctx sql query
             let alias =
                 renderAlias ctx.Provider
                     { Value = "_set"
                       WasQuoted = false
                       PreserveSpelling = false
                       Span = { Start = 0; Length = 0 } }
-            let wrapper = "SELECT * FROM (" + inner + ")" + tableAliasPrefix ctx.Provider + alias
-            let ordered = wrapper + renderOrderClause ctx true query.OrderBy
-            renderPaging ctx query ordered
+            sql.Append(")").Append(tableAliasPrefix ctx.Provider).Append(alias)
+               .Append(renderOrderClause ctx true query.OrderBy)
+               .Append(renderPaging ctx query "").ToString()
         else
             renderQueryCore ctx query
 
