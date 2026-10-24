@@ -274,6 +274,36 @@ jobs:
                   raise SystemExit("Nested SET 2048 allocation exceeded 120 MB: "
                                    + str((item["shape"], worker.get("allocatedBytes"))))
           PY
+      - name: Verify iterative nested SET parsing on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-set,nested-set-typed-schema
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-set-small-stack-pr.json
+      - name: Gate 256 KiB nested SET successful compilation and phases
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-set-small-stack-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"SET small stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Iterative nested SET on 256 KiB must compile successfully, not merely fail closed.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              stages = {stage["Stage"] for stage in worker.get("stageMetrics", []) if stage.get("Success")}
+              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+              if item["shape"] == "nested-set-typed-schema":
+                  required |= {"SchemaBinding", "SchemaType"}
+              if (not worker.get("success") or item["processExitCode"] != 0
+                      or not required.issubset(stages)):
+                  raise SystemExit("SET stack regression: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
+              print(f"  {item['shape']:25} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(stages)}")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -304,6 +334,7 @@ jobs:
             artifacts/sqlcore-mixed-depth-pr.json
             artifacts/sqlcore-query-phases-pr.json
             artifacts/sqlcore-nested-set-pr.json
+            artifacts/sqlcore-set-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

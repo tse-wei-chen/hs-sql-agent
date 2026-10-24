@@ -1233,3 +1233,16 @@ INTERSECT, matching the original precedence and first-error order.
 with a parenthesized local ORDER BY + following INTERSECT rejection.
 Mixed Parser Query→Expression, derived/LATERAL source and CTE-body
 recursion is **still open**; only nested SET operands are claimed here.
+
+### 256 KiB stack independent nested SET gate
+
+The isolated SQL depth workflow now gates four additional PostgreSQL
+`nested-set` / `nested-set-typed-schema` × {512, 2048} workers with a
+**262,144-byte managed thread stack**. Unlike the general 16 constrained
+stack probes, a typed stack-reserve refusal is **not sufficient** for
+these four cases: each worker must successfully compile, return exit
+code 0 and emit all expected phase metrics, including SchemaBinding and
+SchemaType for typed-schema runs. Parent test continues to record crashes,
+timeouts and diagnostic failures independently. The gate is specific to
+nested SET, not a claim that mixed CTE/LATERAL/Expr graphs have no
+remaining CLR recursion.
