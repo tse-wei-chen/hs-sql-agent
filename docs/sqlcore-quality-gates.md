@@ -1444,3 +1444,23 @@ and `SchemaType` telemetry. The existing 2,048-depth 120 MB total
 allocation bound remains enforced. This is an acceptance gate for
 *linear alternating CTE/derived source chains*, not yet for JOIN,
 correlated LATERAL, or arbitrary Expr↔Query crossings.
+
+### Primary FROM LATERAL on scoped heap proofs (R2, 2026-10-24)
+
+The iterative strict-schema projection/type chain now recognizes
+`SELECT ... FROM LATERAL (<query>) AS alias` without JOINs, DISTINCT,
+SET or other non-linear dependencies. Unlike ordinary derived sources,
+the inner LATERAL query **inherits the existing outer correlation scope**.
+The fast path never rewrites JOIN LATERALs: they still use full
+left-source-scoped proof handling. The renderer emits a linear
+chain of LATERAL wrappers into one bounded `RenderBuffer`, retaining
+the target LATERAL capability rejection and projection-before-inner,
+WHERE-after-inner parameter order.
+
+A typed PostgreSQL regression at depth 128 plus a correlated
+outer-scope EXISTS query ensures neither the metadata proof nor the
+output stream loses correlation. The CI small-stack gate requires
+**successful, fully instrumented 128/512-level** ordinary and typed
+LATERAL source compilation on 256-KiB managed stacks. A 2,048-level
+LATERAL/JOIN/correlated mixed graph is not yet a claim of general
+R2 closure; the frozen acceptance criteria remain open.

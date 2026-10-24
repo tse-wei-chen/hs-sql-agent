@@ -124,6 +124,43 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.NotEmpty(compiled.Sql);
     }
 
+    [Fact]
+    public void DeepPrimaryLateralSource_KeepsStrictSchemaAndTypeProofIterative()
+    {
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 128; depth++)
+            sql = $"SELECT l.id FROM LATERAL ({sql}) AS l";
+
+        var context = new SqlPlanValidationContext("lateral-schema-heap-v1")
+            .WithSchemaSnapshot(new SqlSchemaSnapshot(
+                SqlAgentToolType.Postgres, "typed-lateral-heap-v1",
+                new[] { SqlSchemaTable.WithTypes("users",
+                    new[] { new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric) }) }));
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+
+        Assert.Equal(128, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+    }
+
+    [Fact]
+    public void PrimaryLateralSource_KeepsOuterCorrelationInStrictSchemaAndType()
+    {
+        var sql = "SELECT u.id FROM users AS u WHERE EXISTS ("
+            + "SELECT l.id FROM LATERAL (SELECT u.id AS id) AS l "
+            + "WHERE l.id = u.id)";
+        var context = new SqlPlanValidationContext("lateral-correlated-schema-heap-v1")
+            .WithSchemaSnapshot(new SqlSchemaSnapshot(
+                SqlAgentToolType.Postgres, "typed-lateral-correlation-v1",
+                new[] { SqlSchemaTable.WithTypes("users",
+                    new[] { new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric) }) }));
+        var compiled = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy());
+        Assert.Contains("LATERAL", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXISTS", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [MemberData(nameof(SixDialects))]
     public void DeepConjunction_UsesHeapSchemaExpressionTraversal(SqlAgentToolType dialect)

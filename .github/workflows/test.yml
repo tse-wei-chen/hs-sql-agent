@@ -408,6 +408,35 @@ jobs:
                   raise SystemExit("Mixed CTE/derived 2048 depth exceeds the existing 120 MB allocation ceiling")
               print(f"  depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
           PY
+      - name: Verify primary FROM LATERAL proof on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-lateral-derived,nested-lateral-derived-typed-schema
+          --depths 128,512 --stack-bytes 262144
+          --output artifacts/sqlcore-lateral-small-stack-pr.json
+      - name: Gate LATERAL rendering and scoped type proof
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-lateral-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"LATERAL 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Primary LATERAL source must compile at 128/512 on 256 KiB.")
+          required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              present = {m["Stage"] for m in worker.get("stageMetrics", []) if m.get("Success")}
+              expected = required | ({"SchemaBinding", "SchemaType"}
+                  if item["shape"] == "nested-lateral-derived-typed-schema" else set())
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(present):
+                  raise SystemExit("LATERAL source stack/type regression: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), present)))
+              print(f"  {item['shape']:34} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(present)}")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -441,6 +470,7 @@ jobs:
             artifacts/sqlcore-set-small-stack-pr.json
             artifacts/sqlcore-mixed-cte-derived-pr.json
             artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
+            artifacts/sqlcore-lateral-small-stack-pr.json
             artifacts/sqlcore-cte-small-stack-pr.json
           if-no-files-found: warn
 

@@ -23,7 +23,8 @@ internal static class SqlCoreDepthProbe
     private static readonly string[] OptionalShapes =
         ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema",
          "nested-set", "nested-set-typed-schema", "mixed-cte-derived",
-         "mixed-cte-derived-typed-schema"];
+         "mixed-cte-derived-typed-schema", "nested-lateral-derived",
+         "nested-lateral-derived-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -40,6 +41,14 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             sql = "SELECT d.id FROM (" + sql + ") d";
+        return sql;
+    }
+
+    private static string NestLateralDerived(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT l.id FROM LATERAL (" + sql + ") AS l";
         return sql;
     }
 
@@ -125,6 +134,8 @@ internal static class SqlCoreDepthProbe
                 string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth)) +
                 "SELECT u.id" + new string(')', depth + 1),
             "nested-derived-source" => NestDerived(depth),
+            "nested-lateral-derived" or "nested-lateral-derived-typed-schema" =>
+                NestLateralDerived(depth),
             "nested-cte" => NestCte(depth),
             "nested-cte-typed-schema" => NestCte(depth),
             "mixed-cte-derived" or "mixed-cte-derived-typed-schema" => NestMixedCteDerived(depth),
@@ -164,7 +175,8 @@ internal static class SqlCoreDepthProbe
             {
                 var context = new SqlPlanValidationContext("depth-probe-v1");
                 if (shape is "nested-cte-typed-schema" or "nested-set-typed-schema"
-                    or "mixed-cte-derived-typed-schema")
+                    or "mixed-cte-derived-typed-schema"
+                    or "nested-lateral-derived-typed-schema")
                 {
                     var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
                     var table = uppercase ? "USERS" : "users";

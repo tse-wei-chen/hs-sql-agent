@@ -367,6 +367,13 @@ module internal RewriteSchemaValidation =
                     current <- inner
                     // Ordinary derived sources never inherit outer correlation.
                     currentParent <- None
+                | Some (LateralDerivedTable(inner, alias)) ->
+                    // A primary FROM LATERAL has no preceding local
+                    // source. Its input may still see the parent's outer
+                    // scope; unlike ordinary derived, do not erase it.
+                    pending.Add(ResumeSchemaDerived(
+                        ctes, currentParent, current, inner.Span, alias))
+                    current <- inner
                 | _ -> scanning <- false
             | _ -> scanning <- false
 

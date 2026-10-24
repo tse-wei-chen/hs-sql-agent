@@ -366,6 +366,7 @@ module internal RewriteRenderer =
     type private MixedQueryEmitFrame =
         | FinishMixedCte of outer: Query * cte: Cte
         | FinishMixedDerived of outer: Query * alias: IdentifierPart
+        | FinishMixedLateral of outer: Query * alias: IdentifierPart
 
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
@@ -1891,6 +1892,7 @@ module internal RewriteRenderer =
         let mutable current = query
         let mutable sawCte = false
         let mutable sawDerived = false
+        let mutable sawLateral = false
         let mutable scanning = true
         while scanning do
             RewriteResourceBudget.checkpoint ()
@@ -1909,11 +1911,25 @@ module internal RewriteRenderer =
                     frames.Add(FinishMixedDerived(current, alias))
                     sawDerived <- true
                     current <- inner
+                | [], Some (TableSource.LateralDerivedTable(inner, alias))
+                    when head.DistinctMode = SelectDistinct.AllRows
+                         && head.Joins.IsEmpty && head.GroupBy.IsEmpty
+                         && head.Having.IsNone ->
+                    // Skipping renderSource must not skip its fail-closed
+                    // provider proof. Only a primary FROM LATERAL is safe
+                    // to stream without constructing left-join scope.
+                    match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                              providerTool ctx.Provider, null) with
+                    | null ->
+                        frames.Add(FinishMixedLateral(current, alias))
+                        sawLateral <- true
+                        current <- inner
+                    | message -> raise (SqlCompilationException(message))
                 | _ -> scanning <- false
             else
                 scanning <- false
 
-        if not (sawCte && sawDerived) then None
+        if not (sawCte && sawDerived) && not sawLateral then None
         else
             let sql = RenderBuffer(ctx, "")
             // Emit the lexical SQL prefixes outside-in. Projection
@@ -1926,7 +1942,8 @@ module internal RewriteRenderer =
                     sql.Append("WITH ")
                        .Append(renderAlias ctx.Provider cte.Name)
                        .Append(" AS (") |> ignore
-                | FinishMixedDerived(outer, _) ->
+                | FinishMixedDerived(outer, _)
+                | FinishMixedLateral(outer, _) as frame ->
                     sql.Append("SELECT ") |> ignore
                     outer.Head.Projection
                     |> List.iteri (fun index item ->
@@ -1934,7 +1951,9 @@ module internal RewriteRenderer =
                         sql.Append(renderExpr ctx item.Expression) |> ignore
                         item.Alias |> Option.iter (fun alias ->
                             sql.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore))
-                    sql.Append(" FROM (") |> ignore
+                    match frame with
+                    | FinishMixedLateral _ -> sql.Append(" FROM LATERAL (") |> ignore
+                    | _ -> sql.Append(" FROM (") |> ignore
 
             sql.Append(renderQueryCore ctx current) |> ignore
             for index = frames.Count - 1 downto 0 do
@@ -1944,7 +1963,8 @@ module internal RewriteRenderer =
                     sql.Append(") ")
                        .Append(renderSelectBody ctx { outer.Head with Ctes = [] })
                     |> ignore
-                | FinishMixedDerived(outer, alias) ->
+                | FinishMixedDerived(outer, alias)
+                | FinishMixedLateral(outer, alias) ->
                     sql.Append(')')
                        .Append(tableAliasPrefix ctx.Provider)
                        .Append(renderAlias ctx.Provider alias) |> ignore

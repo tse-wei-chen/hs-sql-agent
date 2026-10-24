@@ -432,6 +432,12 @@ module internal RewriteSchemaTypeValidation =
                     pending.Add(ResumeTypedDerived(inheritedCtes, currentParent, current, alias))
                     current <- inner
                     currentParent <- None
+                | Some (LateralDerivedTable(inner, alias)) ->
+                    // FROM-first LATERAL inherits the existing outer
+                    // correlation scope, never a fabricated local row.
+                    // Joined LATERALs stay in the scoped full proof path.
+                    pending.Add(ResumeTypedDerived(inheritedCtes, currentParent, current, alias))
+                    current <- inner
                 | _ -> scanning <- false
             | _ -> scanning <- false
 
