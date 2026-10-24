@@ -22,7 +22,8 @@ internal static class SqlCoreDepthProbe
     // additional resource class in an isolated subprocess.
     private static readonly string[] OptionalShapes =
         ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema",
-         "nested-set", "nested-set-typed-schema", "mixed-cte-derived"];
+         "nested-set", "nested-set-typed-schema", "mixed-cte-derived",
+         "mixed-cte-derived-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -126,7 +127,7 @@ internal static class SqlCoreDepthProbe
             "nested-derived-source" => NestDerived(depth),
             "nested-cte" => NestCte(depth),
             "nested-cte-typed-schema" => NestCte(depth),
-            "mixed-cte-derived" => NestMixedCteDerived(depth),
+            "mixed-cte-derived" or "mixed-cte-derived-typed-schema" => NestMixedCteDerived(depth),
             "nested-set" or "nested-set-typed-schema" => NestSet(depth),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };
@@ -162,7 +163,8 @@ internal static class SqlCoreDepthProbe
             try
             {
                 var context = new SqlPlanValidationContext("depth-probe-v1");
-                if (shape is "nested-cte-typed-schema" or "nested-set-typed-schema")
+                if (shape is "nested-cte-typed-schema" or "nested-set-typed-schema"
+                    or "mixed-cte-derived-typed-schema")
                 {
                     var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
                     var table = uppercase ? "USERS" : "users";

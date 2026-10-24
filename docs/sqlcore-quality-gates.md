@@ -1432,3 +1432,15 @@ refusals, missing phase telemetry and total allocations over
 mixed-source probe to a hard R2 regression check; it is still
 PostgreSQL only and does not prove mixed LATERAL/JOIN/Expr or
 Schema+Type strict correlation across all six target providers.
+
+### Mixed CTE/derived strict Schema+Type on 256 KiB stacks
+
+The alternating mixed-source probe now includes the
+`mixed-cte-derived-typed-schema` variant backed by a known numeric
+`users.id` schema snapshot. Normal and typed variants both must
+compile at 512 and 2,048 nested boundaries on a 256-KiB managed
+stack; successful typed probes additionally require `SchemaBinding`
+and `SchemaType` telemetry. The existing 2,048-depth 120 MB total
+allocation bound remains enforced. This is an acceptance gate for
+*linear alternating CTE/derived source chains*, not yet for JOIN,
+correlated LATERAL, or arbitrary Expr↔Query crossings.
