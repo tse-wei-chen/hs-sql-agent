@@ -87,7 +87,7 @@ public sealed class DatabaseSecretMigrationServiceTests
         Assert.Equal(2, inventory.DatabaseKeyUsage[0].Records);
         var again = await service.MigrateBatchAsync(0, 100, TestContext.Current.CancellationToken);
         Assert.Equal(0, again.Migrated);
-        Assert.Equal(2, again.AlreadyCurrent + (again.Scanned == 3 ? 0 : 0) - 1 + 1); // Includes empty row.
+        Assert.Equal(3, again.AlreadyCurrent); // Two current rows and one empty row.
     }
 
     [Fact]

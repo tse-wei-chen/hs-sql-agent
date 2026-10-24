@@ -327,6 +327,40 @@ Store ciphertext writer in this phase. Deployment needs a coordinated
 dual-reader rollout before v2 writes are activated; a mixed-version fleet
 must not encounter v2 ciphertext on an old-only reader.
 
+### Operator-controlled migration and inventory
+
+The security editor's API supports a **read-only inventory** of legacy/v2
+DB passwords and Durable DML payloads (grouped by Key ID, no ciphertext values),
+and an **explicitly confirmed, bounded** database credential batch migration:
+
+- `GET /api/runtime/security/secret-migration/inventory`
+- `POST /api/runtime/security/secret-migration/database-passwords/batch`
+  with `{"AfterId":0,"BatchSize":50,"Confirmation":"MIGRATE_DATABASE_SECRETS"}`
+
+The endpoints require `/runtime/security.edit` and a human JWT principal;
+Management API keys cannot use them. Every result reports only cursor, scanned,
+migrated, already-current and concurrent-change counts (no passwords or SQL).
+Each successful batch is audited; keep operational backups outside this API.
+
+**Preconditions:** enable the v2 DatabasePassword write gate, distribute all
+required old + new encryption keys to every node, deploy dual-read everywhere,
+drain all Pending/Executing approvals, fence old workers, and take a verified
+backup. The service does *not* fence other nodes by itself: the
+`AllNodesDualReadConfirmed` setting is an operator declaration.
+
+Each legacy/old-key row is authenticated and re-encrypted using its stable DB
+ID as AAD; replacement uses a ciphertext compare-and-swap and a single-row
+transaction with decrypt-and-compare verification before commit. A concurrent
+edit is skipped. Resume from the returned NextAfterId; after a partial error
+retry the prior cursor. An independent full inventory after completion is
+mandatory before any key retirement. Approval payloads, fingerprints and
+approval state are **never mutated by this migrator**.
+
+Key retirement must also account for DML payload key references, historical
+backups and external consumers; the API makes no automatic retire decision.
+The legacy MCP HMAC root must be kept because issued MCP keys and DML connection
+fingerprints still depend on it.
+
 ### Required schema expansion for versioned database secrets
 
 The Admin Store `DbManagement.PasswordHash` now maps to unrestricted

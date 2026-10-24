@@ -57,21 +57,19 @@ public sealed class DatabaseSecretMigrationService(
 
         // DML payloads must be included in key-retirement inventory even
         // though this migrator is intentionally forbidden from changing them.
-        string? afterRequestId = null;
+        // Offset paging for string PK avoids dialect-specific String.Compare
+        // translation differences between PostgreSQL and SQLite.
+        var offset = 0;
         while (true)
         {
-            var query = context.DmlApprovalRequests.AsNoTracking().AsQueryable();
-            if (afterRequestId is not null)
-                query = query.Where(x => string.Compare(x.RequestId, afterRequestId) > 0);
-            var rows = await query.OrderBy(x => x.RequestId)
+            var rows = await context.DmlApprovalRequests.AsNoTracking()
+                .OrderBy(x => x.RequestId)
                 .Select(x => new { x.RequestId, x.ProtectedExecutionPayload })
-                .Take(ScanPage).ToListAsync(ct);
+                .Skip(offset).Take(ScanPage).ToListAsync(ct);
             if (rows.Count == 0) break;
             foreach (var row in rows)
-            {
-                afterRequestId = row.RequestId;
                 CountEnvelope(row.ProtectedExecutionPayload, approvalUsage, ref legacyApprovals, ref malformed);
-            }
+            offset += rows.Count;
         }
 
         var outstanding = await context.DmlApprovalRequests.AsNoTracking()
@@ -161,6 +159,13 @@ public sealed class DatabaseSecretMigrationService(
                 ?? throw new InvalidOperationException("Encryption did not return a database credential.");
 
             await using var transaction = await context.Database.BeginTransactionAsync(ct);
+            // Recheck inside the write transaction; operators still need
+            // external worker quiescence across the entire rollout.
+            if (await context.DmlApprovalRequests.AsNoTracking()
+                .AnyAsync(x => x.Status == "Pending" || x.Status == "Executing", ct))
+                throw new InvalidOperationException(
+                    "DML activity resumed while migrating credentials; stop and verify worker quiescence.");
+
             // Atomic CAS prevents overwriting a concurrent Admin/Bootstrap
             // password update. The SELECT before this transaction is not a lock.
             var changed = await context.DbManagement
