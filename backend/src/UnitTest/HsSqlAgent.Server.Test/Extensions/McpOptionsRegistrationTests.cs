@@ -22,10 +22,10 @@ public class McpOptionsRegistrationTests
         Assert.Contains("Mcp:PublicEndpoint", exception.Message);
     }
 
-    private static HsSqlAgentServiceOptions ValidOptions() => new()
+    private static HsSqlAgentServiceOptions ValidOptions() => V3TestEncryption.Prepare(new()
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-    };
+    });
 }

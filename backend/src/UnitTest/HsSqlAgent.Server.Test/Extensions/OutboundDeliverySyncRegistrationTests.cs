@@ -51,10 +51,10 @@ public class OutboundDeliverySyncRegistrationTests
         Assert.Contains("connection string is required", exception.Message);
     }
 
-    private static HsSqlAgentServiceOptions CreateOptions() => new()
+    private static HsSqlAgentServiceOptions CreateOptions() => V3TestEncryption.Prepare(new()
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-    };
+    });
 }

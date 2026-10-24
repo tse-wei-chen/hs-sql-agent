@@ -167,12 +167,12 @@ public class HostIntegrationRegistrationTests
         Assert.Contains("mutually exclusive", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static HsSqlAgentServiceOptions CreateOptions() => new()
+    private static HsSqlAgentServiceOptions CreateOptions() => V3TestEncryption.Prepare(new()
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-    };
+    });
 
     private sealed class HostPolicyProvider : IAuthorizationPolicyProvider
     {

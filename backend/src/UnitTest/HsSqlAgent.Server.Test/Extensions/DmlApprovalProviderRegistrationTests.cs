@@ -25,7 +25,7 @@ public sealed class DmlApprovalProviderRegistrationTests
         var services = new ServiceCollection();
         var hs = services.AddHsSqlAgentCore();
 
-        hs.AddHsSqlAgentRuntime();
+        hs.AddHsSqlAgentRuntime(V3TestEncryption.Configure);
 
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IDmlApprovalCompletionSink));
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));

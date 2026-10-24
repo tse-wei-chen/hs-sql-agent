@@ -107,18 +107,18 @@ public class HostMvcIsolationTests
            (serviceFilter.ServiceType == typeof(HsSqlAgentValidationFilter) ||
             serviceFilter.ServiceType == typeof(HsSqlAgentExceptionFilter));
 
-    private static HsSqlAgentServiceOptions CreateOptions() => new()
+    private static HsSqlAgentServiceOptions CreateOptions() => V3TestEncryption.Prepare(new()
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
-    };
+    });
 
-    private static HsSqlAgentServiceOptions CreateStandaloneOptions() => new()
+    private static HsSqlAgentServiceOptions CreateStandaloneOptions() => V3TestEncryption.Prepare(new()
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-    };
+    });
 }
 
 [ApiController]

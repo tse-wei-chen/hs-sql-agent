@@ -14,13 +14,13 @@ public class ComposableRegistrationTests
     {
         var services = new ServiceCollection();
         var first = services.AddHsSqlAgentCore();
-        first.AddHsSqlAgentRuntime();
+        first.AddHsSqlAgentRuntime(V3TestEncryption.Configure);
         var descriptorsAfterFirst = services.Count;
 
         // A second package can call AddHsSqlAgentCore independently without
         // installing duplicate runtimes, options, policies or hosted services.
         var second = services.AddHsSqlAgentCore();
-        second.AddHsSqlAgentRuntime();
+        second.AddHsSqlAgentRuntime(V3TestEncryption.Configure);
         Assert.Equal(descriptorsAfterFirst, services.Count);
         Assert.Single(services, d => d.ServiceType == typeof(HsSqlAgentRuntimeOptions));
     }
@@ -30,11 +30,11 @@ public class ComposableRegistrationTests
     {
         var services = new ServiceCollection();
         services.AddHsSqlAgentCore()
-            .AddHsSqlAgentRuntime(o => o.DmlApprovalStore.Provider = "Memory");
+            .AddHsSqlAgentRuntime(o => { V3TestEncryption.Configure(o); o.DmlApprovalStore.Provider = "Memory"; });
 
         var second = services.AddHsSqlAgentCore();
         var error = Assert.Throws<InvalidOperationException>(() =>
-            second.AddHsSqlAgentRuntime(o => o.DmlApprovalStore.Provider = "Redis"));
+            second.AddHsSqlAgentRuntime(o => { V3TestEncryption.Configure(o); o.DmlApprovalStore.Provider = "Redis"; }));
         Assert.Contains("already registered", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -55,7 +55,7 @@ public class ComposableRegistrationTests
     public void AddHsSqlAgentCore_RejectsConflictingLegacyOptionsFromIndependentModule()
     {
         var services = new ServiceCollection();
-        services.AddHsSqlAgentCore(CreateOptions()).AddHsSqlAgentRuntime();
+        services.AddHsSqlAgentCore(CreateOptions()).AddHsSqlAgentRuntime(V3TestEncryption.Configure);
 
         var error = Assert.Throws<InvalidOperationException>(() =>
             services.AddHsSqlAgentCore(CreateOptions()));
@@ -67,7 +67,7 @@ public class ComposableRegistrationTests
     {
         var services = new ServiceCollection();
 
-        services.AddHsSqlAgentCore(new HsSqlAgentServiceOptions());
+        services.AddHsSqlAgentCore(V3TestEncryption.Prepare(new HsSqlAgentServiceOptions()));
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider));
@@ -79,7 +79,7 @@ public class ComposableRegistrationTests
         var services = new ServiceCollection();
         var builder = services.AddHsSqlAgentCore(new HsSqlAgentServiceOptions());
 
-        builder.AddHsSqlAgentRuntime();
+        builder.AddHsSqlAgentRuntime(V3TestEncryption.Configure);
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));
@@ -158,10 +158,10 @@ public class ComposableRegistrationTests
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));
     }
 
-    private static HsSqlAgentServiceOptions CreateOptions() => new()
+    private static HsSqlAgentServiceOptions CreateOptions() => V3TestEncryption.Prepare(new()
     {
         AdminConnectionString = "Data Source=:memory:",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
-    };
+    });
 }

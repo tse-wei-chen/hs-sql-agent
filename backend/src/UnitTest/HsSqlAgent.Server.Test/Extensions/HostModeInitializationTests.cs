@@ -85,8 +85,8 @@ public class HostModeInitializationTests
 
             var ex = Assert.Throws<InvalidOperationException>(
                 () => new ApplicationBuilder(provider).InitializeHsSqlAgent());
-            Assert.Contains("requires draining v2 DML approvals", ex.Message);
-            Assert.Contains("v2-upgrade-pending", ex.Message);
+            Assert.Contains("fresh Admin Store", ex.Message);
+            Assert.DoesNotContain("v2-upgrade-pending", ex.Message);
 
             using var verify = provider.CreateScope();
             var adminDb = verify.ServiceProvider.GetRequiredService<AdminContext>();
@@ -138,7 +138,7 @@ public class HostModeInitializationTests
             var app = new ApplicationBuilder(provider);
 
             var exception = Assert.Throws<InvalidOperationException>(() => app.InitializeHsSqlAgent());
-            Assert.Contains("legacy HsSqlAgent users", exception.Message, StringComparison.Ordinal);
+            Assert.Contains("fresh Admin Store", exception.Message, StringComparison.Ordinal);
         }
         finally
         {
@@ -146,12 +146,12 @@ public class HostModeInitializationTests
         }
     }
 
-    private static HsSqlAgentServiceOptions CreateOptions(string databasePath) => new()
+    private static HsSqlAgentServiceOptions CreateOptions(string databasePath) => V3TestEncryption.Prepare(new()
     {
         AdminDatabaseProvider = "Sqlite",
         AdminConnectionString = $"Data Source={databasePath};Pooling=False",
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes"
-    };
+    });
 
     private static bool TableExists(AdminContext adminDb, string tableName)
     {
