@@ -11,6 +11,8 @@ public class HsSqlAgentServiceOptions
     public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
     public OperabilityOptions Operability { get; } = new();
     public TelemetryOptions Telemetry { get; } = new();
+    /// <summary>Mandatory independent v3 encryption keys, including in the aggregate hosting preset.</summary>
+    public SecretEncryptionOptions SecretEncryption { get; } = new();
     public string AdminDatabaseProvider { get; set; } = "Sqlite";
     public string AdminConnectionString { get; set; } = "Data Source=hsagent.db";
     public string HmacSecretKey { get; set; } = string.Empty;
@@ -87,6 +89,12 @@ public sealed class HsSqlAgentRuntimeOptions
         options.Bootstrap.Enabled = legacy.Bootstrap.Enabled;
         options.Bootstrap.Databases = legacy.Bootstrap.Databases;
         CopyOperability(legacy.Operability, options.Operability);
+        foreach (var (purpose, configuration) in legacy.SecretEncryption.Purposes)
+            options.SecretEncryption.Purposes.Add(purpose, new SecretEncryptionPurposeOptions
+            {
+                ActiveKeyId = configuration.ActiveKeyId,
+                Keys = new Dictionary<string, string>(configuration.Keys, StringComparer.Ordinal)
+            });
         options.Cache.Provider = legacy.CacheProvider;
         options.Cache.ConnectionString = legacy.CacheConnectionString;
         options.Cache.KeyPrefix = legacy.CacheKeyPrefix;
