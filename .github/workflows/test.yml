@@ -605,6 +605,45 @@ jobs:
               print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
           print("Triple dependent JOIN LATERAL 256 KiB: compiled=6/6")
           PY
+      - name: Probe two independently deep LATERAL sibling Queries on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes two-deep-sibling-lateral,two-deep-sibling-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-two-deep-sibling-lateral-pr.json
+      - name: Gate two deep LATERAL sibling proofs and resource isolation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-two-deep-sibling-lateral-pr.json").open(encoding="utf-8") as source:
+              report = json.load(source)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Both independent LATERAL sibling Queries must compile 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+              if typed:
+                  required.update({"SchemaBinding", "SchemaType"})
+              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
+                  raise SystemExit("Sibling LATERAL omitted proof stage: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
+              if item["depth"] == 2048:
+                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 260_000_000
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > 100_000_000):
+                      raise SystemExit("Sibling LATERAL 2048 allocation budget exceeded: " + item["shape"])
+              print(f"  {item['shape']:43} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Two independently deep sibling LATERALs 256 KiB: compiled=6/6")
+          PY
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -729,6 +768,7 @@ jobs:
             artifacts/sqlcore-prefixed-join-lateral-pr.json
             artifacts/sqlcore-double-joined-lateral-pr.json
             artifacts/sqlcore-triple-joined-lateral-pr.json
+            artifacts/sqlcore-two-deep-sibling-lateral-pr.json
             artifacts/sqlcore-in-small-stack-pr.json
             artifacts/sqlcore-scalar-case-small-stack-pr.json
           if-no-files-found: warn

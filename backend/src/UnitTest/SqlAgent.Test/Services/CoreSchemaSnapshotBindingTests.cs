@@ -249,6 +249,36 @@ public sealed class CoreSchemaSnapshotBindingTests
 
 
 
+
+    [Fact]
+    public void IndependentlyDeepSiblingLaterals_KeepSequentialScopeAndRejectMissingColumn()
+    {
+        const int depth = 96;
+        static string Wrap(string sql) =>
+            "SELECT x.id AS id FROM LATERAL (" + sql + ") x";
+        var left = "SELECT u.id AS id";
+        var right = "SELECT a.id AS id";
+        for (var i = 0; i < depth; i++)
+        {
+            left = Wrap(left);
+            right = Wrap(right);
+        }
+        var sql = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right + ") b ON TRUE";
+        var context = Context(SqlAgentToolType.Postgres);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(sql, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT b.id FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON TRUE "
+            + "JOIN LATERAL (" + right.Replace("SELECT a.id AS id", "SELECT a.missing AS id") + ") b ON TRUE";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void ThreeDependentLaterals_UseOrderedStrictScopeAndProtectFutureAliases()
     {

@@ -201,6 +201,25 @@ public sealed class CoreBinderJoinScopeTests
         Assert.Equal(3, command.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
     }
 
+
+    [Fact]
+    public void Compile_DeepSiblingLaterals_PreservesLeftToRightParameterOrder()
+    {
+        var left = "SELECT 11 AS id WHERE u.id = 22";
+        var right = "SELECT 33 AS id WHERE a.id = 44";
+        for (var i = 0; i < 48; i++)
+        {
+            left = "SELECT x.id AS id FROM LATERAL (" + left + ") x";
+            right = "SELECT x.id AS id FROM LATERAL (" + right + ") x";
+        }
+        var sql = "SELECT 5 FROM users u "
+            + "JOIN LATERAL (" + left + ") a ON a.id = 55 "
+            + "JOIN LATERAL (" + right + ") b ON b.id = 66 WHERE u.id = 77";
+        var compiled = Compile(sql, SqlAgentToolType.Postgres);
+        Assert.Equal(new long[] { 5, 11, 22, 55, 33, 44, 66, 77 },
+            compiled.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, provider),
