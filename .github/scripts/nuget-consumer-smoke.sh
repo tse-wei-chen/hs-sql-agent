@@ -77,6 +77,9 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Linq;
 using System.Text;
+using System.Security.Cryptography;
+using Common.Interfaces;
+using Common.Services;
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Approvals.Webhook;
 using HsSqlAgent.Hosting;
@@ -125,7 +128,10 @@ foreach (string assemblyName in expectedAssemblies)
 }
 
 var services = new ServiceCollection();
-services.AddHsSqlAgentCore().AddHsSqlAgentDmlApproval<SmokeApprovalProvider>();
+var approvalRegistration = services.AddHsSqlAgentCore();
+approvalRegistration.AddHsSqlAgentRuntime(options =>
+    ConfigureSmokeSecretProtection(options.SecretProtection));
+approvalRegistration.AddHsSqlAgentDmlApproval<SmokeApprovalProvider>();
 
 _ = typeof(IDmlApprovalCompletionSink);
 var durableCompletion = DmlApprovalCompletion.Approve(
@@ -154,6 +160,15 @@ var standardBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     EnvironmentName = Environments.Development
 });
+// Standard hosting binds key rings from configuration, so the packed consumer
+// must provide test-only keys without weakening production fail-closed checks.
+var standardSecrets = new SecretProtectionSettings();
+ConfigureSmokeSecretProtection(standardSecrets);
+standardBuilder.Configuration["SecretProtection:DatabasePasswords:ActiveKeyId"] = standardSecrets.DatabasePasswords.ActiveKeyId;
+standardBuilder.Configuration["SecretProtection:DatabasePasswords:Keys:smoke-db-1"] = standardSecrets.DatabasePasswords.Keys["smoke-db-1"];
+standardBuilder.Configuration["SecretProtection:DmlPayloads:ActiveKeyId"] = standardSecrets.DmlPayloads.ActiveKeyId;
+standardBuilder.Configuration["SecretProtection:DmlPayloads:Keys:smoke-dml-1"] = standardSecrets.DmlPayloads.Keys["smoke-dml-1"];
+standardBuilder.Configuration["SecretProtection:DmlFingerprintKey"] = standardSecrets.DmlFingerprintKey;
 standardBuilder.Configuration["AdminDatabase:Provider"] = "Sqlite";
 standardBuilder.Configuration["AdminDatabase:ConnectionString"] = "Data Source=hosting-smoke.db";
 standardBuilder.Configuration["JwtSettings:SecretKey"] = new string('J', 64);
@@ -232,7 +247,8 @@ modularBuilder.Services.AddControllers().AddJsonOptions(options =>
 });
 
 var hs = modularBuilder.Services.AddHsSqlAgentCore();
-hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentRuntime(options =>
+    ConfigureSmokeSecretProtection(options.SecretProtection));
 hs.AddHsSqlAgentAdminStore(options =>
 {
     options.Provider = "Sqlite";
@@ -256,6 +272,22 @@ modularApp.UseAuthorization();
 modularApp.UseHsSqlAgentAdminApi();
 modularApp.MapControllers();
 modularApp.MapGet("/host/probe", () => "host-ok").RequireAuthorization();
+
+// The packed consumer must use authenticated ciphertext with trusted record binding.
+var crypto = modularApp.Services.GetRequiredService<ICryptoService>();
+var protectedValue = crypto.EncryptText("nuget-credential", "db-password:smoke-binding");
+if (protectedValue is null || !protectedValue.StartsWith("v2:smoke-db-1:", StringComparison.Ordinal)
+    || crypto.DecryptText(protectedValue, "db-password:smoke-binding") != "nuget-credential")
+    throw new InvalidOperationException("Packed consumer secret protection round-trip failed.");
+try
+{
+    _ = crypto.DecryptText(protectedValue, "db-password:wrong-binding");
+    throw new InvalidOperationException("Packed secret protection accepted a mismatched record binding.");
+}
+catch (CryptographicException)
+{
+    // Correct: AAD rejects a different record identifier.
+}
 
 var authentication = modularApp.Services
     .GetRequiredService<IOptions<AuthenticationOptions>>().Value;
@@ -338,6 +370,18 @@ _ = customStore.TryPromoteAsync(Array.Empty<DmlApprovalChallenge>(),
     new DmlApprovalChallenge("plan", null, 0, "policy", "context",
         DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddMinutes(1), "aggregate"));
 Console.WriteLine("Packed modular HsSqlAgent.Server host and v3 custom approval store smoke passed.");
+
+// Test-only ephemeral keys, independent across purposes and smoke registrations.
+static void ConfigureSmokeSecretProtection(SecretProtectionSettings settings)
+{
+    settings.DatabasePasswords.ActiveKeyId = "smoke-db-1";
+    settings.DatabasePasswords.Keys["smoke-db-1"] =
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    settings.DmlPayloads.ActiveKeyId = "smoke-dml-1";
+    settings.DmlPayloads.Keys["smoke-dml-1"] =
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    settings.DmlFingerprintKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+}
 
 sealed class SmokeHostAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,

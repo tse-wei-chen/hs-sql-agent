@@ -33,6 +33,22 @@ await app.RunAsync();
 
 The standard host owns HsSqlAgent's built-in runtime, Admin Store, built-in identity, MCP endpoint, Admin API/UI, telemetry, exception handling, and DML approval provider selection. URL binding and logging remain normal host-owned ASP.NET Core concerns.
 
+### Required secret protection configuration
+
+Before calling `AddHsSqlAgentStandardHost()`, configure three **independent** randomly generated 32-byte Base64 secrets through the `SecretProtection` configuration section. Missing or invalid keys fail startup. Generate each key separately with `openssl rand -base64 32`, keep them stable across restarts, and use the same configuration on every node:
+
+```json
+{
+  "SecretProtection": {
+    "DatabasePasswords": { "ActiveKeyId": "db-1", "Keys": { "db-1": "<base64-32-byte-key-1>" } },
+    "DmlPayloads": { "ActiveKeyId": "dml-1", "Keys": { "dml-1": "<base64-32-byte-key-2>" } },
+    "DmlFingerprintKey": "<base64-32-byte-key-3>"
+  }
+}
+```
+
+The bracketed values are **invalid placeholders**, not usable key material. Supply production keys through protected configuration, environment variables or mounted secrets, never source control. The new runtime cannot decrypt legacy stored credentials; consult the [breaking-change upgrade guide](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/docs/secret-protection-upgrade.md) before deploying.
+
 ## DML approval provider
 
 The same configuration works in a .NET host and in the official Docker image.
