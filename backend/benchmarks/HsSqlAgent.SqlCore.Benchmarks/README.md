@@ -101,6 +101,19 @@ rejections are still printed explicitly in the uploaded report.
 
 ## Interpretation
 
+- Public parser/compatibility conversion now has an additional six-provider
+  **108-case 256-KiB stack matrix**: derived, CTE, aliased scalar, mixed
+  CTE/derived/scalar, function-contained Query, and LEFT JOIN-derived Query,
+  each at 128/512/2048. Both F#→CLR and CLR→F# conversion must actually succeed.
+  The general parser uses cursor-local completed-boundary continuations;
+  the inverse adapter uses per-call reference-identity continuations. Neither
+  grows the CLR stack across Query/Expr/Source boundaries. Suspended prefixes
+  can be replayed, with token advances and cache/continuation operations charged
+  to the existing work quota. This is not a claim of linear-time parsing for
+  arbitrary wide/branching inputs. First syntax-error offsets and inverse AST
+  first-error order are tested; cyclic public ASTs fail with a typed resource
+  diagnostic. Schema/type proof and rendering retain their separate gates.
+
 - These are microbenchmark measurements, not production latency/SLO guarantees.
 - Compare only results from pinned .NET SDK/runtime, hardware, GC and runner environment.
 - The opt-in `nested-joined-lateral` and `nested-correlated-exists` probes (with and without

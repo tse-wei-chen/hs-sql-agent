@@ -112,9 +112,27 @@ module internal RewriteParser =
               RecursiveCte = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
+    [<Struct>]
+    type private ParseBoundary =
+        | ExpressionBoundary of expressionPosition: int
+        | QueryBoundary of queryPosition: int
+
+    type private BoundaryResult =
+        | ExpressionResult of Expr * int
+        | QueryResult of Query * int
+
+    type private BoundarySuspension(boundary: ParseBoundary) =
+        inherit Exception()
+        member _.Boundary = boundary
+
     type private Cursor(tokens: Token list, dialect: SourceDialect, semantics: SourceSemantics) =
         let data = List.toArray tokens
         let mutable index = 0
+        // Both syntax and source semantics are immutable for a cursor. A
+        // completed boundary can therefore be resumed by its token position
+        // without re-entering its Query/Expr subtree on the CLR stack.
+        let completed = System.Collections.Generic.Dictionary<ParseBoundary, BoundaryResult>()
+
 
         // Pair delimiters once, in linear time and with an explicit heap stack.
         // Used only to elide redundant grouping parentheses, never to change
@@ -134,6 +152,10 @@ module internal RewriteParser =
                 | _ -> ()
             positions)
 
+        member val SchedulingBoundaries = false with get, set
+        member val EvaluatingExpression = false with get, set
+        member _.CompletedBoundaries = completed
+        member _.Position with get () = index and set value = index <- value
         member _.Current = data[index]
 
         member _.RedundantGroupingPrefixLength() =
@@ -813,8 +835,71 @@ module internal RewriteParser =
         | _ -> Cast(expression, target)
 
     let rec private parseExpression (cursor: Cursor) : Expr =
-        RewriteStackSafety.parse cursor.Current.Start
-        parseOr cursor
+        RewriteResourceBudget.checkpoint ()
+        let boundary = ExpressionBoundary cursor.Position
+        match cursor.CompletedBoundaries.TryGetValue boundary with
+        | true, ExpressionResult(value, finish) -> cursor.Position <- finish; value
+        | _ when cursor.SchedulingBoundaries && not cursor.EvaluatingExpression ->
+            // Shallow expressions in a scheduled Query can finish inline.
+            // Any child Expr/Query suspends before entering another grammar
+            // frame; only its source-position continuation is retained.
+            cursor.EvaluatingExpression <- true
+            try
+                RewriteStackSafety.parse cursor.Current.Start
+                let value = parseOr cursor
+                cursor.CompletedBoundaries.[boundary] <- ExpressionResult(value, cursor.Position)
+                value
+            finally cursor.EvaluatingExpression <- false
+        | _ ->
+            match resolveBoundary cursor boundary with
+            | ExpressionResult(value, _) -> value
+            | _ -> invalidOp "Expression continuation produced a Query."
+
+    and private resolveBoundary (cursor: Cursor) boundary =
+        RewriteResourceBudget.checkpoint ()
+        let resume = function
+            | (ExpressionResult(_, finish) | QueryResult(_, finish)) as result ->
+                cursor.Position <- finish
+                result
+        match cursor.CompletedBoundaries.TryGetValue boundary with
+        | true, result -> resume result
+        | _ when cursor.SchedulingBoundaries -> raise (BoundarySuspension boundary)
+        | _ ->
+            let pending = ResizeArray<ParseBoundary>()
+            pending.Add boundary
+            cursor.SchedulingBoundaries <- true
+            try
+                while pending.Count > 0 do
+                    RewriteResourceBudget.checkpoint ()
+                    let last = pending.Count - 1
+                    let current = pending.[last]
+                    cursor.Position <-
+                        match current with
+                        | ExpressionBoundary position | QueryBoundary position -> position
+                    try
+                        let result =
+                            match current with
+                            | ExpressionBoundary _ ->
+                                RewriteStackSafety.parse cursor.Current.Start
+                                cursor.EvaluatingExpression <- true
+                                let expression = parseOr cursor
+                                ExpressionResult(expression, cursor.Position)
+                            | QueryBoundary _ ->
+                                cursor.EvaluatingExpression <- false
+                                let query = parseQueryCore cursor
+                                QueryResult(query, cursor.Position)
+                        cursor.CompletedBoundaries.[current] <- result
+                        pending.RemoveAt last
+                    with :? BoundarySuspension as suspension ->
+                        // Retry only the suspended grammar prefix after the
+                        // child completes. Completed children are O(1) cache
+                        // resumes. Token advances still charge actual work,
+                        // including any replay, to the same compilation quota.
+                        pending.Add suspension.Boundary
+                resume cursor.CompletedBoundaries.[boundary]
+            finally
+                cursor.EvaluatingExpression <- false
+                cursor.SchedulingBoundaries <- false
 
     and private parseOr (cursor: Cursor) =
         let start = cursor.Current.Start
@@ -2142,6 +2227,11 @@ module internal RewriteParser =
         orderBy, limit, offset, fetchPercent, fetchWithTies
 
     and private parseQuery cursor =
+        match resolveBoundary cursor (QueryBoundary cursor.Position) with
+        | QueryResult(value, _) -> value
+        | _ -> invalidOp "Query continuation produced an expression."
+
+    and private parseQueryCore cursor =
         // SET operands form a Query graph. Parenthesized branches are
         // scheduled onto heap continuations instead of recursively calling
         // parseQuery once per UNION/INTERSECT/EXCEPT nesting level.
