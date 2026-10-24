@@ -1199,3 +1199,16 @@ It emits `Parsing`, `LegacyConversion`, `Materialization` and
 compiles through the public compatibility parser/compiler surface and
 requires all these stages to be observable; RawSql is never substituted
 for the caller's executable AST.
+
+### CLR compatibility SET round-trip (R2)
+
+Both compatibility AST translators (`RewriteCompatibilityAstAdapter.queryOf`
+and `RewriteLegacyAstAdapter.queryOfStatement`) now traverse nested
+UNION/INTERSECT/EXCEPT Query branches with heap-based DFS postorder
+continuations and reference-identity result tables. This removes CLR recursion
+along the SET-only conversion edge without reordering query heads, branch
+operations, parameter binding, or AST validation failures. The public
+`CoreSqlTextParser.ParseQuery` → `CoreSqlCompiler.Compile` regression
+round-trips **512 nested PostgreSQL UNIONs** and checks parameter order.
+Mixed CTE, nested scalar expression and derived/LATERAL source conversions
+still require a separate recursion audit and must not be claimed complete.

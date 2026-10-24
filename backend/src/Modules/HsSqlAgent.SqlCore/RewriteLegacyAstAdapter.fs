@@ -2,6 +2,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Collections.Generic
 open System.Text.Json
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Models
@@ -171,6 +172,10 @@ module internal RewriteLegacyAstAdapter =
         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameBoundKindCore.Following -> WindowFrameBound.Following(offset ())
         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameBoundKindCore.UnboundedFollowing -> WindowFrameBound.UnboundedFollowing
         | value -> raise (SqlCompilationException("Unsupported window frame bound '" + string value + "'."))
+
+    type private LegacySetFrame =
+        | VisitLegacySet of HsSqlAgent.SqlCore.Core.Ast.SqlStatement
+        | FinishLegacySet of HsSqlAgent.SqlCore.Core.Ast.QueryStatement * Select
 
     let rec private exprOf (expression: HsSqlAgent.SqlCore.Core.Ast.SqlExpr) : Expr =
         (match expression with
@@ -483,31 +488,54 @@ module internal RewriteLegacyAstAdapter =
         else None
 
     and private queryOfStatement (statement: HsSqlAgent.SqlCore.Core.Ast.SqlStatement) : Query =
-        match statement with
-        | :? HsSqlAgent.SqlCore.Core.Ast.SelectStatement as select ->
-            { Query.Head = selectOf select
-              SetOperations = []
-              OrderBy = select.OrderBy |> Seq.map orderByOf |> Seq.toList
-              Limit = rowCount "limit" select.Limit
-              Offset = rowCount "offset" select.Offset
-              FetchPercent = percentage "fetchPercent" select.FetchPercent
-              FetchWithTies = select.FetchWithTies
-              Span = spanOf select.Span }
-        | :? HsSqlAgent.SqlCore.Core.Ast.QueryStatement as query ->
-            { Query.Head = selectOf query.Head
-              SetOperations =
-                query.SetOperations
-                |> Seq.map (fun operation ->
-                    { SetBranch.Operator = setOperator operation.Kind
-                      Query = queryOfStatement operation.Query })
-                |> Seq.toList
-              OrderBy = query.OrderBy |> Seq.map orderByOf |> Seq.toList
-              Limit = rowCount "limit" query.Limit
-              Offset = rowCount "offset" query.Offset
-              FetchPercent = percentage "fetchPercent" query.FetchPercent
-              FetchWithTies = query.FetchWithTies
-              Span = spanOf query.Span }
-        | _ -> failClosed "query statement" statement
+        // The public CLR AST may carry a deeply nested parenthesized SET
+        // tree even when all its SELECT heads are shallow. Convert the SET
+        // graph in DFS postorder without a CLR call per set-operation level.
+        // Other Query/Expr/Source edges keep their own stack-reserve guard.
+        let converted =
+            Dictionary<HsSqlAgent.SqlCore.Core.Ast.SqlStatement, Query>(HashIdentity.Reference)
+        let pending = ResizeArray<LegacySetFrame>()
+        pending.Add(VisitLegacySet statement)
+        while pending.Count > 0 do
+            RewriteStackSafety.compile SqlDiagnosticStage.Binding
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | VisitLegacySet node ->
+                match node with
+                | :? HsSqlAgent.SqlCore.Core.Ast.SelectStatement as select ->
+                    converted.[node] <-
+                        { Query.Head = selectOf select
+                          SetOperations = []
+                          OrderBy = select.OrderBy |> Seq.map orderByOf |> Seq.toList
+                          Limit = rowCount "limit" select.Limit
+                          Offset = rowCount "offset" select.Offset
+                          FetchPercent = percentage "fetchPercent" select.FetchPercent
+                          FetchWithTies = select.FetchWithTies
+                          Span = spanOf select.Span }
+                | :? HsSqlAgent.SqlCore.Core.Ast.QueryStatement as query ->
+                    let head = selectOf query.Head
+                    pending.Add(FinishLegacySet(query, head))
+                    for index = query.SetOperations.Length - 1 downto 0 do
+                        pending.Add(VisitLegacySet query.SetOperations.[index].Query)
+                | _ -> failClosed "query statement" node
+            | FinishLegacySet(query, head) ->
+                converted.[query] <-
+                    { Query.Head = head
+                      SetOperations =
+                        query.SetOperations
+                        |> Seq.map (fun operation ->
+                            { SetBranch.Operator = setOperator operation.Kind
+                              Query = converted.[operation.Query] })
+                        |> Seq.toList
+                      OrderBy = query.OrderBy |> Seq.map orderByOf |> Seq.toList
+                      Limit = rowCount "limit" query.Limit
+                      Offset = rowCount "offset" query.Offset
+                      FetchPercent = percentage "fetchPercent" query.FetchPercent
+                      FetchWithTies = query.FetchWithTies
+                      Span = spanOf query.Span }
+        converted.[statement]
 
     and private returningItemOf (item: HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem) =
         match item with

@@ -2,6 +2,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Collections.Generic
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Models
@@ -118,6 +119,10 @@ module internal RewriteCompatibilityAstAdapter =
                 HsSqlAgent.SqlCore.Core.Ast.WindowFrameBoundKindCore.UnboundedFollowing,
                 Nullable(),
                 unknown)
+
+    type private CompatibilitySetFrame =
+        | VisitCompatibilitySet of Query
+        | FinishCompatibilitySet of Query * HsSqlAgent.SqlCore.Core.Ast.SelectStatement
 
     let rec private exprOf expression : HsSqlAgent.SqlCore.Core.Ast.SqlExpr =
         let expressionSpan = expression |> Expr.span |> spanOf
@@ -495,31 +500,53 @@ module internal RewriteCompatibilityAstAdapter =
         | SetOperator.ExceptAll -> HsSqlAgent.SqlCore.Core.Ast.SetOperationKind.ExceptAll
 
     and private queryOf (query: Query) : HsSqlAgent.SqlCore.Core.Ast.SqlStatement =
-        match query.SetOperations with
-        | [] ->
-            selectOf query.Head query.OrderBy query.Limit query.Offset query.FetchPercent query.FetchWithTies (spanOf query.Span)
-        | operations ->
-            let head = selectOf query.Head [] None None None false (spanOf query.Head.Span)
-            let result =
-                HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
-                head,
-                operations
-                |> List.map (fun branch ->
-                    HsSqlAgent.SqlCore.Core.Ast.SetOperation(
-                        setOperator branch.Operator,
-                        queryOf branch.Query,
-                        unknown))
-                |> ImmutableArray.CreateRange,
-                query.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-                query.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                query.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
-                spanOf query.Span)
-            result.FetchPercent <-
-                query.FetchPercent
-                |> Option.map (NonNegativePercentage.value >> Nullable)
-                |> Option.defaultValue (Nullable())
-            result.FetchWithTies <- query.FetchWithTies
-            result
+        // Projection into the CLR compatibility shape is the mirror of the
+        // legacy-to-F# transformation. Preserve the original SELECT-first,
+        // left-to-right branch evaluation order with heap postorder frames.
+        let converted =
+            Dictionary<Query, HsSqlAgent.SqlCore.Core.Ast.SqlStatement>(HashIdentity.Reference)
+        let pending = ResizeArray<CompatibilitySetFrame>()
+        pending.Add(VisitCompatibilitySet query)
+        while pending.Count > 0 do
+            RewriteStackSafety.compile SqlDiagnosticStage.Binding
+            let last = pending.Count - 1
+            let frame = pending.[last]
+            pending.RemoveAt(last)
+            match frame with
+            | VisitCompatibilitySet current ->
+                match current.SetOperations with
+                | [] ->
+                    converted.[current] <-
+                        selectOf current.Head current.OrderBy current.Limit current.Offset
+                            current.FetchPercent current.FetchWithTies (spanOf current.Span)
+                | operations ->
+                    let head =
+                        selectOf current.Head [] None None None false (spanOf current.Head.Span)
+                    pending.Add(FinishCompatibilitySet(current, head))
+                    for branch in List.rev operations do
+                        pending.Add(VisitCompatibilitySet branch.Query)
+            | FinishCompatibilitySet(current, head) ->
+                let result =
+                    HsSqlAgent.SqlCore.Core.Ast.QueryStatement(
+                        head,
+                        current.SetOperations
+                        |> List.map (fun branch ->
+                            HsSqlAgent.SqlCore.Core.Ast.SetOperation(
+                                setOperator branch.Operator,
+                                converted.[branch.Query],
+                                unknown))
+                        |> ImmutableArray.CreateRange,
+                        current.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                        current.Limit |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                        current.Offset |> Option.map (NonNegativeRowCount.value >> Nullable) |> Option.defaultValue (Nullable()),
+                        spanOf current.Span)
+                result.FetchPercent <-
+                    current.FetchPercent
+                    |> Option.map (NonNegativePercentage.value >> Nullable)
+                    |> Option.defaultValue (Nullable())
+                result.FetchWithTies <- current.FetchWithTies
+                converted.[current] <- result
+        converted.[query]
 
     let private returningOf item : HsSqlAgent.SqlCore.Core.Ast.DmlReturningItem =
         match item with
