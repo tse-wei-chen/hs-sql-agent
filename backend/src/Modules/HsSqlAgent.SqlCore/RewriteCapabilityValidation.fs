@@ -330,9 +330,12 @@ module internal RewriteCapabilityValidation =
             | Spanned(_, inner) -> pending.Add(inner)
             | Column _ | BoundColumn _ | OrderOrdinal _ | Literal _ -> ()
             | DateAdd(_, left, right) | DateDiff(_, left, right)
-            | Binary((BinaryOperator.Add | BinaryOperator.Subtract
-                      | BinaryOperator.Multiply | BinaryOperator.Divide
-                      | BinaryOperator.Modulo | BinaryOperator.Concat), left, right) ->
+            | Binary((BinaryOperator.Add
+                     | BinaryOperator.Subtract
+                     | BinaryOperator.Multiply
+                     | BinaryOperator.Divide
+                     | BinaryOperator.Modulo
+                     | BinaryOperator.Concat), left, right) ->
                 pending.Add(right)
                 pending.Add(left)
             | Unary(_, inner) | Cast(inner, _) | Extract(_, inner) ->
