@@ -367,6 +367,7 @@ module internal RewriteRenderer =
         | FinishMixedCte of outer: Query * cte: Cte
         | FinishMixedDerived of outer: Query * alias: IdentifierPart
         | FinishMixedLateral of outer: Query * alias: IdentifierPart
+        | FinishMixedJoinedLateral of outer: Query * preceding: TableSource * alias: IdentifierPart * onPredicate: Expr
 
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
@@ -606,17 +607,18 @@ module internal RewriteRenderer =
             let head = current.Head
             if not head.Ctes.IsEmpty
                || head.DistinctMode <> SelectDistinct.AllRows
-               || head.From.IsSome || not head.Joins.IsEmpty
+               || not head.Joins.IsEmpty
                || not head.GroupBy.IsEmpty || head.Having.IsSome
                || not current.SetOperations.IsEmpty || hasTail current then
                 None
             else
                 match head.Projection, head.Where with
                 | [ { Alias = None; Expression = projected } ], Some predicate ->
-                    match Expr.unspan projected, Expr.unspan predicate with
-                    | (Literal _ | Column _ | BoundColumn _),
+                    match head.From, Expr.unspan projected, Expr.unspan predicate with
+                    | (None | Some(TableSource.NamedTable _ | TableSource.CteTable _)),
+                      (Literal _ | Column _ | BoundColumn _),
                       Exists(child, isNegated) ->
-                        Some(projected, child, isNegated)
+                        Some(projected, head.From, child, isNegated)
                     | _ -> None
                 | _ -> None
         // Ordinary EXISTS has no wrappers: don't allocate a builder or
@@ -632,13 +634,15 @@ module internal RewriteRenderer =
             let output = RenderBuffer(ctx, "")
             while wrapping do
                 match tryWrapper current with
-                | Some(projected, child, innerNegated) ->
+                | Some(projected, source, child, innerNegated) ->
                     RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
                     output.Append(if currentNegated then "NOT EXISTS (" else "EXISTS (")
                           .Append("SELECT ")
-                          .Append(renderExpr ctx projected)
-                          .Append(dummyFrom)
-                          .Append(" WHERE ") |> ignore
+                          .Append(renderExpr ctx projected) |> ignore
+                    match source with
+                    | Some named -> output.Append(" FROM ").Append(renderSource ctx named) |> ignore
+                    | None -> output.Append(dummyFrom) |> ignore
+                    output.Append(" WHERE ") |> ignore
                     levels <- levels + 1
                     current <- child
                     currentNegated <- innerNegated
@@ -1925,6 +1929,19 @@ module internal RewriteRenderer =
                         sawLateral <- true
                         current <- inner
                     | message -> raise (SqlCompilationException(message))
+                | [], Some ((TableSource.NamedTable _ | TableSource.CteTable _) as preceding)
+                    when head.DistinctMode = SelectDistinct.AllRows
+                         && head.GroupBy.IsEmpty && head.Having.IsNone ->
+                    match head.Joins with
+                    | [ OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) ] ->
+                        match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                                  providerTool ctx.Provider, null) with
+                        | null ->
+                            frames.Add(FinishMixedJoinedLateral(current, preceding, alias, predicate))
+                            sawLateral <- true
+                            current <- inner
+                        | message -> raise (SqlCompilationException(message))
+                    | _ -> scanning <- false
                 | _ -> scanning <- false
             else
                 scanning <- false
@@ -1943,7 +1960,8 @@ module internal RewriteRenderer =
                        .Append(renderAlias ctx.Provider cte.Name)
                        .Append(" AS (") |> ignore
                 | FinishMixedDerived(outer, _)
-                | FinishMixedLateral(outer, _) as frame ->
+                | FinishMixedLateral(outer, _)
+                | FinishMixedJoinedLateral(outer, _, _, _) as frame ->
                     sql.Append("SELECT ") |> ignore
                     outer.Head.Projection
                     |> List.iteri (fun index item ->
@@ -1953,6 +1971,9 @@ module internal RewriteRenderer =
                             sql.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore))
                     match frame with
                     | FinishMixedLateral _ -> sql.Append(" FROM LATERAL (") |> ignore
+                    | FinishMixedJoinedLateral(_, preceding, _, _) ->
+                        sql.Append(" FROM ").Append(renderSource ctx preceding)
+                           .Append(" INNER JOIN LATERAL (") |> ignore
                     | _ -> sql.Append(" FROM (") |> ignore
 
             sql.Append(renderQueryCore ctx current) |> ignore
@@ -1968,6 +1989,14 @@ module internal RewriteRenderer =
                     sql.Append(')')
                        .Append(tableAliasPrefix ctx.Provider)
                        .Append(renderAlias ctx.Provider alias) |> ignore
+                    outer.Head.Where |> Option.iter (fun predicate ->
+                        sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
+                | FinishMixedJoinedLateral(outer, _, alias, onPredicate) ->
+                    sql.Append(')')
+                       .Append(tableAliasPrefix ctx.Provider)
+                       .Append(renderAlias ctx.Provider alias)
+                       .Append(" ON ")
+                       .Append(renderPredicate ctx onPredicate) |> ignore
                     outer.Head.Where |> Option.iter (fun predicate ->
                         sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
             Some(sql.ToString())
