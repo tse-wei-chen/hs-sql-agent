@@ -1421,3 +1421,14 @@ and Rendering phase to 60MB. The prior observational baseline was
 2048 mixed CTE/derived layers, materially worse than homogeneous
 single-CTE and derived chains. This is a narrow R1 partial improvement,
 not the final streaming-closure claim.
+
+### Strict mixed CTE/derived 256-KiB stack gate
+
+CI requires the alternating CTE/derived full pipeline to **compile
+successfully** at depths 512 and 2,048 on 256-KiB managed worker stacks.
+The gate rejects process crashes, timeouts, stack-reserve/resource
+refusals, missing phase telemetry and total allocations over
+120 MB at 2,048. This advances the previously observational
+mixed-source probe to a hard R2 regression check; it is still
+PostgreSQL only and does not prove mixed LATERAL/JOIN/Expr or
+Schema+Type strict correlation across all six target providers.

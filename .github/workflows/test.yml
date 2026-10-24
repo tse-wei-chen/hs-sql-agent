@@ -372,6 +372,38 @@ jobs:
                       (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
               print(f"  {item['shape']:25} depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
           PY
+      - name: Require alternating CTE-derived full compilation on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes mixed-cte-derived --depths 512,2048
+          --stack-bytes 262144
+          --output artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
+      - name: Gate mixed CTE-derived stack success and phase completeness
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          print(f"Mixed CTE/derived 256 KiB: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 2 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Mixed CTE/derived must fully compile on 256 KiB, not merely fail closed.")
+          expected = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              stages = {stage["Stage"] for stage in worker.get("stageMetrics", []) if stage.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(stages):
+                  raise SystemExit("Mixed Query stack success/telemetry regressed: " + str(
+                      (item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
+              if item["depth"] == 2048 and (
+                  not isinstance(worker.get("allocatedBytes"), int)
+                  or worker["allocatedBytes"] > 120_000_000
+              ):
+                  raise SystemExit("Mixed CTE/derived 2048 depth exceeds the existing 120 MB allocation ceiling")
+              print(f"  depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -404,6 +436,7 @@ jobs:
             artifacts/sqlcore-nested-set-pr.json
             artifacts/sqlcore-set-small-stack-pr.json
             artifacts/sqlcore-mixed-cte-derived-pr.json
+            artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
             artifacts/sqlcore-cte-small-stack-pr.json
           if-no-files-found: warn
 
