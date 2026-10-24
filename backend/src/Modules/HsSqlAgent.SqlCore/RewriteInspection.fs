@@ -64,7 +64,7 @@ module internal RewriteInspection =
         let pushExpr value = pending.Add(VisitExpr value)
         let pushExprs values =
             for value in List.rev values do pushExpr value
-        let pushReturning items =
+        let pushReturning (items: ReturningItem list) =
             for item in List.rev items do pushExpr item.Expression
 
         // Seed the stack in reverse evaluation order. Each frame schedules
