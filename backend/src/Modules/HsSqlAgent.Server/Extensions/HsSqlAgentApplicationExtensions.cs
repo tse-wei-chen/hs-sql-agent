@@ -1,6 +1,7 @@
 using System.Text;
 using Admin.Service.Data.Entites;
 using Admin.Service.Models;
+using Admin.Service.Services;
 using Common.Interfaces;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
@@ -387,6 +388,9 @@ public static class HsSqlAgentApplicationExtensions
             var bootstrapId = dbConfig.BootstrapId.Trim();
             if (!databaseIds.Add(bootstrapId))
                 throw new InvalidOperationException($"Duplicate Bootstrap database id '{bootstrapId}'.");
+
+            // Reject secret-bearing ExtraSettings before any Bootstrap writes.
+            DbExtraSettingsSecurityPolicy.Validate(dbConfig.ExtraSettings);
 
             foreach (var keyConfig in dbConfig.McpKeys)
             {

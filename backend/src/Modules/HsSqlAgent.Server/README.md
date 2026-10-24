@@ -327,6 +327,20 @@ Store ciphertext writer in this phase. Deployment needs a coordinated
 dual-reader rollout before v2 writes are activated; a mixed-version fleet
 must not encounter v2 ciphertext on an old-only reader.
 
+### ExtraSettings secret-leak prevention
+
+New/updated Admin database configurations and Bootstrap inventory now require
+`ExtraSettings` to be an optional JSON object (maximum 16 KiB, nesting 16).
+Secret-bearing names (Password, Token, API Key, private key, credentials,
+connection string), including nested objects and arrays, are rejected; so
+are credential assignments embedded in string values. `ExtraSettings` is
+**not** an encrypted secret store. Use the protected database Password field
+or your deployment secret store instead.
+
+This validation does not redact historical data. Audit old ExtraSettings
+through an authorized process with backups; the migration must not silently
+rewrite arbitrary provider data.
+
 ### Database password dual-read preparation
 
 Every built-in database password **read** path now recognizes legacy ciphertext

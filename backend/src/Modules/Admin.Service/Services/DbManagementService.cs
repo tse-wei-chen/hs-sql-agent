@@ -22,6 +22,7 @@ public class DbManagementService(
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
+        DbExtraSettingsSecurityPolicy.Validate(dbManagement.ExtraSettings);
         if (DbManagementPasswordPolicy.RequiresPassword(dbManagement.SqlProvider)
             && string.IsNullOrWhiteSpace(dbManagement.Password))
         {
@@ -80,6 +81,7 @@ public class DbManagementService(
         if (existingDbManagement != null)
         {
             EnsureNotBootstrapManaged(existingDbManagement);
+            DbExtraSettingsSecurityPolicy.Validate(dbManagement.ExtraSettings);
             existingDbManagement.Name = dbManagement.Name;
             existingDbManagement.SqlProvider = dbManagement.SqlProvider;
             existingDbManagement.Host = dbManagement.Host;
