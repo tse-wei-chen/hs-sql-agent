@@ -3,6 +3,7 @@ using Admin.Service.Data;
 using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Services;
+using System.Security.Cryptography;
 using HsSqlAgent.Server.Extensions;
 using HsSqlAgent.Server.Models;
 using HsSqlAgent.SqliteMigrations;
@@ -95,6 +96,85 @@ public class BootstrapProvisioningTests
 
         var expectedKeyHash = McpAccessKeyCacheKeys.ComputeKeyHash("bootstrap-mcp-key-123456", Encoding.UTF8.GetBytes(hmacKey));
         Assert.Equal(expectedKeyHash, key.KeyHash);
+    }
+
+    [Fact]
+    public async Task Bootstrap_NewDatabaseV2Password_IsCommittedWithMatchingIdAad()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+        var adminDbOptions = new DbContextOptionsBuilder<AdminContext>()
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAdminContextFactory).Assembly.FullName))
+            .Options;
+        var authDbOptions = new DbContextOptionsBuilder<Auth.Service.Data.AuthContext>()
+            .UseSqlite(connection, sqlite =>
+                sqlite.MigrationsAssembly(typeof(SqliteAuthContextFactory).Assembly.FullName))
+            .Options;
+        var hmacKey = "test-hmac-key-that-is-at-least-32-bytes";
+        var protector = new VersionedSecretProtector(new SecretKeyRing(
+            new Dictionary<SecretPurpose, SecretKeySet>
+            {
+                [SecretPurpose.DatabasePassword] = new SecretKeySet
+                {
+                    ActiveKeyId = "db_boot_1",
+                    Keys = new Dictionary<string, byte[]>
+                    {
+                        ["db_boot_1"] = Enumerable.Repeat((byte)0x76, 32).ToArray()
+                    }
+                }
+            }), Encoding.UTF8.GetBytes(hmacKey));
+
+        var services = new ServiceCollection();
+        services.AddAuthorization();
+        services.AddAuthentication();
+        services.AddScoped(_ => new AdminContext(adminDbOptions));
+        services.AddScoped(_ => new Auth.Service.Data.AuthContext(authDbOptions));
+        services.AddSingleton<ICryptoService, CryptoService>();
+        services.AddSingleton<ISecretProtector>(protector);
+        services.AddSingleton<ISecretWriteRolloutPolicy>(new TestDbPasswordWritePolicy());
+        services.AddSingleton<Admin.Service.Interfaces.ISecurityPolicyRuntimeState,
+            Admin.Service.Services.SecurityPolicyRuntimeState>();
+        services.AddSingleton(Options.Create(new McpKeySettings { HmacSecretKey = hmacKey }));
+        services.AddSingleton(Options.Create(new BootstrapOptions
+        {
+            Enabled = true,
+            Databases = [new BootstrapDatabaseOptions
+            {
+                BootstrapId = "new-db",
+                Name = "Primary",
+                Provider = "Postgres",
+                Host = "localhost",
+                Password = "my-private-password",
+                McpKeys = [new BootstrapMcpKeyOptions
+                {
+                    BootstrapId = "new-mcp-key",
+                    Key = "explicit-mcp-key-value"
+                }]
+            }]
+        }));
+        using var provider = services.BuildServiceProvider();
+        var appBuilder = new ApplicationBuilder(provider);
+        appBuilder.UseHsSqlAgent();
+
+        await using var verify = new AdminContext(adminDbOptions);
+        var db = await verify.DbManagement.SingleAsync(TestContext.Current.CancellationToken);
+        Assert.True(db.Id > 0);
+        Assert.StartsWith("v2:db_boot_1:", db.PasswordHash);
+        Assert.Equal("my-private-password", protector.Unprotect(
+            db.PasswordHash, SecretPurpose.DatabasePassword,
+            db.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(
+            db.PasswordHash, SecretPurpose.DatabasePassword,
+            (db.Id + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        Assert.Single(await verify.McpAccessKeys.ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    private sealed class TestDbPasswordWritePolicy : ISecretWriteRolloutPolicy
+    {
+        public bool EnableV2DatabasePasswordWrites => true;
+        public bool EnableV2DurableDmlWrites => false;
     }
 
     [Fact]

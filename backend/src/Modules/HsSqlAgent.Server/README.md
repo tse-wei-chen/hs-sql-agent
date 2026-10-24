@@ -343,8 +343,13 @@ Updating a non-Bootstrap password uses the existing stable ID and v2 encryption.
 Blank password updates preserve the previous ciphertext. Rollback to old-only
 nodes after enabling writes is unsafe.
 
-Bootstrap password reconciliation and batch re-encryption of historical rows
-are *not* switched by this flag. Preserve the legacy MCP HMAC secret until
+Bootstrap-managed passwords also opt into v2 when this flag is enabled and
+the Bootstrap declaration explicitly supplies a password. For a new database,
+the initial ID-allocation write, v2 rewrite and MCP key reconciliation happen
+inside the same relational transaction. Existing Bootstrap records without a
+new configured password are **not** automatically decrypted or re-encrypted.
+
+Batch re-encryption of historical rows is not switched by this flag. Preserve the legacy MCP HMAC secret until
 MCP key hashing, Durable DML approval fingerprints and all historical ciphertext
 have been handled separately.
 

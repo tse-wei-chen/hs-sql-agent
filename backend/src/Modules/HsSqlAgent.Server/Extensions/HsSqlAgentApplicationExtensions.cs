@@ -375,6 +375,8 @@ public static class HsSqlAgentApplicationExtensions
         var cryptoService = services.GetRequiredService<ICryptoService>();
         var mcpKeySettings = services.GetRequiredService<IOptions<McpKeySettings>>().Value;
         var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.HmacSecretKey);
+        var v2PasswordWrites = services.GetService<ISecretWriteRolloutPolicy>()?.EnableV2DatabasePasswordWrites == true;
+        var secretProtector = v2PasswordWrites ? services.GetRequiredService<ISecretProtector>() : null;
 
         // Validate the entire declaration before making any database mutations.
         // Newly generated keys used to be written to stdout, which is unsafe in Docker
@@ -414,7 +416,11 @@ public static class HsSqlAgentApplicationExtensions
         {
             var bootstrapId = dbConfig.BootstrapId!.Trim();
             var dbName = string.IsNullOrWhiteSpace(dbConfig.Name) ? bootstrapId : dbConfig.Name.Trim();
+            // A new DB ID is required before v2 AAD can be computed. Both
+            // writes and the associated MCP key reconciliation are atomic.
+            using var transaction = v2PasswordWrites ? adminDb.Database.BeginTransaction() : null;
             var dbEntity = adminDb.DbManagement.FirstOrDefault(x => x.BootstrapId == bootstrapId);
+            var isNewDatabase = dbEntity is null;
             var now = DateTime.UtcNow;
             if (dbEntity == null)
             {
@@ -429,10 +435,24 @@ public static class HsSqlAgentApplicationExtensions
             dbEntity.Username = Normalize(dbConfig.Username);
             dbEntity.ExtraSettings = Normalize(dbConfig.ExtraSettings);
             if (!string.IsNullOrWhiteSpace(dbConfig.Password))
-                dbEntity.PasswordHash = cryptoService.EncryptText(dbConfig.Password, hmacSecret);
+            {
+                dbEntity.PasswordHash = v2PasswordWrites && dbEntity.Id > 0
+                    ? secretProtector!.Protect(
+                        dbConfig.Password, SecretPurpose.DatabasePassword,
+                        dbEntity.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                    : cryptoService.EncryptText(dbConfig.Password, hmacSecret);
+            }
             dbEntity.UpdatedAt = now;
             dbEntity.UpdatedBy = "Bootstrap";
             adminDb.SaveChanges();
+
+            if (v2PasswordWrites && isNewDatabase && !string.IsNullOrWhiteSpace(dbConfig.Password))
+            {
+                dbEntity.PasswordHash = secretProtector!.Protect(
+                    dbConfig.Password, SecretPurpose.DatabasePassword,
+                    dbEntity.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                adminDb.SaveChanges();
+            }
 
             foreach (var keyConfig in dbConfig.McpKeys)
             {
@@ -462,6 +482,7 @@ public static class HsSqlAgentApplicationExtensions
                 managedKey.RevokedBy = null;
             }
             adminDb.SaveChanges();
+            transaction?.Commit();
         }
     }
 
