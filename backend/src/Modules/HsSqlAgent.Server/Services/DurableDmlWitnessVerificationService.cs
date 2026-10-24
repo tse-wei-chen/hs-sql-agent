@@ -74,7 +74,9 @@ public sealed class DurableDmlWitnessVerificationService(
         string connectionString;
         try
         {
-            var plain = cryptoService.DecryptText(state.ProtectedExecutionPayload, keyBytes);
+            var plain = DurableDmlPayloadCiphertextReader.Decrypt(
+                state.ProtectedExecutionPayload, state.RequestId,
+                cryptoService, keyBytes, secretProtector);
             if (string.IsNullOrWhiteSpace(plain)) return Result(TargetChanged);
             // One authoritative decoder for both completion and independent
             // witness inspection. An old flat payload is explicitly upcast;

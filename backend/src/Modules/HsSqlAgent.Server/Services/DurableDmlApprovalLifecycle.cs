@@ -466,8 +466,10 @@ internal sealed class DurableDmlApprovalLifecycle(
         CancellationToken cancellationToken)
     {
         var secret = RequireHmacSecret();
-        var payloadJson = RequireCrypto().DecryptText(state.ProtectedExecutionPayload, secret)
-                          ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
+        var payloadJson = DurableDmlPayloadCiphertextReader.Decrypt(
+            state.ProtectedExecutionPayload, state.RequestId,
+            RequireCrypto(), secret, services.GetService<ISecretProtector>())
+            ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
         var payload = DurableDmlResumePayloadCodec.Deserialize(payloadJson);
         if (payload.RequiresCommitWitness && !runtime.HasTargetCommitWitness)
             throw new InvalidOperationException(

@@ -335,6 +335,13 @@ MCP authentication, Admin metadata, SQL tools, runtime tests, health checks,
 Durable DML resume and witness inspection are included. Missing key rings,
 wrong record identities and unknown versions fail closed.
 
+The Durable DML completion handler and independent commit-witness verification
+also share a version-aware, fail-closed **payload reader**. Its AAD identity is
+the immutable `DmlApprovalRequestState.RequestId`, with purpose
+`DurableDmlPayload`. Existing approval **payload writes and connection
+fingerprints remain legacy**. Pending/Executing approvals are neither changed
+nor replayed by enabling this reader.
+
 Existing Admin Store password **writers remain legacy** until old-only deployed
 instances have been upgraded. Do not manually migrate DB passwords in a mixed-
 version fleet. Re-encryption can also affect Durable DML approval connection
