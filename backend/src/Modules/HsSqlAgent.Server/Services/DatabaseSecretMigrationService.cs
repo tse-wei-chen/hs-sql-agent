@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Data;
+using Admin.Service.Data.Entites;
 using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Services;
@@ -87,8 +88,10 @@ public sealed class DatabaseSecretMigrationService(
     }
 
     public async Task<DatabaseSecretMigrationBatch> MigrateBatchAsync(
-        int afterId, int batchSize, CancellationToken ct = default)
+        int afterId, int batchSize, CancellationToken ct = default, string actor = "system")
     {
+        if (string.IsNullOrWhiteSpace(actor) || actor.Length > 64)
+            throw new ArgumentException("A migration actor ID of 1-64 characters is required.", nameof(actor));
         if (afterId < 0 || batchSize is < 1 or > MaxBatch)
             throw new ArgumentOutOfRangeException(nameof(batchSize), "Migration cursor and batch size must be valid (1-100).");
         if (writePolicy?.EnableV2DatabasePasswordWrites != true || protector is null || keyRing is null)
@@ -186,6 +189,22 @@ public sealed class DatabaseSecretMigrationService(
             if (!string.Equals(plaintext, verified, StringComparison.Ordinal))
                 throw new CryptographicException("Database credential round-trip verification failed.");
 
+            // Persist a secret-free, per-row audit event inside the *same*
+            // transaction as the ciphertext change. An audit outage must
+            // never allow a migration write to commit without evidence.
+            context.AuditLogs.Add(new AuditLog
+            {
+                EventId = Guid.NewGuid(),
+                ActorType = actor == "system" ? "system" : "admin",
+                ActorId = actor,
+                Action = "security.database-secret.migrated",
+                Target = recordId,
+                DbManagementId = row.Id,
+                Operation = "migration",
+                Result = "success",
+                CreatedAt = DateTime.UtcNow
+            });
+            await context.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
             migrated++;
         }

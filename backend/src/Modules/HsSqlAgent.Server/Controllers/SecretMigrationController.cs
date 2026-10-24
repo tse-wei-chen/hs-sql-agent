@@ -1,7 +1,5 @@
-using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Admin.Service.Interfaces;
 using HsSqlAgent.Server.Authorization;
 using HsSqlAgent.Server.Services;
 using Microsoft.AspNetCore.Mvc;
@@ -15,8 +13,7 @@ namespace HsSqlAgent.Server.Controllers;
 [ApiController]
 [Route("api/runtime/security/secret-migration")]
 public sealed class SecretMigrationController(
-    DatabaseSecretMigrationService migration,
-    IAuditService audit) : ControllerBase
+    DatabaseSecretMigrationService migration) : ControllerBase
 {
     [HttpGet("inventory")]
     [HasPermission("/runtime/security", "edit")]
@@ -42,14 +39,15 @@ public sealed class SecretMigrationController(
 
         try
         {
+            var actor = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrWhiteSpace(actor) || actor.Length > 64)
+                return BadRequest(new { error = "Invalid security operator identity." });
+            // Every row writes its audit event in the same DB transaction
+            // as the secret re-encryption. Batch-level logging is not a
+            // substitute for durable, transactionally coupled evidence.
             var result = await migration.MigrateBatchAsync(
-                request.AfterId, request.BatchSize, cancellationToken);
-            await audit.WriteLogAsync(
-                "security.database-passwords.migration",
-                result.NextAfterId.ToString(CultureInfo.InvariantCulture),
-                "success",
-                $"scanned={result.Scanned};migrated={result.Migrated};conflicts={result.ConcurrentChanges}",
-                cancellationToken);
+                request.AfterId, request.BatchSize, cancellationToken, actor);
             Response.Headers.CacheControl = "no-store";
             return Ok(result);
         }

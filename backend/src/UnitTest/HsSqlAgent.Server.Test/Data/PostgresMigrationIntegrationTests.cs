@@ -184,6 +184,23 @@ public sealed class PostgresMigrationIntegrationTests(PostgresMigrationFixture f
         await adminContext.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"DmlApprovalRequests\" SET \"Status\" = {"OutcomeUnknown"} WHERE \"RequestId\" = {executing.RequestId}", cancellationToken);
         await adminContext.Database.MigrateAsync(cancellationToken);
+        // PostgreSQL used varchar(256) for legacy encrypted credentials.
+        // The v2 envelope must be able to store a longer authenticated
+        // secret without truncation or schema-specific failure.
+        var longEnvelope = new string('Q', 720);
+        var largeEncryptedCredential = new DbManagement
+        {
+            Name = "v2-long-ciphertext-capacity",
+            PasswordHash = longEnvelope,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        };
+        adminContext.DbManagement.Add(largeEncryptedCredential);
+        await adminContext.SaveChangesAsync(cancellationToken);
+        adminContext.ChangeTracker.Clear();
+        Assert.Equal(longEnvelope, (await adminContext.DbManagement.AsNoTracking()
+            .SingleAsync(x => x.Id == largeEncryptedCredential.Id, cancellationToken)).PasswordHash);
+
         var preserved = await adminContext.DmlApprovalRequests.AsNoTracking()
             .SingleAsync(x => x.RequestId == consumed.RequestId, cancellationToken);
         var preservedKey = await adminContext.ManagementApiKeys.AsNoTracking()

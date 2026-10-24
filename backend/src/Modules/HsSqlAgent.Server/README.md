@@ -340,7 +340,9 @@ and an **explicitly confirmed, bounded** database credential batch migration:
 The endpoints require `/runtime/security.edit` and a human JWT principal;
 Management API keys cannot use them. Every result reports only cursor, scanned,
 migrated, already-current and concurrent-change counts (no passwords or SQL).
-Each successful batch is audited; keep operational backups outside this API.
+Every successfully migrated row is durably audited **within the same
+transaction** as its ciphertext replacement. No plaintext or ciphertext is
+written to that audit event. Keep operational backups outside this API.
 
 **Preconditions:** enable the v2 DatabasePassword write gate, distribute all
 required old + new encryption keys to every node, deploy dual-read everywhere,

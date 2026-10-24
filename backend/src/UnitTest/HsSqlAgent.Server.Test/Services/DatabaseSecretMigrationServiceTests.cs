@@ -85,9 +85,11 @@ public sealed class DatabaseSecretMigrationServiceTests
         Assert.Equal(0, inventory.LegacyDatabasePasswords);
         Assert.Single(inventory.DatabaseKeyUsage);
         Assert.Equal(2, inventory.DatabaseKeyUsage[0].Records);
+        Assert.Equal(2, await context.AuditLogs.CountAsync(TestContext.Current.CancellationToken));
         var again = await service.MigrateBatchAsync(0, 100, TestContext.Current.CancellationToken);
         Assert.Equal(0, again.Migrated);
         Assert.Equal(3, again.AlreadyCurrent); // Two current rows and one empty row.
+        Assert.Equal(2, await context.AuditLogs.CountAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -127,6 +129,7 @@ public sealed class DatabaseSecretMigrationServiceTests
             service.MigrateBatchAsync(0, 50, TestContext.Current.CancellationToken));
         context.ChangeTracker.Clear();
         Assert.Equal(original, (await context.DbManagement.SingleAsync(TestContext.Current.CancellationToken)).PasswordHash);
+        Assert.Empty(await context.AuditLogs.ToListAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
