@@ -811,6 +811,51 @@ jobs:
               raise SystemExit("All scalar and CASE projection probes must compile on 256 KiB")
           print(f"Projection Query 256 KiB: scalar compiled={scalar_success}/6; CASE compiled={case_success}/6")
           PY
+      - name: Require six-provider deep paging and exact negative grammar on 256 KiB
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres,MySQL,Sqlite,MsSqlServer,Oracle,Firebird
+          --shapes nested-paging-typed-schema,invalid-nested-paging
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-paging-small-stack-pr.json
+      - name: Gate complete paging corpus, typed stages and first syntax error
+        run: |
+          python3 - <<'PY'
+          import itertools, json
+          with open("artifacts/sqlcore-paging-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          providers = ["Postgres", "MySQL", "Sqlite", "MsSqlServer", "Oracle", "Firebird"]
+          expected = set(itertools.product(providers,
+              ["nested-paging-typed-schema", "invalid-nested-paging"], [128, 512, 2048]))
+          observed = [(item["dialect"], item["shape"], item["depth"]) for item in report["observations"]]
+          if len(observed) != 36 or set(observed) != expected or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Paging corpus is missing, duplicated, refused, crashed or timed out")
+          required = {"Parsing", "Binding", "SchemaBinding", "SchemaType", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item["worker"]
+              phases = worker["stageMetrics"]
+              if item["processExitCode"] != 0 or item["stackBytes"] != 262144:
+                  raise SystemExit("Paging worker did not complete on its constrained stack")
+              if item["shape"] == "invalid-nested-paging":
+                  if (worker["success"] or not worker["expectedGrammarRejection"]
+                      or worker["diagnosticCode"] != "SQL_PARSE_GRAMMAR"
+                      or worker["diagnosticOffset"] != 18 * item["depth"] + 32
+                      or len(phases) != 1 or phases[0]["Stage"] != "Parsing" or phases[0]["Success"]):
+                      raise SystemExit("Negative paging changed its first syntax diagnostic or reached later stages")
+                  if worker["allocatedBytes"] > 30_000_000:
+                      raise SystemExit("Negative paging allocation exceeded 30 MB")
+              else:
+                  if (not worker["success"] or worker["diagnosticCode"] is not None
+                      or worker["parameterCount"] != 2 * item["depth"]
+                      or {phase["Stage"] for phase in phases} != required
+                      or not all(phase["Success"] and phase["WorkUnits"] > 0 for phase in phases)):
+                      raise SystemExit("Positive paging did not complete every typed compiler stage")
+                  render = next(phase for phase in phases if phase["Stage"] == "Rendering")
+                  if worker["allocatedBytes"] > 120_000_000 or render["AllocatedBytes"] > 60_000_000:
+                      raise SystemExit("Paging allocation exceeded existing deep-query ceilings")
+          print("Six-provider paging: 18 full successes and 18 exact syntax negatives on 256 KiB")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -855,6 +900,7 @@ jobs:
             artifacts/sqlcore-facts-small-stack-pr.json
             artifacts/sqlcore-in-small-stack-pr.json
             artifacts/sqlcore-scalar-case-small-stack-pr.json
+            artifacts/sqlcore-paging-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

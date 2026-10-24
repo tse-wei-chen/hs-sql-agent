@@ -22,7 +22,9 @@ module internal RewriteSchemaValidation =
     let private makeScope parent sources =
         { Parent = parent
           Sources = sources
-          Unqualified = sources |> List.collect (fun source -> source.Columns) }
+          Unqualified = sources |> List.collect (fun source ->
+              RewriteResourceBudget.charge (int64 source.Columns.Length)
+              source.Columns) }
 
     let private reject code span message : 'T =
         let diagnosticSpan =
@@ -42,6 +44,7 @@ module internal RewriteSchemaValidation =
         | _ -> part.Value
 
     let private catalogPart dialect (value: string) =
+        RewriteResourceBudget.charge (max 1L (int64 value.Length))
         match dialect with
         | SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Sqlite ->
             value.ToUpperInvariant()
@@ -51,6 +54,7 @@ module internal RewriteSchemaValidation =
         Identifier.parts identifier |> List.map (keyPart dialect) |> String.concat "."
 
     let private keyCatalog dialect (value: string) =
+        RewriteResourceBudget.charge (max 1L (int64 value.Length))
         value.Split('.') |> Array.map (catalogPart dialect) |> String.concat "."
 
     let private buildCatalog dialect (snapshot: SqlSchemaSnapshot) =
@@ -60,6 +64,7 @@ module internal RewriteSchemaValidation =
         let tables =
             snapshot.Tables
             |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
                 keyCatalog dialect table.Name,
                 (table.Columns |> Seq.map (catalogPart dialect) |> Seq.toList))
             |> Seq.toList
@@ -90,22 +95,34 @@ module internal RewriteSchemaValidation =
     let private aliasedSource dialect alias columns =
         { Qualifiers = [ keyPart dialect alias ]; Columns = columns }
 
-    let private countColumn source key = source.Columns |> List.filter ((=) key) |> List.length
+    let private countColumn source key =
+        source.Columns |> List.sumBy (fun name ->
+            RewriteResourceBudget.checkpoint ()
+            if name = key then 1 else 0)
+
+    let private hasQualifier name source =
+        RewriteResourceBudget.checkpoint ()
+        source.Qualifiers |> List.exists (fun qualifier ->
+            RewriteResourceBudget.checkpoint ()
+            qualifier = name)
 
     // Keep the original nearest-scope and alias-hiding rules without
     // recursively calling through a chain of correlated SELECT scopes.
     let private resolveColumn scope qualifier key span =
         let mutable current = Some scope
         while current.IsSome do
+            RewriteResourceBudget.checkpoint ()
             let active = Option.get current
             let matchingSources =
                 match qualifier with
                 | None -> active.Sources
                 | Some name ->
-                    active.Sources |> List.filter (fun item -> List.contains name item.Qualifiers)
+                    active.Sources |> List.filter (hasQualifier name)
             let hits =
                 match qualifier with
-                | None -> active.Unqualified |> List.filter ((=) key) |> List.length
+                | None -> active.Unqualified |> List.sumBy (fun name ->
+                    RewriteResourceBudget.checkpoint ()
+                    if name = key then 1 else 0)
                 | Some _ -> matchingSources |> List.sumBy (fun item -> countColumn item key)
             if hits > 1 then
                 reject "SQL_SCHEMA_COLUMN_AMBIGUOUS" span (
@@ -138,8 +155,9 @@ module internal RewriteSchemaValidation =
         let mutable current = Some scope
         let mutable resolved = None
         while current.IsSome && resolved.IsNone do
+            RewriteResourceBudget.checkpoint ()
             let active = Option.get current
-            match active.Sources |> List.filter (fun source -> List.contains name source.Qualifiers) with
+            match active.Sources |> List.filter (hasQualifier name) with
             | [ found ] -> resolved <- Some found
             | [] -> current <- active.Parent
             | _ ->

@@ -53,8 +53,13 @@ module internal RewriteBinder =
 
     let private partKey dialect part = partsKey dialect [ part ]
     let private equivalentPart dialect left right = StringComparer.Ordinal.Equals(partKey dialect left, partKey dialect right)
-    let private containsQualifier qualifierKey (source: SourceBinding) = source.QualifierKeys |> List.contains qualifierKey
-    let private containsName nameKey values = values |> List.contains nameKey
+    let private containsName nameKey values =
+        values |> List.exists (fun value ->
+            RewriteResourceBudget.checkpoint ()
+            value = nameKey)
+    let private containsQualifier qualifierKey (source: SourceBinding) =
+        RewriteResourceBudget.checkpoint ()
+        containsName qualifierKey source.QualifierKeys
 
     let private localQualifierExists qualifier (scope: Scope) =
         scope.Sources |> List.exists (containsQualifier qualifier)
@@ -65,6 +70,7 @@ module internal RewriteBinder =
         let mutable current = scope.Parent
         let mutable found = false
         while current.IsSome && not found do
+            RewriteResourceBudget.checkpoint ()
             match current with
             | Some parent ->
                 found <- localQualifierExists qualifier parent
@@ -76,6 +82,7 @@ module internal RewriteBinder =
         let mutable current = scope.Parent
         let mutable found = false
         while current.IsSome && not found do
+            RewriteResourceBudget.checkpoint ()
             match current with
             | Some parent ->
                 found <- not parent.Sources.IsEmpty
@@ -1112,12 +1119,14 @@ module internal RewriteBinder =
         // diagnostic, but avoid repeatedly appending immutable lists.
         let seenAliases = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
         for existing in scope.Sources do
+            RewriteResourceBudget.checkpoint ()
             match existing.AliasKey with
             | Some key -> seenAliases.Add key |> ignore
             | None -> ()
         let mutable reversedSources = []
         let mutable reversedBindings = []
         for source in sources do
+            RewriteResourceBudget.checkpoint ()
             let value = bindTableSource scope.Dialect None scope.VisibleCtes source
             let binding = sourceBinding scope.Dialect value
             match binding.AliasKey with

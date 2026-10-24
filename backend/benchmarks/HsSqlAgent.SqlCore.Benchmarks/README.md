@@ -20,6 +20,26 @@ Structurally shallow sibling queries use local heap loops; deeper graphs retain
 occurrence-scoped continuations. Prefix retries remain metered, so this is not
 a claim of arbitrary breadth-linear compilation.
 
+The opt-in `nested-paging-typed-schema` and `invalid-nested-paging` probes
+cover all six providers at 128/512/2048 on isolated 256-KiB worker stacks.
+Every wrapper owns ORDER BY plus OFFSET/FETCH or LIMIT/OFFSET. CI requires
+18 full typed compilations and 18 exact `SQL_PARSE_GRAMMAR` rejections at
+the innermost missing operand, preserving its source offset. Negative workers
+report `success: false` and a separate `expectedGrammarRejection`; resource
+refusals do not satisfy either case. Positive ceilings are 120 MB total and
+60 MB rendering; negative allocation is capped at 30 MB. The historic 72-case
+depth corpus and 16-case constrained-stack corpus remain intact.
+
+Schema metadata normalization, column scans, qualifier scans and ancestor-scope
+walks now charge actual visited items. The wide-schema tests require both proof
+phases to count at least 512 columns times 32 references across all six providers.
+Real 1024-column / 8192-reference inputs must exhaust the proof work quota through
+both string and parsed-AST routes, followed by a successful fresh attempt.
+The inverse adapter converts terminal leaves directly, avoiding projection-prefix
+replay for these wide inputs. DML constant-predicate policy proofs use metered
+heap frames; 36 six-provider 128/512/2048-depth cases on 256 KiB retain the same
+deny/allow decisions for provably true and selective predicates.
+
 Run from repository root:
 
 ```bash

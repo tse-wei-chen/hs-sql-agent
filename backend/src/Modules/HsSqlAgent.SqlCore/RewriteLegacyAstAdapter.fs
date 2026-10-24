@@ -191,9 +191,18 @@ module internal RewriteLegacyAstAdapter =
         let mutable scheduling = false
         let rec exprOf (expression: HsSqlAgent.SqlCore.Core.Ast.SqlExpr) : Expr =
             RewriteResourceBudget.checkpoint ()
-            match resolve (expression :> obj) with
-            | ConvertedExpression value -> value
-            | _ -> invalidOp "Legacy expression continuation returned a Query."
+            match expression with
+            // Leaves cannot cross a Query/Expr edge or form a cycle. Convert
+            // directly so a wide projection does not suspend/replay once per
+            // terminal column, allocating every previous projection again.
+            | :? HsSqlAgent.SqlCore.Core.Binding.BoundColumnExpr
+            | :? HsSqlAgent.SqlCore.Core.Ast.LiteralExpr
+            | :? HsSqlAgent.SqlCore.Core.Ast.ColumnExpr
+            | :? HsSqlAgent.SqlCore.Core.Ast.IntervalExpr -> exprOfCore expression
+            | _ ->
+                match resolve (expression :> obj) with
+                | ConvertedExpression value -> value
+                | _ -> invalidOp "Legacy expression continuation returned a Query."
 
         and exprOfCore (expression: HsSqlAgent.SqlCore.Core.Ast.SqlExpr) : Expr =
             (match expression with

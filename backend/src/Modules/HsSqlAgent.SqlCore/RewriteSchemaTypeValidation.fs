@@ -36,6 +36,7 @@ module internal RewriteSchemaTypeValidation =
         | _ -> part.Value
 
     let private catalogPart dialect (value: string) =
+        RewriteResourceBudget.charge (max 1L (int64 value.Length))
         match dialect with
         | SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Sqlite ->
             value.ToUpperInvariant()
@@ -63,6 +64,7 @@ module internal RewriteSchemaTypeValidation =
         let tables =
             snapshot.Tables
             |> Seq.map (fun table ->
+                RewriteResourceBudget.charge (max 1L (int64 table.Name.Length))
                 table.Name.Split('.')
                 |> Array.map (catalogPart dialect)
                 |> String.concat ".",
@@ -113,6 +115,7 @@ module internal RewriteSchemaTypeValidation =
     let private sourceOutput (source: Source) =
         source.Columns
         |> List.map (fun name ->
+            RewriteResourceBudget.checkpoint ()
             name, (Map.tryFind name source.Kinds |> Option.bind typeKnown))
 
     let private makeScope parent sources =
@@ -125,22 +128,29 @@ module internal RewriteSchemaTypeValidation =
         let mutable doneWalking = false
         let mutable result = None
         while current.IsSome && not doneWalking do
+            RewriteResourceBudget.checkpoint ()
             let active = Option.get current
             let sources =
                 match qualifier with
                 | None -> active.Sources
                 | Some value ->
                     active.Sources
-                    |> List.filter (fun source -> List.contains value source.Qualifiers)
+                    |> List.filter (fun source ->
+                        RewriteResourceBudget.checkpoint ()
+                        source.Qualifiers |> List.exists (fun name ->
+                            RewriteResourceBudget.checkpoint ()
+                            name = value))
             let hits =
                 match qualifier with
                 | None ->
                     active.Unqualified
                     |> List.choose (fun (name, kind) ->
+                        RewriteResourceBudget.checkpoint ()
                         if name = column then Some kind else None)
                 | Some _ ->
                     sources
                     |> List.choose (fun source ->
+                        RewriteResourceBudget.checkpoint ()
                         Map.tryFind column source.Kinds |> Option.map typeKnown)
             match hits with
             | [ found ] ->

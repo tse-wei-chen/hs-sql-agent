@@ -35,7 +35,8 @@ internal static class SqlCoreDepthProbe
          "nested-triple-joined-lateral", "nested-triple-joined-lateral-typed-schema",
          "two-deep-sibling-lateral", "two-deep-sibling-lateral-typed-schema",
          "lateral-exists-comb-siblings", "lateral-exists-comb-siblings-typed-schema",
-         "facts-joined-lateral", "facts-joined-lateral-typed-schema"];
+         "facts-joined-lateral", "facts-joined-lateral-typed-schema",
+         "nested-paging-typed-schema", "invalid-nested-paging"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -52,6 +53,20 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             sql = "SELECT d.id FROM (" + sql + ") d";
+        return sql;
+    }
+
+    private static string NestPaging(int depth, SqlAgentToolType dialect, bool invalid)
+    {
+        var sql = invalid ? "SELECT id FROM users WHERE id = " : "SELECT id FROM users";
+        var suffix = dialect switch
+        {
+            SqlAgentToolType.MsSqlServer or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird =>
+                " OFFSET 1 ROWS FETCH NEXT 2 ROWS ONLY",
+            _ => " LIMIT 2 OFFSET 1"
+        };
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT d.id FROM (" + sql + ") d ORDER BY d.id" + suffix;
         return sql;
     }
 
@@ -259,6 +274,8 @@ internal static class SqlCoreDepthProbe
                 string.Concat(Enumerable.Repeat("SELECT 1 WHERE EXISTS (", depth)) +
                 "SELECT u.id" + new string(')', depth + 1),
             "nested-derived-source" => NestDerived(depth),
+            "nested-paging-typed-schema" => NestPaging(depth, dialect, false),
+            "invalid-nested-paging" => NestPaging(depth, dialect, true),
             "nested-lateral-derived" or "nested-lateral-derived-typed-schema" =>
                 NestLateralDerived(depth),
             "nested-joined-lateral" or "nested-joined-lateral-typed-schema"
@@ -329,7 +346,8 @@ internal static class SqlCoreDepthProbe
                     or "nested-correlated-exists-typed-schema"
                     or "nested-correlated-in-typed-schema"
                     or "nested-scalar-subquery-typed-schema"
-                    or "nested-case-scalar-typed-schema")
+                    or "nested-case-scalar-typed-schema"
+                    or "nested-paging-typed-schema")
                 {
                     var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
                     var table = uppercase ? "USERS" : "users";
@@ -358,6 +376,7 @@ internal static class SqlCoreDepthProbe
                     elapsedMicroseconds = Math.Round(stopwatch.Elapsed.TotalMicroseconds, 2),
                     allocatedBytes = GC.GetAllocatedBytesForCurrentThread() - beforeBytes,
                     renderedChars = compiled.Sql.Length,
+                    parameterCount = compiled.Parameters.Length,
                     stageMetrics = stages,
                     diagnosticCode = (string?)null,
                     error = (string?)null
@@ -373,6 +392,16 @@ internal static class SqlCoreDepthProbe
                     SqlCompilationException compileError => compileError.Diagnostic?.Code,
                     _ => null
                 };
+                var diagnostic = (error as SqlParseException)?.Diagnostic;
+                var expectedOffset = query.IndexOf("WHERE id = ", StringComparison.Ordinal)
+                    + "WHERE id = ".Length;
+                var expectedGrammarRejection = shape == "invalid-nested-paging"
+                    && diagnostic?.Code == "SQL_PARSE_GRAMMAR"
+                    && diagnostic.Category == SqlDiagnosticCategory.Syntax
+                    && diagnostic.Span?.Start == expectedOffset;
+                // Only this named negative accepts the exact original syntax
+                // diagnostic/offset. Resource refusals and crashes still fail.
+                if (expectedGrammarRejection) exitCode = 0;
                 report = JsonSerializer.Serialize(new
                 {
                     success = false,
@@ -386,6 +415,8 @@ internal static class SqlCoreDepthProbe
                     renderedChars = 0,
                     stageMetrics = stages,
                     diagnosticCode,
+                    diagnosticOffset = diagnostic?.Span?.Start,
+                    expectedGrammarRejection,
                     error = error.GetType().Name + ": " +
                         error.Message[..Math.Min(250, error.Message.Length)]
                 });
