@@ -176,6 +176,37 @@ module internal RewriteParser =
                     | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
                     | _ -> false
 
+// Only a complete, unmodified WHERE identifier IN (SELECT ...)
+        // qualifies for the Query heap scheduler. Any trailing expression
+        // operator stays on the original expression grammar.
+        member _.StandaloneWhereInSubquery() =
+            let at position = data[min (data.Length - 1) position].Kind
+            let mutable cursorIndex = index
+            let mutable eligible =
+                match at cursorIndex with
+                | Identifier _ -> true
+                | _ -> false
+            if eligible then
+                cursorIndex <- cursorIndex + 1
+                while eligible && at cursorIndex = Symbol '.' do
+                    match at (cursorIndex + 1) with
+                    | Identifier _ -> cursorIndex <- cursorIndex + 2
+                    | _ -> eligible <- false
+            if not eligible || at cursorIndex <> Keyword "IN"
+               || at (cursorIndex + 1) <> Symbol '(' then false
+            else
+                let body = at (cursorIndex + 2)
+                let subquery = body = Keyword "SELECT" || body = Keyword "WITH"
+                let close = matchingClose.Value[cursorIndex + 1]
+                if not subquery || close < 0 then false
+                else
+                    match at (close + 1) with
+                    | End | Symbol ')' | Symbol ';'
+                    | Keyword "GROUP" | Keyword "HAVING" | Keyword "ORDER"
+                    | Keyword "LIMIT" | Keyword "OFFSET" | Keyword "FETCH"
+                    | Keyword "UNION" | Keyword "INTERSECT" | Keyword "EXCEPT" -> true
+                    | _ -> false
+
         member _.Peek(offset: int) = data[min (data.Length - 1) (index + offset)]
         member _.Advance() =
             RewriteResourceBudget.checkpoint ()
@@ -2186,6 +2217,14 @@ module internal RewriteParser =
                             scheduleQuery (fun query ->
                                 expectSymbol ')' cursor
                                 finishWhere (Some(markExpr expressionStart cursor (Exists(query, false)))))
+                        elif cursor.StandaloneWhereInSubquery() then
+                            let expressionStart = cursor.Current.Start
+                            let value = markExpr expressionStart cursor (Column(identifier cursor))
+                            expectKeyword "IN" cursor
+                            expectSymbol '(' cursor
+                            scheduleQuery (fun query ->
+                                expectSymbol ')' cursor
+                                finishWhere (Some(markExpr expressionStart cursor (InSubquery(value, query, false)))))
                         else finishWhere (Some(parseExpression cursor))
                     else finishWhere None
 

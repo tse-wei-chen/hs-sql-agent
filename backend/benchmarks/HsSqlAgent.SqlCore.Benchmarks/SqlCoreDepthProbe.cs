@@ -26,7 +26,8 @@ internal static class SqlCoreDepthProbe
          "mixed-cte-derived-typed-schema", "nested-lateral-derived",
          "nested-lateral-derived-typed-schema", "nested-joined-lateral",
          "nested-joined-lateral-typed-schema", "nested-correlated-exists",
-         "nested-correlated-exists-typed-schema"];
+         "nested-correlated-exists-typed-schema",
+         "nested-correlated-in", "nested-correlated-in-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -71,6 +72,14 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT u.id";
         for (var level = 0; level < depth; level++)
             sql = "SELECT u.id FROM users u WHERE EXISTS (" + sql + ")";
+        return sql;
+    }
+
+    private static string NestCorrelatedIn(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT id FROM users WHERE id IN (" + sql + ")";
         return sql;
     }
 
@@ -162,6 +171,8 @@ internal static class SqlCoreDepthProbe
                 NestJoinedLateral(depth),
             "nested-correlated-exists" or "nested-correlated-exists-typed-schema" =>
                 NestCorrelatedExists(depth),
+            "nested-correlated-in" or "nested-correlated-in-typed-schema" =>
+                NestCorrelatedIn(depth),
             "nested-cte" => NestCte(depth),
             "nested-cte-typed-schema" => NestCte(depth),
             "mixed-cte-derived" or "mixed-cte-derived-typed-schema" => NestMixedCteDerived(depth),
@@ -204,7 +215,8 @@ internal static class SqlCoreDepthProbe
                     or "mixed-cte-derived-typed-schema"
                     or "nested-lateral-derived-typed-schema"
                     or "nested-joined-lateral-typed-schema"
-                    or "nested-correlated-exists-typed-schema")
+                    or "nested-correlated-exists-typed-schema"
+                    or "nested-correlated-in-typed-schema")
                 {
                     var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
                     var table = uppercase ? "USERS" : "users";

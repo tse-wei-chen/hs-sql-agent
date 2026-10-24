@@ -2001,10 +2001,55 @@ module internal RewriteRenderer =
                         sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
             Some(sql.ToString())
 
+    // A linear correlated WHERE column IN (Query) chain needs a single
+    // append-only SQL buffer: Query -> predicate -> Query must not build
+    // recursive SELECT strings. Projection values still bind before IN.
+    and private tryRenderLinearInQuery (ctx: RenderContext) (query: Query) =
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || not head.GroupBy.IsEmpty || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then None
+            else
+                match head.Projection, head.From, head.Where |> Option.map Expr.unspan with
+                | [ item ], Some ((TableSource.NamedTable _ | TableSource.CteTable _) as source),
+                  Some(InSubquery(value, inner, false)) ->
+                    match Expr.unspan item.Expression, Expr.unspan value with
+                    | (Literal _ | Column _ | BoundColumn _),
+                      (Column _ | BoundColumn _) -> Some(item, source, value, inner)
+                    | _ -> None
+                | _ -> None
+        let output = RenderBuffer(ctx, "")
+        let mutable current = query
+        let mutable count = 0
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            match tryWrapper current with
+            | Some(item, source, value, inner) ->
+                output.Append("SELECT ").Append((renderExpr ctx item.Expression) : string) |> ignore
+                item.Alias |> Option.iter (fun alias ->
+                    output.Append(" AS ").Append(renderAlias ctx.Provider alias) |> ignore)
+                output.Append(" FROM ").Append((renderSource ctx source) : string)
+                      .Append(" WHERE (").Append((renderExpr ctx value) : string)
+                      .Append(" IN (") |> ignore
+                count <- count + 1
+                current <- inner
+            | None -> scanning <- false
+        if count = 0 then None
+        else
+            output.Append((renderQueryCore ctx current) : string) |> ignore
+            for _ in 1 .. count do output.Append("))") |> ignore
+            Some(output.ToString())
+
     and private renderQuery (ctx: RenderContext) query =
-        match tryRenderMixedLinearQuery ctx query with
+        match tryRenderLinearInQuery ctx query with
         | Some sql -> sql
-        | None -> renderQueryCore ctx query
+        | None ->
+            match tryRenderMixedLinearQuery ctx query with
+            | Some sql -> sql
+            | None -> renderQueryCore ctx query
 
     and private renderSubquery (ctx: RenderContext) query =
         if isSetQuery query
