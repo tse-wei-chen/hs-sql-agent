@@ -203,6 +203,26 @@ module internal RewriteSchemaTypeValidation =
             Some SqlSchemaValueKind.Numeric
         | _ -> None
 
+
+    // A linear correlated WHERE EXISTS graph does not require a CLR
+    // Query→Expr→Query callback. Only select shapes whose other expressions
+    // are terminal participate; everything else retains full validation.
+    let private tryLinearExists (query: Query) =
+        let terminalProjection =
+            query.Head.Projection |> List.forall (fun item ->
+                match Expr.unspan item.Expression with
+                | Literal _ | Column _ | BoundColumn _ | Wildcard _
+                | OrderOrdinal _ | Interval _ -> true
+                | _ -> false)
+        if query.Head.Ctes.IsEmpty && query.SetOperations.IsEmpty &&
+           query.Head.Joins.IsEmpty && query.Head.GroupBy.IsEmpty &&
+           query.Head.Having.IsNone && query.OrderBy.IsEmpty &&
+           query.Head.DistinctMode = SelectDistinct.AllRows && terminalProjection then
+            match query.Head.From, query.Head.Where |> Option.map Expr.unspan with
+            | (None | Some(NamedTable _ | CteTable _)), Some(Exists(inner, _)) -> Some inner
+            | _ -> None
+        else None
+
     // The common unary/Boolean/arithmetic/type-comparison graph uses heap
     // continuations. Complex CASE/aggregate/subquery clauses retain their
     // existing provider-aware evaluator until the full Query graph migrates.
@@ -215,6 +235,7 @@ module internal RewriteSchemaTypeValidation =
         | ResumeTypedCte of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * Cte
         | ResumeTypedDerived of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * IdentifierPart
         | ResumeTypedJoinedLateral of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * IdentifierPart
+        | ResumeTypedExists of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query
 
     let rec private expression catalog ctes scope span expr =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
@@ -422,12 +443,23 @@ module internal RewriteSchemaTypeValidation =
         let mutable scanning = true
         while scanning do
             RewriteResourceBudget.checkpoint ()
-            match current.Head.Ctes, current.SetOperations with
-            | [ cte ], [] when not cte.RecursiveScope ->
+            match current.Head.Ctes, current.SetOperations, tryLinearExists current with
+            | [], [], Some inner ->
+                // Type validation inspects WHERE before projection. Defer
+                // the outer projection until the inner EXISTS proof returns.
+                let fromSources =
+                    match current.Head.From with
+                    | Some table -> [ tableSource catalog inheritedCtes currentParent table ]
+                    | None -> []
+                let scope = makeScope currentParent fromSources
+                pending.Add(ResumeTypedExists(inheritedCtes, currentParent, current))
+                currentParent <- Some scope
+                current <- inner
+            | [ cte ], [], _ when not cte.RecursiveScope ->
                 pending.Add(ResumeTypedCte(inheritedCtes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
-            | [], [] when current.Head.Joins.Length = 1 ->
+            | [], [], _ when current.Head.Joins.Length = 1 ->
                 match current.Head.From, current.Head.Joins.Head.Source with
                 | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
                     let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
@@ -435,7 +467,7 @@ module internal RewriteSchemaTypeValidation =
                     currentParent <- Some initial
                     current <- inner
                 | _ -> scanning <- false
-            | [], [] when current.Head.Joins.IsEmpty ->
+            | [], [], _ when current.Head.Joins.IsEmpty ->
                 match current.Head.From with
                 | Some (DerivedTable(inner, alias)) ->
                     pending.Add(ResumeTypedDerived(inheritedCtes, currentParent, current, alias))
@@ -484,6 +516,10 @@ module internal RewriteSchemaTypeValidation =
                     queryTypesHeadWithJoinOverride catalog inherited originalParent
                         outer None (Some source)
                 projected <- result
+            | ResumeTypedExists(inherited, originalParent, outer) ->
+                let withoutWhere =
+                    { outer with Head = { outer.Head with Where = None } }
+                projected <- queryTypesOne catalog inherited originalParent withoutWhere
         projected
 
     and private queryTypesOne catalog inheritedCtes parent (query: Query) =

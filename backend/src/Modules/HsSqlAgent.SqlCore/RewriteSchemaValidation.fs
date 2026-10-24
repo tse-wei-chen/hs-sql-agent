@@ -155,6 +155,26 @@ module internal RewriteSchemaValidation =
         | None -> ()
         | Some name -> qualifiedSource scope (keyIdentifier catalog.Dialect name) span |> ignore
 
+
+    // A linear correlated WHERE EXISTS graph does not require a CLR
+    // Query→Expr→Query callback. Only select shapes whose other expressions
+    // are terminal participate; everything else retains full validation.
+    let private tryLinearExists (query: Query) =
+        let terminalProjection =
+            query.Head.Projection |> List.forall (fun item ->
+                match Expr.unspan item.Expression with
+                | Literal _ | Column _ | BoundColumn _ | Wildcard _
+                | OrderOrdinal _ | Interval _ -> true
+                | _ -> false)
+        if query.Head.Ctes.IsEmpty && query.SetOperations.IsEmpty &&
+           query.Head.Joins.IsEmpty && query.Head.GroupBy.IsEmpty &&
+           query.Head.Having.IsNone && query.OrderBy.IsEmpty &&
+           query.Head.DistinctMode = SelectDistinct.AllRows && terminalProjection then
+            match query.Head.From, query.Head.Where |> Option.map Expr.unspan with
+            | (None | Some(NamedTable _ | CteTable _)), Some(Exists(inner, _)) -> Some inner
+            | _ -> None
+        else None
+
     // Visit scalar children on an explicit heap stack. Query proof still
     // crosses through queryColumns, which has its own stack-reserve guard.
     type private SchemaExprFrame =
@@ -165,6 +185,7 @@ module internal RewriteSchemaValidation =
         | ResumeSchemaCte of Map<string, string list> * Scope option * Query * Cte
         | ResumeSchemaDerived of Map<string, string list> * Scope option * Query * Span * IdentifierPart
         | ResumeSchemaJoinedLateral of Map<string, string list> * Scope option * Query * Span * IdentifierPart
+        | ResumeSchemaExists of string list
 
     let rec private expression catalog ctes scope span expr =
         let pending = ResizeArray<SchemaExprFrame>()
@@ -367,12 +388,20 @@ module internal RewriteSchemaValidation =
         let mutable scanning = true
         while scanning do
             RewriteResourceBudget.checkpoint ()
-            match current.Head.Ctes, current.SetOperations with
-            | [ cte ], [] when not cte.RecursiveScope ->
+            match current.Head.Ctes, current.SetOperations, tryLinearExists current with
+            | [], [], Some inner ->
+                // Schema projection/row-source validation precedes WHERE.
+                let withoutWhere = { current.Head with Where = None }
+                let scope, _, columns =
+                    selectColumns catalog ctes currentParent withoutWhere
+                pending.Add(ResumeSchemaExists columns)
+                currentParent <- Some scope
+                current <- inner
+            | [ cte ], [], _ when not cte.RecursiveScope ->
                 pending.Add(ResumeSchemaCte(ctes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
-            | [], [] when current.Head.Joins.Length = 1 ->
+            | [], [], _ when current.Head.Joins.Length = 1 ->
                 match current.Head.From, current.Head.Joins.Head.Source with
                 | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
                     // The joined LATERAL sees exactly the preceding FROM
@@ -382,7 +411,7 @@ module internal RewriteSchemaValidation =
                     currentParent <- Some initial
                     current <- inner
                 | _ -> scanning <- false
-            | [], [] when current.Head.Joins.IsEmpty ->
+            | [], [], _ when current.Head.Joins.IsEmpty ->
                 match current.Head.From with
                 | Some (DerivedTable(inner, alias)) ->
                     pending.Add(ResumeSchemaDerived(
@@ -440,6 +469,8 @@ module internal RewriteSchemaValidation =
                 outer.OrderBy |> List.iter (fun item ->
                     expression catalog visibleCtes scope Span.unknown item.Expression)
                 projected <- output
+            | ResumeSchemaExists columns ->
+                projected <- columns
         projected
 
     and private queryColumnsSingle catalog ctes parent (query: Query) =

@@ -138,6 +138,29 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
     }
 
 
+
+    [Fact]
+    public void CorrelatedWhereExistsChain_PreservesNumericTypeFamilyProof()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var sql = "SELECT 1 WHERE u.id = 1";
+        for (var level = 0; level < depth; level++)
+            sql = $"SELECT u.id FROM users u WHERE EXISTS ({sql})";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT 1 WHERE u.name + 1 = 0";
+        for (var level = 0; level < depth; level++)
+            invalid = $"SELECT u.id FROM users u WHERE EXISTS ({invalid})";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void JoinedCorrelatedLateralChain_PreservesNestedNumericTypeAndMismatch()
     {
