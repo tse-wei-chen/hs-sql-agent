@@ -2199,12 +2199,13 @@ module internal RewriteParser =
             if cursor.StandaloneScalarSelectProjection() then
                 let start = cursor.Current.Start
                 expectKeyword "SELECT" cursor
+                let expressionStart = cursor.Current.Start
                 expectSymbol '(' cursor
                 scheduleQuery (fun child ->
                     expectSymbol ')' cursor
                     let projection = ResizeArray<SelectItem>()
                     projection.Add
-                        { Expression = markExpr start cursor (ScalarSubquery child)
+                        { Expression = markExpr expressionStart cursor (ScalarSubquery child)
                           Alias = None }
                     scheduleSelectAfterPrefix ctes complete start SelectDistinct.AllRows None projection)
             else
