@@ -24,7 +24,9 @@ internal static class SqlCoreDepthProbe
         ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema",
          "nested-set", "nested-set-typed-schema", "mixed-cte-derived",
          "mixed-cte-derived-typed-schema", "nested-lateral-derived",
-         "nested-lateral-derived-typed-schema"];
+         "nested-lateral-derived-typed-schema", "nested-joined-lateral",
+         "nested-joined-lateral-typed-schema", "nested-correlated-exists",
+         "nested-correlated-exists-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -49,6 +51,26 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             sql = "SELECT l.id FROM LATERAL (" + sql + ") AS l";
+        return sql;
+    }
+
+    // JOINed LATERAL sees the immediately preceding users u at every
+    // level; the innermost query resolves u.id from its parent scope.
+    private static string NestJoinedLateral(int depth)
+    {
+        var sql = "SELECT u.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT l.id FROM users u JOIN LATERAL (" + sql + ") l ON l.id = u.id";
+        return sql;
+    }
+
+    // The innermost SELECT has no FROM, so its u.id is genuinely
+    // correlated with the outer scope, not a local same-named table.
+    private static string NestCorrelatedExists(int depth)
+    {
+        var sql = "SELECT u.id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT u.id FROM users u WHERE EXISTS (" + sql + ")";
         return sql;
     }
 
@@ -136,6 +158,10 @@ internal static class SqlCoreDepthProbe
             "nested-derived-source" => NestDerived(depth),
             "nested-lateral-derived" or "nested-lateral-derived-typed-schema" =>
                 NestLateralDerived(depth),
+            "nested-joined-lateral" or "nested-joined-lateral-typed-schema" =>
+                NestJoinedLateral(depth),
+            "nested-correlated-exists" or "nested-correlated-exists-typed-schema" =>
+                NestCorrelatedExists(depth),
             "nested-cte" => NestCte(depth),
             "nested-cte-typed-schema" => NestCte(depth),
             "mixed-cte-derived" or "mixed-cte-derived-typed-schema" => NestMixedCteDerived(depth),
@@ -176,7 +202,9 @@ internal static class SqlCoreDepthProbe
                 var context = new SqlPlanValidationContext("depth-probe-v1");
                 if (shape is "nested-cte-typed-schema" or "nested-set-typed-schema"
                     or "mixed-cte-derived-typed-schema"
-                    or "nested-lateral-derived-typed-schema")
+                    or "nested-lateral-derived-typed-schema"
+                    or "nested-joined-lateral-typed-schema"
+                    or "nested-correlated-exists-typed-schema")
                 {
                     var uppercase = dialect is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird;
                     var table = uppercase ? "USERS" : "users";

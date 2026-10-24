@@ -446,6 +446,48 @@ jobs:
                       raise SystemExit("2,048-level LATERAL streaming allocation exceeded 60 MB.")
               print(f"  {item['shape']:34} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(present)}")
           PY
+      - name: Verify correlated JOIN LATERAL and WHERE EXISTS scope on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-joined-lateral,nested-joined-lateral-typed-schema,nested-correlated-exists,nested-correlated-exists-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-correlated-small-stack-pr.json
+      - name: Gate correlated mixed Query graphs without crashes or silent validation bypass
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("artifacts/sqlcore-correlated-small-stack-pr.json")
+          with path.open(encoding="utf-8") as source:
+              report = json.load(source)
+          if report["samples"] != 12 or report["crashesOrTimeouts"] or report["unexpectedFailures"]:
+              raise SystemExit("Correlated Query/Expr/Source stack-safety regression: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["unexpectedFailures"])))
+          full = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          succeeded = rejected = 0
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              stages = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if worker.get("success"):
+                  succeeded += 1
+                  required = full | ({"SchemaBinding", "SchemaType"} if typed else set())
+                  if item["processExitCode"] != 0 or not required.issubset(stages):
+                      raise SystemExit("Compilation skipped required proof stages: " + str(
+                          (item["shape"], item["depth"], stages)))
+              elif worker.get("diagnosticCode") == "SQL_COMPILER_STACK_RESERVE" and item["processExitCode"] == 2:
+                  rejected += 1
+              else:
+                  raise SystemExit("Unproven correlated SQL rejection: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"))))
+              print(f"  {item['shape']:39} depth={item['depth']:4} success={worker.get('success')} code={worker.get('diagnosticCode')}")
+          # Successful compilation is not interchangeable with fail-closed
+          # refusal. The per-shape proof debt stays explicit in this report.
+          print(f"Correlated 256 KiB: compiled={succeeded}/12 typedStackRefusals={rejected}/12")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -481,6 +523,7 @@ jobs:
             artifacts/sqlcore-mixed-cte-derived-small-stack-pr.json
             artifacts/sqlcore-lateral-small-stack-pr.json
             artifacts/sqlcore-cte-small-stack-pr.json
+            artifacts/sqlcore-correlated-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

@@ -66,6 +66,14 @@ rejections are still printed explicitly in the uploaded report.
 
 - These are microbenchmark measurements, not production latency/SLO guarantees.
 - Compare only results from pinned .NET SDK/runtime, hardware, GC and runner environment.
+- The opt-in `nested-joined-lateral` and `nested-correlated-exists` probes (with and without
+  strict typed snapshots) exercise Query/Source/Expr correlation on an isolated
+  256-KiB worker stack at 128/512/2048 nesting. CI fails on crashes,
+  timeouts, untyped failures or skipped validation stages. A typed
+  `SQL_COMPILER_STACK_RESERVE` refusal is recorded **separately** from
+  successful compilation: this gate proves safety, not complete R2
+  stack-independent capability.
+
 - Cross-dialect translation, huge inputs, pathological nesting, type metadata, I/O,
   and database execution are **not** measured by this initial harness.
 - No performance percentage or regression threshold is asserted before establishing a
