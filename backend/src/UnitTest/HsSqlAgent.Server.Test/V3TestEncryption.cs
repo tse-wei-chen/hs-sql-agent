@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using HsSqlAgent.Server.Models;
 
 namespace HsSqlAgent.Server.Test;
