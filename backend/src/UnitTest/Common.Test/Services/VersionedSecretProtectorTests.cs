@@ -49,8 +49,8 @@ public class VersionedSecretProtectorTests
     {
         var protector = new VersionedSecretProtector(Ring());
         var cipher = protector.Protect("secret", SecretPurpose.DatabasePassword, "42")!;
-        Assert.Throws<CryptographicException>(() => protector.Unprotect(cipher, SecretPurpose.DatabasePassword, "43"));
-        Assert.Throws<CryptographicException>(() => protector.Unprotect(cipher, SecretPurpose.DurableDmlPayload, "42"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(cipher, SecretPurpose.DatabasePassword, "43"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(cipher, SecretPurpose.DurableDmlPayload, "42"));
     }
 
     [Fact]
@@ -62,10 +62,10 @@ public class VersionedSecretProtectorTests
         var raw = Convert.FromBase64String(segments[2]);
         raw[12] ^= 0x01;
         var changed = segments[0] + ":" + segments[1] + ":" + Convert.ToBase64String(raw);
-        Assert.Throws<CryptographicException>(() => protector.Unprotect(changed, SecretPurpose.DatabasePassword, "42"));
-        Assert.Throws<CryptographicException>(() => protector.Unprotect("v2:db_2026:AA==", SecretPurpose.DatabasePassword, "42"));
-        Assert.Throws<CryptographicException>(() => protector.Unprotect("v3:db_2026:AA==", SecretPurpose.DatabasePassword, "42"));
-        Assert.Throws<CryptographicException>(() => protector.Unprotect("v2:missing:AA==", SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect(changed, SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect("v2:db_2026:AA==", SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect("v3:db_2026:AA==", SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Unprotect("v2:missing:AA==", SecretPurpose.DatabasePassword, "42"));
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public class VersionedSecretProtectorTests
         var rotated = after.Reprotect(oldCipher, SecretPurpose.DatabasePassword, "42")!;
         Assert.StartsWith("v2:db_2026:", rotated);
         Assert.Equal("password", after.Unprotect(rotated, SecretPurpose.DatabasePassword, "42"));
-        Assert.Throws<CryptographicException>(() => new VersionedSecretProtector(Ring())
+        Assert.ThrowsAny<CryptographicException>(() => new VersionedSecretProtector(Ring())
             .Unprotect(oldCipher, SecretPurpose.DatabasePassword, "42"));
     }
 
@@ -97,7 +97,7 @@ public class VersionedSecretProtectorTests
         var legacyKey = Encoding.UTF8.GetBytes("legacy-hmac-key-at-least-32-bytes-long");
         var legacy = new CryptoService().EncryptText("old-password", legacyKey)!;
         var withoutLegacy = new VersionedSecretProtector(Ring());
-        Assert.Throws<CryptographicException>(() => withoutLegacy.Unprotect(legacy, SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() => withoutLegacy.Unprotect(legacy, SecretPurpose.DatabasePassword, "42"));
 
         var protector = new VersionedSecretProtector(Ring(), legacyKey);
         Assert.Equal("old-password", protector.Unprotect(legacy, SecretPurpose.DatabasePassword, "42"));
@@ -150,11 +150,22 @@ public class VersionedSecretProtectorTests
     }
 
     [Fact]
+    public void LegacyMalformedBase64FailsAsCryptographicError()
+    {
+        var key = Encoding.UTF8.GetBytes("legacy-hmac-key-at-least-32-bytes-long");
+        var protector = new VersionedSecretProtector(Ring(), key);
+        Assert.ThrowsAny<CryptographicException>(() =>
+            protector.Unprotect("not-a-valid-base64-value!", SecretPurpose.DatabasePassword, "42"));
+        Assert.ThrowsAny<CryptographicException>(() =>
+            protector.Unprotect("v2:db_2026:$bad$", SecretPurpose.DatabasePassword, "42"));
+    }
+
+    [Fact]
     public void MissingIdentityAndUnknownPurposeAreRejected()
     {
         var protector = new VersionedSecretProtector(Ring());
         Assert.Throws<ArgumentException>(() => protector.Protect("secret", SecretPurpose.DatabasePassword, ""));
         Assert.Throws<ArgumentOutOfRangeException>(() => protector.Protect("secret", (SecretPurpose)99, "id"));
-        Assert.Throws<CryptographicException>(() => protector.Protect("secret", SecretPurpose.ExtraSettings, "id"));
+        Assert.ThrowsAny<CryptographicException>(() => protector.Protect("secret", SecretPurpose.ExtraSettings, "id"));
     }
 }

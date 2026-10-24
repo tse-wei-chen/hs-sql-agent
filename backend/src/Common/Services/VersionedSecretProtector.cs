@@ -71,7 +71,14 @@ public sealed class VersionedSecretProtector : ISecretProtector
             // future envelope versions must never silently downgrade to legacy.
             if (ciphertext.Contains(':') || _legacyKey is null)
                 throw new CryptographicException("Unsupported or unavailable secret envelope.");
-            return _legacyCrypto.DecryptText(ciphertext, _legacyKey);
+            try
+            {
+                return _legacyCrypto.DecryptText(ciphertext, _legacyKey);
+            }
+            catch (FormatException ex)
+            {
+                throw new CryptographicException("Malformed legacy ciphertext.", ex);
+            }
         }
 
         var keySeparator = ciphertext.IndexOf(':', Prefix.Length);
