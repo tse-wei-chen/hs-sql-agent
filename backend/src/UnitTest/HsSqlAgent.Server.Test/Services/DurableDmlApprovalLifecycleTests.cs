@@ -9,6 +9,8 @@ using HsSqlAgent.Approvals;
 using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Provider.Sqlite;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Models;
 using HsSqlAgent.Server.Tools;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Models;
@@ -134,6 +136,57 @@ public sealed class DurableDmlApprovalLifecycleTests
             document.RootElement.GetProperty("Kind").GetString());
         Assert.Equal("execute_dml_sql",
             document.RootElement.GetProperty("Payload").GetProperty("RequiredToolName").GetString());
+    }
+
+    [Fact]
+    public async Task V2PendingApproval_RemainsExecutableExactlyOnceByReadOnlyUpgradedNode()
+    {
+        await using var fixture = await Fixture.CreateAsync(v2Writes: true);
+        var approval = await PersistPendingInsertAsync(fixture);
+        await using (var scope = fixture.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AdminContext>();
+            var state = await context.DmlApprovalRequests.AsNoTracking()
+                .SingleAsync(x => x.RequestId == approval.RequestId,
+                    TestContext.Current.CancellationToken);
+            Assert.StartsWith("v2:dml_new_1:", state.ProtectedExecutionPayload);
+            var protectedPayload = scope.ServiceProvider.GetRequiredService<ISecretProtector>()
+                .Unprotect(state.ProtectedExecutionPayload, SecretPurpose.DurableDmlPayload, state.RequestId);
+            Assert.Contains("SchemaVersion", protectedPayload);
+        }
+
+        // The restarted instance has new-format reading enabled but never writes
+        // v2 itself, exercising the operator's rolling-upgrade compatibility.
+        await using var restarted = fixture.CreateRestartedServices(enableV2Reader: true);
+        await using var scope2 = restarted.CreateAsyncScope();
+        var lifecycle = fixture.CreateLifecycle(scope2.ServiceProvider, new TypedDmlRuntime());
+        var completion = await lifecycle.CompleteAsync(
+            DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(DmlApprovalCompletionStatus.Executed, completion.Status);
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+
+        var replay = await lifecycle.CompleteAsync(
+            DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(DmlApprovalCompletionStatus.AlreadyCompleted, replay.Status);
+        Assert.Equal(1L, await fixture.CountTargetRowsAsync());
+    }
+
+    [Fact]
+    public async Task V2PendingApproval_OldOnlyReaderDoesNotExecuteTarget()
+    {
+        await using var fixture = await Fixture.CreateAsync(v2Writes: true);
+        var approval = await PersistPendingInsertAsync(fixture);
+        await using var restarted = fixture.CreateRestartedServices();
+        await using var scope = restarted.CreateAsyncScope();
+        var lifecycle = fixture.CreateLifecycle(scope.ServiceProvider, new TypedDmlRuntime());
+        var result = await lifecycle.CompleteAsync(
+            DmlApprovalCompletion.Approve(approval.RequestId, approval.ApprovalFingerprint),
+            TestContext.Current.CancellationToken);
+        Assert.NotEqual(DmlApprovalCompletionStatus.Executed, result.Status);
+        Assert.False(result.Retryable);
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
     }
 
     [Fact]
@@ -1247,7 +1300,7 @@ public sealed class DurableDmlApprovalLifecycleTests
         private Mock<ISqlProviderFactory> ProviderFactory { get; }
         private Mock<ISqlConnectionStringFactory> ConnectionStringFactory { get; }
 
-        public static async Task<Fixture> CreateAsync()
+        public static async Task<Fixture> CreateAsync(bool v2Writes = false)
         {
             var adminPath = Path.Combine(Path.GetTempPath(), $"hsqlagent-durable-admin-{Guid.NewGuid():N}.db");
             var targetPath = Path.Combine(Path.GetTempPath(), $"hsqlagent-durable-target-{Guid.NewGuid():N}.db");
@@ -1267,7 +1320,7 @@ public sealed class DurableDmlApprovalLifecycleTests
                     It.IsAny<BuildDbConnectionModelBase>()))
                 .Returns(targetConnectionString);
 
-            var services = BuildServices(adminPath);
+            var services = BuildServices(adminPath, enableV2Reader: v2Writes, v2Writes: v2Writes);
 
             await using (var scope = services.CreateAsyncScope())
             {
@@ -1317,17 +1370,21 @@ public sealed class DurableDmlApprovalLifecycleTests
             bool failAudit = false,
             bool failTerminalSave = false,
             bool failUnknownSave = false,
-            bool failTerminalSaveAfterSuccess = false) =>
+            bool failTerminalSaveAfterSuccess = false,
+            bool enableV2Reader = false) =>
             BuildServices(
                 AdminDatabasePath, failAudit, failTerminalSave,
-                failUnknownSave, failTerminalSaveAfterSuccess);
+                failUnknownSave, failTerminalSaveAfterSuccess,
+                enableV2Reader: enableV2Reader);
 
         private static ServiceProvider BuildServices(
             string adminDatabasePath,
             bool failAudit = false,
             bool failTerminalSave = false,
             bool failUnknownSave = false,
-            bool failTerminalSaveAfterSuccess = false)
+            bool failTerminalSaveAfterSuccess = false,
+            bool enableV2Reader = false,
+            bool v2Writes = false)
         {
             var adminConnectionString = new SqliteConnectionStringBuilder
             {
@@ -1357,6 +1414,24 @@ public sealed class DurableDmlApprovalLifecycleTests
             }
             serviceCollection.AddSingleton<ICryptoService, CryptoService>();
             serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
+            if (enableV2Reader)
+            {
+                var encryption = new SecretEncryptionOptions
+                {
+                    Enabled = true,
+                    EnableV2DurableDmlWrites = v2Writes,
+                    AllNodesDualReadConfirmed = v2Writes
+                };
+                encryption.Purposes["DurableDmlPayload"] = new SecretEncryptionPurposeOptions
+                {
+                    ActiveKeyId = "dml_new_1",
+                    Keys = new Dictionary<string, string>
+                    {
+                        ["dml_new_1"] = Convert.ToBase64String(Enumerable.Repeat((byte)0xb7, 32).ToArray())
+                    }
+                };
+                serviceCollection.AddHsSqlAgentSecretEncryption(encryption);
+            }
             return serviceCollection.BuildServiceProvider();
         }
 

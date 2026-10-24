@@ -8,6 +8,16 @@ namespace HsSqlAgent.Server.Models;
 public sealed class SecretEncryptionOptions
 {
     public bool Enabled { get; set; }
+    /// <summary>
+    /// Explicit rollout opt-in. Only Durable DML payloads may be written in v2
+    /// after all nodes have deployed legacy/v2 dual-read support.
+    /// </summary>
+    public bool EnableV2DurableDmlWrites { get; set; }
+    /// <summary>
+    /// Operator attestation; this is NOT a distributed compatibility probe.
+    /// Never set true while an old-only node can read approval state.
+    /// </summary>
+    public bool AllNodesDualReadConfirmed { get; set; }
     public Dictionary<string, SecretEncryptionPurposeOptions> Purposes { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 }

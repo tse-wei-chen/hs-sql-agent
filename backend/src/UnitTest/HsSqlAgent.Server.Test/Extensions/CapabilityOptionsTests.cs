@@ -130,6 +130,51 @@ public sealed class CapabilityOptionsTests
             }));
     }
 
+    [Fact]
+    public void V2DurableDmlWrites_RequireEncryptionFullFleetConfirmationAndPurposeKey()
+    {
+        var missingEncryption = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            missingEncryption.AddHsSqlAgentCore().AddHsSqlAgentRuntime(o =>
+            {
+                o.SecretEncryption.EnableV2DurableDmlWrites = true;
+                o.SecretEncryption.AllNodesDualReadConfirmed = true;
+            }));
+
+        var noConfirmation = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            noConfirmation.AddHsSqlAgentCore().AddHsSqlAgentRuntime(o =>
+            {
+                o.SecretEncryption.Enabled = true;
+                o.SecretEncryption.EnableV2DurableDmlWrites = true;
+                o.SecretEncryption.Purposes["DurableDmlPayload"] = new SecretEncryptionPurposeOptions
+                {
+                    ActiveKeyId = "dml_key",
+                    Keys = new Dictionary<string, string>
+                    {
+                        ["dml_key"] = Convert.ToBase64String(Enumerable.Repeat((byte)0x61, 32).ToArray())
+                    }
+                };
+            }));
+
+        var missingPurpose = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            missingPurpose.AddHsSqlAgentCore().AddHsSqlAgentRuntime(o =>
+            {
+                o.SecretEncryption.Enabled = true;
+                o.SecretEncryption.EnableV2DurableDmlWrites = true;
+                o.SecretEncryption.AllNodesDualReadConfirmed = true;
+                o.SecretEncryption.Purposes["DatabasePassword"] = new SecretEncryptionPurposeOptions
+                {
+                    ActiveKeyId = "db_key",
+                    Keys = new Dictionary<string, string>
+                    {
+                        ["db_key"] = Convert.ToBase64String(Enumerable.Repeat((byte)0x62, 32).ToArray())
+                    }
+                };
+            }));
+    }
+
     private static void AssertJsonEqual<T>(T expected, T actual)
     {
         var expectedJson = JsonSerializer.Serialize(expected);

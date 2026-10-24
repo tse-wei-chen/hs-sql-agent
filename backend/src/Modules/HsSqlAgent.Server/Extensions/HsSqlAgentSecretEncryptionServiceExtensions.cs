@@ -4,6 +4,7 @@ using Admin.Service.Models;
 using Common.Interfaces;
 using Common.Services;
 using HsSqlAgent.Server.Models;
+using HsSqlAgent.Server.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
@@ -23,7 +24,18 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
+        if (options.EnableV2DurableDmlWrites &&
+            (!options.Enabled || !options.AllNodesDualReadConfirmed))
+            throw new InvalidOperationException(
+                "V2 Durable DML writes require enabled SecretEncryption and explicit full-fleet dual-read confirmation.");
+
         if (!options.Enabled) return services;
+
+        if (options.EnableV2DurableDmlWrites &&
+            !options.Purposes.Keys.Any(p =>
+                string.Equals(p, nameof(SecretPurpose.DurableDmlPayload), StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException(
+                "V2 Durable DML writes require a DurableDmlPayload key ring.");
 
         if (options.Purposes is null || options.Purposes.Count == 0)
             throw new InvalidOperationException("SecretEncryption:Purposes needs at least one configured purpose.");
@@ -55,6 +67,7 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
             // rejects reuse of key material across multiple key IDs/purposes.
             var ring = new SecretKeyRing(keys);
             services.TryAddSingleton<ISecretKeyRing>(ring);
+            services.TryAddSingleton(new SecretEncryptionWritePolicy(options.EnableV2DurableDmlWrites));
             services.TryAddSingleton<ISecretProtector>(sp =>
             {
                 var hmac = sp.GetService<IOptions<McpKeySettings>>()?.Value.HmacSecretKey;

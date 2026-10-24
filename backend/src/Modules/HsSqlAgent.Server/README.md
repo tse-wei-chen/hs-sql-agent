@@ -338,9 +338,31 @@ wrong record identities and unknown versions fail closed.
 The Durable DML completion handler and independent commit-witness verification
 also share a version-aware, fail-closed **payload reader**. Its AAD identity is
 the immutable `DmlApprovalRequestState.RequestId`, with purpose
-`DurableDmlPayload`. Existing approval **payload writes and connection
-fingerprints remain legacy**. Pending/Executing approvals are neither changed
-nor replayed by enabling this reader.
+`DurableDmlPayload`. Existing approval **payload writes default to legacy**, and connection
+fingerprints remain HMAC-bound to the original key. Pending/Executing approvals
+are neither changed nor replayed by enabling this reader.
+
+### Explicit v2 Durable DML payload write rollout
+
+Only after upgrading **every** DML worker, callback handler and witness
+inspection node to the dual-reader build, setting an identical
+`SecretEncryption:Purposes:DurableDmlPayload` key ring on all of them, and
+verifying that no old-only nodes will resume, operators may enable:
+
+```text
+SecretEncryption__Enabled=true
+SecretEncryption__EnableV2DurableDmlWrites=true
+SecretEncryption__AllNodesDualReadConfirmed=true
+```
+
+These settings fail configuration validation unless both explicit opt-ins and a
+DurableDmlPayload key ring are present. `AllNodesDualReadConfirmed` is an
+**operator declaration, not automatic fleet verification**. Enabling v2 only
+affects *new* Pending approval payloads; it does not migrate old approvals,
+change the HMAC connection fingerprint, change admission fencing or alter
+at-most-once execution. Rollbacks to old-only readers after v2 writes are
+**not safe**. New test coverage demonstrates post-restart consumption by a
+read-only-upgraded instance and fail-closed non-execution by an old-only one.
 
 Existing Admin Store password **writers remain legacy** until old-only deployed
 instances have been upgraded. Do not manually migrate DB passwords in a mixed-

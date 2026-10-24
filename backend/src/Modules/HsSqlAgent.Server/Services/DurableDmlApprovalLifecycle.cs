@@ -111,8 +111,17 @@ internal sealed class DurableDmlApprovalLifecycle(
             ComputeConnectionFingerprint(connectionString, secret),
             runtime.HasTargetExecutionFence ? TargetFenceProtocol : null,
             RequiresCommitWitness: runtime.HasTargetCommitWitness);
-        var protectedPayload = crypto.EncryptText(DurableDmlResumePayloadCodec.Serialize(payload), secret)
-                               ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
+        var serializedPayload = DurableDmlResumePayloadCodec.Serialize(payload);
+        // All legacy approvals remain readable. New writes switch only after
+        // every worker has a dual-reader; keep HMAC connection fingerprint
+        // unchanged until a separate, proven rotation protocol exists.
+        var useV2 = services.GetService<SecretEncryptionWritePolicy>()?.EnableV2DurableDmlWrites == true;
+        var protectedPayload = useV2
+            ? (services.GetRequiredService<ISecretProtector>().Protect(
+                serializedPayload, SecretPurpose.DurableDmlPayload, request.RequestId)
+                ?? throw new InvalidOperationException("Could not protect durable DML approval payload."))
+            : (crypto.EncryptText(serializedPayload, secret)
+                ?? throw new InvalidOperationException("Could not protect durable DML approval payload."));
 
         context.DmlApprovalRequests.Add(new DmlApprovalRequestState
         {
