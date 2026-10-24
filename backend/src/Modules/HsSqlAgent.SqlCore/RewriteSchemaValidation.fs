@@ -252,7 +252,7 @@ module internal RewriteSchemaValidation =
     type private SchemaQueryFrame =
         | ResumeSchemaCte of Map<string, string list> * Scope option * Query * Cte
         | ResumeSchemaDerived of Map<string, string list> * Scope option * Query * Span * IdentifierPart
-        | ResumeSchemaJoinedLateral of Map<string, string list> * Scope option * Query * Span * IdentifierPart
+        | ResumeSchemaJoinedLateral of Map<string, string list> * Scope option * Query * Span * IdentifierPart * int
         | ResumeSchemaExists of string list
         | ResumeSchemaIn of string list
         | ResumeSchemaScalarProjection
@@ -353,9 +353,9 @@ module internal RewriteSchemaValidation =
     and private selectColumnsWithFirst catalog inheritedCtes parent (select: Select) firstOverride =
         selectColumnsWithJoinOverride catalog inheritedCtes parent select firstOverride None
 
-    // A previously proved first JOIN LATERAL source can be supplied as a
-    // resolved row shape. The remaining JOIN semantics and expression order
-    // are identical to the ordinary path.
+    // A previously proved JOIN LATERAL source can be supplied at its exact
+    // index. Earlier joins must be proved in their original lexical scope
+    // before the child query; all JOIN predicates are rechecked in order.
     and private selectColumnsWithJoinOverride catalog inheritedCtes parent (select: Select) firstOverride joinOverride =
         let mutable ctes = inheritedCtes
         for cte in select.Ctes do
@@ -380,18 +380,18 @@ module internal RewriteSchemaValidation =
                 | None -> makeScope parent []
                 | Some item -> makeScope parent [ source catalog ctes parent item ]
         let mutable current = first
-        let mutable firstJoin = true
+        let mutable joinIndex = 0
         for join in select.Joins do
             let added =
-                match firstJoin, joinOverride with
-                | true, Some resolved -> resolved
+                match joinOverride with
+                | Some (targetIndex, resolved) when targetIndex = joinIndex -> resolved
                 | _ ->
                     let sourceParent =
                         match join.Source with
                         | LateralDerivedTable _ -> Some current
                         | _ -> current.Parent
                     source catalog ctes sourceParent join.Source
-            firstJoin <- false
+            joinIndex <- joinIndex + 1
             let mergeKeys =
                 match join with
                 | UsingJoin(_, _, columns) ->
@@ -494,11 +494,25 @@ module internal RewriteSchemaValidation =
             | [], [], _, _, _, _ when current.Head.Joins.Length = 1 ->
                 match current.Head.From, current.Head.Joins.Head.Source with
                 | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
-                    // The joined LATERAL sees exactly the preceding FROM
-                    // source, then its outer scope. Never expose later JOINs.
+                    // Only previously visible sources are inherited by
+                    // a lateral Query, never later joins or outer aliases
+                    // shadowed by a current-frame table alias.
                     let initial = makeScope currentParent [ source catalog ctes currentParent first ]
-                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias))
+                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 0))
                     currentParent <- Some initial
+                    current <- inner
+                | _ -> scanning <- false
+            | [], [], _, _, _, _ when current.Head.Joins.Length = 2 ->
+                match current.Head.From, current.Head.Joins with
+                | Some ((NamedTable _ | CteTable _) as first),
+                  [ OnJoin(OnJoinKind.Inner, (NamedTable _ | CteTable _) as firstJoinSource, firstPredicate);
+                    OnJoin(OnJoinKind.Inner, LateralDerivedTable(inner, alias), _) ] ->
+                    let initial = makeScope currentParent [ source catalog ctes currentParent first ]
+                    let preceding = source catalog ctes currentParent firstJoinSource
+                    let visible = makeScope currentParent (initial.Sources @ [ preceding ])
+                    expression catalog ctes visible Span.unknown firstPredicate
+                    pending.Add(ResumeSchemaJoinedLateral(ctes, currentParent, current, inner.Span, alias, 1))
+                    currentParent <- Some visible
                     current <- inner
                 | _ -> scanning <- false
             | [], [], _, _, _, _ when current.Head.Joins.IsEmpty ->
@@ -548,14 +562,14 @@ module internal RewriteSchemaValidation =
                 outer.OrderBy |> List.iter (fun item ->
                     expression catalog visibleCtes scope Span.unknown item.Expression)
                 projected <- output
-            | ResumeSchemaJoinedLateral(inherited, originalParent, outer, innerSpan, alias) ->
+            | ResumeSchemaJoinedLateral(inherited, originalParent, outer, innerSpan, alias, joinIndex) ->
                 let resolved =
                     projected
                     |> requireNamedProjection innerSpan
                     |> aliasedSource catalog.Dialect alias
                 let scope, visibleCtes, output =
                     selectColumnsWithJoinOverride catalog inherited originalParent
-                        outer.Head None (Some resolved)
+                        outer.Head None (Some(joinIndex, resolved))
                 outer.OrderBy |> List.iter (fun item ->
                     expression catalog visibleCtes scope Span.unknown item.Expression)
                 projected <- output

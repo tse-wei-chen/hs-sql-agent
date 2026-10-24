@@ -368,6 +368,7 @@ module internal RewriteRenderer =
         | FinishMixedDerived of outer: Query * alias: IdentifierPart
         | FinishMixedLateral of outer: Query * alias: IdentifierPart
         | FinishMixedJoinedLateral of outer: Query * preceding: TableSource * alias: IdentifierPart * onPredicate: Expr
+        | FinishMixedPrefixedJoinedLateral of outer: Query * preceding: TableSource * earlier: Join * alias: IdentifierPart * onPredicate: Expr
 
     let rec private renderExpr (ctx: RenderContext) expression =
         RewriteStackSafety.compile SqlDiagnosticStage.RenderingInvariant
@@ -1941,6 +1942,15 @@ module internal RewriteRenderer =
                             sawLateral <- true
                             current <- inner
                         | message -> raise (SqlCompilationException(message))
+                    | [ (OnJoin(OnJoinKind.Inner, (TableSource.NamedTable _ | TableSource.CteTable _), _) as early);
+                        OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) ] ->
+                        match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
+                                  providerTool ctx.Provider, null) with
+                        | null ->
+                            frames.Add(FinishMixedPrefixedJoinedLateral(current, preceding, early, alias, predicate))
+                            sawLateral <- true
+                            current <- inner
+                        | message -> raise (SqlCompilationException(message))
                     | _ -> scanning <- false
                 | _ -> scanning <- false
             else
@@ -1961,7 +1971,8 @@ module internal RewriteRenderer =
                        .Append(" AS (") |> ignore
                 | FinishMixedDerived(outer, _)
                 | FinishMixedLateral(outer, _)
-                | FinishMixedJoinedLateral(outer, _, _, _) as frame ->
+                | FinishMixedJoinedLateral(outer, _, _, _)
+                | FinishMixedPrefixedJoinedLateral(outer, _, _, _, _) as frame ->
                     sql.Append("SELECT ") |> ignore
                     outer.Head.Projection
                     |> List.iteri (fun index item ->
@@ -1974,6 +1985,14 @@ module internal RewriteRenderer =
                     | FinishMixedJoinedLateral(_, preceding, _, _) ->
                         sql.Append(" FROM ").Append(renderSource ctx preceding)
                            .Append(" INNER JOIN LATERAL (") |> ignore
+                    | FinishMixedPrefixedJoinedLateral(_, preceding, earlier, _, _) ->
+                        sql.Append(" FROM ").Append(renderSource ctx preceding)
+                           .Append(" INNER JOIN ").Append(renderSource ctx earlier.Source) |> ignore
+                        match earlier with
+                        | OnJoin(_, _, condition) ->
+                            sql.Append(" ON ").Append(renderPredicate ctx condition) |> ignore
+                        | _ -> invalidOp "Streaming JOIN proof requires an ON predicate."
+                        sql.Append(" INNER JOIN LATERAL (") |> ignore
                     | _ -> sql.Append(" FROM (") |> ignore
 
             sql.Append(renderQueryCore ctx current) |> ignore
@@ -1991,7 +2010,8 @@ module internal RewriteRenderer =
                        .Append(renderAlias ctx.Provider alias) |> ignore
                     outer.Head.Where |> Option.iter (fun predicate ->
                         sql.Append(" WHERE ").Append(renderPredicate ctx predicate) |> ignore)
-                | FinishMixedJoinedLateral(outer, _, alias, onPredicate) ->
+                | FinishMixedJoinedLateral(outer, _, alias, onPredicate)
+                | FinishMixedPrefixedJoinedLateral(outer, _, _, alias, onPredicate) ->
                     sql.Append(')')
                        .Append(tableAliasPrefix ctx.Provider)
                        .Append(renderAlias ctx.Provider alias)
