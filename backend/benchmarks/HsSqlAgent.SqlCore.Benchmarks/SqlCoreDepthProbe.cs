@@ -29,7 +29,8 @@ internal static class SqlCoreDepthProbe
          "nested-correlated-exists-typed-schema",
          "nested-correlated-in", "nested-correlated-in-typed-schema",
          "nested-scalar-subquery-typed-schema", "nested-case-scalar",
-         "nested-case-scalar-typed-schema"];
+         "nested-case-scalar-typed-schema",
+         "nested-prefixed-joined-lateral", "nested-prefixed-joined-lateral-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -69,6 +70,17 @@ internal static class SqlCoreDepthProbe
 
     // The innermost SELECT has no FROM, so its u.id is genuinely
     // correlated with the outer scope, not a local same-named table.
+    // A preceding regular JOIN introduces v, which the second JOIN
+    // LATERAL must see at each level, without losing outer correlation.
+    private static string NestPrefixedJoinedLateral(int depth)
+    {
+        var sql = "SELECT v.id AS id";
+        for (var level = 0; level < depth; level++)
+            sql = "SELECT l.id FROM users u JOIN users v ON v.id = u.id "
+                + "JOIN LATERAL (" + sql + ") l ON l.id = v.id";
+        return sql;
+    }
+
     private static string NestCorrelatedExists(int depth)
     {
         var sql = "SELECT u.id";
@@ -181,6 +193,8 @@ internal static class SqlCoreDepthProbe
                 NestLateralDerived(depth),
             "nested-joined-lateral" or "nested-joined-lateral-typed-schema" =>
                 NestJoinedLateral(depth),
+            "nested-prefixed-joined-lateral" or "nested-prefixed-joined-lateral-typed-schema" =>
+                NestPrefixedJoinedLateral(depth),
             "nested-correlated-exists" or "nested-correlated-exists-typed-schema" =>
                 NestCorrelatedExists(depth),
             "nested-correlated-in" or "nested-correlated-in-typed-schema" =>
@@ -227,6 +241,7 @@ internal static class SqlCoreDepthProbe
                     or "mixed-cte-derived-typed-schema"
                     or "nested-lateral-derived-typed-schema"
                     or "nested-joined-lateral-typed-schema"
+                    or "nested-prefixed-joined-lateral-typed-schema"
                     or "nested-correlated-exists-typed-schema"
                     or "nested-correlated-in-typed-schema"
                     or "nested-scalar-subquery-typed-schema"

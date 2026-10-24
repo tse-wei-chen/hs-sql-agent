@@ -491,6 +491,44 @@ jobs:
               print(f"  {item['shape']:39} depth={item['depth']:4} success={worker.get('success')} allocated={worker.get('allocatedBytes')}")
           print(f"Correlated 256 KiB: compiled={succeeded}/12, no resource refusals or crashes")
           PY
+      - name: Verify prefixed second JOIN LATERAL correlation on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-prefixed-joined-lateral,nested-prefixed-joined-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-prefixed-join-lateral-pr.json
+      - name: Gate second JOIN LATERAL full compilation and typed scope
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-prefixed-join-lateral-pr.json").open(encoding="utf-8") as stream:
+              report = json.load(stream)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Prefixed second JOIN LATERAL must compile all 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          stages = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              typed = item["shape"].endswith("-typed-schema")
+              expected = stages | ({"SchemaBinding", "SchemaType"} if typed else set())
+              succeeded = {s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")}
+              if not worker.get("success") or item["processExitCode"] != 0 or not expected.issubset(succeeded):
+                  raise SystemExit("Prefixed LATERAL skipped a required proof: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), succeeded)))
+              if item["depth"] == 2048:
+                  render = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 180_000_000
+                      or len(render) != 1 or render[0]["AllocatedBytes"] > 60_000_000):
+                      raise SystemExit("Prefixed LATERAL 2048 allocation regression: " + item["shape"])
+              print(f"  {item['shape']:42} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
+          print("Prefixed second JOIN LATERAL 256 KiB: compiled=6/6")
+          PY
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -612,6 +650,7 @@ jobs:
             artifacts/sqlcore-lateral-small-stack-pr.json
             artifacts/sqlcore-cte-small-stack-pr.json
             artifacts/sqlcore-correlated-small-stack-pr.json
+            artifacts/sqlcore-prefixed-join-lateral-pr.json
             artifacts/sqlcore-in-small-stack-pr.json
             artifacts/sqlcore-scalar-case-small-stack-pr.json
           if-no-files-found: warn

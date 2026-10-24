@@ -246,6 +246,31 @@ public sealed class CoreSchemaSnapshotBindingTests
         Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
     }
 
+
+    [Fact]
+    public void PrefixedSecondJoinLateralChain_ResolvesPriorSourceAndPreservesFirstError()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres);
+        static string Wrap(string sql) =>
+            "SELECT l.id FROM users u JOIN users v ON v.id = u.id "
+            + "JOIN LATERAL (" + sql + ") l ON l.id = v.id";
+        var valid = "SELECT v.id AS id";
+        for (var level = 0; level < depth; level++)
+            valid = Wrap(valid);
+        var compiled = SqlCoreFacade.CompileQuery(valid, SqlAgentToolType.Postgres,
+            SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy());
+        Assert.Equal(depth, compiled.Sql.Split("LATERAL (", StringSplitOptions.None).Length - 1);
+
+        var invalid = "SELECT v.missing AS id";
+        for (var level = 0; level < depth; level++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres,
+                SqlAgentToolType.Postgres, context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void JoinedCorrelatedLateralChain_UsesSchemaContinuationsAndPreservesFirstError()
     {
