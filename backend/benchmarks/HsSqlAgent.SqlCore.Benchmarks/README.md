@@ -74,6 +74,12 @@ rejections are still printed explicitly in the uploaded report.
   successful compilation: this gate proves safety, not complete R2
   stack-independent capability.
 
+- The opt-in `nested-correlated-in` probe exercises WHERE identifier IN (Query) under
+  256-KiB workers at depths 128/512/2048 with both ordinary and strict typed
+  schema. CI requires **six successful compilations**, complete stage
+  telemetry and measured 2,048-depth allocation ceilings; stack-reserve
+  refusals or crashes fail this capability gate.
+
 - Cross-dialect translation, huge inputs, pathological nesting, type metadata, I/O,
   and database execution are **not** measured by this initial harness.
 - No performance percentage or regression threshold is asserted before establishing a

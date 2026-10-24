@@ -78,6 +78,23 @@ public sealed class CoreBinderJoinScopeTests
         Assert.Contains("LATERAL", compiled.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void Compile_StreamingInSubquery_PreservesProjectionFirstParameters(SqlAgentToolType dialect)
+    {
+        var sql = "SELECT 11 FROM users WHERE id IN ("
+            + "SELECT 22 FROM users WHERE id IN (SELECT 33 FROM users))";
+        var compiled = Compile(sql, dialect);
+        Assert.Equal(new long[] { 11, 22, 33 },
+            compiled.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType provider) =>
         CoreSqlCompiler.CreateDefault().Compile(
             CoreSqlTextParser.ParseQuery(sql, provider),

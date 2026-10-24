@@ -145,6 +145,22 @@ public sealed class CoreSchemaSnapshotBindingTests
     }
 
 
+
+    [Fact]
+    public void WhereInFollowedByAnd_UsesOriginalBooleanParser()
+    {
+        var dialect = SqlAgentToolType.Postgres;
+        var valid = "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders) AND id = 7";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders) AND missing = 7";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, dialect, dialect, Context(dialect), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void DeepCorrelatedInSubquery_PreservesStrictSchemaFirstError()
     {
