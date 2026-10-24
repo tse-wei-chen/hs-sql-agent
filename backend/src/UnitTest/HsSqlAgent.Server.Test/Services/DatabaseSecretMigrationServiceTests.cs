@@ -182,6 +182,138 @@ public sealed class DatabaseSecretMigrationServiceTests
     }
 
     [Fact]
+    public async Task ConcurrentAdminPasswordChange_IsNotOverwrittenOrAudited_AndCanResume()
+    {
+        // Use two independent contexts on the same open SQLite connection.
+        // A real Admin writer changes the value AFTER the migration's read,
+        // but BEFORE its CAS. The migrator must never replace that value.
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
+        await using var migrationContext = new AdminContext(options);
+        await migrationContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        var crypto = new CryptoService();
+        var original = crypto.EncryptText("old-password", OldSecret);
+        migrationContext.DbManagement.Add(new DbManagement
+        {
+            Name = "concurrent", PasswordHash = original,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        });
+        await migrationContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        var recordId = migrationContext.DbManagement.Single().Id;
+        var adminReplacement = crypto.EncryptText("new-admin-password", OldSecret);
+        var (protector, ring) = CreateKeys();
+
+        var racingProtector = new InterleavedPasswordUpdateProtector(protector, () =>
+        {
+            using var adminContext = new AdminContext(options);
+            var count = adminContext.DbManagement
+                .Where(x => x.Id == recordId)
+                .ExecuteUpdate(x => x.SetProperty(y => y.PasswordHash, adminReplacement));
+            Assert.Equal(1, count);
+        });
+
+        var migration = new DatabaseSecretMigrationService(
+            migrationContext, crypto, Options.Create(new McpKeySettings { HmacSecretKey = Hmac }),
+            racingProtector, ring, new Policy());
+        var result = await migration.MigrateBatchAsync(
+            0, 25, TestContext.Current.CancellationToken, "security-operator");
+
+        Assert.Equal(0, result.Migrated);
+        Assert.Equal(1, result.ConcurrentChanges);
+        Assert.Equal(recordId, result.NextAfterId);
+        migrationContext.ChangeTracker.Clear();
+        var stored = await migrationContext.DbManagement.AsNoTracking()
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(adminReplacement, stored.PasswordHash);
+        Assert.Equal("new-admin-password", crypto.DecryptText(stored.PasswordHash, OldSecret));
+        Assert.Empty(await migrationContext.AuditLogs.ToListAsync(TestContext.Current.CancellationToken));
+
+        // A conservative re-scan from the previous cursor is idempotent and
+        // migrates the admin's NEW value, not the stale password.
+        var resumed = new DatabaseSecretMigrationService(
+            migrationContext, crypto, Options.Create(new McpKeySettings { HmacSecretKey = Hmac }),
+            protector, ring, new Policy());
+        var retry = await resumed.MigrateBatchAsync(
+            0, 25, TestContext.Current.CancellationToken, "security-operator");
+        Assert.Equal(1, retry.Migrated);
+        migrationContext.ChangeTracker.Clear();
+        stored = await migrationContext.DbManagement.AsNoTracking()
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("new-admin-password", protector.Unprotect(
+            stored.PasswordHash, SecretPurpose.DatabasePassword,
+            recordId.ToString(CultureInfo.InvariantCulture)));
+        var audit = await migrationContext.AuditLogs.AsNoTracking()
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(recordId, audit.DbManagementId);
+        Assert.Equal("security-operator", audit.ActorId);
+    }
+
+    [Fact]
+    public async Task DmlAdmissionAfterMigrationRead_BlocksWriteAndLeavesPasswordUnchanged()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(connection).Options;
+        await using var migrationContext = new AdminContext(options);
+        await migrationContext.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        var crypto = new CryptoService();
+        var original = crypto.EncryptText("original-password", OldSecret);
+        migrationContext.DbManagement.Add(new DbManagement
+        {
+            Name = "target", PasswordHash = original,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        });
+        await migrationContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        var (protector, ring) = CreateKeys();
+        var racingProtector = new InterleavedPasswordUpdateProtector(protector, () =>
+        {
+            using var actor = new AdminContext(options);
+            actor.DmlApprovalRequests.Add(new DmlApprovalRequestState
+            {
+                RequestId = "new-pending", Status = "Pending",
+                ApprovalFingerprint = new string('a', 64),
+                EvidenceFingerprint = new string('b', 64),
+                ProtectedExecutionPayload = "protected-payload",
+                RequesterIdentity = "requester", TargetIdentity = "target",
+                DatabaseProvider = "Postgres", DatabaseIdentity = "target",
+                RequiredToolName = "execute_dml_sql",
+                CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddHours(1)
+            });
+            actor.SaveChanges();
+        });
+        var migration = new DatabaseSecretMigrationService(
+            migrationContext, crypto, Options.Create(new McpKeySettings { HmacSecretKey = Hmac }),
+            racingProtector, ring, new Policy());
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            migration.MigrateBatchAsync(0, 25, TestContext.Current.CancellationToken));
+        migrationContext.ChangeTracker.Clear();
+        Assert.Equal(original, (await migrationContext.DbManagement.AsNoTracking()
+            .SingleAsync(TestContext.Current.CancellationToken)).PasswordHash);
+        Assert.Empty(await migrationContext.AuditLogs.ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    private sealed class InterleavedPasswordUpdateProtector(
+        ISecretProtector inner, Action beforeFirstProtect) : ISecretProtector
+    {
+        private bool _invoked;
+        public string? Protect(string? plaintext, SecretPurpose purpose, string recordId)
+        {
+            if (!_invoked)
+            {
+                _invoked = true;
+                beforeFirstProtect();
+            }
+            return inner.Protect(plaintext, purpose, recordId);
+        }
+        public string? Unprotect(string? ciphertext, SecretPurpose purpose, string recordId)
+            => inner.Unprotect(ciphertext, purpose, recordId);
+        public string? Reprotect(string? ciphertext, SecretPurpose purpose, string recordId)
+            => inner.Reprotect(ciphertext, purpose, recordId);
+    }
+
+    [Fact]
     public async Task MigrationWithWrongLegacyKeyFailsWithoutAnyRowChanges()
     {
         await using var conn = new SqliteConnection("Data Source=:memory:");
