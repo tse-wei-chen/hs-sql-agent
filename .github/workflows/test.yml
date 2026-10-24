@@ -527,6 +527,33 @@ jobs:
               print(f"  {item['shape']:36} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
           print("Correlated IN small-stack: compiled 6/6, no stack reserve or crash")
           PY
+      - name: Diagnose projection ScalarSubquery and CASE Query crossings on small stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-scalar-subquery,nested-scalar-subquery-typed-schema,nested-case-scalar,nested-case-scalar-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-scalar-case-small-stack-pr.json
+      - name: Report projection Query crossings, preserving refusal versus success
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-scalar-case-small-stack-pr.json", encoding="utf-8") as source:
+              report = json.load(source)
+          if report["samples"] != 12 or report["crashesOrTimeouts"] or report["unexpectedFailures"]:
+              raise SystemExit("Projection-Query worker crashed or returned an untyped failure: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["unexpectedFailures"])))
+          compiled = 0
+          for item in report["observations"]:
+              worker = item["worker"] or {}
+              stages = [s["Stage"] for s in worker.get("stageMetrics", []) if s.get("Success")]
+              if worker.get("success"):
+                  compiled += 1
+              print(f"  {item['shape']:36} depth={item['depth']:4} compiled={worker.get('success')} code={worker.get('diagnosticCode')} stages={stages}")
+          print(f"Projection Query mixed depth: compiled={compiled}/12 refused={report['resourceRejections']}/12")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -564,6 +591,7 @@ jobs:
             artifacts/sqlcore-cte-small-stack-pr.json
             artifacts/sqlcore-correlated-small-stack-pr.json
             artifacts/sqlcore-in-small-stack-pr.json
+            artifacts/sqlcore-scalar-case-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:
