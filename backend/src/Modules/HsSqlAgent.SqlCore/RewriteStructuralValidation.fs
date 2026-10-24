@@ -74,79 +74,85 @@ module internal RewriteStructuralValidation =
         | StructuralExpr of expression: Expr * allowCountWildcard: bool
         | StructuralQuery of query: Query
 
+    // Shared scalar edge scheduler used by both the standalone DML visitor
+    // and query-wide CTE/no-FROM worklists. In particular, expression
+    // subqueries enqueue Query frames instead of calling back recursively.
+    let private queueStructuralChildren
+        (pushExpr: bool -> Expr -> unit) (pushQuery: Query -> unit)
+        allowWildcard value =
+        let push = pushExpr false
+        let pushExprs (values: Expr list) =
+            for item in List.rev values do push item
+        let pushOrders (values: OrderBy list) =
+            for order in List.rev values do push order.Expression
+        match value with
+        | Spanned(_, inner) -> pushExpr allowWildcard inner
+        | Unary(_, operand) | Cast(operand, _) | Extract(_, operand)
+        | PostgresJsonAccess(operand, _, _) | IsNull(operand, _) -> push operand
+        | DateAdd(_, left, right) | DateDiff(_, left, right)
+        | Binary(_, left, right) | Like(left, right, _, _, _)
+        | RegexMatch(left, right) | FilteredAggregate(left, right) ->
+            push right
+            push left
+        | RawRegexCall(args, _) -> pushExprs args
+        | FunctionCall call ->
+            pushOrders call.AggregateOrderBy
+            let args = List.toArray call.Arguments
+            let name = FunctionName.value call.Name |> fun v -> v.Trim().ToUpperInvariant()
+            for index = args.Length - 1 downto 0 do
+                let wildcard =
+                    not (FunctionName.hasQuotedParts call.Name)
+                    && name = "COUNT" && index = 0
+                    && (match Expr.unspan args.[index] with
+                        | Wildcard None -> true
+                        | _ -> false)
+                pushExpr wildcard args.[index]
+        | Windowed(value, window) ->
+            pushOrders window.OrderBy
+            pushExprs window.PartitionBy
+            push value
+        | SimpleCase(input, branches, fallback) ->
+            fallback |> Option.iter push
+            NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
+                push branch.Result
+                push branch.Match) branches
+            push input
+        | SearchedCase(branches, fallback) ->
+            fallback |> Option.iter push
+            NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
+                push branch.Result
+                push branch.Condition) branches
+        | InList(value, items, _) ->
+            NonEmpty.iterReverse push items
+            push value
+        | InSubquery(value, query, _) ->
+            pushQuery query
+            push value
+        | Between(value, lower, upper, _) ->
+            push upper
+            push lower
+            push value
+        | ScalarSubquery query | Exists(query, _) -> pushQuery query
+        | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
+        | Literal _ | Interval _ -> ()
+
     let private walkStructuralExpression onExpr onQuery allowWildcard root =
         let pending = ResizeArray<StructuralExprFrame>()
-        let inline pushExpr value = pending.Add(StructuralExpr(value, false))
-        let pushExprs (values: Expr list) =
-            let items = List.toArray values
-            for index = items.Length - 1 downto 0 do
-                pushExpr items.[index]
-        let pushOrders (values: OrderBy list) =
-            let items: OrderBy array = List.toArray values
-            for index = items.Length - 1 downto 0 do
-                pushExpr items.[index].Expression
         pending.Add(StructuralExpr(root, allowWildcard))
         while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
             let last = pending.Count - 1
             let frame = pending.[last]
-            pending.RemoveAt last
+            pending.RemoveAt(last)
             match frame with
             | StructuralQuery query -> onQuery query
             | StructuralExpr(value, allowed) ->
                 onExpr allowed value
-                match value with
-                | Spanned(_, inner) ->
-                    pending.Add(StructuralExpr(inner, allowed))
-                | Unary(_, operand) | Cast(operand, _) | Extract(_, operand)
-                | PostgresJsonAccess(operand, _, _) | IsNull(operand, _) ->
-                    pushExpr operand
-                | DateAdd(_, left, right) | DateDiff(_, left, right)
-                | Binary(_, left, right) | Like(left, right, _, _, _)
-                | RegexMatch(left, right) | FilteredAggregate(left, right) ->
-                    pushExpr right
-                    pushExpr left
-                | RawRegexCall(args, _) -> pushExprs args
-                | FunctionCall call ->
-                    pushOrders call.AggregateOrderBy
-                    let args = List.toArray call.Arguments
-                    let name = FunctionName.value call.Name |> fun value -> value.Trim().ToUpperInvariant()
-                    for index = args.Length - 1 downto 0 do
-                        let wildcard =
-                            not (FunctionName.hasQuotedParts call.Name)
-                            && name = "COUNT" && index = 0
-                            && (match Expr.unspan args.[index] with
-                                | Wildcard None -> true
-                                | _ -> false)
-                        pending.Add(StructuralExpr(args.[index], wildcard))
-                | Windowed(value, window) ->
-                    pushOrders window.OrderBy
-                    pushExprs window.PartitionBy
-                    pushExpr value
-                | SimpleCase(input, branches, fallback) ->
-                    fallback |> Option.iter pushExpr
-                    NonEmpty.iterReverse (fun (branch: SimpleCaseBranch) ->
-                        pushExpr branch.Result
-                        pushExpr branch.Match) branches
-                    pushExpr input
-                | SearchedCase(branches, fallback) ->
-                    fallback |> Option.iter pushExpr
-                    NonEmpty.iterReverse (fun (branch: SearchedCaseBranch) ->
-                        pushExpr branch.Result
-                        pushExpr branch.Condition) branches
-                | InList(value, items, _) ->
-                    NonEmpty.iterReverse pushExpr items
-                    pushExpr value
-                | InSubquery(value, query, _) ->
-                    pending.Add(StructuralQuery query)
-                    pushExpr value
-                | Between(value, lower, upper, _) ->
-                    pushExpr upper
-                    pushExpr lower
-                    pushExpr value
-                | ScalarSubquery query | Exists(query, _) ->
-                    pending.Add(StructuralQuery query)
-                | Column _ | BoundColumn _ | Wildcard _ | OrderOrdinal _
-                | Literal _ | Interval _ -> ()
+                queueStructuralChildren
+                    (fun childAllowed child ->
+                        pending.Add(StructuralExpr(child, childAllowed)))
+                    (fun query -> pending.Add(StructuralQuery query))
+                    allowed value
 
     let rec private validateNestedCteExpr targetRuntime expression =
         walkStructuralExpression
@@ -209,7 +215,10 @@ module internal RewriteStructuralValidation =
                 join.Predicate |> Option.iter (CteProofExpression >> pending.Add)
                 pending.Add(CteProofSource join.Source)
             | CteProofExpression expression ->
-                validateNestedCteExpr targetRuntime expression
+                queueStructuralChildren
+                    (fun _ child -> pending.Add(CteProofExpression child))
+                    (fun query -> pending.Add(CteProofQuery(ScalarSubqueryPosition, query)))
+                    false expression
             | CteProofScalarTail(currentPosition, current) ->
                 if currentPosition = ScalarSubqueryPosition
                    && not current.Head.Ctes.IsEmpty
@@ -229,8 +238,8 @@ module internal RewriteStructuralValidation =
                             "scalar/EXISTS subquery with a root CTE and set-operation tail can order only by an output name "
                             + "or output ordinal; rich ordering expressions would require an unproven scope barrier")
             | CteProofOrderTail current ->
-                current.OrderBy |> List.iter (fun order ->
-                    validateNestedCteExpr targetRuntime order.Expression)
+                for order in List.rev current.OrderBy do
+                    pending.Add(CteProofExpression order.Expression)
 
     let validateNestedCteDocument targetRuntime document =
         match document.Statement with
@@ -272,7 +281,7 @@ module internal RewriteStructuralValidation =
         | NoFromProofQuery of Query
         | NoFromProofSource of TableSource
         | NoFromProofJoin of Join
-        | NoFromProofExpression of strictNoFrom: bool * expression: Expr
+        | NoFromProofExpression of strictNoFrom: bool * allowCountWildcard: bool * expression: Expr
         | NoFromProofJoinInvariant of Select
         | NoFromProofOrderTail of Query
 
@@ -322,17 +331,17 @@ module internal RewriteStructuralValidation =
                     pending.Add(NoFromProofQuery branch.Query)
                 let strict = select.From.IsNone
                 select.Having |> Option.iter (fun value ->
-                    pending.Add(NoFromProofExpression(strict, value)))
+                    pending.Add(NoFromProofExpression(strict, false, value)))
                 for value in List.rev select.GroupBy do
-                    pending.Add(NoFromProofExpression(strict, value))
+                    pending.Add(NoFromProofExpression(strict, false, value))
                 select.Where |> Option.iter (fun value ->
-                    pending.Add(NoFromProofExpression(strict, value)))
+                    pending.Add(NoFromProofExpression(strict, false, value)))
                 for item in List.rev select.Projection do
-                    pending.Add(NoFromProofExpression(strict, item.Expression))
+                    pending.Add(NoFromProofExpression(strict, false, item.Expression))
                 match select.DistinctMode with
                 | SelectDistinct.DistinctOn expressions ->
                     for value in List.rev (NonEmpty.toList expressions) do
-                        pending.Add(NoFromProofExpression(strict, value))
+                        pending.Add(NoFromProofExpression(strict, false, value))
                 | _ -> ()
                 pending.Add(NoFromProofJoinInvariant select)
                 for join in List.rev select.Joins do
@@ -347,23 +356,36 @@ module internal RewriteStructuralValidation =
                     pending.Add(NoFromProofQuery query)
             | NoFromProofJoin join ->
                 join.Predicate |> Option.iter (fun value ->
-                    pending.Add(NoFromProofExpression(false, value)))
+                    pending.Add(NoFromProofExpression(false, false, value)))
                 pending.Add(NoFromProofSource join.Source)
             | NoFromProofJoinInvariant select ->
                 if select.From.IsNone && not select.Joins.IsEmpty then
                     raise (SqlCompilationException(
                         "A Core SELECT cannot contain JOIN sources without a primary FROM source."))
-            | NoFromProofExpression(strict, expression) ->
-                if strict then validateNoFromExpression false expression
-                else visitNestedNoFromExpression expression
+            | NoFromProofExpression(strict, allowed, expression) ->
+                if strict then
+                    match expression with
+                    | Column identifier -> noFromReferenceError identifier
+                    | BoundColumn(_, ColumnBinding.OuterRowSource) -> ()
+                    | BoundColumn(identifier, _) -> noFromReferenceError identifier
+                    | Wildcard _ when allowed -> ()
+                    | Wildcard None ->
+                        raise (SqlCompilationException(
+                            "Column reference '*' requires a FROM source in the portable Core query model."))
+                    | Wildcard(Some identifier) -> noFromReferenceError identifier
+                    | _ -> ()
+                queueStructuralChildren
+                    (fun childAllowed child ->
+                        pending.Add(NoFromProofExpression(strict, childAllowed, child)))
+                    (fun query -> pending.Add(NoFromProofQuery query))
+                    allowed expression
             | NoFromProofOrderTail current ->
-                current.OrderBy |> List.iter (fun order ->
+                for order in List.rev current.OrderBy do
                     match Expr.unspan order.Expression with
                     | BoundColumn(_, ColumnBinding.ProjectionAlias) -> ()
                     | _ ->
-                        if current.Head.From.IsNone then
-                            validateNoFromExpression false order.Expression
-                        else visitNestedNoFromExpression order.Expression)
+                        pending.Add(NoFromProofExpression(
+                            current.Head.From.IsNone, false, order.Expression))
 
     let validateNoFromDocument targetRuntime document =
         let _ = targetRuntime

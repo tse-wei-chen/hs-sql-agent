@@ -229,6 +229,32 @@ jobs:
                   raise SystemExit("Nested Query 2048 allocation exceeded 120 MB: "
                                    + str((item["shape"], worker.get("allocatedBytes"))))
           PY
+      - name: Characterize alternating CTE/derived parser resource threshold
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes mixed-cte-derived --depths 128,512,2048
+          --output artifacts/sqlcore-mixed-cte-derived-pr.json
+      - name: Report mixed source nesting by stage (observational, not a pass claim)
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("artifacts/sqlcore-mixed-cte-derived-pr.json")
+          if not path.exists():
+              raise SystemExit("Mixed CTE/derived profiling report missing")
+          report = json.loads(path.read_text(encoding="utf-8"))
+          print(f"Mixed CTE/derived: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 3:
+              raise SystemExit("Mixed CTE/derived probe coverage changed")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              phases = [p["Stage"] for p in worker.get("stageMetrics", []) if p["Success"]]
+              print(f"  depth={item['depth']} success={worker.get('success')} code={worker.get('diagnosticCode')} phases={phases} bytes={worker.get('allocatedBytes')}")
+          PY
       - name: Characterize nested SET branch stack and allocations (isolated, observational)
         run: >
           dotnet run -c Release --no-build
@@ -364,6 +390,7 @@ jobs:
             artifacts/sqlcore-query-phases-pr.json
             artifacts/sqlcore-nested-set-pr.json
             artifacts/sqlcore-set-small-stack-pr.json
+            artifacts/sqlcore-mixed-cte-derived-pr.json
             artifacts/sqlcore-cte-small-stack-pr.json
           if-no-files-found: warn
 

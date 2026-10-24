@@ -22,7 +22,7 @@ internal static class SqlCoreDepthProbe
     // additional resource class in an isolated subprocess.
     private static readonly string[] OptionalShapes =
         ["mixed-query-graph", "nested-derived-source", "nested-cte", "nested-cte-typed-schema",
-         "nested-set", "nested-set-typed-schema"];
+         "nested-set", "nested-set-typed-schema", "mixed-cte-derived"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -47,6 +47,16 @@ internal static class SqlCoreDepthProbe
         var sql = "SELECT id FROM users";
         for (var level = 0; level < depth; level++)
             sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+        return sql;
+    }
+
+    private static string NestMixedCteDerived(int depth)
+    {
+        var sql = "SELECT id FROM users";
+        for (var level = 0; level < depth; level++)
+            sql = (level & 1) == 0
+                ? "WITH c AS (" + sql + ") SELECT id FROM c"
+                : "SELECT d.id FROM (" + sql + ") AS d";
         return sql;
     }
 
@@ -116,6 +126,7 @@ internal static class SqlCoreDepthProbe
             "nested-derived-source" => NestDerived(depth),
             "nested-cte" => NestCte(depth),
             "nested-cte-typed-schema" => NestCte(depth),
+            "mixed-cte-derived" => NestMixedCteDerived(depth),
             "nested-set" or "nested-set-typed-schema" => NestSet(depth),
             _ => throw new ArgumentException("Unknown probe shape: " + shape)
         };

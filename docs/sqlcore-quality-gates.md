@@ -1370,3 +1370,19 @@ compilation stage, including both SchemaBinding and SchemaType for
 typed metadata proofs, with no crashes/timeouts. This is a CTE-only
 parser milestone; it does not claim Derived/LATERAL/Expr parsing is
 stack independent.
+
+### Mixed expression/query structural proof and alternating source probe
+
+Nested CTE-placement and no-FROM structural proofs now use their **own**
+Query/Expr heap frames all the way through scalar/EXISTS/IN subqueries,
+CTE definitions, derived and LATERAL table sources, JOIN predicates and
+SET ordering tails. A single `queueStructuralChildren` preserves
+source-order expression traversal, COUNT(*) wildcard permissions,
+subquery boundaries, and no-FROM error precedence without recursively
+calling a new Query proof from inside an expression visitor.
+
+The isolated `mixed-cte-derived` depth-probe alternates CTE definition
+and derived-source Query crossings at 128/512/2048 with phase telemetry.
+The CI step is **observational** until Parser and strict Schema/Type
+crossings demonstrate genuine 256-KiB full compilation. A typed
+stack-reserve failure is never misreported as a compilation success.
