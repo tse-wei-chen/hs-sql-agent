@@ -214,6 +214,7 @@ module internal RewriteSchemaTypeValidation =
     type private TypedQueryFrame =
         | ResumeTypedCte of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * Cte
         | ResumeTypedDerived of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * IdentifierPart
+        | ResumeTypedJoinedLateral of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * IdentifierPart
 
     let rec private expression catalog ctes scope span expr =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
@@ -426,6 +427,14 @@ module internal RewriteSchemaTypeValidation =
                 pending.Add(ResumeTypedCte(inheritedCtes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
+            | [], [] when current.Head.Joins.Length = 1 ->
+                match current.Head.From, current.Head.Joins.Head.Source with
+                | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
+                    let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
+                    pending.Add(ResumeTypedJoinedLateral(inheritedCtes, currentParent, current, alias))
+                    currentParent <- Some initial
+                    current <- inner
+                | _ -> scanning <- false
             | [], [] when current.Head.Joins.IsEmpty ->
                 match current.Head.From with
                 | Some (DerivedTable(inner, alias)) ->
@@ -465,6 +474,15 @@ module internal RewriteSchemaTypeValidation =
                 let _, result =
                     queryTypesHeadWithFirst catalog inherited originalParent
                         outer (Some source)
+                projected <- result
+            | ResumeTypedJoinedLateral(inherited, originalParent, outer, alias) ->
+                let columns =
+                    projected |> List.choose (fun (name, kind) ->
+                        name |> Option.map (fun value -> value, kind))
+                let source = sourceAlias catalog alias columns
+                let _, result =
+                    queryTypesHeadWithJoinOverride catalog inherited originalParent
+                        outer None (Some source)
                 projected <- result
         projected
 
@@ -507,6 +525,9 @@ module internal RewriteSchemaTypeValidation =
         queryTypesHeadWithFirst catalog inheritedCtes parent query None
 
     and private queryTypesHeadWithFirst catalog inheritedCtes parent (query: Query) firstOverride =
+        queryTypesHeadWithJoinOverride catalog inheritedCtes parent query firstOverride None
+
+    and private queryTypesHeadWithJoinOverride catalog inheritedCtes parent (query: Query) firstOverride joinOverride =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
         let mutable ctes = inheritedCtes
         // Sequential visibility follows the already validated CTE lexical scope.
@@ -528,12 +549,18 @@ module internal RewriteSchemaTypeValidation =
                 | None -> makeScope parent []
                 | Some table -> makeScope parent [ tableSource catalog ctes parent table ]
         let mutable scope = initial
+        let mutable firstJoin = true
         for join in query.Head.Joins do
-            let sourceParent =
-                match join.Source with
-                | LateralDerivedTable _ -> Some scope
-                | _ -> scope.Parent
-            let added = tableSource catalog ctes sourceParent join.Source
+            let added =
+                match firstJoin, joinOverride with
+                | true, Some resolved -> resolved
+                | _ ->
+                    let sourceParent =
+                        match join.Source with
+                        | LateralDerivedTable _ -> Some scope
+                        | _ -> scope.Parent
+                    tableSource catalog ctes sourceParent join.Source
+            firstJoin <- false
             let left = scope.Unqualified
             let right = sourceOutput added
             let mergeKeys =

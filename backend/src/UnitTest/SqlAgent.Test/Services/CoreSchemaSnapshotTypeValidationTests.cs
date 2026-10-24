@@ -137,6 +137,32 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
         Assert.NotEmpty(compiled.Sql);
     }
 
+
+    [Fact]
+    public void JoinedCorrelatedLateralChain_PreservesNestedNumericTypeAndMismatch()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        static string Wrap(string sql) =>
+            $"SELECT l.id FROM users u JOIN LATERAL ({sql}) l ON l.id = u.id";
+        var valid = "SELECT u.id AS id";
+        for (var level = 0; level < depth; level++)
+            valid = Wrap(valid);
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT u.name + 1 AS id";
+        for (var level = 0; level < depth; level++)
+            invalid = Wrap(invalid);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(
+                invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+        Assert.Equal(SqlDiagnosticStage.SemanticValidation, error.Diagnostic?.Stage);
+    }
+
     [Theory]
     [MemberData(nameof(Providers))]
     public void TypedSnapshot_DeepBooleanGraph_UsesIterativeTypeProof(
