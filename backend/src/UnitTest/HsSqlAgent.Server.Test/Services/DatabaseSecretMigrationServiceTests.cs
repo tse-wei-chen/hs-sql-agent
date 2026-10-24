@@ -86,6 +86,16 @@ public sealed class DatabaseSecretMigrationServiceTests
         Assert.Single(inventory.DatabaseKeyUsage);
         Assert.Equal(2, inventory.DatabaseKeyUsage[0].Records);
         Assert.Equal(2, await context.AuditLogs.CountAsync(TestContext.Current.CancellationToken));
+        var currentReview = await service.ReviewKeyRetirementAsync(
+            SecretPurpose.DatabasePassword, "db_new_1", TestContext.Current.CancellationToken);
+        Assert.False(currentReview.EligibleForOfflineReview);
+        Assert.Equal(2, currentReview.CurrentReferences);
+        var oldReview = await service.ReviewKeyRetirementAsync(
+            SecretPurpose.DatabasePassword, "db_old_1", TestContext.Current.CancellationToken);
+        Assert.True(oldReview.EligibleForOfflineReview);
+        Assert.Equal(0, oldReview.CurrentReferences);
+        Assert.Contains("backups", oldReview.RequiredOperatorVerification, StringComparison.OrdinalIgnoreCase);
+
         var again = await service.MigrateBatchAsync(0, 100, TestContext.Current.CancellationToken);
         Assert.Equal(0, again.Migrated);
         Assert.Equal(3, again.AlreadyCurrent); // Two current rows and one empty row.
@@ -130,6 +140,45 @@ public sealed class DatabaseSecretMigrationServiceTests
         context.ChangeTracker.Clear();
         Assert.Equal(original, (await context.DbManagement.SingleAsync(TestContext.Current.CancellationToken)).PasswordHash);
         Assert.Empty(await context.AuditLogs.ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task PostWriteVerificationFailureRollsBackCiphertextAndAuditTogether()
+    {
+        await using var conn = new SqliteConnection("Data Source=:memory:");
+        await conn.OpenAsync(TestContext.Current.CancellationToken);
+        var options = new DbContextOptionsBuilder<AdminContext>().UseSqlite(conn).Options;
+        await using var context = new AdminContext(options);
+        await context.Database.EnsureCreatedAsync(TestContext.Current.CancellationToken);
+        var crypto = new CryptoService();
+        var old = crypto.EncryptText("critical-password", OldSecret);
+        context.DbManagement.Add(new DbManagement
+        {
+            Name = "protected", PasswordHash = old,
+            CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        var (normalProtector, ring) = CreateKeys();
+        var intentionallyBrokenReader = new VerificationFailureProtector(normalProtector);
+        var service = new DatabaseSecretMigrationService(context, crypto,
+            Options.Create(new McpKeySettings { HmacSecretKey = Hmac }),
+            intentionallyBrokenReader, ring, new Policy());
+        await Assert.ThrowsAsync<CryptographicException>(() =>
+            service.MigrateBatchAsync(0, 25, TestContext.Current.CancellationToken));
+
+        context.ChangeTracker.Clear();
+        Assert.Equal(old, (await context.DbManagement.SingleAsync(TestContext.Current.CancellationToken)).PasswordHash);
+        Assert.Empty(await context.AuditLogs.ToListAsync(TestContext.Current.CancellationToken));
+    }
+
+    private sealed class VerificationFailureProtector(ISecretProtector inner) : ISecretProtector
+    {
+        public string? Protect(string? plaintext, SecretPurpose purpose, string recordId)
+            => inner.Protect(plaintext, purpose, recordId);
+        public string? Unprotect(string? ciphertext, SecretPurpose purpose, string recordId)
+            => "mismatched-plaintext";
+        public string? Reprotect(string? ciphertext, SecretPurpose purpose, string recordId)
+            => throw new NotSupportedException();
     }
 
     [Fact]

@@ -87,6 +87,51 @@ public sealed class DatabaseSecretMigrationService(
                 .Select(x => new SecretKeyUsage(x.Key, x.Value)).ToArray());
     }
 
+    /// <summary>
+    /// A zero-reference result is only eligible for OFFLINE operator review.
+    /// It is not a distributed proof that no node or backup still depends on
+    /// the key. This service never removes keys from the ring.
+    /// </summary>
+    public async Task<SecretKeyRetirementReview> ReviewKeyRetirementAsync(
+        SecretPurpose purpose, string keyId, CancellationToken ct = default)
+    {
+        if (purpose is not (SecretPurpose.DatabasePassword or SecretPurpose.DurableDmlPayload))
+            throw new ArgumentException("Only persisted DB and DML keys can be inventoried.");
+        if (string.IsNullOrEmpty(keyId) || keyId.Length > 64 ||
+            keyId.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '-' or '_')))
+            throw new ArgumentException("Invalid encryption key ID.");
+
+        if (keyRing is null)
+            throw new InvalidOperationException("Secret key ring is not configured.");
+
+        var (activeKeyId, activeBytes) = keyRing.GetActiveKey(purpose);
+        CryptographicOperations.ZeroMemory(activeBytes);
+        var candidateBytes = keyRing.GetDecryptionKey(purpose, keyId);
+        CryptographicOperations.ZeroMemory(candidateBytes);
+
+        var inventory = await InspectAsync(ct);
+        var refs = purpose == SecretPurpose.DatabasePassword
+            ? inventory.DatabaseKeyUsage
+            : inventory.DmlKeyUsage;
+        var references = refs.FirstOrDefault(x => x.KeyId == keyId)?.Records ?? 0;
+        var blockers = new List<string>();
+        if (activeKeyId == keyId)
+            blockers.Add("Key is still active for new encryption.");
+        if (references != 0)
+            blockers.Add("Live Admin Store ciphertext still references this key ID.");
+        if (inventory.MalformedEnvelopes != 0)
+            blockers.Add("Malformed or unknown ciphertext envelopes require manual investigation.");
+        if (inventory.PendingOrExecutingApprovals != 0)
+            blockers.Add("Pending or Executing approvals have not been drained.");
+
+        return new SecretKeyRetirementReview(
+            purpose.ToString(), keyId, references, blockers.Count == 0,
+            blockers.ToArray(),
+            "Zero current database references do not prove that backups, " +
+            "old worker processes or external consumers no longer need this key. " +
+            "Manually verify all nodes, offline copies and recovery plans before removing any key.");
+    }
+
     public async Task<DatabaseSecretMigrationBatch> MigrateBatchAsync(
         int afterId, int batchSize, CancellationToken ct = default, string actor = "system")
     {
@@ -240,6 +285,10 @@ public sealed class DatabaseSecretMigrationService(
 }
 
 public sealed record SecretKeyUsage(string KeyId, int Records);
+public sealed record SecretKeyRetirementReview(
+    string Purpose, string KeyId, int CurrentReferences,
+    bool EligibleForOfflineReview, IReadOnlyList<string> Blockers,
+    string RequiredOperatorVerification);
 public sealed record SecretMigrationInventory(
     int LegacyDatabasePasswords,
     int LegacyDmlPayloads,

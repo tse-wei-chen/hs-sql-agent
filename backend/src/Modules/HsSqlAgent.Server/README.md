@@ -358,6 +358,14 @@ retry the prior cursor. An independent full inventory after completion is
 mandatory before any key retirement. Approval payloads, fingerprints and
 approval state are **never mutated by this migrator**.
 
+A per-purpose, per-Key-ID **retirement readiness review** is also available:
+`GET /api/runtime/security/secret-migration/retirement/{purpose}/{keyId}`.
+It blocks offline review if the requested key remains active, is referenced by
+live ciphertext, any envelope is malformed, or any Pending/Executing approval
+remains. A clean result means only `EligibleForOfflineReview`: it does not
+authorize deletion. Old processes, recovery backups and external consumers
+must still be independently verified. No endpoint ever removes key material.
+
 Key retirement must also account for DML payload key references, historical
 backups and external consumers; the API makes no automatic retire decision.
 The legacy MCP HMAC root must be kept because issued MCP keys and DML connection
