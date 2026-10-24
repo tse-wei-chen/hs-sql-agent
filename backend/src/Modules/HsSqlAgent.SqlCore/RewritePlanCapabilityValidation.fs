@@ -47,8 +47,20 @@ module internal RewritePlanCapabilityValidation =
             proveJoinSource capabilityMessage proofs join.Source)
 
     and private proveJoinQuery capabilityMessage proofs query =
-        proveJoinSelect capabilityMessage proofs query.Head
-        query.SetOperations |> List.iter (fun branch -> proveJoinQuery capabilityMessage proofs branch.Query)
+        // Pure SET chains are a depth-first Query graph. Keep SELECT
+        // join proofs ahead of branch traversal without using one
+        // recursive CLR frame per branch. CTE/derived Query crossings
+        // still use the normal scoped proof path.
+        let pending = ResizeArray<Query>()
+        pending.Add(query)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let current = pending.[last]
+            pending.RemoveAt(last)
+            proveJoinSelect capabilityMessage proofs current.Head
+            for branch in List.rev current.SetOperations do
+                pending.Add(branch.Query)
 
     let proveJoins capabilityMessage proofs document =
         match document.Statement with
@@ -518,17 +530,43 @@ module internal RewritePlanCapabilityValidation =
                 raise (SqlCompilationException(
                     "SQL Server set-operation OFFSET pagination supports ORDER BY output names or ordinals only."))
 
-    let rec private proveSqlServerPagingQuery query =
-        query.Head.Ctes |> List.iter (fun cte -> proveSqlServerPagingQuery cte.Query)
-        query.Head.From |> Option.iter (function DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
-        query.Head.Joins |> List.iter (fun join ->
-            match join.Source with DerivedTable(q, _) | LateralDerivedTable(q, _) -> proveSqlServerPagingQuery q | _ -> ())
-        query.SetOperations |> List.iter (fun branch -> proveSqlServerPagingQuery branch.Query)
-        match query.Offset with
-        | Some offset when NonNegativeRowCount.value offset > 0 ->
-            if query.SetOperations.IsEmpty then proveSqlServerSelectPaging query
-            else proveSqlServerSetPaging query
-        | _ -> ()
+    let private proveSqlServerPagingQuery query =
+        // Postorder is essential: check CTEs, derived FROM and joins,
+        // then SET children, only afterwards the parent's paging rule.
+        // Track enter/finish explicitly rather than recursing through
+        // nested Query graphs (including correlated table sources).
+        let pending = ResizeArray<struct (bool * Query)>()
+        pending.Add(struct (false, query))
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let struct (finish, current) = pending.[last]
+            pending.RemoveAt(last)
+            if finish then
+                match current.Offset with
+                | Some offset when NonNegativeRowCount.value offset > 0 ->
+                    if current.SetOperations.IsEmpty then
+                        proveSqlServerSelectPaging current
+                    else proveSqlServerSetPaging current
+                | _ -> ()
+            else
+                pending.Add(struct (true, current))
+                let children = ResizeArray<Query>()
+                for cte in current.Head.Ctes do
+                    children.Add(cte.Query)
+                match current.Head.From with
+                | Some(DerivedTable(inner, _) | LateralDerivedTable(inner, _)) ->
+                    children.Add(inner)
+                | _ -> ()
+                for join in current.Head.Joins do
+                    match join.Source with
+                    | DerivedTable(inner, _) | LateralDerivedTable(inner, _) ->
+                        children.Add(inner)
+                    | _ -> ()
+                for branch in current.SetOperations do
+                    children.Add(branch.Query)
+                for index = children.Count - 1 downto 0 do
+                    pending.Add(struct (false, children.[index]))
 
     let proveOrderingAndPaging targetRuntime targetOrdering document =
         match document.Statement with

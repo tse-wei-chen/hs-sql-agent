@@ -1275,3 +1275,17 @@ query body; nested ORDER BY tails follow their children. Existing
 provider-specific rejection paths remain active, and every scheduled
 frame charges the compilation work budget. Complex CTE/derived/LATERAL
 Query crossings remain future R2 work.
+
+### Plan join and SQL Server paging SET proof continuations
+
+The third 256-KiB/2,048-depth worker crash occurred inside
+`RewritePlanCapabilityValidation.proveJoinQuery`, after structural
+and expression capability validation were made stack independent.
+Join proofs now use a heap Query DFS for SET branches, preserving
+SELECT source/join checks and branch order. SQL Server-specific
+pagination proof traversal was separately converted to explicit
+enter/finish Query frames, preserving CTE → FROM-derived → JOIN-derived
+→ SET → local OFFSET validation precedence without CLR graph recursion.
+The strict small-stack probe continues to reject any unexpected crash,
+rather than accepting stack-reserve refusal or silently removing
+a provider capability check.
