@@ -463,9 +463,10 @@ jobs:
           path = Path("artifacts/sqlcore-correlated-small-stack-pr.json")
           with path.open(encoding="utf-8") as source:
               report = json.load(source)
-          if report["samples"] != 12 or report["crashesOrTimeouts"] or report["unexpectedFailures"]:
-              raise SystemExit("Correlated Query/Expr/Source stack-safety regression: " + str(
-                  (report["samples"], report["crashesOrTimeouts"], report["unexpectedFailures"])))
+          if (report["samples"] != 12 or report["crashesOrTimeouts"] or
+              report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Correlated Query/Expr/Source must compile all 12 cases on 256 KiB: " + str(
+                  (report["samples"], report["failures"], report["resourceRejections"], report["crashesOrTimeouts"])))
           full = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
           succeeded = rejected = 0
           for item in report["observations"]:
@@ -478,15 +479,17 @@ jobs:
                   if item["processExitCode"] != 0 or not required.issubset(stages):
                       raise SystemExit("Compilation skipped required proof stages: " + str(
                           (item["shape"], item["depth"], stages)))
-              elif worker.get("diagnosticCode") == "SQL_COMPILER_STACK_RESERVE" and item["processExitCode"] == 2:
-                  rejected += 1
               else:
-                  raise SystemExit("Unproven correlated SQL rejection: " + str(
+                  raise SystemExit("Correlated SQL must compile rather than fail closed: " + str(
                       (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"))))
-              print(f"  {item['shape']:39} depth={item['depth']:4} success={worker.get('success')} code={worker.get('diagnosticCode')}")
-          # Successful compilation is not interchangeable with fail-closed
-          # refusal. The per-shape proof debt stays explicit in this report.
-          print(f"Correlated 256 KiB: compiled={succeeded}/12 typedStackRefusals={rejected}/12")
+              if item["depth"] == 2048:
+                  if not isinstance(worker.get("allocatedBytes"), int) or worker["allocatedBytes"] > 120_000_000:
+                      raise SystemExit("Correlated 2048 total allocation exceeded 120 MB: " + item["shape"])
+                  rendering = [s for s in worker.get("stageMetrics", []) if s["Stage"] == "Rendering"]
+                  if len(rendering) != 1 or rendering[0]["AllocatedBytes"] > 60_000_000:
+                      raise SystemExit("Correlated 2048 render allocation exceeded 60 MB: " + item["shape"])
+              print(f"  {item['shape']:39} depth={item['depth']:4} success={worker.get('success')} allocated={worker.get('allocatedBytes')}")
+          print(f"Correlated 256 KiB: compiled={succeeded}/12, no resource refusals or crashes")
           PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
