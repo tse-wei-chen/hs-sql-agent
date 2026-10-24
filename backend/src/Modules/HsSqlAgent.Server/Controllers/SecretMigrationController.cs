@@ -50,41 +50,6 @@ public sealed class SecretMigrationController(
         }
     }
 
-    [HttpPost("database-passwords/batch")]
-    [HasPermission("/runtime/security", "edit")]
-    public async Task<IActionResult> MigrateDatabasePasswords(
-        [FromBody] DatabasePasswordMigrationRequest? request,
-        CancellationToken cancellationToken)
-    {
-        if (!IsHumanSecurityEditor()) return Forbid();
-        if (request is null ||
-            request.Confirmation != "MIGRATE_DATABASE_SECRETS" ||
-            request.AfterId < 0 || request.BatchSize is < 1 or > 100)
-            return BadRequest(new { error =
-                "A valid cursor, batch size (1-100), and explicit MIGRATE_DATABASE_SECRETS confirmation are required." });
-
-        try
-        {
-            var actor = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
-                ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
-            if (string.IsNullOrWhiteSpace(actor) || actor.Length > 64)
-                return BadRequest(new { error = "Invalid security operator identity." });
-            // Every row writes its audit event in the same DB transaction
-            // as the secret re-encryption. Batch-level logging is not a
-            // substitute for durable, transactionally coupled evidence.
-            var result = await migration.MigrateBatchAsync(
-                request.AfterId, request.BatchSize, cancellationToken, actor);
-            Response.Headers.CacheControl = "no-store";
-            return Ok(result);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or CryptographicException)
-        {
-            // Do not propagate lower-layer provider/crypto/configuration text
-            // via an exception filter to the API response.
-            return Conflict(new { error = "Migration is blocked. Verify key configuration, pending approvals, and worker quiescence." });
-        }
-    }
-
     private bool IsHumanSecurityEditor()
     {
         if (User.FindFirst("hsa_actor_type")?.Value == "management-api-key")
@@ -95,5 +60,3 @@ public sealed class SecretMigrationController(
     }
 }
 
-public sealed record DatabasePasswordMigrationRequest(
-    int AfterId, int BatchSize, string? Confirmation);

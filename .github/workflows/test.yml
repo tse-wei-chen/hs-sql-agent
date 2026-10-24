@@ -22,8 +22,6 @@ jobs:
       - name: Verify v3 environment and Compose samples
         run: |
           python3 .github/scripts/verify-v3-secret-compose-samples.py
-          docker compose --env-file .env.example -f docker-compose.yml config --quiet
-          docker compose --env-file .env.distributed.example -f docker-compose.distributed.yml config --quiet
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"

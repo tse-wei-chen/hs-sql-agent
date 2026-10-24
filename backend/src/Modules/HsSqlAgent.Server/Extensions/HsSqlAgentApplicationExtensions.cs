@@ -6,6 +6,7 @@ using Common.Interfaces;
 using HsSqlAgent.Server.Middleware;
 using HsSqlAgent.Server.Models;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 
@@ -52,6 +53,9 @@ public static class HsSqlAgentApplicationExtensions
             var adminDb = scope.ServiceProvider.GetRequiredService<Admin.Service.Data.AdminContext>();
 
             if (firstInitialization)
+                ValidateFreshV3Store(adminDb);
+
+            if (firstInitialization)
             {
                 if (useBuiltInAuth)
                 {
@@ -62,11 +66,8 @@ public static class HsSqlAgentApplicationExtensions
                     PrepareSqliteAdminHistoryForHostMode(adminDb);
                 }
 
-                // Fail before EF changes a v2 Admin Store if it still holds
-                // unconsumed or physically ambiguous DML approval requests.
-                // The v3 migration repeats this check in the database itself,
-                // so direct migrators cannot skip the safety barrier.
-                ValidateV3ApprovalDrain(adminDb);
+                // Only an empty store or an already marked v3 store can reach
+                // EF migrations. Never mutate a pre-v3 Admin Store.
                 adminDb.Database.Migrate();
 
                 var securityPolicy = adminDb.SecurityPolicySettings
@@ -87,37 +88,25 @@ public static class HsSqlAgentApplicationExtensions
         return app;
     }
 
-    private static void ValidateV3ApprovalDrain(Admin.Service.Data.AdminContext adminDb)
+    private const string V3SqliteFreshMarker = "20261024115500_V3FreshStore";
+    private const string V3PostgresFreshMarker = "20261024115500_V3FreshStorePostgres";
+
+    private static void ValidateFreshV3Store(Admin.Service.Data.AdminContext adminDb)
     {
-        // A fresh installation has no durable-approval table yet. Existing
-        // v2 installations do, and must not advance to the v3 admission
-        // contract while an approval is resumable or may still be executing.
+        // A brand-new Admin Store has neither tables nor applied migrations.
+        // On restart, our v3-only migration marker is already recorded.
+        // Never attempt to upgrade or erase a v2 store in-place.
         var applied = adminDb.Database.GetAppliedMigrations().ToHashSet(StringComparer.Ordinal);
-        if (!applied.Contains("20260905130453_AddDurableDmlApprovals") &&
-            !applied.Contains("20260905130459_AddDurableDmlApprovalsPostgres"))
+        if (applied.Contains(V3SqliteFreshMarker) || applied.Contains(V3PostgresFreshMarker))
             return;
 
-        if (applied.Contains("20261022190000_V3ApprovalDrainGate") ||
-            applied.Contains("20261022190000_V3ApprovalDrainGatePostgres"))
-            return;
-
-        var outstanding = adminDb.DmlApprovalRequests.AsNoTracking()
-            .Where(x => x.Status == "Pending" || x.Status == "Executing")
-            .OrderBy(x => x.RequestId)
-            .Select(x => x.RequestId)
-            .Take(3)
-            .ToArray();
-
-        if (outstanding.Length == 0)
-            return;
-
-        throw new InvalidOperationException(
-            "HsSqlAgent v3 upgrade requires draining v2 DML approvals before migrating the Admin Store. " +
-            "Pending/Executing requests still exist (sample request IDs: " +
-            string.Join(", ", outstanding) + "). " +
-            "Stop all v2 DML workers, resolve or securely reject outstanding approvals, " +
-            "and verify physical outcomes before reattempting migration. " +
-            "Do not mark an Executing approval failed without independently proving worker quiescence.");
+        var existingTables = adminDb.Database.GetService<
+            Microsoft.EntityFrameworkCore.Storage.IRelationalDatabaseCreator>().HasTables();
+        if (applied.Count != 0 || existingTables)
+            throw new InvalidOperationException(
+                "HsSqlAgent v3 requires a fresh Admin Store. A pre-v3 or unmarked database " +
+                "was detected and has NOT been modified. Configure a new Admin database " +
+                "and provision new identities, connections and MCP keys. No data migration is supported.");
     }
 
     /// <summary>
