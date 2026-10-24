@@ -34,7 +34,8 @@ internal static class SqlCoreDepthProbe
          "nested-double-joined-lateral", "nested-double-joined-lateral-typed-schema",
          "nested-triple-joined-lateral", "nested-triple-joined-lateral-typed-schema",
          "two-deep-sibling-lateral", "two-deep-sibling-lateral-typed-schema",
-         "lateral-exists-comb-siblings", "lateral-exists-comb-siblings-typed-schema"];
+         "lateral-exists-comb-siblings", "lateral-exists-comb-siblings-typed-schema",
+         "facts-joined-lateral", "facts-joined-lateral-typed-schema"];
 
     private sealed record StageSample(string Stage, long ElapsedMicroseconds,
         long AllocatedBytes, long WorkUnits, bool Success);
@@ -260,7 +261,8 @@ internal static class SqlCoreDepthProbe
             "nested-derived-source" => NestDerived(depth),
             "nested-lateral-derived" or "nested-lateral-derived-typed-schema" =>
                 NestLateralDerived(depth),
-            "nested-joined-lateral" or "nested-joined-lateral-typed-schema" =>
+            "nested-joined-lateral" or "nested-joined-lateral-typed-schema"
+                or "facts-joined-lateral" or "facts-joined-lateral-typed-schema" =>
                 NestJoinedLateral(depth),
             "nested-prefixed-joined-lateral" or "nested-prefixed-joined-lateral-typed-schema" =>
                 NestPrefixedJoinedLateral(depth),
@@ -318,6 +320,7 @@ internal static class SqlCoreDepthProbe
                     or "mixed-cte-derived-typed-schema"
                     or "nested-lateral-derived-typed-schema"
                     or "nested-joined-lateral-typed-schema"
+                    or "facts-joined-lateral-typed-schema"
                     or "nested-prefixed-joined-lateral-typed-schema"
                     or "nested-double-joined-lateral-typed-schema"
                     or "nested-triple-joined-lateral-typed-schema"
@@ -337,8 +340,12 @@ internal static class SqlCoreDepthProbe
                             table, new[] { new SqlSchemaColumn(
                                 column, SqlSchemaValueKind.Numeric) }) }));
                 }
-                var compiled = SqlCoreFacade.CompileQuery(
-                    query, dialect, dialect, context, new SqlExecutionPlanPolicy());
+                var isFactsShape = shape.StartsWith("facts-", StringComparison.Ordinal);
+                var compiled = isFactsShape
+                    ? SqlCoreFacade.CompileQueryWithFacts(
+                        query, dialect, dialect, context, new SqlExecutionPlanPolicy()).Command
+                    : SqlCoreFacade.CompileQuery(
+                        query, dialect, dialect, context, new SqlExecutionPlanPolicy());
                 stopwatch.Stop();
                 report = JsonSerializer.Serialize(new
                 {

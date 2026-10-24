@@ -682,6 +682,50 @@ jobs:
               print(f"  {item['shape']:44} depth={item['depth']:4} bytes={worker.get('allocatedBytes')}")
           print("LATERAL / EXISTS mixed comb 256 KiB: compiled=6/6")
           PY
+      - name: Verify public Query Facts inspection on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes facts-joined-lateral,facts-joined-lateral-typed-schema
+          --depths 128,512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-facts-small-stack-pr.json
+      - name: Gate Inspection phase work accounting and deep Query Facts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          with Path("artifacts/sqlcore-facts-small-stack-pr.json").open(encoding="utf-8") as src:
+              report = json.load(src)
+          if (report["samples"] != 6 or report["crashesOrTimeouts"]
+              or report["failures"] or report["resourceRejections"]):
+              raise SystemExit("Public Query Facts inspection must compile 6/6 on 256 KiB: " + str(
+                  (report["samples"], report["crashesOrTimeouts"], report["failures"], report["resourceRejections"])))
+          baseline = {"Parsing", "Binding", "Inspection", "Normalization", "Validation", "Policy", "Rendering"}
+          for sample in report["observations"]:
+              worker = sample.get("worker") or {}
+              stages = worker.get("stageMetrics", [])
+              ok = {x["Stage"] for x in stages if x.get("Success")}
+              typed = sample["shape"].endswith("-typed-schema")
+              required = baseline | ({"SchemaBinding", "SchemaType"} if typed else set())
+              inspection = [x for x in stages if x["Stage"] == "Inspection"]
+              if (not worker.get("success") or sample["processExitCode"] != 0
+                  or not required.issubset(ok) or len(inspection) != 1):
+                  raise SystemExit("Facts stage omitted proof: " + str(
+                      (sample["shape"], sample["depth"], worker.get("diagnosticCode"), ok)))
+              phase = inspection[0]
+              if phase["WorkUnits"] < sample["depth"] or phase["AllocatedBytes"] < 0:
+                  raise SystemExit("Facts inspection work is not accounted per Query node.")
+              if sample["depth"] == 2048:
+                  if (not isinstance(worker.get("allocatedBytes"), int)
+                      or worker["allocatedBytes"] > 180_000_000
+                      or phase["AllocatedBytes"] > 40_000_000):
+                      raise SystemExit("2048 Query Facts allocation regression: " + sample["shape"])
+              print(f"  {sample['shape']:39} depth={sample['depth']:4} "
+                    f"inspectionWork={phase['WorkUnits']} bytes={worker.get('allocatedBytes')}")
+          print("Query Facts Inspection 256 KiB: compiled=6/6, metered all frames")
+          PY
       - name: Verify correlated IN Query heap continuation on 256 KiB stacks
         run: >
           dotnet run -c Release --no-build
@@ -808,6 +852,7 @@ jobs:
             artifacts/sqlcore-triple-joined-lateral-pr.json
             artifacts/sqlcore-two-deep-sibling-lateral-pr.json
             artifacts/sqlcore-lateral-exists-comb-pr.json
+            artifacts/sqlcore-facts-small-stack-pr.json
             artifacts/sqlcore-in-small-stack-pr.json
             artifacts/sqlcore-scalar-case-small-stack-pr.json
           if-no-files-found: warn

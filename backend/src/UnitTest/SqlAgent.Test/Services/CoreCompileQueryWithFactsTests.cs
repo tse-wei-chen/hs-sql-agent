@@ -63,6 +63,49 @@ public sealed class CoreCompileQueryWithFactsTests
         Assert.True(result.Facts.ContainsCte);
         Assert.True(result.Facts.ContainsSubquery);
     }
+
+    [Fact]
+    public void CompileQueryWithFacts_DeepLateralScopeMaintainsPublicInspectionContract()
+    {
+        const int depth = 96;
+        var sql = "SELECT u.id AS id";
+        for (var i = 0; i < depth; i++)
+            sql = "SELECT l.id FROM users u JOIN LATERAL ("
+                + sql + ") l ON l.id = u.id";
+
+        var combined = SqlCoreFacade.CompileQueryWithFacts(
+            sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("facts-deep-lateral-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.NotEmpty(combined.Command.Sql);
+        Assert.True(combined.Facts.ContainsSubquery);
+        Assert.False(combined.Facts.ContainsCte);
+        Assert.Contains("users", combined.Facts.ReferencedTables,
+            StringComparer.OrdinalIgnoreCase);
+        Assert.Single(combined.Facts.ReferencedTables);
+    }
+
+    [Theory]
+    [MemberData(nameof(Providers))]
+    public void CompileQueryWithFacts_DeepCteScopePreservesSixDialectParity(
+        SqlAgentToolType provider)
+    {
+        var sql = "SELECT id FROM users";
+        for (var i = 0; i < 96; i++)
+            sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+
+        var combined = SqlCoreFacade.CompileQueryWithFacts(
+            sql, provider, provider,
+            new SqlPlanValidationContext("facts-deep-cte-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.True(combined.Facts.ContainsCte);
+        Assert.False(combined.Facts.ContainsSubquery);
+        Assert.Contains("users", combined.Facts.ReferencedTables,
+            StringComparer.OrdinalIgnoreCase);
+        Assert.DoesNotContain("c", combined.Facts.ReferencedTables,
+            StringComparer.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void CompileQueryWithFacts_PolicyRejectionPreservesBoundFactsOnOriginalException()
     {
