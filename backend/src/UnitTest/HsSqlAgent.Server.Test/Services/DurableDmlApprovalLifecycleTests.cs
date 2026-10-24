@@ -178,9 +178,9 @@ public sealed class DurableDmlApprovalLifecycleTests
         await using var fixture = await Fixture.CreateAsync();
         var approval = await PersistPendingInsertAsync(fixture);
         // An old ciphertext is explicitly unsupported by product v3.
-        await using (var scope = fixture.Services.CreateAsyncScope())
+        await using (var originalScope = fixture.Services.CreateAsyncScope())
         {
-            var services = scope.ServiceProvider;
+            var services = originalScope.ServiceProvider;
             var db = services.GetRequiredService<AdminContext>();
             var state = await db.DmlApprovalRequests.SingleAsync(
                 x => x.RequestId == approval.RequestId, TestContext.Current.CancellationToken);
