@@ -101,6 +101,17 @@ rejections are still printed explicitly in the uploaded report.
 
 ## Interpretation
 
+- Strict schema/name and type proofs now also use per-verification, occurrence-
+  scoped continuations across general Query/Expr/Source boundaries. The isolated
+  proof matrix requires **72 cases** (six providers × function-contained Query,
+  deeply nested scalar functions, LEFT JOIN-derived sources and multiple CTEs ×
+  128/512/2048) to complete both phases on **256-KiB** stacks, report at least
+  `depth` real work units in each phase and allocate at most **180 MB combined**
+  at depth 2048. Missing-column/type negatives and one public Query object reused
+  under different outer scopes verify that proofs cannot leak across occurrences.
+  This matrix isolates schema/type from later provider output capability gates;
+  it does not claim full compilation for every one of those query shapes.
+
 - Public parser/compatibility conversion now has an additional six-provider
   **108-case 256-KiB stack matrix**: derived, CTE, aliased scalar, mixed
   CTE/derived/scalar, function-contained Query, and LEFT JOIN-derived Query,

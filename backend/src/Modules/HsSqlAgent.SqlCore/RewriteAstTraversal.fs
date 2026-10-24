@@ -120,6 +120,31 @@ module internal RewriteAstTraversal =
     let iter (visit: Expr -> unit) (root: Expr) =
         exists true (fun node -> visit node; false) root |> ignore
 
+    /// Prove that a Query has no nested Query edge in any source or scalar
+    /// clause. Inspect only this Query's own expressions, never descend into
+    /// a Query child while deciding whether a local proof can finish alone.
+    let isTerminalQuery (query: Query) =
+        let terminalExpr expression =
+            not (exists true (function
+                | ScalarSubquery _ | Exists _ | InSubquery _ -> true
+                | _ -> false) expression)
+        let terminalSource = function
+            | NamedTable _ | CteTable _ -> true
+            | DerivedTable _ | LateralDerivedTable _ -> false
+        let head = query.Head
+        head.Ctes.IsEmpty && query.SetOperations.IsEmpty
+        && (head.From |> Option.forall terminalSource)
+        && (head.Joins |> List.forall (fun join -> terminalSource join.Source))
+        && (head.Projection |> List.forall (fun item -> terminalExpr item.Expression))
+        && (head.DistinctOn |> Option.forall (List.forall terminalExpr))
+        && (head.Where |> Option.forall terminalExpr)
+        && (head.GroupBy |> List.forall terminalExpr)
+        && (head.Having |> Option.forall terminalExpr)
+        && (head.Joins |> List.forall (function
+            | OnJoin(_, _, predicate) -> terminalExpr predicate
+            | _ -> true))
+        && (query.OrderBy |> List.forall (fun item -> terminalExpr item.Expression))
+
     /// Struct DU frames avoid one managed object per nested SQL node.
     /// Explicit work capacity grows with nesting, not the CLR call stack.
     /// Explicit continuation frames for policy traversal across queries,
