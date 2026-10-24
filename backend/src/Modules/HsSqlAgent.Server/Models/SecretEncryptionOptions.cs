@@ -13,6 +13,8 @@ public sealed class SecretEncryptionOptions
     /// after all nodes have deployed legacy/v2 dual-read support.
     /// </summary>
     public bool EnableV2DurableDmlWrites { get; set; }
+    /// <summary>Only new and explicitly updated Admin DB credentials; Bootstrap remains legacy.</summary>
+    public bool EnableV2DatabasePasswordWrites { get; set; }
     /// <summary>
     /// Operator attestation; this is NOT a distributed compatibility probe.
     /// Never set true while an old-only node can read approval state.

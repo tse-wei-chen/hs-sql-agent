@@ -2,9 +2,11 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Data;
 using Admin.Service.Models;
 using Common.Interfaces;
+using Common.Services;
 using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
 using System.Text;
+using System.Globalization;
 using Admin.Service.Interfaces;
 namespace Admin.Service.Services;
 
@@ -12,13 +14,17 @@ public class DbManagementService(
     IAdminContext context,
     ICryptoService cryptoService,
     IOptions<McpKeySettings> mcpKeySettings,
-    ICacheService cache) : IDbManagementService
+    ICacheService cache,
+    ISecretProtector? secretProtector = null,
+    ISecretWriteRolloutPolicy? writePolicy = null) : IDbManagementService
 {
     private static readonly TimeSpan CacheBarrierExpiry = TimeSpan.FromMinutes(6);
     private readonly IAdminContext _context = context;
     private readonly ICryptoService _cryptoService = cryptoService;
     private readonly ICacheService _cache = cache;
     private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
+    private readonly bool _v2PasswordWrites = writePolicy?.EnableV2DatabasePasswordWrites == true;
+    private readonly ISecretProtector? _secretProtector = secretProtector;
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
@@ -45,8 +51,34 @@ public class DbManagementService(
             UpdatedBy = dbManagement.UpdatedBy
         };
 
-        _context.DbManagement.Add(entity);
-        await _context.SaveChangesAsync(cancellationToken);
+        if (_v2PasswordWrites && !string.IsNullOrWhiteSpace(dbManagement.Password))
+        {
+            // The identity/sequence ID is unknown until the first INSERT. Both
+            // database writes MUST be in one transaction: never commit a row
+            // carrying the transitional legacy ciphertext.
+            var protector = _secretProtector ??
+                throw new InvalidOperationException("V2 database password writes require a secret protector.");
+            if (_context is not DbContext dbContext || !dbContext.Database.IsRelational())
+                throw new InvalidOperationException("V2 database password writes require a relational Admin Store.");
+
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+            _context.DbManagement.Add(entity);
+            await _context.SaveChangesAsync(cancellationToken);
+            if (entity.Id <= 0)
+                throw new InvalidOperationException("Database ID was not assigned.");
+
+            entity.PasswordHash = protector.Protect(
+                dbManagement.Password, SecretPurpose.DatabasePassword,
+                entity.Id.ToString(CultureInfo.InvariantCulture));
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        else
+        {
+            _context.DbManagement.Add(entity);
+            await _context.SaveChangesAsync(cancellationToken);
+        }
+
         return DbManagementVM.Projection.Compile().Invoke(entity);
     }
 
@@ -89,7 +121,12 @@ public class DbManagementService(
             existingDbManagement.Username = dbManagement.Username;
             if (!string.IsNullOrWhiteSpace(dbManagement.Password))
             {
-                existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+                existingDbManagement.PasswordHash = _v2PasswordWrites
+                    ? (_secretProtector ?? throw new InvalidOperationException(
+                        "V2 database password writes require a secret protector."))
+                        .Protect(dbManagement.Password, SecretPurpose.DatabasePassword,
+                            id.ToString(CultureInfo.InvariantCulture))
+                    : _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
             }
             existingDbManagement.Database = dbManagement.Database;
             existingDbManagement.ExtraSettings = dbManagement.ExtraSettings;

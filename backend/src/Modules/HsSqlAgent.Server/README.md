@@ -327,6 +327,27 @@ Store ciphertext writer in this phase. Deployment needs a coordinated
 dual-reader rollout before v2 writes are activated; a mixed-version fleet
 must not encounter v2 ciphertext on an old-only reader.
 
+### Opt-in v2 Admin database password writes
+
+`SecretEncryption:EnableV2DatabasePasswordWrites=true` works only together
+with `SecretEncryption:Enabled=true`, `AllNodesDualReadConfirmed=true` and
+a configured DatabasePassword AES key ring. This opt-in is meant **only after
+every reader/worker in the deployed fleet is upgraded**, with no old-only
+process allowed to resume. The confirmation is not an automatic distributed
+readiness probe.
+
+New Admin-created database connections receive an ID within a relational
+Admin Store transaction, then immediately receive an AAD-bound v2 ciphertext
+within that **same transaction**; no intermediate legacy row is committed.
+Updating a non-Bootstrap password uses the existing stable ID and v2 encryption.
+Blank password updates preserve the previous ciphertext. Rollback to old-only
+nodes after enabling writes is unsafe.
+
+Bootstrap password reconciliation and batch re-encryption of historical rows
+are *not* switched by this flag. Preserve the legacy MCP HMAC secret until
+MCP key hashing, Durable DML approval fingerprints and all historical ciphertext
+have been handled separately.
+
 ### ExtraSettings secret-leak prevention
 
 New/updated Admin database configurations and Bootstrap inventory now require

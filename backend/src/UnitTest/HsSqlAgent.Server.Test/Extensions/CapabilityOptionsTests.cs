@@ -175,6 +175,43 @@ public sealed class CapabilityOptionsTests
             }));
     }
 
+    [Fact]
+    public void V2DatabasePasswordWrites_RequireFleetConfirmationAndPurposeRing()
+    {
+        var noAcknowledgement = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            noAcknowledgement.AddHsSqlAgentCore().AddHsSqlAgentRuntime(o =>
+            {
+                o.SecretEncryption.Enabled = true;
+                o.SecretEncryption.EnableV2DatabasePasswordWrites = true;
+                o.SecretEncryption.Purposes["DatabasePassword"] = new SecretEncryptionPurposeOptions
+                {
+                    ActiveKeyId = "db_key",
+                    Keys = new Dictionary<string, string>
+                    {
+                        ["db_key"] = Convert.ToBase64String(Enumerable.Repeat((byte)0x84, 32).ToArray())
+                    }
+                };
+            }));
+
+        var noDbRing = new ServiceCollection();
+        Assert.Throws<InvalidOperationException>(() =>
+            noDbRing.AddHsSqlAgentCore().AddHsSqlAgentRuntime(o =>
+            {
+                o.SecretEncryption.Enabled = true;
+                o.SecretEncryption.EnableV2DatabasePasswordWrites = true;
+                o.SecretEncryption.AllNodesDualReadConfirmed = true;
+                o.SecretEncryption.Purposes["DurableDmlPayload"] = new SecretEncryptionPurposeOptions
+                {
+                    ActiveKeyId = "dml_key",
+                    Keys = new Dictionary<string, string>
+                    {
+                        ["dml_key"] = Convert.ToBase64String(Enumerable.Repeat((byte)0x85, 32).ToArray())
+                    }
+                };
+            }));
+    }
+
     private static void AssertJsonEqual<T>(T expected, T actual)
     {
         var expectedJson = JsonSerializer.Serialize(expected);

@@ -24,10 +24,10 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
-        if (options.EnableV2DurableDmlWrites &&
+        if ((options.EnableV2DurableDmlWrites || options.EnableV2DatabasePasswordWrites) &&
             (!options.Enabled || !options.AllNodesDualReadConfirmed))
             throw new InvalidOperationException(
-                "V2 Durable DML writes require enabled SecretEncryption and explicit full-fleet dual-read confirmation.");
+                "V2 secret writes require enabled SecretEncryption and explicit full-fleet dual-read confirmation.");
 
         if (!options.Enabled) return services;
 
@@ -36,6 +36,12 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
                 string.Equals(p, nameof(SecretPurpose.DurableDmlPayload), StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException(
                 "V2 Durable DML writes require a DurableDmlPayload key ring.");
+
+        if (options.EnableV2DatabasePasswordWrites &&
+            (options.Purposes is null || !options.Purposes.Keys.Any(p =>
+                string.Equals(p, nameof(SecretPurpose.DatabasePassword), StringComparison.OrdinalIgnoreCase))))
+            throw new InvalidOperationException(
+                "V2 DB password writes require a DatabasePassword key ring.");
 
         if (options.Purposes is null || options.Purposes.Count == 0)
             throw new InvalidOperationException("SecretEncryption:Purposes needs at least one configured purpose.");
@@ -67,7 +73,10 @@ public static class HsSqlAgentSecretEncryptionServiceExtensions
             // rejects reuse of key material across multiple key IDs/purposes.
             var ring = new SecretKeyRing(keys);
             services.TryAddSingleton<ISecretKeyRing>(ring);
-            services.TryAddSingleton(new SecretEncryptionWritePolicy(options.EnableV2DurableDmlWrites));
+            services.TryAddSingleton(new SecretEncryptionWritePolicy(
+                options.EnableV2DurableDmlWrites, options.EnableV2DatabasePasswordWrites));
+            services.TryAddSingleton<ISecretWriteRolloutPolicy>(
+                sp => sp.GetRequiredService<SecretEncryptionWritePolicy>());
             services.TryAddSingleton<ISecretProtector>(sp =>
             {
                 var hmac = sp.GetService<IOptions<McpKeySettings>>()?.Value.HmacSecretKey;
