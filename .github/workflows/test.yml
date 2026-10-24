@@ -304,6 +304,35 @@ jobs:
                       (item["shape"], item["depth"], worker.get("diagnosticCode"), stages)))
               print(f"  {item['shape']:25} depth={item['depth']} allocated={worker.get('allocatedBytes')} stages={len(stages)}")
           PY
+      - name: Verify heap CTE parsing and typed proof on 256 KiB stacks
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --depth-probe --dialects Postgres
+          --shapes nested-cte,nested-cte-typed-schema
+          --depths 512,2048 --stack-bytes 262144
+          --output artifacts/sqlcore-cte-small-stack-pr.json
+      - name: Gate 256 KiB nested CTE successful compilation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          with open("artifacts/sqlcore-cte-small-stack-pr.json", encoding="utf-8") as src:
+              report = json.load(src)
+          print(f"CTE small stack: samples={report['samples']} failures={report['failures']} crashesOrTimeouts={report['crashesOrTimeouts']}")
+          if report["samples"] != 4 or report["failures"] or report["crashesOrTimeouts"]:
+              raise SystemExit("Nested CTE must compile successfully on a 256 KiB stack.")
+          for item in report["observations"]:
+              worker = item.get("worker") or {}
+              stages = {sample["Stage"] for sample in worker.get("stageMetrics", []) if sample.get("Success")}
+              required = {"Parsing", "Binding", "Normalization", "Validation", "Policy", "Rendering"}
+              if item["shape"] == "nested-cte-typed-schema":
+                  required |= {"SchemaBinding", "SchemaType"}
+              if not worker.get("success") or item["processExitCode"] != 0 or not required.issubset(stages):
+                  raise SystemExit("CTE small stack did not succeed: " + str(
+                      (item["shape"], item["depth"], worker.get("diagnosticCode"), worker.get("error"), stages)))
+              print(f"  {item['shape']:25} depth={item['depth']} bytes={worker['allocatedBytes']} stages={len(stages)}")
+          PY
       - name: Measure constrained-stack SQL compilation (observational)
         run: >
           dotnet run -c Release --no-build
@@ -335,6 +364,7 @@ jobs:
             artifacts/sqlcore-query-phases-pr.json
             artifacts/sqlcore-nested-set-pr.json
             artifacts/sqlcore-set-small-stack-pr.json
+            artifacts/sqlcore-cte-small-stack-pr.json
           if-no-files-found: warn
 
   sqlagent-test:

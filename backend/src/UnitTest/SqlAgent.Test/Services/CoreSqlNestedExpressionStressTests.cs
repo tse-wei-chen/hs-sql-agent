@@ -33,6 +33,38 @@ public sealed class CoreSqlNestedExpressionStressTests
         Assert.NotNull(parsed.Statement);
     }
 
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void DeepNestedCteParser_UsesTheQueryHeapScheduler(
+        SqlAgentToolType dialect)
+    {
+        // Every CTE body crosses Query -> WITH body -> Query, not a SET
+        // boundary. It must not consume a CLR parseQuery frame per level.
+        var sql = "SELECT id FROM users";
+        for (var depth = 0; depth < 512; depth++)
+            sql = "WITH c AS (" + sql + ") SELECT id FROM c";
+
+        var parsed = CoreSqlTextParser.ParseQuery(sql, dialect);
+        Assert.NotNull(parsed.Statement);
+    }
+
+    [Theory]
+    [MemberData(nameof(SourceDialects))]
+    public void MultipleCtes_KeepLexicalOrderAndColumnAliasLists(
+        SqlAgentToolType dialect)
+    {
+        const string sql =
+            "WITH first_cte (a) AS (SELECT 1), "
+            + "second_cte (b) AS (SELECT a FROM first_cte) "
+            + "SELECT b FROM second_cte";
+        var result = SqlCoreFacade.CompileQuery(
+            sql, dialect, dialect,
+            new SqlPlanValidationContext("iterative-cte-parse-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("WITH", result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, result.Parameters.Length);
+    }
+
     [Fact]
     public void NestedSetOperand_RejectsLocalOrderByBeforeFollowingIntersect()
     {

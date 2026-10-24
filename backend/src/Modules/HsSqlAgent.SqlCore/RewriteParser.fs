@@ -1693,8 +1693,11 @@ module internal RewriteParser =
         [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "NATURAL" ]
         |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
 
-    and private parseCtes (cursor: Cursor) =
-        if not (acceptKeyword "WITH" cursor) then []
+    and private parseCtes
+        (cursor: Cursor)
+        (scheduleQuery: (Query -> unit) -> unit)
+        (complete: Cte list -> unit) =
+        if not (acceptKeyword "WITH" cursor) then complete []
         else
             let recursiveScope =
                 if isKeyword "RECURSIVE" cursor.Current then
@@ -1705,7 +1708,7 @@ module internal RewriteParser =
                 else
                     false
             let ctes = ResizeArray<Cte>()
-            let parseOne () =
+            let rec scheduleOne () =
                 let start = cursor.Current.Start
                 let name = identifierPart cursor
                 let aliases = ResizeArray<IdentifierPart>()
@@ -1715,16 +1718,21 @@ module internal RewriteParser =
                     expectSymbol ')' cursor
                 expectKeyword "AS" cursor
                 expectSymbol '(' cursor
-                let query = parseQuery cursor
-                expectSymbol ')' cursor
-                { Name = name
-                  ColumnAliases = aliases |> Seq.toList
-                  Query = query
-                  RecursiveScope = recursiveScope
-                  Span = parsedSpan start cursor }
-            ctes.Add(parseOne())
-            while acceptSymbol ',' cursor do ctes.Add(parseOne())
-            ctes |> Seq.toList
+                // Re-enter the SAME heap Query scheduler rather than
+                // calling parseQuery on the CLR stack for every WITH body.
+                // The callback owns the close-paren, span, and lexical
+                // continuation to the next CTE definition.
+                scheduleQuery (fun query ->
+                    expectSymbol ')' cursor
+                    ctes.Add
+                        { Name = name
+                          ColumnAliases = aliases |> Seq.toList
+                          Query = query
+                          RecursiveScope = recursiveScope
+                          Span = parsedSpan start cursor }
+                    if acceptSymbol ',' cursor then scheduleOne ()
+                    else complete (ctes |> Seq.toList))
+            scheduleOne ()
 
     and private parseSelectWithCtes (cursor: Cursor) (ctes: Cte list) =
         let start = cursor.Current.Start
@@ -1999,62 +2007,62 @@ module internal RewriteParser =
             push (fun () ->
                 RewriteStackSafety.parse cursor.Current.Start
                 let start = cursor.Current.Start
-                let ctes = parseCtes cursor
-                let head, top = parseSelectWithCtes cursor ctes
-                let initial: Query =
-                    { Head = head
-                      SetOperations = []
-                      OrderBy = []
-                      Limit = top
-                      Offset = None
-                      FetchPercent = None
-                      FetchWithTies = false
-                      Span = head.Span }
-                let intersects = ResizeArray<SetBranch>()
-                let lowerBranches = ResizeArray<SetBranch>()
+                parseCtes cursor scheduleQuery (fun ctes ->
+                    let head, top = parseSelectWithCtes cursor ctes
+                    let initial: Query =
+                        { Head = head
+                          SetOperations = []
+                          OrderBy = []
+                          Limit = top
+                          Offset = None
+                          FetchPercent = None
+                          FetchWithTies = false
+                          Span = head.Span }
+                    let intersects = ResizeArray<SetBranch>()
+                    let lowerBranches = ResizeArray<SetBranch>()
 
-                let rec scanInitialIntersects () =
-                    if isKeyword "INTERSECT" cursor.Current then
-                        match parseSetOperator cursor with
-                        | Some operator ->
-                            scheduleOperand (fun branch ->
-                                intersects.Add { Operator = operator; Query = branch }
-                                push scanInitialIntersects)
-                        | None -> push scanLowerBranches
-                    else push scanLowerBranches
+                    let rec scanInitialIntersects () =
+                        if isKeyword "INTERSECT" cursor.Current then
+                            match parseSetOperator cursor with
+                            | Some operator ->
+                                scheduleOperand (fun branch ->
+                                    intersects.Add { Operator = operator; Query = branch }
+                                    push scanInitialIntersects)
+                            | None -> push scanLowerBranches
+                        else push scanLowerBranches
 
-                and scanLowerBranches () =
-                    if isKeyword "UNION" cursor.Current
-                       || isKeyword "EXCEPT" cursor.Current then
-                        match parseSetOperator cursor with
-                        | Some operator ->
-                            scheduleOperandWithIntersects (fun branch ->
-                                lowerBranches.Add { Operator = operator; Query = branch }
-                                push scanLowerBranches)
-                        | None -> push finish
-                    else push finish
+                    and scanLowerBranches () =
+                        if isKeyword "UNION" cursor.Current
+                           || isKeyword "EXCEPT" cursor.Current then
+                            match parseSetOperator cursor with
+                            | Some operator ->
+                                scheduleOperandWithIntersects (fun branch ->
+                                    lowerBranches.Add { Operator = operator; Query = branch }
+                                    push scanLowerBranches)
+                            | None -> push finish
+                        else push finish
 
-                and finish () =
-                    let orderBy, tailLimit, offset, fetchPercent, fetchWithTies =
-                        parseQueryTail cursor
-                    let limit =
-                        match initial.Limit, tailLimit with
-                        | Some value, None -> Some value
-                        | None, value -> value
-                        | Some _, Some _ ->
-                            fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
-                    complete
-                        { initial with
-                            SetOperations =
-                                (intersects |> Seq.toList) @ (lowerBranches |> Seq.toList)
-                            OrderBy = orderBy
-                            Limit = limit
-                            Offset = offset
-                            FetchPercent = fetchPercent
-                            FetchWithTies = fetchWithTies
-                            Span = parsedSpan start cursor }
+                    and finish () =
+                        let orderBy, tailLimit, offset, fetchPercent, fetchWithTies =
+                            parseQueryTail cursor
+                        let limit =
+                            match initial.Limit, tailLimit with
+                            | Some value, None -> Some value
+                            | None, value -> value
+                            | Some _, Some _ ->
+                                fail cursor.Current "TOP cannot be combined with OFFSET/FETCH row limiting"
+                        complete
+                            { initial with
+                                SetOperations =
+                                    (intersects |> Seq.toList) @ (lowerBranches |> Seq.toList)
+                                OrderBy = orderBy
+                                Limit = limit
+                                Offset = offset
+                                FetchPercent = fetchPercent
+                                FetchWithTies = fetchWithTies
+                                Span = parsedSpan start cursor }
 
-                push scanInitialIntersects)
+                    push scanInitialIntersects))
 
         and scheduleOperand (complete: Query -> unit) =
             if acceptSymbol '(' cursor then

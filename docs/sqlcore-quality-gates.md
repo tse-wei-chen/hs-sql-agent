@@ -1351,3 +1351,22 @@ rewrites, short-circuits fail-closed on a heap worklist instead of
 recursively checking deep arithmetic/cast trees. PostgreSQL's
 512-clause FILTER aggregate regression checks parameter cardinality
 and SQL emission. These changes do not relax target proof requirements.
+
+### CTE parser scheduler and hard 256-KiB gate (R2)
+
+`RewriteParser.parseCtes` now receives the enclosing
+`parseQuery` heap scheduler and a continuation for the lexical CTE
+list. It schedules each WITH-body query and resumes after its closing
+parenthesis; no CTE nesting level recursively calls `parseQuery`.
+This preserves recursive-CTE source capability checks, multiple CTE
+declaration order, alias lists and precise spans. New source-dialect
+parser regressions cover all six providers at 512 nested CTEs, plus
+all-provider multi-CTE alias/projection compilation.
+
+CI adds a strict **success-only** worker gate: PostgreSQL
+`nested-cte` and `nested-cte-typed-schema`, each at depths 512/2048,
+with 256-KiB managed stacks. The gate requires every expected
+compilation stage, including both SchemaBinding and SchemaType for
+typed metadata proofs, with no crashes/timeouts. This is a CTE-only
+parser milestone; it does not claim Derived/LATERAL/Expr parsing is
+stack independent.
