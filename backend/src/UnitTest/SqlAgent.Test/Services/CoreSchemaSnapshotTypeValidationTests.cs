@@ -141,6 +141,28 @@ public sealed class CoreSchemaSnapshotTypeValidationTests
 
 
 
+
+    [Fact]
+    public void DeepSearchedCaseScalarSubquery_RejectsInvalidInnerArithmetic()
+    {
+        const int depth = 96;
+        var context = Context(SqlAgentToolType.Postgres, typed: true);
+        var valid = "SELECT id + 1 FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT CASE WHEN 1 = 1 THEN (" + valid + ") ELSE 0 END";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            context, new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT name + 1 FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT CASE WHEN 1 = 1 THEN (" + invalid + ") ELSE 0 END";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                context, new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_TYPE_MISMATCH", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void DeepProjectionScalarSubquery_PreservesNumericTypeRejection()
     {

@@ -265,6 +265,32 @@ module internal RewriteSchemaTypeValidation =
             | _ -> None
         else None
 
+
+    // Only one CASE branch with one suspended scalar Query participates.
+    // The condition and fallback remain fully validated and type-checked.
+    let private tryLinearCaseProjection (query: Query) =
+        let head = query.Head
+        if head.Ctes.IsEmpty && query.SetOperations.IsEmpty &&
+           head.DistinctMode = SelectDistinct.AllRows &&
+           head.From.IsNone && head.Joins.IsEmpty &&
+           head.Where.IsNone && head.GroupBy.IsEmpty && head.Having.IsNone &&
+           query.OrderBy.IsEmpty && query.Limit.IsNone && query.Offset.IsNone &&
+           query.FetchPercent.IsNone && not query.FetchWithTies then
+            match head.Projection with
+            | [ { Alias = None; Expression = projection } ] ->
+                match Expr.unspan projection with
+                | SearchedCase(branches, Some fallback) ->
+                    match NonEmpty.toList branches, Expr.unspan fallback with
+                    | [ branch ], Literal _ ->
+                        match Expr.unspan branch.Result, Expr.unspan branch.Condition with
+                        | ScalarSubquery inner, Binary _ ->
+                            Some(branch.Condition, fallback, inner)
+                        | _ -> None
+                    | _ -> None
+                | _ -> None
+            | _ -> None
+        else None
+
     // The common unary/Boolean/arithmetic/type-comparison graph uses heap
     // continuations. Complex CASE/aggregate/subquery clauses retain their
     // existing provider-aware evaluator until the full Query graph migrates.
@@ -280,6 +306,7 @@ module internal RewriteSchemaTypeValidation =
         | ResumeTypedExists of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query
         | ResumeTypedIn of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * SqlSchemaValueKind option * Span
         | ResumeTypedScalarProjection
+        | ResumeTypedCaseProjection of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Expr
 
     let rec private expression catalog ctes scope span expr =
         RewriteStackSafety.compile SqlDiagnosticStage.SemanticValidation
@@ -487,8 +514,8 @@ module internal RewriteSchemaTypeValidation =
         let mutable scanning = true
         while scanning do
             RewriteResourceBudget.checkpoint ()
-            match current.Head.Ctes, current.SetOperations, tryLinearExists current, tryLinearIn current, tryLinearScalarProjection current with
-            | [], [], Some inner, _, _ ->
+            match current.Head.Ctes, current.SetOperations, tryLinearExists current, tryLinearIn current, tryLinearScalarProjection current, tryLinearCaseProjection current with
+            | [], [], Some inner, _, _, _ ->
                 // Type validation inspects WHERE before projection. Defer
                 // the outer projection until the inner EXISTS proof returns.
                 let fromSources =
@@ -499,7 +526,7 @@ module internal RewriteSchemaTypeValidation =
                 pending.Add(ResumeTypedExists(inheritedCtes, currentParent, current))
                 currentParent <- Some scope
                 current <- inner
-            | [], [], _, Some(value, inner), _ ->
+            | [], [], _, Some(value, inner), _, _ ->
                 let fromSources =
                     match current.Head.From with
                     | Some table -> [ tableSource catalog inheritedCtes currentParent table ]
@@ -510,15 +537,22 @@ module internal RewriteSchemaTypeValidation =
                 pending.Add(ResumeTypedIn(inheritedCtes, currentParent, current, leftKind, whereSpan))
                 currentParent <- Some scope
                 current <- inner
-            | [], [], _, _, Some inner ->
+            | [], [], _, _, Some inner, _ ->
                 pending.Add ResumeTypedScalarProjection
                 currentParent <- Some(makeScope currentParent [])
                 current <- inner
-            | [ cte ], [], _, _, _ when not cte.RecursiveScope ->
+            | [], [], _, _, _, Some(condition, fallback, inner) ->
+                let scope = makeScope currentParent []
+                requireKind Span.unknown SqlSchemaValueKind.Boolean
+                    (expression catalog inheritedCtes scope Span.unknown condition) "CASE WHEN"
+                pending.Add(ResumeTypedCaseProjection(inheritedCtes, currentParent, fallback))
+                currentParent <- Some scope
+                current <- inner
+            | [ cte ], [], _, _, _, _ when not cte.RecursiveScope ->
                 pending.Add(ResumeTypedCte(inheritedCtes, currentParent, current, cte))
                 current <- cte.Query
                 currentParent <- None
-            | [], [], _, _, _ when current.Head.Joins.Length = 1 ->
+            | [], [], _, _, _, _ when current.Head.Joins.Length = 1 ->
                 match current.Head.From, current.Head.Joins.Head.Source with
                 | Some ((NamedTable _ | CteTable _) as first), LateralDerivedTable(inner, alias) ->
                     let initial = makeScope currentParent [ tableSource catalog inheritedCtes currentParent first ]
@@ -526,7 +560,7 @@ module internal RewriteSchemaTypeValidation =
                     currentParent <- Some initial
                     current <- inner
                 | _ -> scanning <- false
-            | [], [], _, _, _ when current.Head.Joins.IsEmpty ->
+            | [], [], _, _, _, _ when current.Head.Joins.IsEmpty ->
                 match current.Head.From with
                 | Some (DerivedTable(inner, alias)) ->
                     pending.Add(ResumeTypedDerived(inheritedCtes, currentParent, current, alias))
@@ -591,6 +625,9 @@ module internal RewriteSchemaTypeValidation =
                     match projected with
                     | [ (_, kind) ] -> [ None, kind ]
                     | _ -> [ None, None ]
+            | ResumeTypedCaseProjection(inherited, originalParent, fallback) ->
+                expression catalog inherited (makeScope originalParent []) Span.unknown fallback |> ignore
+                projected <- [ None, None ]
         projected
 
     and private queryTypesOne catalog inheritedCtes parent (query: Query) =

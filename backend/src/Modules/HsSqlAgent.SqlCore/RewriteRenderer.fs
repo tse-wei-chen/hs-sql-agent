@@ -2043,13 +2043,71 @@ module internal RewriteRenderer =
             for _ in 1 .. count do output.Append("))") |> ignore
             Some(output.ToString())
 
+
+    // Append a linear searched CASE -> scalar Query chain outside-in.
+    // Condition parameters precede child parameters; ELSE binds on unwind.
+    and private tryRenderLinearCaseQuery (ctx: RenderContext) (query: Query) =
+        let tryWrapper (current: Query) =
+            let head = current.Head
+            if not head.Ctes.IsEmpty || head.From.IsSome
+               || not head.Joins.IsEmpty
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || head.Where.IsSome || not head.GroupBy.IsEmpty
+               || head.Having.IsSome
+               || not current.SetOperations.IsEmpty || hasTail current then None
+            else
+                match head.Projection with
+                | [ { Alias = None; Expression = projection } ] ->
+                    match Expr.unspan projection with
+                    | SearchedCase(branches, Some fallback) ->
+                        match NonEmpty.toList branches, Expr.unspan fallback with
+                        | [ branch ], Literal _ ->
+                            match Expr.unspan branch.Result, Expr.unspan branch.Condition with
+                            | ScalarSubquery child, Binary _ ->
+                                Some(branch.Condition, fallback, child)
+                            | _ -> None
+                        | _ -> None
+                    | _ -> None
+                | _ -> None
+        let dummyFrom =
+            match ctx.Provider with
+            | Oracle -> " FROM DUAL"
+            | Firebird -> " FROM RDB$DATABASE"
+            | _ -> ""
+        let mutable current = query
+        let fallbacks = ResizeArray<Expr>()
+        let output = RenderBuffer(ctx, "")
+        let mutable scanning = true
+        while scanning do
+            RewriteResourceBudget.checkpoint ()
+            match tryWrapper current with
+            | Some(condition, fallback, child) ->
+                output.Append("SELECT CASE WHEN ")
+                      .Append((renderPredicate ctx condition) : string)
+                      .Append(" THEN (") |> ignore
+                fallbacks.Add(fallback)
+                current <- child
+            | None -> scanning <- false
+        if fallbacks.Count = 0 then None
+        else
+            output.Append((renderQueryCore ctx current) : string) |> ignore
+            for index = fallbacks.Count - 1 downto 0 do
+                output.Append(") ELSE ")
+                      .Append((renderExpr ctx fallbacks.[index]) : string)
+                      .Append(" END")
+                      .Append(dummyFrom) |> ignore
+            Some(output.ToString())
+
     and private renderQuery (ctx: RenderContext) query =
-        match tryRenderLinearInQuery ctx query with
+        match tryRenderLinearCaseQuery ctx query with
         | Some sql -> sql
         | None ->
-            match tryRenderMixedLinearQuery ctx query with
+            match tryRenderLinearInQuery ctx query with
             | Some sql -> sql
-            | None -> renderQueryCore ctx query
+            | None ->
+                match tryRenderMixedLinearQuery ctx query with
+                | Some sql -> sql
+                | None -> renderQueryCore ctx query
 
     and private renderSubquery (ctx: RenderContext) query =
         if isSetQuery query

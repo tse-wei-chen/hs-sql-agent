@@ -162,6 +162,27 @@ public sealed class CoreSchemaSnapshotBindingTests
     }
 
 
+
+    [Fact]
+    public void DeepSearchedCaseScalarSubquery_ReportsMissingInnerColumn()
+    {
+        const int depth = 96;
+        var valid = "SELECT id FROM users";
+        for (var i = 0; i < depth; i++)
+            valid = "SELECT CASE WHEN 1 = 1 THEN (" + valid + ") ELSE 0 END";
+        Assert.NotEmpty(SqlCoreFacade.CompileQuery(
+            valid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()).Sql);
+
+        var invalid = "SELECT missing FROM users";
+        for (var i = 0; i < depth; i++)
+            invalid = "SELECT CASE WHEN 1 = 1 THEN (" + invalid + ") ELSE 0 END";
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(invalid, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres), new SqlExecutionPlanPolicy()));
+        Assert.Equal("SQL_SCHEMA_COLUMN_NOT_FOUND", error.Diagnostic?.Code);
+    }
+
     [Fact]
     public void DeepProjectionScalarSubquery_ResumesStrictSchemaProof()
     {
