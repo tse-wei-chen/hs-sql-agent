@@ -130,7 +130,7 @@ public sealed class CapabilityOptionsTests
             }));
     }
 
-    private static void AssertJsonEqual<T>(T expected, T actual>
+    private static void AssertJsonEqual<T>(T expected, T actual)
     {
         var expectedJson = JsonSerializer.Serialize(expected);
         var actualJson = JsonSerializer.Serialize(actual);

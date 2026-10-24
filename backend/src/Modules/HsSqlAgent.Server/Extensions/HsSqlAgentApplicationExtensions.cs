@@ -418,7 +418,7 @@ public static class HsSqlAgentApplicationExtensions
                 adminDb.DbManagement.Add(dbEntity);
             }
             dbEntity.Name = dbName;
-            dbEntity.SqlProvider = dbConfig.Provider.Trim();
+            dbEntity.SqlProvider = dbConfig.Provider!.Trim();
             dbEntity.Host = Normalize(dbConfig.Host);
             dbEntity.Port = Normalize(dbConfig.Port);
             dbEntity.Database = Normalize(dbConfig.Database);
