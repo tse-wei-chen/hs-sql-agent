@@ -321,6 +321,7 @@ public class McpAccessKeyService(
                     Host = db.Host ?? string.Empty,
                     Port = db.Port ?? string.Empty,
                     Username = db.Username ?? string.Empty,
+                    SecretBindingId = db.SecretBindingId,
                     PasswordHash = db.PasswordHash ?? string.Empty,
                     Database = db.Database ?? string.Empty,
                     ExtraSettings = db.ExtraSettings

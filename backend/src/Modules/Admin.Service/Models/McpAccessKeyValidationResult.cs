@@ -25,6 +25,7 @@ public sealed class McpRuntimeDatabaseConfiguration
     public string Host { get; init; } = string.Empty;
     public string Port { get; init; } = string.Empty;
     public string Username { get; init; } = string.Empty;
+    public string SecretBindingId { get; set; } = string.Empty;
     public string PasswordHash { get; init; } = string.Empty;
     public string Database { get; init; } = string.Empty;
     public string? ExtraSettings { get; init; }

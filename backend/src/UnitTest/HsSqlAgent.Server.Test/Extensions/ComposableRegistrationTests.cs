@@ -14,7 +14,7 @@ public class ComposableRegistrationTests
     {
         var services = new ServiceCollection();
         var first = services.AddHsSqlAgentCore();
-        first.AddHsSqlAgentRuntime();
+        first.AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
         var descriptorsAfterFirst = services.Count;
 
         // A second package can call AddHsSqlAgentCore independently without
@@ -30,7 +30,7 @@ public class ComposableRegistrationTests
     {
         var services = new ServiceCollection();
         services.AddHsSqlAgentCore()
-            .AddHsSqlAgentRuntime(o => o.DmlApprovalStore.Provider = "Memory");
+            .AddHsSqlAgentRuntime(o => { o.SecretProtection = Common.Services.TestSecrets.Create(); o.DmlApprovalStore.Provider = "Memory"; });
 
         var second = services.AddHsSqlAgentCore();
         var error = Assert.Throws<InvalidOperationException>(() =>
@@ -55,7 +55,7 @@ public class ComposableRegistrationTests
     public void AddHsSqlAgentCore_RejectsConflictingLegacyOptionsFromIndependentModule()
     {
         var services = new ServiceCollection();
-        services.AddHsSqlAgentCore(CreateOptions()).AddHsSqlAgentRuntime();
+        services.AddHsSqlAgentCore(CreateOptions()).AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
 
         var error = Assert.Throws<InvalidOperationException>(() =>
             services.AddHsSqlAgentCore(CreateOptions()));
@@ -79,7 +79,7 @@ public class ComposableRegistrationTests
         var services = new ServiceCollection();
         var builder = services.AddHsSqlAgentCore(new HsSqlAgentServiceOptions());
 
-        builder.AddHsSqlAgentRuntime();
+        builder.AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create());
 
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(IAuthService));
         Assert.DoesNotContain(services, descriptor => descriptor.ServiceType == typeof(Admin.Service.Data.AdminContext));
@@ -161,6 +161,7 @@ public class ComposableRegistrationTests
     private static HsSqlAgentServiceOptions CreateOptions() => new()
     {
         AdminConnectionString = "Data Source=:memory:",
+        SecretProtection = Common.Services.TestSecrets.Create(),
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
     };

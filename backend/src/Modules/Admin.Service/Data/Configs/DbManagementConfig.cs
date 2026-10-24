@@ -14,7 +14,9 @@ public class DbManagementConfig : IEntityTypeConfiguration<DbManagement>
         builder.Property(x => x.Host).HasMaxLength(100);
         builder.Property(x => x.Port).HasMaxLength(10);
         builder.Property(x => x.Username).HasMaxLength(100);
-        builder.Property(x => x.PasswordHash).HasMaxLength(256);
+        builder.Property(x => x.PasswordHash);
+        builder.Property(x => x.SecretBindingId).IsRequired().HasMaxLength(32);
+        builder.HasIndex(x => x.SecretBindingId).IsUnique();
         builder.Property(x => x.Database).HasMaxLength(100);
         builder.Property(x => x.CreatedAt).IsRequired();
         builder.Property(x => x.CreatedBy).HasMaxLength(100);

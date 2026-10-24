@@ -97,7 +97,7 @@ public class DbSetterServiceTests
                 It.IsAny<BuildDbConnectionModelBase>()))
             .Returns(connString);
 
-        var mockConnection = CreateMockDbConnection(throwOnOpen: true, errorMessage: "Access denied");
+        var mockConnection = CreateMockDbConnection(throwOnOpen: true, errorMessage: "Password=do-not-leak;Host=private-db");
         var connectionFactory = new Mock<IDbConnectionFactory>();
         connectionFactory.Setup(f => f.Create(connString)).Returns(mockConnection.Object);
         var provider = new Mock<ISqlProvider>();
@@ -107,7 +107,8 @@ public class DbSetterServiceTests
         var result = await _service.TestDbConnectionAsync(request, TestContext.Current.CancellationToken);
 
         Assert.False(result.IsSuccess);
-        Assert.Equal("Access denied", result.ErrorMessage);
+        Assert.Equal("DB_CONNECTION_FAILED: Unable to connect to the database.", result.ErrorMessage);
+        Assert.DoesNotContain("do-not-leak", result.ErrorMessage);
         connectionFactory.Verify(f => f.Create(connString), Times.Once);
         mockConnection.Verify(c => c.OpenAsync(It.IsAny<CancellationToken>()), Times.Once);
     }

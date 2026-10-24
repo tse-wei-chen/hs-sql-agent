@@ -2,26 +2,23 @@ using Admin.Service.Data.Entites;
 using Admin.Service.Data;
 using Admin.Service.Models;
 using Common.Interfaces;
-using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
-using System.Text;
 using Admin.Service.Interfaces;
 namespace Admin.Service.Services;
 
 public class DbManagementService(
     IAdminContext context,
     ICryptoService cryptoService,
-    IOptions<McpKeySettings> mcpKeySettings,
     ICacheService cache) : IDbManagementService
 {
     private static readonly TimeSpan CacheBarrierExpiry = TimeSpan.FromMinutes(6);
     private readonly IAdminContext _context = context;
     private readonly ICryptoService _cryptoService = cryptoService;
     private readonly ICacheService _cache = cache;
-    private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
 
     public async Task<DbManagementVM> CreateDbAsync(DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
+        Common.Services.ConnectionExtraSettings.Validate(dbManagement.ExtraSettings);
         if (DbManagementPasswordPolicy.RequiresPassword(dbManagement.SqlProvider)
             && string.IsNullOrWhiteSpace(dbManagement.Password))
         {
@@ -35,7 +32,6 @@ public class DbManagementService(
             Host = dbManagement.Host,
             Port = dbManagement.Port,
             Username = dbManagement.Username,
-            PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret),
             Database = dbManagement.Database,
             ExtraSettings = dbManagement.ExtraSettings,
             CreatedBy = dbManagement.CreatedBy,
@@ -44,6 +40,7 @@ public class DbManagementService(
             UpdatedBy = dbManagement.UpdatedBy
         };
 
+        entity.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, "db-password:" + entity.SecretBindingId);
         _context.DbManagement.Add(entity);
         await _context.SaveChangesAsync(cancellationToken);
         return DbManagementVM.Projection.Compile().Invoke(entity);
@@ -76,6 +73,7 @@ public class DbManagementService(
 
     public async Task UpdateDbAsync(int id, DbManagementRequest dbManagement, CancellationToken cancellationToken = default)
     {
+        Common.Services.ConnectionExtraSettings.Validate(dbManagement.ExtraSettings);
         var existingDbManagement = await _context.DbManagement.FirstOrDefaultAsync(db => db.Id == id, cancellationToken);
         if (existingDbManagement != null)
         {
@@ -87,7 +85,7 @@ public class DbManagementService(
             existingDbManagement.Username = dbManagement.Username;
             if (!string.IsNullOrWhiteSpace(dbManagement.Password))
             {
-                existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, _hmacSecret);
+                existingDbManagement.PasswordHash = _cryptoService.EncryptText(dbManagement.Password, "db-password:" + existingDbManagement.SecretBindingId);
             }
             existingDbManagement.Database = dbManagement.Database;
             existingDbManagement.ExtraSettings = dbManagement.ExtraSettings;

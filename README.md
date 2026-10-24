@@ -14,6 +14,8 @@ It supports **PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird** and 
 
 > **Upgrading from v2.x?** See the [v3.0 migration guide](docs/v3-migration.md) for breaking approval-store contracts, Redis key changes, Pending approvals and safe deployment requirements.
 
+> **Secret protection breaking change:** configure three independent protection keys and re-enter existing DB passwords. Read the [upgrade and key rotation guide](docs/secret-protection-upgrade.md) before deploying.
+
 ## Publish SQL as an MCP tool
 
 Instead of teaching the model to regenerate the same query every time, define the SQL shape once:
@@ -58,6 +60,8 @@ SQL support is intentionally bounded by proven semantics. See the [SQL Support R
 ```bash
 cp .env.example .env
 # Set HMAC_KEY and JWT_KEY to unique secrets of at least 32 bytes.
+# Also set DB_ENCRYPTION_KEY, DML_ENCRYPTION_KEY, and DML_FINGERPRINT_KEY
+# to three independent Base64-encoded random 32-byte values.
 docker compose up -d
 ```
 

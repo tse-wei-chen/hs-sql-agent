@@ -88,7 +88,7 @@ internal sealed class DurableDmlApprovalLifecycle(
             throw new InvalidOperationException("A Pending DML approval must include an external reference.");
 
         var context = RequireAdminContext();
-        var secret = RequireHmacSecret();
+        var secret = RequireFingerprintKey();
         var crypto = RequireCrypto();
         var now = DateTime.UtcNow;
         var durableUntil = request.DurableUntil?.UtcDateTime
@@ -110,7 +110,7 @@ internal sealed class DurableDmlApprovalLifecycle(
             ComputeConnectionFingerprint(connectionString, secret),
             runtime.HasTargetExecutionFence ? TargetFenceProtocol : null,
             RequiresCommitWitness: runtime.HasTargetCommitWitness);
-        var protectedPayload = crypto.EncryptText(DurableDmlResumePayloadCodec.Serialize(payload), secret)
+        var protectedPayload = crypto.EncryptText(DurableDmlResumePayloadCodec.Serialize(payload), "dml-payload:" + request.RequestId)
                                ?? throw new InvalidOperationException("Could not protect durable DML approval payload.");
 
         context.DmlApprovalRequests.Add(new DmlApprovalRequestState
@@ -464,8 +464,8 @@ internal sealed class DurableDmlApprovalLifecycle(
         DmlApprovalRequestState state,
         CancellationToken cancellationToken)
     {
-        var secret = RequireHmacSecret();
-        var payloadJson = RequireCrypto().DecryptText(state.ProtectedExecutionPayload, secret)
+        var secret = RequireFingerprintKey();
+        var payloadJson = RequireCrypto().DecryptText(state.ProtectedExecutionPayload, "dml-payload:" + state.RequestId)
                           ?? throw new InvalidOperationException("Could not decrypt durable DML approval payload.");
         var payload = DurableDmlResumePayloadCodec.Deserialize(payloadJson);
         if (payload.RequiresCommitWitness && !runtime.HasTargetCommitWitness)
@@ -595,7 +595,7 @@ internal sealed class DurableDmlApprovalLifecycle(
                 throw new DmlApprovalStaleException("The Custom DML Tool changed or was disabled after approval was requested.");
         }
 
-        var password = RequireCrypto().DecryptText(db.PasswordHash, secret);
+        var password = RequireCrypto().DecryptText(db.PasswordHash, "db-password:" + db.SecretBindingId);
         var connectionString = connectionStringFactory.BuildConnectionString(providerType, new BuildDbConnectionModelBase
         {
             Host = db.Host,
@@ -675,13 +675,8 @@ internal sealed class DurableDmlApprovalLifecycle(
         services.GetService<ICryptoService>()
         ?? throw new InvalidOperationException("Durable DML approval requires ICryptoService.");
 
-    private byte[] RequireHmacSecret()
-    {
-        var secret = services.GetService<IOptions<McpKeySettings>>()?.Value.HmacSecretKey;
-        if (string.IsNullOrWhiteSpace(secret))
-            throw new InvalidOperationException("Durable DML approval requires the MCP HMAC secret to protect resume state.");
-        return Encoding.UTF8.GetBytes(secret);
-    }
+    private byte[] RequireFingerprintKey() => Common.Services.CryptoService.DecodeKey(
+        services.GetRequiredService<Common.Services.SecretProtectionSettings>().DmlFingerprintKey);
 
     private static HashSet<string>? ParseWhitelist(string? value)
     {

@@ -19,7 +19,7 @@ namespace HsSqlAgent.Server.Services;
 public sealed class DurableDmlWitnessVerificationService(
     AdminContext adminContext,
     ICryptoService cryptoService,
-    IOptions<McpKeySettings> mcpKeySettings,
+    Common.Services.SecretProtectionSettings secretProtection,
     ISqlProviderFactory sqlProviderFactory,
     ISqlConnectionStringFactory connectionStringFactory,
     IDmlTargetCommitWitness? targetWitness = null)
@@ -65,14 +65,12 @@ public sealed class DurableDmlWitnessVerificationService(
             || !string.Equals(db.Database?.Trim(), state.DatabaseIdentity, StringComparison.Ordinal))
             return Result(TargetChanged);
 
-        var key = mcpKeySettings.Value.HmacSecretKey;
-        if (string.IsNullOrWhiteSpace(key)) return Result(ReadUnavailable);
-        var keyBytes = Encoding.UTF8.GetBytes(key);
+        var keyBytes = Common.Services.CryptoService.DecodeKey(secretProtection.DmlFingerprintKey);
 
         string connectionString;
         try
         {
-            var plain = cryptoService.DecryptText(state.ProtectedExecutionPayload, keyBytes);
+            var plain = cryptoService.DecryptText(state.ProtectedExecutionPayload, "dml-payload:" + state.RequestId);
             if (string.IsNullOrWhiteSpace(plain)) return Result(TargetChanged);
             // One authoritative decoder for both completion and independent
             // witness inspection. An old flat payload is explicitly upcast;
@@ -83,7 +81,7 @@ public sealed class DurableDmlWitnessVerificationService(
                 || resume.SourceDialect != provider)
                 return Result(TargetChanged);
 
-            var password = cryptoService.DecryptText(db.PasswordHash, keyBytes);
+            var password = cryptoService.DecryptText(db.PasswordHash, "db-password:" + db.SecretBindingId);
             connectionString = connectionStringFactory.BuildConnectionString(provider,
                 new BuildDbConnectionModelBase
                 {

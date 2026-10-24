@@ -22,13 +22,10 @@ public class RuntimeAdminController(
     IAuditService auditService,
     IDbManagementService dbManagementService,
     ICryptoService cryptoService,
-    IOptions<McpKeySettings> mcpKeySettings,
     IOperabilityService operabilityService,
     IAuditRetentionService auditRetentionService,
     ICustomSqlToolService customSqlToolService) : ControllerBase
 {
-    private readonly byte[] _hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-
     [HttpGet("mcp-keys")]
     [ProducesResponseType(typeof(IReadOnlyCollection<McpAccessKeyListItem>), StatusCodes.Status200OK)]
     [HasPermission("/runtime/mcp-keys", "view")]
@@ -186,7 +183,7 @@ public class RuntimeAdminController(
                 Host = dbc.Host,
                 Port = dbc.Port,
                 Username = dbc.Username,
-                Password = cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, _hmacSecret),
+                Password = cryptoService.DecryptText(((DbManagementPwdVM)dbc).PasswordHash, "db-password:" + ((DbManagementPwdVM)dbc).SecretBindingId),
                 Database = dbc.Database,
                 ExtraSettings = dbc.ExtraSettings
             };

@@ -1,5 +1,8 @@
 # HsSqlAgent.Server
 
+
+Secret protection now requires independent Base64-encoded random 32-byte keys for database passwords, DML payloads, and DML connection fingerprints. The standard host binds the `SecretProtection` configuration section; custom runtime registrations must set `options.SecretProtection`. Legacy encrypted passwords must be re-entered and approvals drained before upgrade. See the [secret protection upgrade guide](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/docs/secret-protection-upgrade.md).
+
 Embeddable MCP SQL Agent components for ASP.NET Core. New applications compose capabilities explicitly; each capability owns only the options it needs. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains as a compatibility path for existing consumers.
 
 ## Install
@@ -65,7 +68,11 @@ builder.Services.AddAuthorization(options =>
 
 var hs = builder.Services.AddHsSqlAgentCore();
 
-hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentRuntime(options =>
+{
+    // Required: purpose-specific encryption key rings and independent DML fingerprint key.
+    builder.Configuration.GetSection("SecretProtection").Bind(options.SecretProtection);
+});
 hs.AddHsSqlAgentAdminStore(options =>
 {
     options.Provider = "Postgres";
@@ -119,7 +126,11 @@ using HsSqlAgent.Server.Middleware;
 var builder = WebApplication.CreateBuilder(args);
 var hs = builder.Services.AddHsSqlAgentCore();
 
-hs.AddHsSqlAgentRuntime();
+hs.AddHsSqlAgentRuntime(options =>
+{
+    // Required: purpose-specific encryption key rings and independent DML fingerprint key.
+    builder.Configuration.GetSection("SecretProtection").Bind(options.SecretProtection);
+});
 
 hs.AddHsSqlAgentAdminStore(options =>
 {
@@ -227,6 +238,7 @@ builder.Services.AddHsSqlAgent(options =>
     options.AdminConnectionString = "Data Source=hsagent.db";
     options.JwtSecretKey = builder.Configuration["JWT_KEY"]!;
     options.HmacSecretKey = builder.Configuration["HMAC_KEY"]!;
+    builder.Configuration.GetSection("SecretProtection").Bind(options.SecretProtection);
 });
 
 var app = builder.Build();

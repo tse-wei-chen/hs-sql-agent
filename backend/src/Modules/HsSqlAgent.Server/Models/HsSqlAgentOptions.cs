@@ -7,6 +7,7 @@ namespace HsSqlAgent.Server.Models;
 public class HsSqlAgentServiceOptions
 {
     public McpOptions Mcp { get; } = new();
+    public Common.Services.SecretProtectionSettings SecretProtection { get; set; } = new();
     public BootstrapOptions Bootstrap { get; } = new();
     public EnterpriseIdentityOptions EnterpriseIdentity { get; } = new();
     public OperabilityOptions Operability { get; } = new();
@@ -71,6 +72,7 @@ public sealed class HsSqlAgentAdminStoreOptions
 
 public sealed class HsSqlAgentRuntimeOptions
 {
+    public Common.Services.SecretProtectionSettings SecretProtection { get; set; } = new();
     public BootstrapOptions Bootstrap { get; } = new();
     public OperabilityOptions Operability { get; } = new();
     public CacheOptions Cache { get; } = new();
@@ -83,6 +85,9 @@ public sealed class HsSqlAgentRuntimeOptions
     internal static HsSqlAgentRuntimeOptions FromLegacy(HsSqlAgentServiceOptions legacy)
     {
         var options = new HsSqlAgentRuntimeOptions();
+        options.SecretProtection.DatabasePasswords = legacy.SecretProtection.DatabasePasswords;
+        options.SecretProtection.DmlPayloads = legacy.SecretProtection.DmlPayloads;
+        options.SecretProtection.DmlFingerprintKey = legacy.SecretProtection.DmlFingerprintKey;
         options.Bootstrap.Enabled = legacy.Bootstrap.Enabled;
         options.Bootstrap.Databases = legacy.Bootstrap.Databases;
         CopyOperability(legacy.Operability, options.Operability);

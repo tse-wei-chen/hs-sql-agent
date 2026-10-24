@@ -380,7 +380,7 @@ public class CustomSqlToolControllerTests
     private static Mock<ICryptoService> CreateCrypto()
     {
         var crypto = new Mock<ICryptoService>();
-        crypto.Setup(x => x.DecryptText("encrypted", It.IsAny<byte[]>())).Returns("password");
+        crypto.Setup(x => x.DecryptText("encrypted", It.IsAny<string>())).Returns("password");
         return crypto;
     }
 

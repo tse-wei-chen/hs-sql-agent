@@ -170,6 +170,7 @@ public class HostIntegrationRegistrationTests
     private static HsSqlAgentServiceOptions CreateOptions() => new()
     {
         AdminConnectionString = "Data Source=:memory:",
+        SecretProtection = Common.Services.TestSecrets.Create(),
         HmacSecretKey = "test-hmac-key-that-is-at-least-32-bytes",
         JwtSecretKey = "test-jwt-key-that-is-at-least-32-bytes"
     };

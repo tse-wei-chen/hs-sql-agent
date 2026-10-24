@@ -45,7 +45,7 @@ public class McpAccessKeyAuthMiddlewareTests
         _dbSetterServiceMock = new Mock<IDbSetterService>();
         _cryptoServiceMock = new Mock<ICryptoService>();
         _cryptoServiceMock
-            .Setup(c => c.DecryptText("encrypted-password", It.IsAny<byte[]>()))
+            .Setup(c => c.DecryptText("encrypted-password", It.IsAny<string>()))
             .Returns("decrypted");
         _settings = Options.Create(new McpKeySettings { HmacSecretKey = "test-secret-key-at-least-32-bytes-long!" });
         _loggerMock = new Mock<ILogger<McpAccessKeyAuthMiddleware>>();

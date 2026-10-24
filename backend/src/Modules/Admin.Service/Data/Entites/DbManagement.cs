@@ -3,6 +3,7 @@ namespace Admin.Service.Data.Entites;
 public class DbManagement
 {
     public int Id { get; set; }
+    public string SecretBindingId { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = null!;
     public string? SqlProvider { get; set; }
     public string? Host { get; set; }

@@ -19,7 +19,7 @@ public sealed class CapabilityOptionsTests
 
         var legacyServices = new ServiceCollection();
         var legacyBuilder = legacyServices.AddHsSqlAgentCore(legacy);
-        legacyBuilder.AddHsSqlAgentRuntime()
+        legacyBuilder.AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create())
             .AddHsSqlAgentAdminStore()
             .AddHsSqlAgentBuiltInAuth()
             .AddHsSqlAgentMcp()
@@ -27,7 +27,7 @@ public sealed class CapabilityOptionsTests
 
         var modularServices = new ServiceCollection();
         var modularBuilder = modularServices.AddHsSqlAgentCore();
-        modularBuilder.AddHsSqlAgentRuntime()
+        modularBuilder.AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create())
             .AddHsSqlAgentAdminStore()
             .AddHsSqlAgentBuiltInAuth(options => options.Jwt.SecretKey = ValidSecret)
             .AddHsSqlAgentMcp(options => options.HmacSecretKey = ValidSecret)
@@ -62,7 +62,7 @@ public sealed class CapabilityOptionsTests
             options.AddPolicy("Host.SqlAgentAdmin", policy => policy.RequireAuthenticatedUser()));
 
         services.AddHsSqlAgentCore()
-            .AddHsSqlAgentRuntime()
+            .AddHsSqlAgentRuntime(options => options.SecretProtection = Common.Services.TestSecrets.Create())
             .AddHsSqlAgentAdminStore()
             .AddHsSqlAgentHostAuthorization("Host.SqlAgentAdmin")
             .AddHsSqlAgentAdminApi();

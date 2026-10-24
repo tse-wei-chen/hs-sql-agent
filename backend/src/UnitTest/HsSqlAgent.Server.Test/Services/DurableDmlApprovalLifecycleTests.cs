@@ -125,7 +125,7 @@ public sealed class DurableDmlApprovalLifecycleTests
         var crypto = services.GetRequiredService<ICryptoService>();
         var json = crypto.DecryptText(
             state.ProtectedExecutionPayload,
-            System.Text.Encoding.UTF8.GetBytes(HmacSecret));
+            "dml-payload:" + state.RequestId);
         Assert.NotNull(json);
         using var document = System.Text.Json.JsonDocument.Parse(json);
         Assert.Equal(DurableDmlResumePayloadCodec.CurrentSchemaVersion,
@@ -150,11 +150,11 @@ public sealed class DurableDmlApprovalLifecycleTests
                 TestContext.Current.CancellationToken);
             var crypto = services.GetRequiredService<ICryptoService>();
             var secret = System.Text.Encoding.UTF8.GetBytes(HmacSecret);
-            var json = crypto.DecryptText(state.ProtectedExecutionPayload, secret);
+            var json = crypto.DecryptText(state.ProtectedExecutionPayload, "dml-payload:" + state.RequestId);
             Assert.NotNull(json);
             var root = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
             root["SchemaVersion"] = DurableDmlResumePayloadCodec.CurrentSchemaVersion + 1;
-            state.ProtectedExecutionPayload = crypto.EncryptText(root.ToJsonString(), secret)
+            state.ProtectedExecutionPayload = crypto.EncryptText(root.ToJsonString(), "dml-payload:" + state.RequestId)
                 ?? throw new InvalidOperationException("Could not reencrypt test fixture.");
             await db.SaveChangesAsync(TestContext.Current.CancellationToken);
         }
@@ -1356,6 +1356,7 @@ public sealed class DurableDmlApprovalLifecycleTests
                 serviceCollection.AddSingleton(audit.Object);
             }
             serviceCollection.AddSingleton<ICryptoService, CryptoService>();
+        serviceCollection.AddSingleton(Common.Services.TestSecrets.Create());
             serviceCollection.Configure<McpKeySettings>(options => options.HmacSecretKey = HmacSecret);
             return serviceCollection.BuildServiceProvider();
         }
@@ -1365,7 +1366,7 @@ public sealed class DurableDmlApprovalLifecycleTests
             new(
                 scopedServices.GetRequiredService<AdminContext>(),
                 scopedServices.GetRequiredService<ICryptoService>(),
-                scopedServices.GetRequiredService<IOptions<McpKeySettings>>(),
+                scopedServices.GetRequiredService<Common.Services.SecretProtectionSettings>(),
                 ProviderFactory.Object,
                 ConnectionStringFactory.Object,
                 witness);

@@ -31,9 +31,9 @@ public class McpAccessKeyServiceTests
         _settingsMock.Setup(s => s.Value).Returns(new McpKeySettings { HmacSecretKey = _testHmacSecret });
 
         _cryptoServiceMock = new Mock<ICryptoService>();
-        _cryptoServiceMock.Setup(c => c.EncryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
+        _cryptoServiceMock.Setup(c => c.EncryptText(It.IsAny<string>(), It.IsAny<string>()))
             .Returns((string? plain, byte[] key) => plain != null ? $"ENCRYPTED_{plain}" : null);
-        _cryptoServiceMock.Setup(c => c.DecryptText(It.IsAny<string>(), It.IsAny<byte[]>()))
+        _cryptoServiceMock.Setup(c => c.DecryptText(It.IsAny<string>(), It.IsAny<string>()))
             .Returns((string? cipher, byte[] key) => cipher?.Replace("ENCRYPTED_", ""));
         _cacheMock = new Mock<ICacheService>();
         _securityPolicyRuntimeStateMock = new Mock<ISecurityPolicyRuntimeState>();

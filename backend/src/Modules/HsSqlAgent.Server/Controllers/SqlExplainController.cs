@@ -221,8 +221,8 @@ public sealed class SqlExplainController(
         ICryptoService cryptoService,
         IOptions<McpKeySettings> mcpKeySettings)
     {
-        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(database.PasswordHash, hmacSecret);
+
+        var password = cryptoService.DecryptText(database.PasswordHash, "db-password:" + database.SecretBindingId);
         return connectionStringFactory.BuildConnectionString(
             dbType,
             new BuildDbConnectionModelBase

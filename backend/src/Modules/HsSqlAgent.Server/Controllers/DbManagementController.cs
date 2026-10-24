@@ -150,8 +150,8 @@ public class DbManagementController(
         ICryptoService cryptoService,
         IOptions<McpKeySettings> mcpKeySettings)
     {
-        var hmacSecret = Encoding.UTF8.GetBytes(mcpKeySettings.Value.HmacSecretKey);
-        var password = cryptoService.DecryptText(db.PasswordHash, hmacSecret);
+
+        var password = cryptoService.DecryptText(db.PasswordHash, "db-password:" + db.SecretBindingId);
         return connectionStringFactory.BuildConnectionString(
             dbType,
             new BuildDbConnectionModelBase

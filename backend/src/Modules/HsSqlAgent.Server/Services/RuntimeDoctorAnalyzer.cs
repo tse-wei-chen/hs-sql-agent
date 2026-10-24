@@ -1,4 +1,5 @@
 using System.Text;
+using Common.Services;
 using HsSqlAgent.Server.Models;
 using Microsoft.Extensions.Configuration;
 
@@ -25,6 +26,7 @@ internal static class RuntimeDoctorAnalyzer
         ArgumentNullException.ThrowIfNull(configuration);
         var checks = new List<RuntimeDoctorCheck>();
         var isProduction = string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase);
+        AddSecretProtectionCheck(checks, configuration, isProduction);
 
         AddSecretCheck(
             checks,
@@ -85,6 +87,68 @@ internal static class RuntimeDoctorAnalyzer
             deploymentMode,
             DateTime.UtcNow,
             checks);
+    }
+
+    private static void AddSecretProtectionCheck(
+        ICollection<RuntimeDoctorCheck> checks,
+        IConfiguration configuration,
+        bool isProduction)
+    {
+        const string id = "security.secret-protection";
+        const string title = "Database and DML secret protection";
+        const string action = "Configure independent Base64-encoded random 32-byte keys in SecretProtection, with valid active key IDs. Replace all public sample keys before deployment.";
+        var settings = new SecretProtectionSettings();
+        try
+        {
+            configuration.GetSection("SecretProtection").Bind(settings);
+            if (settings.DatabasePasswords.Keys.Values.Concat(settings.DmlPayloads.Keys.Values)
+                .Append(settings.DmlFingerprintKey).Any(LooksLikePlaceholder))
+            {
+                checks.Add(Error(id, "Security", title,
+                    "Secret protection still uses example placeholder values. Replace them before starting the application.", action));
+                return;
+            }
+            // Use the same validation as the runtime, including retained keys.
+            _ = new CryptoService(settings);
+        }
+        catch (Exception error) when (error is InvalidOperationException or ArgumentException or FormatException)
+        {
+            checks.Add(Error(id, "Security", title,
+                "Secret protection configuration is missing or invalid. Check active key IDs, Base64 format, 32-byte length, and key independence.", action));
+            return;
+        }
+
+        var keys = settings.DatabasePasswords.Keys.Values
+            .Concat(settings.DmlPayloads.Keys.Values)
+            .Append(settings.DmlFingerprintKey)
+            .Select(CryptoService.DecodeKey)
+            .ToArray();
+        try
+        {
+            var signingSecrets = new[] { configuration["McpKeySettings:HmacSecretKey"], configuration["JwtSettings:SecretKey"] };
+            if (keys.Any(key => signingSecrets.Any(secret => secret is not null &&
+                    (key.AsSpan().SequenceEqual(Encoding.UTF8.GetBytes(secret)) ||
+                     string.Equals(Convert.ToBase64String(key), secret.Trim(), StringComparison.Ordinal)))))
+            {
+                checks.Add(Error(id, "Security", title,
+                    "A protection key is reused as an MCP HMAC or JWT signing secret.", action));
+                return;
+            }
+            if (keys.Any(key => Encoding.UTF8.GetString(key).StartsWith("sample-", StringComparison.Ordinal)))
+            {
+                const string detail = "Public sample protection keys are configured, including any retained keys. Use them only for local development.";
+                checks.Add(isProduction
+                    ? Error(id, "Security", title, detail, action)
+                    : Warning(id, "Security", title, detail, action));
+                return;
+            }
+            checks.Add(Healthy(id, "Security", title,
+                "Active and retained protection keys have valid IDs and lengths, are independent, and contain no public sample keys."));
+        }
+        finally
+        {
+            foreach (var key in keys) System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+        }
     }
 
     private static void AddSecretCheck(
@@ -401,6 +465,9 @@ internal static class RuntimeDoctorAnalyzer
     {
         var normalized = value.Trim().ToLowerInvariant();
         return normalized.Contains("yourmcphmacsecretkeyhere", StringComparison.Ordinal)
+               || normalized.Contains("yourdbencryptionkeyhere", StringComparison.Ordinal)
+               || normalized.Contains("yourdmlencryptionkeyhere", StringComparison.Ordinal)
+               || normalized.Contains("yourdmlfingerprintkeyhere", StringComparison.Ordinal)
                || normalized.Contains("yoursupersecretkeyhere", StringComparison.Ordinal)
                || normalized is "changeme" or "change-me" or "replace-me"
                || normalized.StartsWith("<", StringComparison.Ordinal);

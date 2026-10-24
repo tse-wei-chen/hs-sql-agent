@@ -112,6 +112,12 @@ public sealed class HsSqlAgentStandardHostTests
         builder.Configuration["AdminDatabase:ConnectionString"] = "Data Source=standard-host-test.db";
         builder.Configuration["JwtSettings:SecretKey"] = new string('J', 64);
         builder.Configuration["McpKeySettings:HmacSecretKey"] = new string('H', 64);
+        var secrets = Common.Services.TestSecrets.Create();
+        builder.Configuration["SecretProtection:DatabasePasswords:ActiveKeyId"] = "db-1";
+        builder.Configuration["SecretProtection:DatabasePasswords:Keys:db-1"] = secrets.DatabasePasswords.Keys["db-1"];
+        builder.Configuration["SecretProtection:DmlPayloads:ActiveKeyId"] = "dml-1";
+        builder.Configuration["SecretProtection:DmlPayloads:Keys:dml-1"] = secrets.DmlPayloads.Keys["dml-1"];
+        builder.Configuration["SecretProtection:DmlFingerprintKey"] = secrets.DmlFingerprintKey;
         builder.Configuration["Mcp:PublicEndpoint"] = "http://localhost:8080/mcp";
         return builder;
     }
