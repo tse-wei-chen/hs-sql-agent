@@ -299,193 +299,47 @@ or complete connection strings and is intentionally not logged or returned.
 If a key was previously printed by bootstrap, revoke/replace it and review access
 to retained container and centralized logs.
 
-### Configure an independent encryption key ring (inactive read/write rollout)
+### v3 secret encryption (explicit rollout)
 
-The **opt-in** `SecretEncryption` configuration supports a separate AES-256-GCM
-key ring per purpose. A Base64 key must decode to **32 random bytes**, never
-reused across key IDs or purposes or sourced from the MCP HMAC signing key.
+`SecretEncryption:Enabled` registers independent purpose-specific AES-256-GCM
+keys for database passwords and Durable DML resume payloads. Each Base64 key
+must decode to **32 random bytes**; do not reuse the legacy MCP HMAC key.
 
-For the StandardHost, configure via protected environment variables or mounted
-secrets (examples use placeholders, not production keys):
+**New ciphertext writes are OFF by default.** The separate
+`EnableV2DatabasePasswordWrites` and `EnableV2DurableDmlWrites` switches
+require `AllNodesDualReadConfirmed` plus the corresponding key ring. This
+confirmation is an **operator assertion, not a fleet probe**: update all
+workers, standby nodes and approval handlers to dual-read first. Never allow
+an old-only node to return after v2 ciphertext is written.
 
-```text
-SecretEncryption__Enabled=true
-SecretEncryption__Purposes__DatabasePassword__ActiveKeyId=db_k1
-SecretEncryption__Purposes__DatabasePassword__Keys__db_k1=<BASE64_32_BYTE_RANDOM_KEY>
-SecretEncryption__Purposes__DurableDmlPayload__ActiveKeyId=dml_k1
-SecretEncryption__Purposes__DurableDmlPayload__Keys__dml_k1=<DIFFERENT_BASE64_32_BYTE_RANDOM_KEY>
-```
-
-For embedded hosts, configure `options.SecretEncryption` in
-`AddHsSqlAgentRuntime(options => ...)`. This registers the new protector in DI
-only when enabled, validates key shape at registration, and rejects the legacy
-MCP HMAC-derived AES key if the MCP settings are present. Do **not** remove
-previous key IDs until all old records have been safely migrated and verified.
-
-**Important:** Enabling the key ring does not change the persisted Admin
-Store ciphertext writer in this phase. Deployment needs a coordinated
-dual-reader rollout before v2 writes are activated; a mixed-version fleet
-must not encounter v2 ciphertext on an old-only reader.
-
-### Operator-controlled migration and inventory
-
-The security editor's API supports a **read-only inventory** of legacy/v2
-DB passwords and Durable DML payloads (grouped by Key ID, no ciphertext values),
-and an **explicitly confirmed, bounded** database credential batch migration:
+The operator-only security endpoints are:
 
 - `GET /api/runtime/security/secret-migration/inventory`
 - `POST /api/runtime/security/secret-migration/database-passwords/batch`
-  with `{"AfterId":0,"BatchSize":50,"Confirmation":"MIGRATE_DATABASE_SECRETS"}`
+- `GET /api/runtime/security/secret-migration/retirement/{purpose}/{keyId}`
 
-The endpoints require `/runtime/security.edit` and a human JWT principal;
-Management API keys cannot use them. Every result reports only cursor, scanned,
-migrated, already-current and concurrent-change counts (no passwords or SQL).
-Every successfully migrated row is durably audited **within the same
-transaction** as its ciphertext replacement. No plaintext or ciphertext is
-written to that audit event. Keep operational backups outside this API.
+They require a human administrator with `/runtime/security.edit`. Password
+migration uses per-row ciphertext compare-and-swap, authenticated verification
+and a transactionally coupled audit event. It refuses Pending/Executing DML
+approvals; it does **not** stop other workers, replay DML, migrate approval
+payloads or automatically delete old keys. Preserve the legacy MCP HMAC secret
+for issued access-key hashes and existing DML connection fingerprints.
 
-**Preconditions:** enable the v2 DatabasePassword write gate, distribute all
-required old + new encryption keys to every node, deploy dual-read everywhere,
-drain all Pending/Executing approvals, fence old workers, and take a verified
-backup. The service does *not* fence other nodes by itself: the
-`AllNodesDualReadConfirmed` setting is an operator declaration.
+`ExtraSettings` is not a secret store: new Admin and Bootstrap writes reject
+credential-bearing JSON. Existing plaintext values require separately
+authorized cleanup. PostgreSQL's `DbManagement.PasswordHash` schema must be
+widened from `varchar(256)` to `text` before v2 writes or migrations; SQLite
+already uses unbounded `TEXT`.
 
-Each legacy/old-key row is authenticated and re-encrypted using its stable DB
-ID as AAD; replacement uses a ciphertext compare-and-swap and a single-row
-transaction with decrypt-and-compare verification before commit. A concurrent
-edit is skipped. Resume from the returned NextAfterId; after a partial error
-retry the prior cursor. An independent full inventory after completion is
-mandatory before any key retirement. Approval payloads, fingerprints and
-approval state are **never mutated by this migrator**.
+**Canonical v3 documentation lives on the documentation website**, not here:
 
-A per-purpose, per-Key-ID **retirement readiness review** is also available:
-`GET /api/runtime/security/secret-migration/retirement/{purpose}/{keyId}`.
-It blocks offline review if the requested key remains active, is referenced by
-live ciphertext, any envelope is malformed, or any Pending/Executing approval
-remains. A clean result means only `EligibleForOfflineReview`: it does not
-authorize deletion. Old processes, recovery backups and external consumers
-must still be independently verified. No endpoint ever removes key material.
+- [Secret encryption and key management](https://sql-agent.net/docs/3.0.0/operations/secret-protection/)
+- [Historical migration and key retirement](https://sql-agent.net/docs/3.0.0/operations/secret-migration/)
+- [Upgrade to v3](https://sql-agent.net/docs/3.0.0/reference/upgrade-guide/)
 
-Key retirement must also account for DML payload key references, historical
-backups and external consumers; the API makes no automatic retire decision.
-The legacy MCP HMAC root must be kept because issued MCP keys and DML connection
-fingerprints still depend on it.
+These v3 website routes are staged in
+[documentation PR #40](https://github.com/tse-wei-chen/hs-sql-agent.site/pull/40)
+and are **not a published API contract until the matching product tag ships**.
+The product release must precede publication of that documentation PR.
 
-### Required schema expansion for versioned database secrets
-
-The Admin Store `DbManagement.PasswordHash` now maps to unrestricted
-`text` for PostgreSQL (and `TEXT` for SQLite). Versioned AES-GCM
-envelopes can exceed the legacy 256-character field limit, even for valid
-database credentials. The new provider-specific EF migrations expand the
-column without changing existing ciphertext. **Run migrations before
-enabling v2 password writes or running any legacy-row migration.**
-Downgrading to the 256-character schema is intentionally unsupported once
-longer ciphertexts have been stored.
-
-### Opt-in v2 Admin database password writes
-
-`SecretEncryption:EnableV2DatabasePasswordWrites=true` works only together
-with `SecretEncryption:Enabled=true`, `AllNodesDualReadConfirmed=true` and
-a configured DatabasePassword AES key ring. This opt-in is meant **only after
-every reader/worker in the deployed fleet is upgraded**, with no old-only
-process allowed to resume. The confirmation is not an automatic distributed
-readiness probe.
-
-New Admin-created database connections receive an ID within a relational
-Admin Store transaction, then immediately receive an AAD-bound v2 ciphertext
-within that **same transaction**; no intermediate legacy row is committed.
-Updating a non-Bootstrap password uses the existing stable ID and v2 encryption.
-Blank password updates preserve the previous ciphertext. Rollback to old-only
-nodes after enabling writes is unsafe.
-
-Bootstrap-managed passwords also opt into v2 when this flag is enabled and
-the Bootstrap declaration explicitly supplies a password. For a new database,
-the initial ID-allocation write, v2 rewrite and MCP key reconciliation happen
-inside the same relational transaction. Existing Bootstrap records without a
-new configured password are **not** automatically decrypted or re-encrypted.
-
-Batch re-encryption of historical rows is not switched by this flag. Preserve the legacy MCP HMAC secret until
-MCP key hashing, Durable DML approval fingerprints and all historical ciphertext
-have been handled separately.
-
-### ExtraSettings secret-leak prevention
-
-New/updated Admin database configurations and Bootstrap inventory now require
-`ExtraSettings` to be an optional JSON object (maximum 16 KiB, nesting 16).
-Secret-bearing names (Password, Token, API Key, private key, credentials,
-connection string), including nested objects and arrays, are rejected; so
-are credential assignments embedded in string values. `ExtraSettings` is
-**not** an encrypted secret store. Use the protected database Password field
-or your deployment secret store instead.
-
-This validation does not redact historical data. Audit old ExtraSettings
-through an authorized process with backups; the migration must not silently
-rewrite arbitrary provider data.
-
-### Database password dual-read preparation
-
-Every built-in database password **read** path now recognizes legacy ciphertext
-and v2 AES-GCM using the persisted Admin Store DB ID as AAD record identity.
-MCP authentication, Admin metadata, SQL tools, runtime tests, health checks,
-Durable DML resume and witness inspection are included. Missing key rings,
-wrong record identities and unknown versions fail closed.
-
-The Durable DML completion handler and independent commit-witness verification
-also share a version-aware, fail-closed **payload reader**. Its AAD identity is
-the immutable `DmlApprovalRequestState.RequestId`, with purpose
-`DurableDmlPayload`. Existing approval **payload writes default to legacy**, and connection
-fingerprints remain HMAC-bound to the original key. Pending/Executing approvals
-are neither changed nor replayed by enabling this reader.
-
-### Explicit v2 Durable DML payload write rollout
-
-Only after upgrading **every** DML worker, callback handler and witness
-inspection node to the dual-reader build, setting an identical
-`SecretEncryption:Purposes:DurableDmlPayload` key ring on all of them, and
-verifying that no old-only nodes will resume, operators may enable:
-
-```text
-SecretEncryption__Enabled=true
-SecretEncryption__EnableV2DurableDmlWrites=true
-SecretEncryption__AllNodesDualReadConfirmed=true
-```
-
-These settings fail configuration validation unless both explicit opt-ins and a
-DurableDmlPayload key ring are present. `AllNodesDualReadConfirmed` is an
-**operator declaration, not automatic fleet verification**. Enabling v2 only
-affects *new* Pending approval payloads; it does not migrate old approvals,
-change the HMAC connection fingerprint, change admission fencing or alter
-at-most-once execution. Rollbacks to old-only readers after v2 writes are
-**not safe**. New test coverage demonstrates post-restart consumption by a
-read-only-upgraded instance and fail-closed non-execution by an old-only one.
-
-Existing Admin Store password **writers remain legacy** until old-only deployed
-instances have been upgraded. Do not manually migrate DB passwords in a mixed-
-version fleet. Re-encryption can also affect Durable DML approval connection
-evidence, so pending/executing approvals must be drained or handled first.
-
-### Versioned secret protection (infrastructure; not active for persisted records yet)
-
-`Common.Services.VersionedSecretProtector` and `SecretKeyRing` provide an
-auditable AES-256-GCM v2 envelope with purpose-specific 32-byte keys, key IDs,
-immutable-record AAD binding, explicit legacy decryption, and a re-protection
-operation for rotation. The wire format is
-`v2:<key-id>:<base64(nonce + tag + ciphertext)>`.
-
-**This is not yet the active Admin Store encryption path.** The current DB
-password and Durable DML Approval readers/writers still use the original
-unversioned `ICryptoService`. Do not store v2 ciphertext into those columns,
-or remove the existing MCP HMAC secret, before all readers/writers and
-deployments have been migrated. In particular, preserve DML connection
-fingerprints and pending/executing request semantics. Encryption keys must be
-32-byte random values from protected configuration, independent across
-DB passwords / DML payloads / sensitive extra settings; do not reuse HMAC
-signing keys as new AES keys. The dedicated crypto unit tests run in CI.
-
-**Migration note:** This hardening stage does not rotate the shared legacy MCP
-HMAC secret or re-encrypt stored database credentials / pending DML approvals.
-Changing that secret without a coordinated migration can make saved credentials,
-MCP keys and durable approval payloads unusable.
-
-Full project documentation:
-https://github.com/tse-wei-chen/hs-sql-agent
+Full project documentation: https://sql-agent.net/docs/
