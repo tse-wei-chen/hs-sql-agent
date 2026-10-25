@@ -1,7 +1,7 @@
 # HsSqlAgent.Server
 
 
-Secret protection now requires independent Base64-encoded random 32-byte keys for database passwords, DML payloads, and DML connection fingerprints. The standard host binds the `SecretProtection` configuration section; custom runtime registrations must set `options.SecretProtection`. Legacy encrypted passwords must be re-entered and approvals drained before upgrade. See the [secret protection upgrade guide](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/docs/secret-protection-upgrade.md).
+Secret protection now requires independent Base64-encoded random 32-byte keys for database passwords, DML payloads, and DML connection fingerprints. The standard host binds the `SecretProtection` configuration section; custom runtime registrations must set `options.SecretProtection`. Legacy encrypted passwords must be re-entered and approvals drained before upgrade. See the [documentation website](https://sql-agent.net/en/docs/).
 
 Embeddable MCP SQL Agent components for ASP.NET Core. New applications compose capabilities explicitly; each capability owns only the options it needs. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains as a compatibility path for existing consumers.
 

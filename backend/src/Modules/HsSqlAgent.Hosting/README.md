@@ -1,7 +1,7 @@
 # HsSqlAgent.Hosting
 
 
-Secret protection now requires independent Base64-encoded random 32-byte keys for database passwords, DML payloads, and DML connection fingerprints. The standard host binds the `SecretProtection` configuration section; custom runtime registrations must set `options.SecretProtection`. Legacy encrypted passwords must be re-entered and approvals drained before upgrade. See the [secret protection upgrade guide](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/docs/secret-protection-upgrade.md).
+Secret protection now requires independent Base64-encoded random 32-byte keys for database passwords, DML payloads, and DML connection fingerprints. The standard host binds the `SecretProtection` configuration section; custom runtime registrations must set `options.SecretProtection`. Legacy encrypted passwords must be re-entered and approvals drained before upgrade. See the [documentation website](https://sql-agent.net/en/docs/).
 
 Official batteries-included ASP.NET Core composition for HsSqlAgent.
 
@@ -47,7 +47,7 @@ Before calling `AddHsSqlAgentStandardHost()`, configure three **independent** ra
 }
 ```
 
-The bracketed values are **invalid placeholders**, not usable key material. Supply production keys through protected configuration, environment variables or mounted secrets, never source control. The new runtime cannot decrypt legacy stored credentials; consult the [breaking-change upgrade guide](https://github.com/tse-wei-chen/hs-sql-agent/blob/main/docs/secret-protection-upgrade.md) before deploying.
+The bracketed values are **invalid placeholders**, not usable key material. Supply production keys through protected configuration, environment variables or mounted secrets, never source control. The new runtime cannot decrypt legacy stored credentials; consult the [documentation website](https://sql-agent.net/en/docs/) before deploying.
 
 ## DML approval provider
 

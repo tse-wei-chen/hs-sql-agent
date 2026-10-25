@@ -1,75 +1,36 @@
-# Nuxt Minimal Starter
+# hs-sql-agent Admin UI
 
-Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+The Nuxt 4 frontend for hs-sql-agent 3.0.0. Application source lives in `app/`;
+both `@` and `~` resolve to that directory.
 
-## Setup
+## Development
 
-Make sure to install dependencies:
+Run these commands from `frontend/`:
 
 ```bash
-# npm
-npm install
-
-# pnpm
 pnpm install
-
-# yarn
-yarn install
-
-# bun
-bun install
-```
-
-## Development Server
-
-Start the development server on `http://localhost:3000`:
-
-```bash
-# npm
-npm run dev
-
-# pnpm
 pnpm dev
-
-# yarn
-yarn dev
-
-# bun
-bun run dev
 ```
 
-## Production
+Open <http://localhost:3000>. Start the backend on port 8080; the development
+server proxies `/api/**`, `/mcp`, and `/mcp/**` to it.
 
-Build the application for production:
+## Validation
 
 ```bash
-# npm
-npm run build
-
-# pnpm
-pnpm build
-
-# yarn
-yarn build
-
-# bun
-bun run build
+pnpm test --run
+pnpm lint
 ```
 
-Locally preview production build:
+Tests use Vitest with happy-dom.
+
+## Static deployment
 
 ```bash
-# npm
-npm run preview
-
-# pnpm
-pnpm preview
-
-# yarn
-yarn preview
-
-# bun
-bun run preview
+pnpm generate
 ```
 
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
+The generated SPA is written to `dist/`. The Docker build copies it into the
+backend's `wwwroot/`, where ASP.NET Core serves it.
+
+See the [repository README](../README.md) for configuration and deployment.

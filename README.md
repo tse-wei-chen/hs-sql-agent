@@ -12,9 +12,9 @@ Every published tool still runs through the same fail-closed SQL compiler, per-k
 
 It supports **PostgreSQL, MySQL, SQL Server, Oracle, SQLite, and Firebird** and can run as the complete first-party server with its Admin UI or be embedded into an existing ASP.NET Core application.
 
-> **Upgrading from v2.x?** See the [v3.0 migration guide](docs/v3-migration.md) for breaking approval-store contracts, Redis key changes, Pending approvals and safe deployment requirements.
+> **Upgrading from v2.x?** See the [documentation website](https://sql-agent.net/en/docs/) for breaking approval-store contracts, Redis key changes, Pending approvals and safe deployment requirements.
 
-> **Secret protection breaking change:** configure three independent protection keys and re-enter existing DB passwords. Read the [upgrade and key rotation guide](docs/secret-protection-upgrade.md) before deploying.
+> **Secret protection breaking change:** configure three independent protection keys and re-enter existing DB passwords. Read the [documentation website](https://sql-agent.net/en/docs/) before deploying.
 
 ## Publish SQL as an MCP tool
 
