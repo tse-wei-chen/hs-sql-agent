@@ -37,6 +37,7 @@ module internal RewriteScriptAnalyzer =
             syntax.Span, column, name)
 
     let private analyzeDdl sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
+                           (scope: RewriteCatalogSchemaResolution.SchemaScope)
                            (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
         let tokens =
             RewriteResourceBudget.withStage "SchemaLexical" SqlDiagnosticStage.Lexical (fun () ->
@@ -68,13 +69,12 @@ module internal RewriteScriptAnalyzer =
             unknown,
             [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
             [error]
-        let scope = RewriteCatalogSchemaResolution.scope sourceDialect sourceProfile
         let unsupportedDeclaredScope =
             sourceDialect = SqlAgentToolType.Postgres
-            && not (isNull sourceProfile)
-            && not (isNull (sourceProfile.GetSessionSetting("SEARCH_PATH")))
             && (match scope with
-                | RewriteCatalogSchemaResolution.Unproven -> true
+                | RewriteCatalogSchemaResolution.Unproven ->
+                    not (isNull sourceProfile)
+                    && not (isNull (sourceProfile.GetSessionSetting("SEARCH_PATH")))
                 | _ -> false)
         let resolve = RewriteCatalogSchemaResolution.resolve scope
         let resolveConstraint (constraintInfo: SqlCatalogConstraint) =
@@ -356,12 +356,15 @@ module internal RewriteScriptAnalyzer =
             let errors = ResizeArray<SqlDiagnostic>()
             let mutable current = initial
             let mutable transaction = RewriteTransactionAnalyzer.Outside
+            let mutable session = RewriteSessionAnalyzer.initial sourceDialect sourceProfile
+            let mutable transactionSession : RewriteSessionAnalyzer.SessionContext option = None
 
             RewriteResourceBudget.withStage "ScriptAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
                 for syntax in parsed.Statements do
                     RewriteResourceBudget.checkpoint ()
                     let before = current
                     let transactionBefore = RewriteTransactionAnalyzer.status transaction
+                    let sessionBefore = RewriteSessionAnalyzer.snapshot session
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
@@ -373,15 +376,37 @@ module internal RewriteScriptAnalyzer =
                             let status, certainty, next, newTransaction, changes, diagnostics =
                                 RewriteTransactionAnalyzer.analyze sourceDialect sourceProfile current transaction syntax
                             transaction <- newTransaction
+                            if status = SqlStatementAnalysisStatus.Analyzed then
+                                match transactionBefore, RewriteTransactionAnalyzer.status newTransaction with
+                                | SqlTransactionState.Outside, SqlTransactionState.Active ->
+                                    transactionSession <- Some session
+                                | SqlTransactionState.Active, SqlTransactionState.Outside ->
+                                    // Only recognized ROLLBACK reaches this branch.
+                                    if syntax.Text.TrimStart().StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase) then
+                                        session <- Option.defaultValue RewriteSessionAnalyzer.unknown transactionSession
+                                    transactionSession <- None
+                                | _ -> ()
+                            else
+                                session <- RewriteSessionAnalyzer.unknown
+                                transactionSession <- None
                             let effects =
                                 if changes.IsEmpty then SqlEffectKind.ChangeTransaction
                                 else SqlEffectKind.ChangeTransaction ||| SqlEffectKind.ChangeSchema
                             status, effects, certainty, SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable, SqlCatalogBindingStatus.NotApplicable,
                             next, changes, diagnostics
+                        elif syntax.Kind = SqlScriptStatementKind.Session then
+                            let status, certainty, nextSession, nextCatalog, diagnostics =
+                                RewriteSessionAnalyzer.analyze sourceDialect sourceProfile session current syntax
+                            session <- nextSession
+                            status, SqlEffectKind.ChangeSession, certainty,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            nextCatalog, ([]: SqlCatalogChange list), diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
                             let status, certainty, next, changes, diagnostics =
-                                analyzeDdl sourceDialect sourceProfile current syntax
+                                analyzeDdl sourceDialect sourceProfile (RewriteSessionAnalyzer.scope session) current syntax
                             status, SqlEffectKind.ChangeSchema, certainty, SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable, SqlCatalogBindingStatus.NotApplicable,
                             next, changes, diagnostics
@@ -399,7 +424,8 @@ module internal RewriteScriptAnalyzer =
                                 if syntax.Status = SqlScriptParseStatus.Parsed
                                    && (syntax.Kind = SqlScriptStatementKind.Query
                                        || syntax.Kind = SqlScriptStatementKind.Mutation) then
-                                    RewriteCatalogBinding.verify sourceDialect sourceProfile current syntax
+                                    RewriteCatalogBinding.verify sourceDialect sourceProfile
+                                        (RewriteSessionAnalyzer.scope session) current syntax
                                 else
                                     SqlCatalogBindingStatus.NotApplicable,
                                     SqlCatalogBindingStatus.NotApplicable,
@@ -408,8 +434,7 @@ module internal RewriteScriptAnalyzer =
                                     SqlCatalogKnowledge.Unknown,
                                     []
                             let next =
-                                if syntax.Kind = SqlScriptStatementKind.Session
-                                   || syntax.Kind = SqlScriptStatementKind.Procedural
+                                if syntax.Kind = SqlScriptStatementKind.Procedural
                                    || syntax.Kind = SqlScriptStatementKind.Unknown then
                                     RewriteCatalogModel.taintAll current
                                 else current
@@ -425,6 +450,9 @@ module internal RewriteScriptAnalyzer =
                         transactionBefore = SqlTransactionState.Active
                         && RewriteTransactionAnalyzer.status nextTransaction = SqlTransactionState.Unknown
                     transaction <- nextTransaction
+                    if stateBecameUnknown then
+                        session <- RewriteSessionAnalyzer.unknown
+                        transactionSession <- None
                     let after =
                         if stateBecameUnknown then RewriteCatalogModel.taintAll next else next
                     let additionalErrors =
@@ -445,8 +473,10 @@ module internal RewriteScriptAnalyzer =
                             (if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty),
                             bindingStatus, nameStatus, typeStatus, before, after,
                             transactionBefore, RewriteTransactionAnalyzer.status transaction,
+                            sessionBefore, RewriteSessionAnalyzer.snapshot session,
                             readOnly changes, detailedEffects, effectCoverage,
                             readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
-                RewriteTransactionAnalyzer.status transaction))
+                RewriteTransactionAnalyzer.status transaction,
+                RewriteSessionAnalyzer.snapshot session))
