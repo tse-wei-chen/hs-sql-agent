@@ -45,6 +45,8 @@ type SqlStatementAnalysis internal (
     effects: SqlEffectKind,
     certainty: SqlCatalogKnowledge,
     catalogBinding: SqlCatalogBindingStatus,
+    nameBinding: SqlCatalogBindingStatus,
+    typeBinding: SqlCatalogBindingStatus,
     catalogBefore: SqlCatalogState,
     catalogAfter: SqlCatalogState,
     transactionBefore: SqlTransactionState,
@@ -57,6 +59,10 @@ type SqlStatementAnalysis internal (
     member _.Effects = effects
     member _.Certainty = certainty
     member _.CatalogBinding = catalogBinding
+    /// Proof of physical and scoped SQL identifiers against the Virtual Catalog.
+    member _.NameBinding = nameBinding
+    /// Proof of the modeled source-dialect value categories; independent of name binding.
+    member _.TypeBinding = typeBinding
     member _.CatalogBefore = catalogBefore
     member _.CatalogAfter = catalogAfter
     member _.TransactionBefore = transactionBefore
