@@ -107,13 +107,15 @@ public sealed class SqlCoreCatalogBindingTests
     }
 
     [Fact]
-    public void OtherDialectDoesNotConsumePostgresqlOnlyStaticCatalogProof()
+    public void MySqlTablelessSelectCanBeBoundWithoutCollationAssumptions()
     {
         var result = SqlCoreFacade.AnalyzeScript(
             "SELECT 1", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
         var stmt = Assert.Single(result.Statements);
-        Assert.Equal(SqlCatalogBindingStatus.Unverified, stmt.CatalogBinding);
-        Assert.Contains(stmt.Diagnostics, d => d.Code == "SQL_CATALOG_BINDING_DIALECT_UNPROVEN");
+        Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.CatalogBinding);
+        Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.NameBinding);
+        Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.TypeBinding);
+        Assert.Empty(stmt.Diagnostics);
     }
 
     [Fact]

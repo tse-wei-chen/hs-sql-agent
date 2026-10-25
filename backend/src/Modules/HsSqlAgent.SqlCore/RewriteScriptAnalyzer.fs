@@ -121,10 +121,11 @@ module internal RewriteScriptAnalyzer =
                     RewriteResourceBudget.checkpoint ()
                     let before = current
                     let transactionBefore = RewriteTransactionAnalyzer.status transaction
-                    let status, effects, certainty, bindingStatus, next, changes, diagnostics =
+                    let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
-                            SqlCatalogKnowledge.Unknown, SqlCatalogBindingStatus.Rejected, current, [],
+                            SqlCatalogKnowledge.Unknown, SqlCatalogBindingStatus.Rejected,
+                            SqlCatalogBindingStatus.Rejected, SqlCatalogBindingStatus.NotApplicable, current, [],
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Transaction then
@@ -135,11 +136,14 @@ module internal RewriteScriptAnalyzer =
                                 if changes.IsEmpty then SqlEffectKind.ChangeTransaction
                                 else SqlEffectKind.ChangeTransaction ||| SqlEffectKind.ChangeSchema
                             status, effects, certainty, SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable, SqlCatalogBindingStatus.NotApplicable,
                             next, changes, diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
                             let status, certainty, next, changes, diagnostics =
                                 analyzeDdl sourceDialect sourceProfile current syntax
-                            status, SqlEffectKind.ChangeSchema, certainty, SqlCatalogBindingStatus.NotApplicable, next, changes, diagnostics
+                            status, SqlEffectKind.ChangeSchema, certainty, SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable, SqlCatalogBindingStatus.NotApplicable,
+                            next, changes, diagnostics
                         else
                             let effects =
                                 match syntax.Kind with
@@ -150,12 +154,14 @@ module internal RewriteScriptAnalyzer =
                                 | SqlScriptStatementKind.Session -> SqlEffectKind.ChangeSession
                                 | SqlScriptStatementKind.Utility -> SqlEffectKind.Administrative
                                 | _ -> SqlEffectKind.None
-                            let bindingStatus, status, certainty, catalogErrors =
+                            let bindingStatus, nameStatus, typeStatus, status, certainty, catalogErrors =
                                 if syntax.Status = SqlScriptParseStatus.Parsed
                                    && (syntax.Kind = SqlScriptStatementKind.Query
                                        || syntax.Kind = SqlScriptStatementKind.Mutation) then
                                     RewriteCatalogBinding.verify sourceDialect sourceProfile current syntax
                                 else
+                                    SqlCatalogBindingStatus.NotApplicable,
+                                    SqlCatalogBindingStatus.NotApplicable,
                                     SqlCatalogBindingStatus.NotApplicable,
                                     SqlStatementAnalysisStatus.Unsupported,
                                     SqlCatalogKnowledge.Unknown,
@@ -171,7 +177,7 @@ module internal RewriteScriptAnalyzer =
                                     if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                                     else [syntax.Diagnostic]
                                 parserDiagnostics @ catalogErrors
-                            status, effects, certainty, bindingStatus, next, [], diagnostics
+                            status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, [], diagnostics
                     let nextTransaction =
                         RewriteTransactionAnalyzer.invalidateIfUnproven transaction syntax.Kind status
                     let stateBecameUnknown =
@@ -192,7 +198,7 @@ module internal RewriteScriptAnalyzer =
                         SqlStatementAnalysis(
                             syntax, status, effects,
                             (if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty),
-                            bindingStatus, before, after,
+                            bindingStatus, nameStatus, typeStatus, before, after,
                             transactionBefore, RewriteTransactionAnalyzer.status transaction,
                             readOnly changes, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
