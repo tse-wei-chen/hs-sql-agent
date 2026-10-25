@@ -95,6 +95,83 @@ module internal RewriteScriptAnalyzer =
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
                 fail ("DROP TABLE " + name + " does not exist in the known catalog.")
             | _ -> partial name SqlCatalogOperation.DropTable
+        | Recognized (CreateIndex(tableName, indexName, members)) ->
+            match RewriteCatalogModel.lookup state tableName with
+            | Some table when table.Knowledge = SqlCatalogKnowledge.Known
+                              && state.IsClosedWorld ->
+                let globalIndex =
+                    state.Tables
+                    |> Seq.collect (fun t -> t.Indexes)
+                    |> Seq.exists (fun idx ->
+                        String.Equals(idx.Name, indexName, StringComparison.Ordinal))
+                if globalIndex then
+                    fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
+                elif members.IsEmpty || List.distinct members <> members then
+                    fail "CREATE INDEX has duplicate or empty column members."
+                elif members |> List.exists (fun memberName ->
+                    not (table.Columns |> Seq.exists (fun col ->
+                        String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
+                    fail "CREATE INDEX references an absent column."
+                else
+                    let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
+                    let updated =
+                        RewriteCatalogModel.withIndexes state tableName
+                            (seq { yield! table.Indexes; yield idx })
+                    exact tableName SqlCatalogOperation.CreateIndex updated
+            | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
+        | Recognized (DropIndex(indexName, target)) ->
+            if not state.IsClosedWorld ||
+               (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Index owner and absence require a complete known Catalog."
+            else
+                let owners =
+                    state.Tables |> Seq.filter (fun t ->
+                        (match target with
+                         | Some tableName ->
+                             String.Equals(tableName, t.Name, StringComparison.Ordinal)
+                         | None -> true)
+                        && (t.Indexes |> Seq.exists (fun idx ->
+                            String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
+                    |> Seq.toList
+                match owners with
+                | [owner] ->
+                    let remaining =
+                        owner.Indexes |> Seq.filter (fun idx ->
+                            not (String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
+                    RewriteCatalogModel.withIndexes state owner.Name remaining
+                    |> exact owner.Name SqlCatalogOperation.DropIndex
+                | [] -> fail ("DROP INDEX '" + indexName + "' is absent in the known Catalog.")
+                | _ -> dependencyUnproven "Index name resolves to more than one modeled owner."
+        | Recognized (AddConstraint(tableName, newConstraint)) ->
+            match RewriteCatalogModel.lookup state tableName with
+            | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
+                match RewriteSchemaDependencies.validateNewConstraint sourceDialect state
+                          tableName newConstraint with
+                | RewriteSchemaDependencies.Proven ->
+                    let updated =
+                        RewriteCatalogModel.withConstraints state tableName
+                            (seq { yield! table.Constraints; yield newConstraint })
+                    exact tableName SqlCatalogOperation.AddConstraint updated
+                | RewriteSchemaDependencies.Invalid message -> fail message
+                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+            | _ -> dependencyUnproven "Cannot establish the table's known constraint set."
+        | Recognized (DropConstraint(tableName, constraintName)) ->
+            match RewriteCatalogModel.lookup state tableName with
+            | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
+                match table.Constraints |> Seq.tryFind (fun item ->
+                    String.Equals(item.Name, constraintName, StringComparison.Ordinal)) with
+                | None ->
+                    fail ("DROP CONSTRAINT '" + constraintName + "' does not exist.")
+                | Some target ->
+                    match RewriteSchemaDependencies.canDropConstraint state tableName target with
+                    | RewriteSchemaDependencies.Proven ->
+                        RewriteCatalogModel.withConstraints state tableName
+                            (table.Constraints |> Seq.filter (fun c ->
+                                not (String.Equals(c.Name, constraintName, StringComparison.Ordinal))))
+                        |> exact tableName SqlCatalogOperation.DropConstraint
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+            | _ -> dependencyUnproven "Constraint owner is not a proven table."
         | Recognized (AlterColumns(name, actions)) ->
             match RewriteCatalogModel.lookup state name with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
