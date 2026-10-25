@@ -876,12 +876,15 @@ module internal RewriteSchemaTypeValidation =
             invalidArg "state" "Typed catalog binding requires a complete known closed-world catalog."
         let typeKind (name: string) =
             match name.ToUpperInvariant() with
-            | "BOOLEAN" -> SqlSchemaValueKind.Boolean
-            | "SMALLINT" | "INTEGER" | "INT" | "BIGINT" -> SqlSchemaValueKind.Numeric
-            | "TEXT" | "CHAR" | "VARCHAR" -> SqlSchemaValueKind.Text
-            | "DATE" | "TIMESTAMP" -> SqlSchemaValueKind.Temporal
-            | value when value.StartsWith("CHAR(", StringComparison.Ordinal)
-                      || value.StartsWith("VARCHAR(", StringComparison.Ordinal) ->
+            | "BOOLEAN" | "BIT" -> SqlSchemaValueKind.Boolean
+            | "SMALLINT" | "INTEGER" | "INT" | "BIGINT"
+            | "NUMBER" | "FLOAT" | "REAL" | "NUMERIC" -> SqlSchemaValueKind.Numeric
+            | "TEXT" | "CHAR" | "VARCHAR" | "VARCHAR2"
+            | "NVARCHAR" | "NVARCHAR2" | "NCHAR" -> SqlSchemaValueKind.Text
+            | "DATE" | "TIMESTAMP" | "DATETIME" | "DATETIME2" ->
+                SqlSchemaValueKind.Temporal
+            | value when [ "CHAR("; "VARCHAR("; "NCHAR("; "NVARCHAR("; "VARCHAR2("; "NVARCHAR2(" ]
+                         |> List.exists (fun prefix -> value.StartsWith(prefix, StringComparison.Ordinal)) ->
                 SqlSchemaValueKind.Text
             | _ -> SqlSchemaValueKind.Unknown
         let tables =
