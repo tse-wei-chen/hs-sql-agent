@@ -23,8 +23,14 @@ module internal RewriteSecurityAnalyzer =
         | Deny
 
     type private ParsedDcl =
-        | Modeled of SecurityOperation * SqlTablePrivilege list * SqlCatalogQualifiedName *
-                     (string * SqlSecurityPrincipalKind * string option) list
+        | ModeledTable of SecurityOperation * SqlTablePrivilege list * SqlCatalogQualifiedName *
+                          (string * SqlSecurityPrincipalKind * string option) list *
+                          withGrantOption: bool * revokeGrantOptionOnly: bool *
+                          cascadeMode: SqlSecurityCascadeMode
+        | ModeledRole of SecurityOperation * string list *
+                         (string * SqlSecurityPrincipalKind * string option) list *
+                         withAdminOption: bool * revokeAdminOptionOnly: bool *
+                         cascadeMode: SqlSecurityCascadeMode
         | Unsupported of string
         | Invalid of string
 
@@ -153,68 +159,141 @@ module internal RewriteSecurityAnalyzer =
             | SqlAgentToolType.MsSqlServer
             | SqlAgentToolType.MySQL -> ()
             | _ -> raise (UnsupportedGrammar "This provider's DCL account and object privilege grammar is not modeled.")
-            let privileges = ResizeArray<SqlTablePrivilege>()
-            privileges.Add(privilege ())
-            while symbol ',' do
-                RewriteResourceBudget.checkpoint ()
-                if privileges.Count >= 4 then
-                    raise (UnsupportedGrammar "DCL duplicate or unsupported privilege list.")
-                let next = privilege ()
-                if privileges.Contains(next) then
-                    raise (UnsupportedGrammar "Repeated DCL privilege is outside the canonical static intent subset.")
-                privileges.Add next
-            expect "ON"
-            let target =
-                match sourceDialect with
-                | SqlAgentToolType.MsSqlServer ->
-                    if not (accept "OBJECT") then
-                        raise (UnsupportedGrammar "SQL Server DCL requires the proven OBJECT::schema.table form.")
-                    // SQL Server object qualifier must use OBJECT::, not an
-                    // invented portable TABLE notation.
-                    match current () with
-                    | Some token when token.Kind = Operator "::" ->
-                        index <- index + 1
-                    | _ when symbol ':' && symbol ':' -> ()
-                    | _ -> raise (UnsupportedGrammar "SQL Server DCL requires OBJECT::schema.table.")
-                    let name = qualifiedName ()
-                    if name.Parts.Count <> 2 then
-                        raise (UnsupportedGrammar "SQL Server DCL requires an explicit schema-qualified object.")
-                    name
-                | SqlAgentToolType.MySQL ->
-                    // MySQL ON db.table is an exact object spelling; schema.*
-                    // and *.* are different grant scopes and stay unsupported.
-                    if word () = "TABLE" then
-                        raise (UnsupportedGrammar "MySQL table privilege grammar uses ON db.table.")
-                    let name = qualifiedName ()
-                    if name.Parts.Count <> 2 then
-                        raise (UnsupportedGrammar "MySQL modeled table privileges require explicit db.table.")
-                    name
-                | SqlAgentToolType.Oracle ->
-                    // Oracle's object privilege grammar has ON object, not
-                    // PostgreSQL's optional TABLE keyword.
-                    if word () = "TABLE" then
-                        raise (UnsupportedGrammar "Oracle's modeled table privilege grammar uses ON object, without TABLE.")
-                    qualifiedName ()
-                | SqlAgentToolType.Postgres
-                | SqlAgentToolType.Firebird ->
-                    accept "TABLE" |> ignore
-                    qualifiedName ()
-                | _ -> raise (UnsupportedGrammar "Unsupported source dialect.")
-            match operation with
-            | Grant | Deny -> expect "TO"
-            | Revoke -> expect "FROM"
-            let principals = ResizeArray<string * SqlSecurityPrincipalKind * string option>()
-            principals.Add(grantee ())
-            while symbol ',' do
-                RewriteResourceBudget.checkpoint ()
-                if principals.Count >= MaxIntentsPerStatement then
-                    raise (UnsupportedGrammar "DCL expansion exceeds static intent budget.")
+            // Exact-source PostgreSQL role membership is a separate grammar
+            // from table privilege delegation. Never reuse it for other DBs.
+            let revokeGrantOptionOnly, revokeAdminOptionOnly =
+                if operation = Revoke && accept "GRANT" then
+                    expect "OPTION"
+                    expect "FOR"
+                    true, false
+                elif operation = Revoke && accept "ADMIN" then
+                    expect "OPTION"
+                    expect "FOR"
+                    false, true
+                else false, false
+            if (revokeGrantOptionOnly || revokeAdminOptionOnly)
+                && sourceDialect <> SqlAgentToolType.Postgres then
+                raise (UnsupportedGrammar "Grant/admin-option revocation requires the PostgreSQL proof subset.")
+
+            let readPrincipals () =
+                let principals = ResizeArray<string * SqlSecurityPrincipalKind * string option>()
                 principals.Add(grantee ())
-            if index <> values.Length then
-                raise (UnsupportedGrammar "DCL trailing clauses, column privileges, membership, grants with options and cascading effects are not modeled.")
-            if principals.Count * privileges.Count > MaxIntentsPerStatement then
-                raise (UnsupportedGrammar "DCL intent expansion exceeds static resource budget.")
-            Modeled(operation, List.ofSeq privileges, target, List.ofSeq principals)
+                while symbol ',' do
+                    RewriteResourceBudget.checkpoint ()
+                    if principals.Count >= MaxIntentsPerStatement then
+                        raise (UnsupportedGrammar "DCL recipient list exceeds the static budget.")
+                    principals.Add(grantee ())
+                List.ofSeq principals
+
+            let readCascade () =
+                if operation <> Revoke then SqlSecurityCascadeMode.None
+                elif accept "CASCADE" then SqlSecurityCascadeMode.Cascade
+                elif accept "RESTRICT" then SqlSecurityCascadeMode.Restrict
+                else SqlSecurityCascadeMode.None
+
+            let isTablePrivilege =
+                match word () with
+                | "SELECT" | "INSERT" | "UPDATE" | "DELETE" -> true
+                | _ -> false
+            if revokeAdminOptionOnly || not isTablePrivilege then
+                if sourceDialect <> SqlAgentToolType.Postgres
+                   || operation = Deny || revokeGrantOptionOnly then
+                    raise (UnsupportedGrammar "Role membership syntax is modeled for PostgreSQL GRANT/REVOKE only.")
+                if word () = "ALL" || word () = "PUBLIC" then
+                    raise (UnsupportedGrammar "Wildcard and PUBLIC role membership are unproven.")
+                let roles = ResizeArray<string>()
+                roles.Add(namePart ())
+                while symbol ',' do
+                    RewriteResourceBudget.checkpoint ()
+                    if roles.Count >= MaxIntentsPerStatement then
+                        raise (UnsupportedGrammar "Role membership expansion exceeds budget.")
+                    roles.Add(namePart ())
+                match operation with
+                | Grant -> expect "TO"
+                | Revoke -> expect "FROM"
+                | Deny -> raise (UnsupportedGrammar "DENY does not grant role membership.")
+                let principals = readPrincipals ()
+                if principals |> List.exists (fun (name,kind,_) ->
+                    kind = SqlSecurityPrincipalKind.Public
+                    || String.Equals(name, "PUBLIC", StringComparison.OrdinalIgnoreCase)) then
+                    raise (UnsupportedGrammar "PostgreSQL role membership cannot target PUBLIC.")
+                let withAdmin =
+                    if operation = Grant && accept "WITH" then
+                        expect "ADMIN"
+                        expect "OPTION"
+                        true
+                    else false
+                let cascade = readCascade ()
+                if index <> values.Length then
+                    raise (UnsupportedGrammar "Unmodeled role options, grantor or trailing clauses.")
+                if roles.Count * principals.Length > MaxIntentsPerStatement then
+                    raise (UnsupportedGrammar "Role dependency expansion exceeds the static budget.")
+                ModeledRole(operation, List.ofSeq roles, principals,
+                            withAdmin, revokeAdminOptionOnly, cascade)
+            else
+                if revokeAdminOptionOnly then
+                    raise (UnsupportedGrammar "ADMIN OPTION FOR applies to role membership only.")
+                let privileges = ResizeArray<SqlTablePrivilege>()
+                privileges.Add(privilege ())
+                while symbol ',' do
+                    RewriteResourceBudget.checkpoint ()
+                    if privileges.Count >= 4 then
+                        raise (UnsupportedGrammar "DCL duplicate or unsupported privilege list.")
+                    let next = privilege ()
+                    if privileges.Contains(next) then
+                        raise (UnsupportedGrammar "Repeated DCL privilege is outside the canonical static intent subset.")
+                    privileges.Add next
+                expect "ON"
+                let target =
+                    match sourceDialect with
+                    | SqlAgentToolType.MsSqlServer ->
+                        if not (accept "OBJECT") then
+                            raise (UnsupportedGrammar "SQL Server DCL requires the proven OBJECT::schema.table form.")
+                        match current () with
+                        | Some token when token.Kind = Operator "::" -> index <- index + 1
+                        | _ when symbol ':' && symbol ':' -> ()
+                        | _ -> raise (UnsupportedGrammar "SQL Server DCL requires OBJECT::schema.table.")
+                        let name = qualifiedName ()
+                        if name.Parts.Count <> 2 then
+                            raise (UnsupportedGrammar "SQL Server DCL requires an explicit schema-qualified object.")
+                        name
+                    | SqlAgentToolType.MySQL ->
+                        if word () = "TABLE" then
+                            raise (UnsupportedGrammar "MySQL table privilege grammar uses ON db.table.")
+                        let name = qualifiedName ()
+                        if name.Parts.Count <> 2 then
+                            raise (UnsupportedGrammar "MySQL modeled table privileges require explicit db.table.")
+                        name
+                    | SqlAgentToolType.Oracle ->
+                        if word () = "TABLE" then
+                            raise (UnsupportedGrammar "Oracle's modeled table privilege grammar uses ON object, without TABLE.")
+                        qualifiedName ()
+                    | SqlAgentToolType.Postgres
+                    | SqlAgentToolType.Firebird ->
+                        accept "TABLE" |> ignore
+                        qualifiedName ()
+                    | _ -> raise (UnsupportedGrammar "Unsupported source dialect.")
+                match operation with
+                | Grant | Deny -> expect "TO"
+                | Revoke -> expect "FROM"
+                let principals = readPrincipals ()
+                let withGrantOption =
+                    if operation = Grant && sourceDialect = SqlAgentToolType.Postgres
+                       && accept "WITH" then
+                        expect "GRANT"
+                        expect "OPTION"
+                        true
+                    else false
+                if withGrantOption && (principals |> List.exists (fun (_,k,_) ->
+                    k = SqlSecurityPrincipalKind.Public)) then
+                    raise (UnsupportedGrammar "PostgreSQL cannot grant GRANT OPTION to PUBLIC.")
+                let cascade = readCascade ()
+                if index <> values.Length then
+                    raise (UnsupportedGrammar "Unmodeled privilege options, column grants, grantor or trailing clauses.")
+                if principals.Length * privileges.Count > MaxIntentsPerStatement then
+                    raise (UnsupportedGrammar "DCL intent expansion exceeds static resource budget.")
+                ModeledTable(operation, List.ofSeq privileges, target, principals,
+                             withGrantOption, revokeGrantOptionOnly, cascade)
         with
         | UnsupportedGrammar message -> Unsupported message
         | InvalidGrammar message -> Invalid message
@@ -227,27 +306,53 @@ module internal RewriteSecurityAnalyzer =
         let tokens =
             RewriteResourceBudget.withStage "SecurityLexical" SqlDiagnosticStage.Lexical (fun () ->
                 RewriteFacadeAdapter.tokenizeScriptValidated syntax.Text sourceDialect sourceProfile)
+        let action = function
+            | Grant -> SqlSecurityAction.Grant
+            | Revoke -> SqlSecurityAction.Revoke
+            | Deny -> SqlSecurityAction.Deny
         match parse sourceDialect sourceProfile tokens with
-        | Modeled(operation, privileges, target, principals) ->
-            let action =
-                match operation with
-                | Grant -> SqlSecurityAction.Grant
-                | Revoke -> SqlSecurityAction.Revoke
-                | Deny -> SqlSecurityAction.Deny
+        | ModeledTable(operation, privileges, target, principals,
+                       withGrantOption, revokeOnly, cascadeMode) ->
+            let sqlAction = action operation
             let intents =
                 [ for principal, kind, host in principals do
                     for privilege in privileges do
                         RewriteResourceBudget.checkpoint ()
-                        yield SqlSecurityIntent(action, privilege, target, principal, kind, syntax.Span,
-                                                Option.defaultValue null host) ]
-            // Only the grammar/intent is modeled. Privilege application,
-            // authorization, object existence and grantor are UNKNOWN.
-            SqlStatementAnalysisStatus.PartiallyAnalyzed, intents, []
+                        yield SqlSecurityIntent(sqlAction, privilege, target, principal, kind, syntax.Span,
+                                                Option.defaultValue null host, withGrantOption,
+                                                revokeOnly, cascadeMode) ]
+            // A grant without grant-option has no modeled outgoing delegation
+            // edge. A revoke could invalidate one, even with no prior DCL
+            // in this script. We cannot identify who actually depends on it.
+            let dependencies =
+                if sourceDialect = SqlAgentToolType.Postgres
+                   && (withGrantOption || operation = Revoke) then
+                    [ for intent in intents do
+                        RewriteResourceBudget.checkpoint ()
+                        yield SqlSecurityDependency(
+                            SqlSecurityDependencyKind.TableDelegation,
+                            sqlAction, intent.Principal, intent.PrincipalKind,
+                            null, target, Nullable(intent.Privilege),
+                            withGrantOption, revokeOnly, cascadeMode, syntax.Span) ]
+                else []
+            SqlStatementAnalysisStatus.PartiallyAnalyzed, intents, dependencies, []
+        | ModeledRole(operation, roles, principals, withAdmin, revokeOnly, cascadeMode) ->
+            let sqlAction = action operation
+            let dependencies =
+                [ for principal, kind, _ in principals do
+                    for role in roles do
+                        RewriteResourceBudget.checkpoint ()
+                        yield SqlSecurityDependency(
+                            SqlSecurityDependencyKind.RoleMembership,
+                            sqlAction, principal, kind, role, null,
+                            Nullable<SqlTablePrivilege>(),
+                            withAdmin, revokeOnly, cascadeMode, syntax.Span) ]
+            SqlStatementAnalysisStatus.PartiallyAnalyzed, [], dependencies, []
         | Unsupported message ->
-            SqlStatementAnalysisStatus.Unsupported, [],
+            SqlStatementAnalysisStatus.Unsupported, [], [],
             [diagnostic syntax "SQL_SECURITY_UNSUPPORTED"
                 SqlDiagnosticCategory.Capability message]
         | Invalid message ->
-            SqlStatementAnalysisStatus.Invalid, [],
+            SqlStatementAnalysisStatus.Invalid, [], [],
             [diagnostic syntax "SQL_SECURITY_SYNTAX_INVALID"
                 SqlDiagnosticCategory.Syntax message]
