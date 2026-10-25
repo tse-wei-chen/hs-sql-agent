@@ -113,8 +113,15 @@ module internal RewriteSchemaDependencies =
                 Invalid ("Constraint '" + constraintInfo.Name + "' already exists.")
             else
                 let proposed = Seq.append table.Constraints [constraintInfo] |> Seq.toList
-                validateCreate dialect state name
-                    (table.Columns |> Seq.toList) proposed
+                match validateCreate dialect state name
+                          (table.Columns |> Seq.toList) proposed with
+                | Proven ->
+                    // Structural validity is not a proof of existing row data.
+                    // PRIMARY KEY / UNIQUE may find duplicates; FOREIGN KEY
+                    // may find unmatched child rows. No cardinality evidence
+                    // is carried by a Virtual Catalog.
+                    Unproven "ALTER ADD CONSTRAINT depends on existing row values; uniqueness or referential integrity is not proven."
+                | other -> other
 
     let canDropConstraint (state: SqlCatalogState) tableName
                           (constraintInfo: SqlCatalogConstraint) =
