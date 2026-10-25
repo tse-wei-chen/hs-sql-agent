@@ -22,6 +22,9 @@ module internal RewriteScriptAnalyzer =
     let private changed (syntax: SqlScriptStatementSyntax) name operation certainty =
         SqlCatalogChange(name, operation, certainty, syntax.Span)
 
+    let private changedColumn (syntax: SqlScriptStatementSyntax) name column operation =
+        SqlCatalogChange(name, operation, SqlCatalogKnowledge.Known, syntax.Span, column)
+
     let private analyzeDdl sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
                            (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
         let tokens =
@@ -75,37 +78,56 @@ module internal RewriteScriptAnalyzer =
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
                 fail ("DROP TABLE " + name + " does not exist in the known catalog.")
             | _ -> partial name SqlCatalogOperation.DropTable
-        | Recognized (AddColumn(name, column)) ->
+        | Recognized (AlterColumns(name, actions)) ->
             match RewriteCatalogModel.lookup state name with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
-                if table.Columns |> Seq.exists (fun c -> String.Equals(c.Name, column.Name, StringComparison.Ordinal)) then
-                    fail ("ALTER TABLE " + name + " column " + column.Name + " already exists.")
-                else
-                    seq {
-                        yield! table.Columns
-                        yield column
-                    }
-                    |> RewriteCatalogModel.knownTable state name
-                    |> exact name SqlCatalogOperation.AddColumn
+                // Transactional *analysis* within one ALTER statement: stage
+                // every operation in local working state, then publish a single
+                // immutable snapshot. If any action fails, publish no deltas.
+                let working = ResizeArray<SqlCatalogColumn>(table.Columns)
+                let pending = ResizeArray<SqlCatalogChange>()
+                let mutable failure: string option = None
+                let locate column =
+                    working |> Seq.tryFindIndex (fun c ->
+                        String.Equals(c.Name, column, StringComparison.Ordinal))
+                for action in actions do
+                    RewriteResourceBudget.checkpoint ()
+                    if failure.IsNone then
+                        match action with
+                        | Add column ->
+                            if locate column.Name |> Option.isSome then
+                                failure <- Some(
+                                    "ALTER TABLE " + name + " column " + column.Name +
+                                    " already exists.")
+                            else
+                                working.Add column
+                                pending.Add(changedColumn syntax name column.Name SqlCatalogOperation.AddColumn)
+                        | Remove(columnName, ifExists) ->
+                            match locate columnName with
+                            | Some index when working.Count = 1 ->
+                                failure <- Some(
+                                    "ALTER TABLE " + name + " cannot drop its last column.")
+                            | Some index ->
+                                working.RemoveAt index
+                                pending.Add(changedColumn syntax name columnName SqlCatalogOperation.DropColumn)
+                            | None when ifExists -> ()
+                            | None ->
+                                failure <- Some(
+                                    "ALTER TABLE " + name + " column " + columnName +
+                                    " does not exist.")
+                match failure with
+                | Some message -> fail message
+                | None when pending.Count = 0 -> noChange
+                | None ->
+                    let updated = RewriteCatalogModel.knownTable state name working
+                    SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                    updated, (pending |> Seq.toList), []
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
                 fail ("ALTER TABLE " + name + " does not exist in the known catalog.")
-            | _ -> partial name SqlCatalogOperation.AddColumn
-        | Recognized (RemoveColumn(name, columnName, ifExists)) ->
-            match RewriteCatalogModel.lookup state name with
-            | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
-                let exists = table.Columns |> Seq.exists (fun c -> String.Equals(c.Name, columnName, StringComparison.Ordinal))
-                if not exists && not ifExists then
-                    fail ("ALTER TABLE " + name + " column " + columnName + " does not exist.")
-                elif not exists then
-                    noChange
-                else
-                    table.Columns
-                    |> Seq.filter (fun c -> not (String.Equals(c.Name, columnName, StringComparison.Ordinal)))
-                    |> RewriteCatalogModel.knownTable state name
-                    |> exact name SqlCatalogOperation.DropColumn
-            | _ when RewriteCatalogModel.isKnownAbsent state name ->
-                fail ("ALTER TABLE " + name + " does not exist in the known catalog.")
-            | _ -> partial name SqlCatalogOperation.DropColumn
+            | _ ->
+                // The referenced table/columns are not proven. A composite
+                // ALTER cannot claim its individual mutations succeeded.
+                partial name SqlCatalogOperation.Indeterminate
 
     let analyze sql sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) (initial: SqlCatalogState) =
         if Object.ReferenceEquals(initial, null) then nullArg "initialCatalog"

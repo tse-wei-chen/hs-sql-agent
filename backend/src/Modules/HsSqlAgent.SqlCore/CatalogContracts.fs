@@ -56,8 +56,14 @@ type SqlCatalogChange internal (
     tableName: string,
     operation: SqlCatalogOperation,
     certainty: SqlCatalogKnowledge,
-    span: SqlDiagnosticSpan) =
+    span: SqlDiagnosticSpan,
+    columnName: string) =
+    new(tableName, operation, certainty, span) =
+        SqlCatalogChange(tableName, operation, certainty, span, null)
     member _.TableName = tableName
     member _.Operation = operation
     member _.Certainty = certainty
     member _.Span = span
+    /// Populated for proven column-level changes; null for table-wide or
+    /// indeterminate effects. This is not an executable schema-change plan.
+    member _.ColumnName = columnName
