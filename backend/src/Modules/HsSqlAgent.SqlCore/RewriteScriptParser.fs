@@ -145,6 +145,10 @@ module internal RewriteScriptParser =
                                     |> ignore)
                                 SqlScriptParseStatus.Parsed, None
                             with
+                            | :? SqlParseException as ex
+                                when not (Object.ReferenceEquals(ex.Diagnostic, null))
+                                     && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                                reraise()
                             | :? SqlParseException as ex ->
                                 SqlScriptParseStatus.Invalid,
                                 Some(invalidDiagnostic ex absoluteStart length)
@@ -170,28 +174,29 @@ module internal RewriteScriptParser =
                 nesting <- 0
                 opaque <- false
 
-            while index < tokenCount do
-                RewriteResourceBudget.checkpoint ()
-                let token = tokens.[index]
-                if nesting = 0 && isSqlServerGoLine sql token sourceDialect then
-                    emit index
-                    batch <- batch + 1
-                else
-                    if start < 0 then
-                        match token.Kind with
-                        | Symbol ';' -> ()
-                        | _ ->
-                            start <- index
-                            opaque <- requiresOpaqueRemainder tokens start sourceDialect
-                    match token.Kind with
-                    | Symbol '(' -> nesting <- nesting + 1
-                    | Symbol ')' -> nesting <- nesting - 1
-                    | Symbol ';' when nesting = 0 && not opaque ->
+            RewriteResourceBudget.withStage "ScriptDispatch" SqlDiagnosticStage.Parse (fun () ->
+                while index < tokenCount do
+                    RewriteResourceBudget.checkpoint ()
+                    let token = tokens.[index]
+                    if nesting = 0 && isSqlServerGoLine sql token sourceDialect then
                         emit index
-                    | _ -> ()
-                index <- index + 1
+                        batch <- batch + 1
+                    else
+                        if start < 0 then
+                            match token.Kind with
+                            | Symbol ';' -> ()
+                            | _ ->
+                                start <- index
+                                opaque <- requiresOpaqueRemainder tokens start sourceDialect
+                        match token.Kind with
+                        | Symbol '(' -> nesting <- nesting + 1
+                        | Symbol ')' -> nesting <- nesting - 1
+                        | Symbol ';' when nesting = 0 && not opaque ->
+                            emit index
+                        | _ -> ()
+                    index <- index + 1
 
-            emit tokenCount
+                emit tokenCount)
             let statements : IReadOnlyList<SqlScriptStatementSyntax> =
                 Array.AsReadOnly(result.ToArray())
             let errors : IReadOnlyList<SqlDiagnostic> =
