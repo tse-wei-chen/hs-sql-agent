@@ -57,7 +57,20 @@ module internal RewriteScriptAnalyzer =
             unknown,
             [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
             [error]
+        let referencedTableName = function
+            | Create(name, _, _, _)
+            | Drop(name, _)
+            | AlterColumns(name, _)
+            | CreateIndex(name, _, _)
+            | AddConstraint(name, _)
+            | DropConstraint(name, _) -> Some name
+            | DropIndex(_, target) -> target
         match parsed with
+        | Recognized operation when
+            referencedTableName operation
+            |> Option.exists (RewriteCatalogModel.hasUnqualifiedScopeConflict state) ->
+            dependencyUnproven
+                "Default schema/search_path is not modeled; unqualified table name may resolve to an existing qualified table."
         | Recognized _ when
             RewriteCatalogIdentifierProof.mode sourceDialect sourceProfile =
                 RewriteCatalogIdentifierProof.FoldAscii
