@@ -11,11 +11,15 @@ open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 /// proven syntax and type gate. No blanket "ANSI" DDL fallback exists.
 module internal RewriteSchemaAnalyzer =
 
+    /// Closed column operations are parsed completely before any Catalog mutation.
+    type AlterColumnAction =
+        | Add of SqlCatalogColumn
+        | Remove of column: string * ifExists: bool
+
     type DdlOperation =
         | Create of table: string * columns: SqlCatalogColumn list * ifNotExists: bool
         | Drop of table: string * ifExists: bool
-        | AddColumn of table: string * column: SqlCatalogColumn
-        | RemoveColumn of table: string * column: string * ifExists: bool
+        | AlterColumns of table: string * actions: AlterColumnAction list
 
     type DdlSyntax =
         | Recognized of DdlOperation
@@ -237,18 +241,15 @@ module internal RewriteSchemaAnalyzer =
             expect "ALTER"
             if not (accept "TABLE") then raise OutsideSubset
             let table = qualifiedName ()
-            if accept "ADD" then
+            let addAction () =
+                // ADD has already been consumed. Only proven nullable column
+                // definitions may be added without inspecting existing rows.
                 if accept "COLUMN" && not rules.AddColumnKeyword then raise OutsideSubset
-                let wrapped = rules.AddParentheses && symbol '('
                 let added = column ()
-                if wrapped then expectSymbol ')'
-                endOfStatement ()
-                if not added.Nullable then
-                    // Without row-data knowledge, ALTER ADD NOT NULL might
-                    // fail on existing rows. Never claim a certain Delta.
-                    raise OutsideSubset
-                Recognized(AddColumn(table, added))
-            elif accept "DROP" then
+                if not added.Nullable then raise OutsideSubset
+                Add added
+            let dropAction () =
+                // DROP has already been consumed.
                 let prefixed = accept "COLUMN"
                 if prefixed && not rules.DropColumnKeyword then raise OutsideSubset
                 if not prefixed && not rules.DropBareColumn then raise OutsideSubset
@@ -258,10 +259,74 @@ module internal RewriteSchemaAnalyzer =
                         expect "EXISTS"
                         true
                     else false
-                let removed = namePart ()
-                endOfStatement ()
-                Recognized(RemoveColumn(table, removed, conditional))
-            else raise OutsideSubset
+                Remove(namePart (), conditional)
+            let parseRepeatedActions () =
+                let parseOne () =
+                    RewriteResourceBudget.checkpoint ()
+                    if accept "ADD" then addAction ()
+                    elif accept "DROP" then dropAction ()
+                    else raise OutsideSubset
+                let actions = ResizeArray<AlterColumnAction>()
+                actions.Add(parseOne ())
+                while symbol ',' do actions.Add(parseOne ())
+                actions |> Seq.toList
+            let actions =
+                match sourceDialect with
+                | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL | SqlAgentToolType.Firebird ->
+                    parseRepeatedActions ()
+                | SqlAgentToolType.MsSqlServer ->
+                    if accept "ADD" then
+                        let actions = ResizeArray<AlterColumnAction>()
+                        actions.Add(addAction ())
+                        while symbol ',' do
+                            RewriteResourceBudget.checkpoint ()
+                            actions.Add(Add(column ()))
+                        if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
+                            raise OutsideSubset
+                        actions |> Seq.toList
+                    elif accept "DROP" then
+                        expect "COLUMN"
+                        let actions = ResizeArray<AlterColumnAction>()
+                        actions.Add(Remove(namePart (), false))
+                        while symbol ',' do
+                            RewriteResourceBudget.checkpoint ()
+                            actions.Add(Remove(namePart (), false))
+                        actions |> Seq.toList
+                    else raise OutsideSubset
+                | SqlAgentToolType.Oracle ->
+                    if accept "ADD" then
+                        if accept "COLUMN" then raise OutsideSubset
+                        let parenthesized = symbol '('
+                        let actions = ResizeArray<AlterColumnAction>()
+                        actions.Add(Add(column ()))
+                        if parenthesized then
+                            while symbol ',' do
+                                RewriteResourceBudget.checkpoint ()
+                                actions.Add(Add(column ()))
+                            expectSymbol ')'
+                        if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
+                            raise OutsideSubset
+                        actions |> Seq.toList
+                    elif accept "DROP" then
+                        if symbol '(' then
+                            let actions = ResizeArray<AlterColumnAction>()
+                            actions.Add(Remove(namePart (), false))
+                            while symbol ',' do
+                                RewriteResourceBudget.checkpoint ()
+                                actions.Add(Remove(namePart (), false))
+                            expectSymbol ')'
+                            actions |> Seq.toList
+                        else
+                            expect "COLUMN"
+                            [Remove(namePart (), false)]
+                    else raise OutsideSubset
+                | SqlAgentToolType.Sqlite ->
+                    if accept "ADD" then [addAction ()]
+                    elif accept "DROP" then [dropAction ()]
+                    else raise OutsideSubset
+                | _ -> raise OutsideSubset
+            endOfStatement ()
+            Recognized(AlterColumns(table, actions))
 
         try
             match word () with
