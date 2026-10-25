@@ -101,6 +101,44 @@ module internal RewriteSchemaDependencies =
                                     reject "Foreign key references a missing local/remote column."
             defaultArg error Proven
 
+    let validateNewConstraint dialect state name
+                              (constraintInfo: SqlCatalogConstraint) =
+        match RewriteCatalogModel.lookup state name with
+        | None -> Invalid ("Cannot add constraint to missing table '" + name + "'.")
+        | Some table ->
+            if String.IsNullOrWhiteSpace constraintInfo.Name then
+                Unproven "ALTER ADD CONSTRAINT requires an explicit constraint name."
+            elif table.Constraints |> Seq.exists (fun item ->
+                equals item.Name constraintInfo.Name) then
+                Invalid ("Constraint '" + constraintInfo.Name + "' already exists.")
+            else
+                let proposed = Seq.append table.Constraints [constraintInfo] |> Seq.toList
+                match validateCreate dialect state name
+                          (table.Columns |> Seq.toList) proposed with
+                | Proven ->
+                    // Structural validity is not a proof of existing row data.
+                    // PRIMARY KEY / UNIQUE may find duplicates; FOREIGN KEY
+                    // may find unmatched child rows. No cardinality evidence
+                    // is carried by a Virtual Catalog.
+                    Unproven "ALTER ADD CONSTRAINT depends on existing row values; uniqueness or referential integrity is not proven."
+                | other -> other
+
+    let canDropConstraint (state: SqlCatalogState) tableName
+                          (constraintInfo: SqlCatalogConstraint) =
+        if not (complete state) then
+            Unproven "Constraint dependencies cannot be proven against an incomplete Catalog."
+        elif constraintInfo.Kind = SqlCatalogConstraintKind.ForeignKey then Proven
+        else
+            let inbound =
+                RewriteCatalogModel.inboundForeignKeys state tableName
+                |> Seq.exists (fun (_, fk) ->
+                    fk.ReferencedColumns.Count = constraintInfo.Columns.Count
+                    && Seq.forall2 equals fk.ReferencedColumns constraintInfo.Columns)
+            if inbound then
+                Invalid ("DROP CONSTRAINT '" + constraintInfo.Name +
+                         "' is blocked by a referencing FOREIGN KEY.")
+            else Proven
+
     let canDropTable (state: SqlCatalogState) name =
         if not (complete state) then
             Unproven "Cannot prove absence of dependent tables in an incomplete Catalog."
@@ -119,8 +157,8 @@ module internal RewriteSchemaDependencies =
             Unproven "Cannot prove absence of column constraints in an incomplete Catalog."
         else
             match RewriteCatalogModel.columnDependencies state tableName columnName with
-            | (owner, dependency)::_ ->
+            | (owner, dependencyKind)::_ ->
                 Invalid ("DROP COLUMN " + columnName +
-                         " is blocked by " + string dependency.Kind +
+                         " is blocked by " + dependencyKind +
                          " dependency in table '" + owner + "'.")
             | [] -> Proven

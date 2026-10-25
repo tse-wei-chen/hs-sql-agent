@@ -25,19 +25,32 @@ module internal RewriteCatalogModel =
         Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) -> StringComparer.Ordinal.Compare(left.Name, right.Name)) tables
         SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables))
 
-    let knownTableWithConstraints state name columns constraints =
-        let copied = columns |> Seq.toArray |> Array.AsReadOnly
-        let verifiedConstraints = constraints |> Seq.toArray |> Array.AsReadOnly
-        replace state name
-            (Some(SqlCatalogTable(name, SqlCatalogKnowledge.Known, copied, verifiedConstraints)))
+    let replaceTable state name columns constraints indexes =
+        let cols = columns |> Seq.toArray |> Array.AsReadOnly
+        let keys = constraints |> Seq.toArray |> Array.AsReadOnly
+        let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
+        replace state name (Some(SqlCatalogTable(name, SqlCatalogKnowledge.Known, cols, keys, idxs)))
 
-    /// ALTER never silently discards existing PK, UNIQUE or FK dependencies.
+    let knownTableWithConstraints state name columns constraints =
+        replaceTable state name columns constraints Seq.empty
+
+    /// Normal column ALTER keeps every established key and non-unique index.
     let knownTable state name columns =
-        let existing =
-            match lookup state name with
-            | Some table -> table.Constraints :> seq<SqlCatalogConstraint>
-            | None -> Seq.empty
-        knownTableWithConstraints state name columns existing
+        match lookup state name with
+        | Some existing ->
+            replaceTable state name columns existing.Constraints existing.Indexes
+        | None ->
+            replaceTable state name columns Seq.empty Seq.empty
+
+    let withConstraints state name constraints =
+        match lookup state name with
+        | Some table -> replaceTable state name table.Columns constraints table.Indexes
+        | None -> invalidArg "name" "Table not found."
+
+    let withIndexes state name indexes =
+        match lookup state name with
+        | Some table -> replaceTable state name table.Columns table.Constraints indexes
+        | None -> invalidArg "name" "Table not found."
 
     let inboundForeignKeys (state: SqlCatalogState) targetTable =
         state.Tables
@@ -62,7 +75,17 @@ module internal RewriteCatalogModel =
             |> Seq.filter (fun (_, item) ->
                 item.ReferencedColumns |> Seq.exists (sameName columnName))
             |> Seq.map (fun (table, item) -> table.Name, item)
-        Seq.append local incoming |> Seq.toList
+        let indexed =
+            match lookup state tableName with
+            | Some table ->
+                table.Indexes
+                |> Seq.filter (fun index ->
+                    index.Columns |> Seq.exists (sameName columnName))
+                |> Seq.map (fun index -> table.Name, index.Name)
+            | None -> Seq.empty
+        (Seq.append local incoming |> Seq.map (fun (owner, item) -> owner, string item.Kind))
+        |> Seq.append indexed
+        |> Seq.toList
 
     let unknownTable state name =
         replace state name

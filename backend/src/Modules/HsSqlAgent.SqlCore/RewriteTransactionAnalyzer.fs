@@ -73,6 +73,13 @@ module internal RewriteTransactionAnalyzer =
             && Seq.forall2 sameColumn a.Columns b.Columns
             && a.Constraints.Count = b.Constraints.Count
             && Seq.forall2 sameConstraint a.Constraints b.Constraints
+            && a.Indexes.Count = b.Indexes.Count
+            && Seq.forall2 (fun (x: SqlCatalogIndex) (y: SqlCatalogIndex) ->
+                String.Equals(x.Name, y.Name, StringComparison.Ordinal)
+                && x.Columns.Count = y.Columns.Count
+                && Seq.forall2 (fun a b ->
+                    String.Equals(a, b, StringComparison.Ordinal)) x.Columns y.Columns)
+                a.Indexes b.Indexes
         left.IsClosedWorld = right.IsClosedWorld
         && left.Tables.Count = right.Tables.Count
         && Seq.forall2 sameTable left.Tables right.Tables

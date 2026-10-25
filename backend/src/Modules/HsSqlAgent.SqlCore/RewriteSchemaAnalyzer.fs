@@ -21,6 +21,10 @@ module internal RewriteSchemaAnalyzer =
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         | Drop of table: string * ifExists: bool
         | AlterColumns of table: string * actions: AlterColumnAction list
+        | CreateIndex of table: string * name: string * columns: string list
+        | DropIndex of name: string * table: string option
+        | AddConstraint of table: string * constraintInfo: SqlCatalogConstraint
+        | DropConstraint of table: string * name: string
 
     type DdlSyntax =
         | Recognized of DdlOperation
@@ -134,6 +138,16 @@ module internal RewriteSchemaAnalyzer =
             if symbol '.' then first + "." + namePart ()
             else first
 
+        let columnNames () =
+            expectSymbol '('
+            let names = ResizeArray<string>()
+            names.Add(namePart ())
+            while symbol ',' do
+                RewriteResourceBudget.checkpoint ()
+                names.Add(namePart ())
+            expectSymbol ')'
+            names |> Seq.toList
+
         let typeName () =
             let kind = word ()
             if kind = "" then raise (Malformed("Expected a SQL column type in TABLE DDL."))
@@ -213,105 +227,183 @@ module internal RewriteSchemaAnalyzer =
             else false
         let parseCreate () =
             expect "CREATE"
-            if not (accept "TABLE") then raise OutsideSubset
-            let conditional = ifNotExists ()
-            let table = qualifiedName ()
-            expectSymbol '('
-            let columns = ResizeArray<SqlCatalogColumn>()
-            let constraints = ResizeArray<SqlCatalogConstraint>()
-            let optionalConstraintName () =
-                if accept "CONSTRAINT" then Some(namePart ())
-                else None
-            let columnList () =
+            if accept "INDEX" then
+                let indexName = namePart ()
+                expect "ON"
+                let table = qualifiedName ()
+                // Expression/functional/partial indexes are valid SQL but
+                // outside the proven physical-column-only index subset.
+                match (current ()).Kind with
+                | Symbol '(' -> ()
+                | _ -> raise OutsideSubset
+                let names =
+                    expectSymbol '('
+                    let physical () =
+                        match (current ()).Kind with
+                        | Identifier _ -> namePart ()
+                        | _ -> raise OutsideSubset
+                    let cols = ResizeArray<string>()
+                    cols.Add(physical ())
+                    while symbol ',' do
+                        RewriteResourceBudget.checkpoint ()
+                        cols.Add(physical ())
+                    expectSymbol ')'
+                    cols |> Seq.toList
+                endOfStatement ()
+                Recognized(CreateIndex(table, indexName, names))
+            else
+                if not (accept "TABLE") then raise OutsideSubset
+                let conditional = ifNotExists ()
+                let table = qualifiedName ()
                 expectSymbol '('
-                let cols = ResizeArray<string>()
-                cols.Add(namePart ())
-                while symbol ',' do
-                    RewriteResourceBudget.checkpoint ()
+                let columns = ResizeArray<SqlCatalogColumn>()
+                let constraints = ResizeArray<SqlCatalogConstraint>()
+                let optionalConstraintName () =
+                    if accept "CONSTRAINT" then Some(namePart ())
+                    else None
+                let columnList () =
+                    expectSymbol '('
+                    let cols = ResizeArray<string>()
                     cols.Add(namePart ())
-                expectSymbol ')'
-                cols |> Seq.toList
-            let makeConstraint cname kind members remote remoteMembers =
-                SqlCatalogConstraint(
-                    (match cname with Some value -> value | None -> null),
-                    kind, Array.AsReadOnly(List.toArray members),
-                    remote, Array.AsReadOnly(List.toArray remoteMembers))
-            let foreign cname members =
-                expect "REFERENCES"
-                let remote = qualifiedName ()
-                // Omitted target column / implicit PK selection is deliberately
-                // not inferred: require an explicit column list.
-                let remoteMembers = columnList ()
-                makeConstraint cname SqlCatalogConstraintKind.ForeignKey
-                    members remote remoteMembers
-            let tableConstraint () =
-                let cname = optionalConstraintName ()
-                if accept "PRIMARY" then
-                    expect "KEY"
-                    makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
-                        (columnList ()) null []
-                elif accept "UNIQUE" then
-                    makeConstraint cname SqlCatalogConstraintKind.Unique
-                        (columnList ()) null []
-                elif accept "FOREIGN" then
-                    expect "KEY"
-                    let members = columnList ()
-                    foreign cname members
-                else raise OutsideSubset
-            let element () =
-                RewriteResourceBudget.checkpoint ()
-                if word () = "CHECK" || word () = "EXCLUDE" then
-                    raise OutsideSubset
-                elif word () = "PRIMARY" || word () = "UNIQUE"
-                     || word () = "FOREIGN" || word () = "CONSTRAINT" then
-                    constraints.Add(tableConstraint ())
-                else
-                    let col = column ()
-                    columns.Add col
+                    while symbol ',' do
+                        RewriteResourceBudget.checkpoint ()
+                        cols.Add(namePart ())
+                    expectSymbol ')'
+                    cols |> Seq.toList
+                let makeConstraint cname kind members remote remoteMembers =
+                    SqlCatalogConstraint(
+                        (match cname with Some value -> value | None -> null),
+                        kind, Array.AsReadOnly(List.toArray members),
+                        remote, Array.AsReadOnly(List.toArray remoteMembers))
+                let foreign cname members =
+                    expect "REFERENCES"
+                    let remote = qualifiedName ()
+                    // Omitted target column / implicit PK selection is deliberately
+                    // not inferred: require an explicit column list.
+                    let remoteMembers = columnList ()
+                    makeConstraint cname SqlCatalogConstraintKind.ForeignKey
+                        members remote remoteMembers
+                let tableConstraint () =
                     let cname = optionalConstraintName ()
                     if accept "PRIMARY" then
                         expect "KEY"
-                        constraints.Add(
-                            makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
-                                [col.Name] null [])
+                        makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
+                            (columnList ()) null []
                     elif accept "UNIQUE" then
-                        constraints.Add(
-                            makeConstraint cname SqlCatalogConstraintKind.Unique
-                                [col.Name] null [])
-                    elif accept "REFERENCES" then
-                        // REFERENCES was consumed by the inline grammar.
-                        let remote = qualifiedName ()
-                        let remoteColumns = columnList ()
-                        constraints.Add(
-                            makeConstraint cname SqlCatalogConstraintKind.ForeignKey
-                                [col.Name] remote remoteColumns)
-                    elif cname.IsSome then
+                        makeConstraint cname SqlCatalogConstraintKind.Unique
+                            (columnList ()) null []
+                    elif accept "FOREIGN" then
+                        expect "KEY"
+                        let members = columnList ()
+                        foreign cname members
+                    else raise OutsideSubset
+                let element () =
+                    RewriteResourceBudget.checkpoint ()
+                    if word () = "CHECK" || word () = "EXCLUDE" then
                         raise OutsideSubset
-            element ()
-            while symbol ',' do element ()
-            if not (symbol ')') then
-                match (current ()).Kind with
-                | End -> raise (Malformed("CREATE TABLE has no closing ')'."))
-                | _ -> raise OutsideSubset
-            endOfStatement ()
-            let members = columns |> Seq.toList
-            let deps = constraints |> Seq.toList
-            if members.IsEmpty then Invalid "CREATE TABLE must contain a physical column."
-            elif (members |> Seq.groupBy (fun x -> x.Name)
-                  |> Seq.exists (fun (_, items) -> Seq.length items > 1)) then
-                Invalid "CREATE TABLE contains duplicate column names."
-            else Recognized(Create(table, members, deps, conditional))
+                    elif word () = "PRIMARY" || word () = "UNIQUE"
+                         || word () = "FOREIGN" || word () = "CONSTRAINT" then
+                        constraints.Add(tableConstraint ())
+                    else
+                        let col = column ()
+                        columns.Add col
+                        let cname = optionalConstraintName ()
+                        if accept "PRIMARY" then
+                            expect "KEY"
+                            constraints.Add(
+                                makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
+                                    [col.Name] null [])
+                        elif accept "UNIQUE" then
+                            constraints.Add(
+                                makeConstraint cname SqlCatalogConstraintKind.Unique
+                                    [col.Name] null [])
+                        elif accept "REFERENCES" then
+                            // REFERENCES was consumed by the inline grammar.
+                            let remote = qualifiedName ()
+                            let remoteColumns = columnList ()
+                            constraints.Add(
+                                makeConstraint cname SqlCatalogConstraintKind.ForeignKey
+                                    [col.Name] remote remoteColumns)
+                        elif cname.IsSome then
+                            raise OutsideSubset
+                element ()
+                while symbol ',' do element ()
+                if not (symbol ')') then
+                    match (current ()).Kind with
+                    | End -> raise (Malformed("CREATE TABLE has no closing ')'."))
+                    | _ -> raise OutsideSubset
+                endOfStatement ()
+                let members = columns |> Seq.toList
+                let deps = constraints |> Seq.toList
+                if members.IsEmpty then Invalid "CREATE TABLE must contain a physical column."
+                elif (members |> Seq.groupBy (fun x -> x.Name)
+                      |> Seq.exists (fun (_, items) -> Seq.length items > 1)) then
+                    Invalid "CREATE TABLE contains duplicate column names."
+                else Recognized(Create(table, members, deps, conditional))
         let parseDrop () =
             expect "DROP"
-            if not (accept "TABLE") then raise OutsideSubset
-            let conditional = ifExists ()
-            let table = qualifiedName ()
-            endOfStatement ()
-            Recognized(Drop(table, conditional))
+            if accept "INDEX" then
+                let indexName = namePart ()
+                let target =
+                    if accept "ON" then
+                        match sourceDialect with
+                        | SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer ->
+                            Some(qualifiedName ())
+                        | _ -> raise OutsideSubset
+                    else
+                        match sourceDialect with
+                        | SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer ->
+                            raise OutsideSubset
+                        | _ -> None
+                endOfStatement ()
+                Recognized(DropIndex(indexName, target))
+            else
+                if not (accept "TABLE") then raise OutsideSubset
+                let conditional = ifExists ()
+                let table = qualifiedName ()
+                endOfStatement ()
+                Recognized(Drop(table, conditional))
         let parseAlter () =
             expect "ALTER"
             if not (accept "TABLE") then raise OutsideSubset
             let table = qualifiedName ()
+            let constraintDefinition constraintName =
+                let make kind cols target targetCols =
+                    SqlCatalogConstraint(
+                        constraintName, kind, Array.AsReadOnly(List.toArray cols),
+                        target, Array.AsReadOnly(List.toArray targetCols))
+                if accept "PRIMARY" then
+                    expect "KEY"
+                    make SqlCatalogConstraintKind.PrimaryKey
+                        (columnNames ()) null []
+                elif accept "UNIQUE" then
+                    make SqlCatalogConstraintKind.Unique (columnNames ()) null []
+                elif accept "FOREIGN" then
+                    expect "KEY"
+                    let local = columnNames ()
+                    expect "REFERENCES"
+                    let target = qualifiedName ()
+                    make SqlCatalogConstraintKind.ForeignKey local target (columnNames ())
+                else raise OutsideSubset
+            let constraintAction () =
+                // SQLite does not support ALTER TABLE ADD/DROP CONSTRAINT.
+                // MySQL DROP FOREIGN KEY requires separate source semantics.
+                match sourceDialect with
+                | SqlAgentToolType.Sqlite | SqlAgentToolType.MySQL ->
+                    raise OutsideSubset
+                | _ ->
+                    if accept "ADD" then
+                        expect "CONSTRAINT"
+                        let name = namePart ()
+                        let result = constraintDefinition name
+                        endOfStatement ()
+                        Recognized(AddConstraint(table, result))
+                    elif accept "DROP" then
+                        expect "CONSTRAINT"
+                        let name = namePart ()
+                        endOfStatement ()
+                        Recognized(DropConstraint(table, name))
+                    else raise OutsideSubset
             let addAction () =
                 // ADD has already been consumed. Only proven nullable column
                 // definitions may be added without inspecting existing rows.
@@ -341,67 +433,74 @@ module internal RewriteSchemaAnalyzer =
                 actions.Add(parseOne ())
                 while symbol ',' do actions.Add(parseOne ())
                 actions |> Seq.toList
-            let actions =
-                match sourceDialect with
-                | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL | SqlAgentToolType.Firebird ->
-                    parseRepeatedActions ()
-                | SqlAgentToolType.MsSqlServer ->
-                    if accept "ADD" then
-                        let actions = ResizeArray<AlterColumnAction>()
-                        actions.Add(addAction ())
-                        while symbol ',' do
-                            RewriteResourceBudget.checkpoint ()
-                            // T-SQL ADD expects a comma-separated column
-                            // definition, never another ALTER subcommand.
-                            if word () = "DROP" || word () = "ADD" then
-                                raise OutsideSubset
-                            actions.Add(Add(column ()))
-                        if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
-                            raise OutsideSubset
-                        actions |> Seq.toList
-                    elif accept "DROP" then
-                        expect "COLUMN"
-                        let actions = ResizeArray<AlterColumnAction>()
-                        actions.Add(Remove(namePart (), false))
-                        while symbol ',' do
-                            RewriteResourceBudget.checkpoint ()
-                            actions.Add(Remove(namePart (), false))
-                        actions |> Seq.toList
-                    else raise OutsideSubset
-                | SqlAgentToolType.Oracle ->
-                    if accept "ADD" then
-                        if accept "COLUMN" then raise OutsideSubset
-                        let parenthesized = symbol '('
-                        let actions = ResizeArray<AlterColumnAction>()
-                        actions.Add(Add(column ()))
-                        if parenthesized then
+            if word () = "ADD" && index + 1 < tokens.Length
+               && tokenWord tokens.[index + 1] = "CONSTRAINT" then
+                constraintAction ()
+            elif word () = "DROP" && index + 1 < tokens.Length
+                 && tokenWord tokens.[index + 1] = "CONSTRAINT" then
+                constraintAction ()
+            else
+                let actions =
+                    match sourceDialect with
+                    | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL | SqlAgentToolType.Firebird ->
+                        parseRepeatedActions ()
+                    | SqlAgentToolType.MsSqlServer ->
+                        if accept "ADD" then
+                            let actions = ResizeArray<AlterColumnAction>()
+                            actions.Add(addAction ())
                             while symbol ',' do
                                 RewriteResourceBudget.checkpoint ()
+                                // T-SQL ADD expects a comma-separated column
+                                // definition, never another ALTER subcommand.
+                                if word () = "DROP" || word () = "ADD" then
+                                    raise OutsideSubset
                                 actions.Add(Add(column ()))
-                            expectSymbol ')'
-                        if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
-                            raise OutsideSubset
-                        actions |> Seq.toList
-                    elif accept "DROP" then
-                        if symbol '(' then
+                            if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
+                                raise OutsideSubset
+                            actions |> Seq.toList
+                        elif accept "DROP" then
+                            expect "COLUMN"
                             let actions = ResizeArray<AlterColumnAction>()
                             actions.Add(Remove(namePart (), false))
                             while symbol ',' do
                                 RewriteResourceBudget.checkpoint ()
                                 actions.Add(Remove(namePart (), false))
-                            expectSymbol ')'
                             actions |> Seq.toList
-                        else
-                            expect "COLUMN"
-                            [Remove(namePart (), false)]
-                    else raise OutsideSubset
-                | SqlAgentToolType.Sqlite ->
-                    if accept "ADD" then [addAction ()]
-                    elif accept "DROP" then [dropAction ()]
-                    else raise OutsideSubset
-                | _ -> raise OutsideSubset
-            endOfStatement ()
-            Recognized(AlterColumns(table, actions))
+                        else raise OutsideSubset
+                    | SqlAgentToolType.Oracle ->
+                        if accept "ADD" then
+                            if accept "COLUMN" then raise OutsideSubset
+                            let parenthesized = symbol '('
+                            let actions = ResizeArray<AlterColumnAction>()
+                            actions.Add(Add(column ()))
+                            if parenthesized then
+                                while symbol ',' do
+                                    RewriteResourceBudget.checkpoint ()
+                                    actions.Add(Add(column ()))
+                                expectSymbol ')'
+                            if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
+                                raise OutsideSubset
+                            actions |> Seq.toList
+                        elif accept "DROP" then
+                            if symbol '(' then
+                                let actions = ResizeArray<AlterColumnAction>()
+                                actions.Add(Remove(namePart (), false))
+                                while symbol ',' do
+                                    RewriteResourceBudget.checkpoint ()
+                                    actions.Add(Remove(namePart (), false))
+                                expectSymbol ')'
+                                actions |> Seq.toList
+                            else
+                                expect "COLUMN"
+                                [Remove(namePart (), false)]
+                        else raise OutsideSubset
+                    | SqlAgentToolType.Sqlite ->
+                        if accept "ADD" then [addAction ()]
+                        elif accept "DROP" then [dropAction ()]
+                        else raise OutsideSubset
+                    | _ -> raise OutsideSubset
+                endOfStatement ()
+                Recognized(AlterColumns(table, actions))
 
         try
             match word () with

@@ -17,6 +17,10 @@ type SqlCatalogOperation =
     | AddColumn = 2
     | DropColumn = 3
     | Indeterminate = 4
+    | CreateIndex = 5
+    | DropIndex = 6
+    | AddConstraint = 7
+    | DropConstraint = 8
 
 [<Sealed>]
 type SqlCatalogColumn internal (name: string, typeName: string, nullable: bool) =
@@ -47,17 +51,29 @@ type SqlCatalogConstraint internal (
     member _.ReferencedColumns = referencedColumns
 
 [<Sealed>]
+type SqlCatalogIndex internal (name: string, columns: IReadOnlyList<string>) =
+    member _.Name = name
+    member _.Columns = columns
+
+[<Sealed>]
 type SqlCatalogTable internal (
     name: string, knowledge: SqlCatalogKnowledge,
     columns: IReadOnlyList<SqlCatalogColumn>,
-    constraints: IReadOnlyList<SqlCatalogConstraint>) =
+    constraints: IReadOnlyList<SqlCatalogConstraint>,
+    indexes: IReadOnlyList<SqlCatalogIndex>) =
     new(name, knowledge, columns) =
         SqlCatalogTable(name, knowledge, columns,
-                        Array.AsReadOnly(Array.empty<SqlCatalogConstraint>))
+                        Array.AsReadOnly(Array.empty<SqlCatalogConstraint>),
+                        Array.AsReadOnly(Array.empty<SqlCatalogIndex>))
+    new(name, knowledge, columns, constraints) =
+        SqlCatalogTable(name, knowledge, columns, constraints,
+                        Array.AsReadOnly(Array.empty<SqlCatalogIndex>))
     member _.Name = name
     member _.Knowledge = knowledge
     member _.Columns = columns
     member _.Constraints = constraints
+    /// Only standalone simple non-unique indexes, never implicit key indexes.
+    member _.Indexes = indexes
 
 /// Immutable snapshot detached from the legacy SqlSchemaSnapshot. The latter
 /// requires known schema and must never receive an unknown/partial Catalog.
