@@ -266,7 +266,7 @@ module internal RewriteSchemaAnalyzer =
                         cols.Add(namePart ())
                     expectSymbol ')'
                     cols |> Seq.toList
-                let makeConstraint cname kind members remote remoteMembers =
+                let makeConstraint cname kind members (remote: SqlCatalogQualifiedName) remoteMembers =
                     SqlCatalogConstraint(
                         (match cname with Some value -> value | None -> null),
                         kind, Array.AsReadOnly(List.toArray members),
@@ -364,7 +364,7 @@ module internal RewriteSchemaAnalyzer =
             if not (accept "TABLE") then raise OutsideSubset
             let table = qualifiedName ()
             let constraintDefinition constraintName =
-                let make kind cols target targetCols =
+                let make kind cols (target: SqlCatalogQualifiedName) targetCols =
                     SqlCatalogConstraint(
                         constraintName, kind, Array.AsReadOnly(List.toArray cols),
                         target, Array.AsReadOnly(List.toArray targetCols))
