@@ -148,13 +148,13 @@ public sealed class SqlCoreVirtualCatalogTests
     }
 
     [Fact]
-    public void UnknownDdlInOtherDialect_FailsClosed()
+    public void UnsupportedConstraintInOtherDialect_FailsClosed()
     {
         var analysis = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INT)", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+            "CREATE TABLE users(id INT PRIMARY KEY)", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
 
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, analysis.Statements[0].Status);
-        Assert.Equal("SQL_SCHEMA_DIALECT_UNSUPPORTED", Assert.Single(analysis.Diagnostics).Code);
+        Assert.Equal("SQL_SCHEMA_UNSUPPORTED_STATEMENT", Assert.Single(analysis.Diagnostics).Code);
         Assert.False(analysis.FinalCatalog.IsClosedWorld);
     }
 
