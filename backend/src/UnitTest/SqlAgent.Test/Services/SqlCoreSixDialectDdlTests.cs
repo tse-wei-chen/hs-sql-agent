@@ -1,6 +1,7 @@
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using HsSqlAgent.SqlCore.Script;
 using Xunit;
 
@@ -47,8 +48,14 @@ public sealed class SqlCoreSixDialectDdlTests
         SqlAgentToolType provider, string create, string add, string dropColumn, string dropTable,
         string tableName, string columnName)
     {
+        // SQLite DROP COLUMN was added in 3.35; a versionless profile must
+        // not be interpreted as proving that capability.
+        var versionProof = provider == SqlAgentToolType.Sqlite
+            ? new SqlProviderCapabilityProfile(provider, new Version(3, 45))
+            : null;
         var result = SqlCoreFacade.AnalyzeScript(
-            create + add + dropColumn + dropTable, provider, SqlCatalogState.KnownEmpty());
+            create + add + dropColumn + dropTable, provider,
+            SqlCatalogState.KnownEmpty(), versionProof);
 
         Assert.Equal(4, result.Statements.Count);
         Assert.Empty(result.Diagnostics);
@@ -165,6 +172,67 @@ public sealed class SqlCoreSixDialectDdlTests
         Assert.Equal(SqlCatalogKnowledge.Unknown,
             result.FinalCatalog.Tables.Single(t => t.Name.Equals("users",
                 StringComparison.OrdinalIgnoreCase)).Knowledge);
+    }
+
+    [Fact]
+    public void SQLiteColumnDropRequiresVersionAtLeastThreeThirtyFive()
+    {
+        const string script =
+            "CREATE TABLE users(id INTEGER, name TEXT); ALTER TABLE users DROP COLUMN name;";
+        var unknown = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, unknown.Statements[1].Status);
+        Assert.False(unknown.FinalCatalog.IsClosedWorld);
+
+        var tooOld = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(),
+            new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 34)));
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, tooOld.Statements[1].Status);
+
+        var supported = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Sqlite, SqlCatalogState.KnownEmpty(),
+            new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(3, 35)));
+        Assert.Empty(supported.Diagnostics);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, supported.Statements[1].Status);
+        Assert.Single(Assert.Single(supported.FinalCatalog.Tables).Columns);
+    }
+
+    [Fact]
+    public void SqlServerIfExistsNeedsVersionProofFor2016OrLater()
+    {
+        const string sql = "DROP TABLE IF EXISTS absent";
+        var unknown = SqlCoreFacade.AnalyzeScript(
+            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
+            Assert.Single(unknown.Statements).Status);
+
+        var proven = SqlCoreFacade.AnalyzeScript(
+            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(),
+            new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(13, 0)));
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed,
+            Assert.Single(proven.Statements).Status);
+        Assert.Empty(proven.Diagnostics);
+        Assert.Empty(proven.FinalCatalog.Tables);
+        Assert.Empty(proven.Statements[0].Changes);
+    }
+
+    [Fact]
+    public void FirebirdNewerColumnKeywordAndBooleanRequireVersionProof()
+    {
+        const string script =
+            "CREATE TABLE users(id INTEGER, active BOOLEAN); ALTER TABLE users DROP COLUMN active;";
+        var unknown = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, unknown.Statements[0].Status);
+
+        var proven = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Firebird, SqlCatalogState.KnownEmpty(),
+            new SqlProviderCapabilityProfile(SqlAgentToolType.Firebird, new Version(6, 0)));
+        Assert.Empty(proven.Diagnostics);
+        Assert.Equal(2, proven.Statements.Count);
+        Assert.All(proven.Statements, s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        Assert.Single(Assert.Single(proven.FinalCatalog.Tables).Columns);
     }
 
     [Fact]
