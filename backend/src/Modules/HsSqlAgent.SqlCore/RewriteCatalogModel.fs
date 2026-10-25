@@ -83,7 +83,6 @@ module internal RewriteCatalogModel =
                     index.Columns |> Seq.exists (sameName columnName))
                 |> Seq.map (fun index -> table.Name, index.Name)
             | None -> Seq.empty
-            |> Seq.toList
         (Seq.append local incoming |> Seq.map (fun (owner, item) -> owner, string item.Kind))
         |> Seq.append indexed
         |> Seq.toList
