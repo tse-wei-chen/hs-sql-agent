@@ -67,6 +67,7 @@ module internal RewriteCatalogBinding =
         SqlCatalogKnowledge.Known, []
 
     let verify sourceDialect (profile: SqlProviderCapabilityProfile | null)
+               (scoped: RewriteCatalogSchemaResolution.SchemaScope)
                (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
         if not state.IsClosedWorld
            || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
@@ -82,7 +83,6 @@ module internal RewriteCatalogBinding =
                         RewriteBinder.bind sourceDialect parsed)
                 // The Source inspection AST visitor is iterative, does not
                 // recurse through CTEs/subqueries and includes Mutation targets.
-                let scoped = RewriteCatalogSchemaResolution.scope sourceDialect profile
                 let schemaScopeProven =
                     match scoped with
                     | RewriteCatalogSchemaResolution.SingleSchema _ -> true

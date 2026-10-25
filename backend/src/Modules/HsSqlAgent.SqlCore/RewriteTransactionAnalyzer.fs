@@ -151,7 +151,6 @@ module internal RewriteTransactionAnalyzer =
         match context with
         | Active _ when status = SqlStatementAnalysisStatus.Invalid
                         || status = SqlStatementAnalysisStatus.Unsupported
-                        || kind = SqlScriptStatementKind.Session
                         || kind = SqlScriptStatementKind.Utility
                         || kind = SqlScriptStatementKind.Procedural
                         || kind = SqlScriptStatementKind.Unknown

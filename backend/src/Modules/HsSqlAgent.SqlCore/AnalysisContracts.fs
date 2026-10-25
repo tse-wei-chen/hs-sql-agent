@@ -40,6 +40,7 @@ type SqlStatementEffectOperation =
     | AddConstraint = 12
     | DropConstraint = 13
     | TransactionControl = 14
+    | SetSearchPath = 15
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -81,6 +82,13 @@ type SqlTransactionState =
     | Active = 1
     | Unknown = 2
 
+/// Immutable static session scope. A known SearchPath is a caller/script
+/// premise, never evidence from a live server or a compilation permission.
+[<Sealed>]
+type SqlSessionAnalysisState internal (searchPath: string | null) =
+    member _.SearchPath = searchPath
+    member _.IsSearchPathProven = not (isNull searchPath)
+
 /// Effects are *potential* unless certainty is Known. This is not an
 /// execution permission, SQL compiler proof, or security authorization.
 [<Sealed>]
@@ -96,6 +104,8 @@ type SqlStatementAnalysis internal (
     catalogAfter: SqlCatalogState,
     transactionBefore: SqlTransactionState,
     transactionAfter: SqlTransactionState,
+    sessionBefore: SqlSessionAnalysisState,
+    sessionAfter: SqlSessionAnalysisState,
     changes: IReadOnlyList<SqlCatalogChange>,
     detailedEffects: IReadOnlyList<SqlStatementEffect>,
     effectCoverage: SqlEffectCoverage,
@@ -114,6 +124,8 @@ type SqlStatementAnalysis internal (
     member _.CatalogAfter = catalogAfter
     member _.TransactionBefore = transactionBefore
     member _.TransactionAfter = transactionAfter
+    member _.SessionBefore = sessionBefore
+    member _.SessionAfter = sessionAfter
     member _.Changes = changes
     member _.DetailedEffects = detailedEffects
     member _.EffectCoverage = effectCoverage
@@ -124,7 +136,8 @@ type SqlScriptAnalysisResult internal (
     statements: IReadOnlyList<SqlStatementAnalysis>,
     diagnostics: IReadOnlyList<SqlDiagnostic>,
     finalCatalog: SqlCatalogState,
-    finalTransaction: SqlTransactionState) =
+    finalTransaction: SqlTransactionState,
+    finalSession: SqlSessionAnalysisState) =
     let detailedEffects : IReadOnlyList<SqlStatementEffect> =
         (statements
          |> Seq.collect (fun item -> item.DetailedEffects)
@@ -135,3 +148,4 @@ type SqlScriptAnalysisResult internal (
     member _.Diagnostics = diagnostics
     member _.FinalCatalog = finalCatalog
     member _.FinalTransaction = finalTransaction
+    member _.FinalSession = finalSession
