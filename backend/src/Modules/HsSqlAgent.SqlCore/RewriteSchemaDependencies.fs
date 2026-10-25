@@ -88,7 +88,7 @@ module internal RewriteSchemaDependencies =
                                     && (key.Columns |> Seq.toList) = remote)
                             if not uniqueTarget then
                                 reject "Foreign key target is not a proven PRIMARY KEY or UNIQUE key."
-                            for localName, remoteName in List.zip local remote do
+                            for (localName, remoteName) in List.zip local remote do
                                 RewriteResourceBudget.checkpoint ()
                                 let sourceType = columnLookup localName
                                 let targetType =
