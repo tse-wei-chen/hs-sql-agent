@@ -435,13 +435,18 @@ module internal RewriteScriptAnalyzer =
                     let allDiagnostics = diagnostics @ additionalErrors
                     current <- after
                     for item in allDiagnostics do errors.Add item
+                    let detailedEffects, effectCoverage =
+                        RewriteResourceBudget.withStage "ScriptEffects" SqlDiagnosticStage.SemanticValidation (fun () ->
+                            RewriteStatementEffects.describe sourceDialect sourceProfile syntax
+                                status certainty effects (readOnly changes))
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
                             (if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty),
                             bindingStatus, nameStatus, typeStatus, before, after,
                             transactionBefore, RewriteTransactionAnalyzer.status transaction,
-                            readOnly changes, readOnly allDiagnostics)))
+                            readOnly changes, detailedEffects, effectCoverage,
+                            readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction))
