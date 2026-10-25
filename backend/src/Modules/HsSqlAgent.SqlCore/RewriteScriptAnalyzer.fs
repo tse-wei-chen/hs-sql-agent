@@ -38,14 +38,14 @@ module internal RewriteScriptAnalyzer =
             let error = diagnostic syntax "SQL_SCHEMA_SEMANTIC_INVALID" SqlDiagnosticCategory.Semantic message
             SqlStatementAnalysisStatus.Invalid, SqlCatalogKnowledge.Known,
             state, ([]: SqlCatalogChange list), [error]
-        let partial name operation =
+        let partial (name: SqlCatalogQualifiedName) operation =
             let next = RewriteCatalogModel.unknownTable state name
             SqlStatementAnalysisStatus.PartiallyAnalyzed, SqlCatalogKnowledge.Unknown,
             next, [changed syntax name.DisplayName operation SqlCatalogKnowledge.Unknown], []
         let noChange =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
             state, ([]: SqlCatalogChange list), ([]: SqlDiagnostic list)
-        let exact name operation next =
+        let exact (name: SqlCatalogQualifiedName) operation next =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
             next, [changed syntax name.DisplayName operation SqlCatalogKnowledge.Known], []
         let dependencyUnproven message =
