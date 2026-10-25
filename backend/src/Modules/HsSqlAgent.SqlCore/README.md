@@ -37,6 +37,47 @@ foreach (var parameter in command.Parameters)
 For mutations, use `CoreSqlTextParser.ParseDml` with `CoreDmlCompiler`. Compilation produces an
 immutable `CompiledSqlCommand`; this package does not open database connections or execute SQL.
 
+## Static script DCL analysis (no authorization)
+
+`SqlCoreFacade.AnalyzeScript` can report potential, strongly typed permission
+changes without connecting to a database or executing SQL. A `SecurityIntent`
+identifies an action (`Grant`, `Revoke`, or SQL Server `Deny`), table-level
+privilege, structured source object name, and recipient. It is **not** an
+effective ACL, access-check result, grantor proof, or executable SQL plan.
+All `SqlSecurityIntent.Certainty` values remain `Unknown`.
+
+```csharp
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Enums;
+
+var report = SqlCoreFacade.AnalyzeScript(
+    "GRANT SELECT ON app.orders TO 'alice'@'localhost';",
+    SqlAgentToolType.MySQL,
+    SqlCatalogState.KnownEmpty());
+
+foreach (var intent in report.SecurityIntents)
+    Console.WriteLine($"{intent.Action}: {intent.Privilege} on {intent.Target.DisplayName} " +
+                      $"for {intent.Principal}@{intent.PrincipalHost}; {intent.Certainty}");
+```
+
+The MySQL grammar currently requires **explicit, exact** `'user'@'host'`
+accounts and `ON database.table`. Wildcard hosts, omitted hosts, role
+membership, `db.*` / `*.*`, account options, and privilege delegation are
+not yet modeled and remain fail-closed. The MySQL `@` account separator is
+recognized only by script analysis; raw query/mutation compilation still
+rejects unbound `@parameters`.
+
+SQL Server's modeled subset accepts `GRANT`, `REVOKE`, and `DENY` for
+`ON OBJECT::schema.table`. `DENY` is **not** equivalent to `REVOKE` or a
+negative effective-permission proof; inheritance, ownership, principal
+membership, grant options and explicit DENY precedence are outside the model.
+PostgreSQL, Firebird and Oracle retain their provider-specific proven table
+privilege subsets. SQLite does not claim SQL GRANT/REVOKE support.
+
+Neither these intents nor `DetailedEffects` authorize DML or change the
+virtual Catalog. Database permission enforcement remains the host's duty.
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:
