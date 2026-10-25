@@ -22,14 +22,15 @@ module internal RewriteScriptAnalyzer =
     let private changed (syntax: SqlScriptStatementSyntax) name operation certainty =
         SqlCatalogChange(name, operation, certainty, syntax.Span)
 
-    let private analyzePostgresDdl (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
+    let private analyzeDdl sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
+                           (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
         let tokens =
             RewriteResourceBudget.withStage "SchemaLexical" SqlDiagnosticStage.Lexical (fun () ->
-                RewriteFacadeAdapter.tokenizeSourceValidated syntax.Text SqlAgentToolType.Postgres null)
+                RewriteFacadeAdapter.tokenizeSourceValidated syntax.Text sourceDialect sourceProfile)
             |> List.toArray
         let parsed =
             RewriteResourceBudget.withStage "SchemaParsing" SqlDiagnosticStage.Parse (fun () ->
-                RewriteSchemaAnalyzer.parse tokens)
+                RewriteSchemaAnalyzer.parseForWith sourceDialect sourceProfile tokens)
         let fail message =
             let error = diagnostic syntax "SQL_SCHEMA_SEMANTIC_INVALID" SqlDiagnosticCategory.Semantic message
             SqlStatementAnalysisStatus.Invalid, SqlCatalogKnowledge.Known,
@@ -51,7 +52,7 @@ module internal RewriteScriptAnalyzer =
             let error =
                 diagnostic syntax "SQL_SCHEMA_UNSUPPORTED_STATEMENT"
                     SqlDiagnosticCategory.Capability
-                    "PostgreSQL DDL is outside the statically proven TABLE subset; catalog facts are invalidated."
+                    "Source dialect DDL is outside the statically proven TABLE subset; catalog facts are invalidated."
             SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
             unknown, [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown], [error]
         | Recognized (Create(name, columns, ifNotExists)) ->
@@ -137,17 +138,7 @@ module internal RewriteScriptAnalyzer =
                             next, changes, diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
                             let status, certainty, next, changes, diagnostics =
-                                if sourceDialect = SqlAgentToolType.Postgres then
-                                    analyzePostgresDdl current syntax
-                                else
-                                    let warning =
-                                        diagnostic syntax "SQL_SCHEMA_DIALECT_UNSUPPORTED"
-                                            SqlDiagnosticCategory.Capability
-                                            "This source dialect has no proven DDL catalog analyzer."
-                                    SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
-                                    RewriteCatalogModel.taintAll current,
-                                    [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
-                                    [warning]
+                                analyzeDdl sourceDialect sourceProfile current syntax
                             status, SqlEffectKind.ChangeSchema, certainty, SqlCatalogBindingStatus.NotApplicable, next, changes, diagnostics
                         else
                             let effects =
