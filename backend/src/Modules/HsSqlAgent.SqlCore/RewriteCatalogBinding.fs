@@ -82,6 +82,15 @@ module internal RewriteCatalogBinding =
                         RewriteBinder.bind sourceDialect parsed)
                 // The Source inspection AST visitor is iterative, does not
                 // recurse through CTEs/subqueries and includes Mutation targets.
+                let scoped = RewriteCatalogSchemaResolution.scope sourceDialect profile
+                let schemaScopeProven =
+                    match scoped with
+                    | RewriteCatalogSchemaResolution.SingleSchema _ -> true
+                    | _ -> false
+                let catalogForBinding =
+                    if schemaScopeProven && RewriteCatalogSchemaResolution.canProject scoped state then
+                        RewriteCatalogSchemaResolution.projectForBinding scoped state
+                    else state
                 let inspected = RewriteInspection.inspectBound bound
                 let physicalTableCount = inspected.ReferencedTables.Count
                 let defaultSchemaAmbiguity =
@@ -97,7 +106,16 @@ module internal RewriteCatalogBinding =
                 // server filesystem; SQL Server identifiers by DB collation.
                 // SqlProviderCapabilityProfile has neither proof. A generic
                 // uppercasing schema binder cannot safely certify such names.
-                if defaultSchemaAmbiguity then
+                if schemaScopeProven && not (RewriteCatalogSchemaResolution.canProject scoped state) then
+                    unverified syntax "SQL_CATALOG_SCHEMA_SCOPE_UNPROVEN"
+                        "Declared search path cannot be safely projected over caller-provided unqualified identities."
+                elif schemaScopeProven &&
+                     (inspected.ReferencedTables |> Seq.exists (fun t ->
+                         not (t.Contains(".", StringComparison.Ordinal))
+                         && t.StartsWith("pg_", StringComparison.OrdinalIgnoreCase))) then
+                    unverified syntax "SQL_CATALOG_SCHEMA_SYSTEM_UNPROVEN"
+                        "PostgreSQL system-catalog implicit search scope is not modeled."
+                elif defaultSchemaAmbiguity && not schemaScopeProven then
                     unverified syntax "SQL_CATALOG_DEFAULT_SCHEMA_UNPROVEN"
                         "Unqualified physical table reference may resolve through an undeclared search_path or default schema."
                 elif physicalTableCount > 0
@@ -108,7 +126,7 @@ module internal RewriteCatalogBinding =
                 else
                     let namesChecked =
                         RewriteResourceBudget.withStage "CatalogNameValidation" SqlDiagnosticStage.Binding (fun () ->
-                            RewriteSchemaValidation.verifyVirtual sourceDialect state bound)
+                            RewriteSchemaValidation.verifyVirtual sourceDialect catalogForBinding bound)
                     if sourceDialect = SqlAgentToolType.Sqlite && physicalTableCount > 0 then
                         // SQLite storage classes have dynamic affinity: an
                         // INTEGER column does not establish static Numeric-only
@@ -117,7 +135,7 @@ module internal RewriteCatalogBinding =
                             "SQLite column affinity is dynamic; table/column names are verified but assignment types are not."
                     else
                         RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
-                            RewriteSchemaTypeValidation.verifyVirtual sourceDialect state namesChecked)
+                            RewriteSchemaTypeValidation.verifyVirtual sourceDialect catalogForBinding namesChecked)
                         |> ignore
                         verified
             with
