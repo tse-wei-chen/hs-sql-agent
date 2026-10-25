@@ -22,6 +22,9 @@ module internal RewriteScriptAnalyzer =
     let private changed (syntax: SqlScriptStatementSyntax) name operation certainty =
         SqlCatalogChange(name, operation, certainty, syntax.Span)
 
+    let private changedColumn (syntax: SqlScriptStatementSyntax) name column operation =
+        SqlCatalogChange(name, operation, SqlCatalogKnowledge.Known, syntax.Span, column)
+
     let private analyzeDdl sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
                            (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
         let tokens =
@@ -98,7 +101,7 @@ module internal RewriteScriptAnalyzer =
                                     " already exists.")
                             else
                                 working.Add column
-                                pending.Add(changed syntax name SqlCatalogOperation.AddColumn SqlCatalogKnowledge.Known)
+                                pending.Add(changedColumn syntax name column.Name SqlCatalogOperation.AddColumn)
                         | Remove(columnName, ifExists) ->
                             match locate columnName with
                             | Some index when working.Count = 1 ->
@@ -106,7 +109,7 @@ module internal RewriteScriptAnalyzer =
                                     "ALTER TABLE " + name + " cannot drop its last column.")
                             | Some index ->
                                 working.RemoveAt index
-                                pending.Add(changed syntax name SqlCatalogOperation.DropColumn SqlCatalogKnowledge.Known)
+                                pending.Add(changedColumn syntax name columnName SqlCatalogOperation.DropColumn)
                             | None when ifExists -> ()
                             | None ->
                                 failure <- Some(
