@@ -20,10 +20,11 @@ module internal RewriteSecurityAnalyzer =
     type private SecurityOperation =
         | Grant
         | Revoke
+        | Deny
 
     type private ParsedDcl =
         | Modeled of SecurityOperation * SqlTablePrivilege list * SqlCatalogQualifiedName *
-                     (string * SqlSecurityPrincipalKind) list
+                     (string * SqlSecurityPrincipalKind * string option) list
         | Unsupported of string
         | Invalid of string
 
@@ -49,6 +50,14 @@ module internal RewriteSecurityAnalyzer =
         // string literals. Do not claim server collation or object existence.
         not (String.IsNullOrWhiteSpace name)
         && (quoted || RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier name)
+
+    let private mySqlAccountPart maxLength (value: string) allowDotsAndHyphens =
+        value.Length > 0 && value.Length <= maxLength
+        && (value |> Seq.forall (fun c ->
+            (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9')
+            || (allowDotsAndHyphens && (c = '.' || c = '-'))
+            || (not allowDotsAndHyphens && c = '_')))
 
     let private parse sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
                       (tokens: Token list) : ParsedDcl =
@@ -100,28 +109,49 @@ module internal RewriteSecurityAnalyzer =
             | "DELETE" -> index <- index + 1; SqlTablePrivilege.Delete
             | _ -> raise (UnsupportedGrammar "Only whole-table SELECT, INSERT, UPDATE and DELETE privileges are modeled.")
         let grantee () =
-            if sourceDialect = SqlAgentToolType.Firebird then
-                if accept "USER" then (namePart (), SqlSecurityPrincipalKind.User)
-                elif accept "ROLE" then (namePart (), SqlSecurityPrincipalKind.Role)
-                elif accept "PUBLIC" then ("PUBLIC", SqlSecurityPrincipalKind.Public)
+            if sourceDialect = SqlAgentToolType.MySQL then
+                // The host component is part of the principal identity, not
+                // a suffix to discard. Reject MySQL wildcard/matching hosts
+                // and all implicit/default-host principal spellings.
+                let user =
+                    match (take ()).Kind with
+                    | StringLiteral text when mySqlAccountPart 32 text false -> text
+                    | _ -> raise (UnsupportedGrammar "MySQL accounts require a quoted simple user name.")
+                if not (symbol '@') then
+                    raise (UnsupportedGrammar "MySQL account must declare an explicit host.")
+                let host =
+                    match (take ()).Kind with
+                    | StringLiteral text when mySqlAccountPart 255 text true -> text
+                    | _ -> raise (UnsupportedGrammar "MySQL account host must be an exact quoted ASCII host without wildcards.")
+                user, SqlSecurityPrincipalKind.MySqlAccount, Some host
+            elif sourceDialect = SqlAgentToolType.Firebird then
+                if accept "USER" then (namePart (), SqlSecurityPrincipalKind.User, None)
+                elif accept "ROLE" then (namePart (), SqlSecurityPrincipalKind.Role, None)
+                elif accept "PUBLIC" then ("PUBLIC", SqlSecurityPrincipalKind.Public, None)
                 else raise (UnsupportedGrammar "Firebird grantees require explicit USER, ROLE or PUBLIC to avoid ambiguous identities.")
-            elif sourceDialect <> SqlAgentToolType.MsSqlServer && accept "PUBLIC" then
-                "PUBLIC", SqlSecurityPrincipalKind.Public
+            elif sourceDialect = SqlAgentToolType.MsSqlServer then
+                if word () = "PUBLIC" then
+                    raise (UnsupportedGrammar "SQL Server PUBLIC is outside the modeled DCL principal scope.")
+                namePart (), SqlSecurityPrincipalKind.Named, None
+            elif accept "PUBLIC" then
+                "PUBLIC", SqlSecurityPrincipalKind.Public, None
             else
-                namePart (), SqlSecurityPrincipalKind.Named
+                namePart (), SqlSecurityPrincipalKind.Named, None
         try
             let operation =
                 if accept "GRANT" then Grant
                 elif accept "REVOKE" then Revoke
-                else raise (UnsupportedGrammar "Not a supported GRANT or REVOKE statement.")
-            // A provider grammar is a proof gate, not a generic ANSI
-            // permission fallback. MySQL users include host/account semantics;
-            // SQLite does not provide SQL GRANT/REVOKE.
+                elif accept "DENY" then Deny
+                else raise (UnsupportedGrammar "Not a supported DCL statement.")
+            // Never map SQL Server DENY onto other vendors' permission models.
+            if operation = Deny && sourceDialect <> SqlAgentToolType.MsSqlServer then
+                raise (UnsupportedGrammar "DENY is modeled only for SQL Server.")
             match sourceDialect with
             | SqlAgentToolType.Postgres
             | SqlAgentToolType.Oracle
             | SqlAgentToolType.Firebird
-            | SqlAgentToolType.MsSqlServer -> ()
+            | SqlAgentToolType.MsSqlServer
+            | SqlAgentToolType.MySQL -> ()
             | _ -> raise (UnsupportedGrammar "This provider's DCL account and object privilege grammar is not modeled.")
             let privileges = ResizeArray<SqlTablePrivilege>()
             privileges.Add(privilege ())
@@ -150,6 +180,15 @@ module internal RewriteSecurityAnalyzer =
                     if name.Parts.Count <> 2 then
                         raise (UnsupportedGrammar "SQL Server DCL requires an explicit schema-qualified object.")
                     name
+                | SqlAgentToolType.MySQL ->
+                    // MySQL ON db.table is an exact object spelling; schema.*
+                    // and *.* are different grant scopes and stay unsupported.
+                    if word () = "TABLE" then
+                        raise (UnsupportedGrammar "MySQL table privilege grammar uses ON db.table.")
+                    let name = qualifiedName ()
+                    if name.Parts.Count <> 2 then
+                        raise (UnsupportedGrammar "MySQL modeled table privileges require explicit db.table.")
+                    name
                 | SqlAgentToolType.Oracle ->
                     // Oracle's object privilege grammar has ON object, not
                     // PostgreSQL's optional TABLE keyword.
@@ -162,9 +201,9 @@ module internal RewriteSecurityAnalyzer =
                     qualifiedName ()
                 | _ -> raise (UnsupportedGrammar "Unsupported source dialect.")
             match operation with
-            | Grant -> expect "TO"
+            | Grant | Deny -> expect "TO"
             | Revoke -> expect "FROM"
-            let principals = ResizeArray<string * SqlSecurityPrincipalKind>()
+            let principals = ResizeArray<string * SqlSecurityPrincipalKind * string option>()
             principals.Add(grantee ())
             while symbol ',' do
                 RewriteResourceBudget.checkpoint ()
@@ -187,18 +226,20 @@ module internal RewriteSecurityAnalyzer =
                 (syntax: SqlScriptStatementSyntax) =
         let tokens =
             RewriteResourceBudget.withStage "SecurityLexical" SqlDiagnosticStage.Lexical (fun () ->
-                RewriteFacadeAdapter.tokenizeSourceValidated syntax.Text sourceDialect sourceProfile)
+                RewriteFacadeAdapter.tokenizeScriptValidated syntax.Text sourceDialect sourceProfile)
         match parse sourceDialect sourceProfile tokens with
         | Modeled(operation, privileges, target, principals) ->
             let action =
                 match operation with
                 | Grant -> SqlSecurityAction.Grant
                 | Revoke -> SqlSecurityAction.Revoke
+                | Deny -> SqlSecurityAction.Deny
             let intents =
-                [ for principal, kind in principals do
+                [ for principal, kind, host in principals do
                     for privilege in privileges do
                         RewriteResourceBudget.checkpoint ()
-                        yield SqlSecurityIntent(action, privilege, target, principal, kind, syntax.Span) ]
+                        yield SqlSecurityIntent(action, privilege, target, principal, kind, syntax.Span,
+                                                Option.defaultValue null host) ]
             // Only the grammar/intent is modeled. Privilege application,
             // authorization, object existence and grantor are UNKNOWN.
             SqlStatementAnalysisStatus.PartiallyAnalyzed, intents, []
