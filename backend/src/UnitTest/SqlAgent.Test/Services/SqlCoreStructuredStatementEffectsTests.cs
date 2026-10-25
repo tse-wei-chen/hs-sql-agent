@@ -82,7 +82,8 @@ public sealed class SqlCoreStructuredStatementEffectsTests
         var statement = Assert.Single(result.Statements);
         var effect = Assert.Single(statement.DetailedEffects);
         Assert.Equal(SqlStatementEffectOperation.Unknown, effect.Operation);
-        Assert.Equal(SqlEffectKind.ChangePermissions, effect.Kind);
+        Assert.True(effect.Kind.HasFlag(SqlEffectKind.ChangePermissions));
+        Assert.True(effect.Kind.HasFlag(SqlEffectKind.UnknownEffects));
         Assert.Equal(SqlCatalogKnowledge.Unknown, effect.Certainty);
         Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
     }
