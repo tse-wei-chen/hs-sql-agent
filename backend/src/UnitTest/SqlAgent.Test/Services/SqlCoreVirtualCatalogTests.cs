@@ -82,7 +82,7 @@ public sealed class SqlCoreVirtualCatalogTests
     {
         var analysis = Analyze(
             "CREATE TABLE users (id INTEGER);" +
-            "CREATE TABLE orders (id INTEGER PRIMARY KEY);" +
+            "CREATE TABLE orders (id INTEGER, CHECK(id > 0));" +
             "ALTER TABLE users ADD COLUMN name TEXT;");
 
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, analysis.Statements[0].Status);
@@ -151,7 +151,7 @@ public sealed class SqlCoreVirtualCatalogTests
     public void UnsupportedConstraintInOtherDialect_FailsClosed()
     {
         var analysis = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE users(id INT PRIMARY KEY)", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+            "CREATE TABLE users(id INT, CHECK(id > 0))", SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
 
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, analysis.Statements[0].Status);
         Assert.Equal("SQL_SCHEMA_UNSUPPORTED_STATEMENT", Assert.Single(analysis.Diagnostics).Code);

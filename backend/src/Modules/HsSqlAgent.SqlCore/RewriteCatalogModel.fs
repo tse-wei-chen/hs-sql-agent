@@ -25,9 +25,44 @@ module internal RewriteCatalogModel =
         Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) -> StringComparer.Ordinal.Compare(left.Name, right.Name)) tables
         SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables))
 
-    let knownTable state name columns =
+    let knownTableWithConstraints state name columns constraints =
         let copied = columns |> Seq.toArray |> Array.AsReadOnly
-        replace state name (Some(SqlCatalogTable(name, SqlCatalogKnowledge.Known, copied)))
+        let verifiedConstraints = constraints |> Seq.toArray |> Array.AsReadOnly
+        replace state name
+            (Some(SqlCatalogTable(name, SqlCatalogKnowledge.Known, copied, verifiedConstraints)))
+
+    /// ALTER never silently discards existing PK, UNIQUE or FK dependencies.
+    let knownTable state name columns =
+        let existing =
+            match lookup state name with
+            | Some table -> table.Constraints :> seq<SqlCatalogConstraint>
+            | None -> Seq.empty
+        knownTableWithConstraints state name columns existing
+
+    let inboundForeignKeys (state: SqlCatalogState) targetTable =
+        state.Tables
+        |> Seq.collect (fun table ->
+            table.Constraints
+            |> Seq.filter (fun constraintInfo ->
+                constraintInfo.Kind = SqlCatalogConstraintKind.ForeignKey
+                && sameName constraintInfo.ReferencedTable targetTable)
+            |> Seq.map (fun constraintInfo -> table, constraintInfo))
+
+    let columnDependencies (state: SqlCatalogState) tableName columnName =
+        let local =
+            match lookup state tableName with
+            | Some table ->
+                table.Constraints
+                |> Seq.filter (fun item ->
+                    item.Columns |> Seq.exists (sameName columnName))
+                |> Seq.map (fun item -> table.Name, item)
+            | None -> Seq.empty
+        let incoming =
+            inboundForeignKeys state tableName
+            |> Seq.filter (fun (_, item) ->
+                item.ReferencedColumns |> Seq.exists (sameName columnName))
+            |> Seq.map (fun (table, item) -> table.Name, item)
+        Seq.append local incoming |> Seq.toList
 
     let unknownTable state name =
         replace state name

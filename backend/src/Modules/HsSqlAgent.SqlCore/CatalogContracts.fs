@@ -24,13 +24,40 @@ type SqlCatalogColumn internal (name: string, typeName: string, nullable: bool) 
     member _.TypeName = typeName
     member _.Nullable = nullable
 
+/// Structural dependencies proved by a fully modeled CREATE TABLE.
+/// CHECK, arbitrary indexes, triggers and CASCADE are intentionally excluded.
+type SqlCatalogConstraintKind =
+    | PrimaryKey = 0
+    | Unique = 1
+    | ForeignKey = 2
+
+[<Sealed>]
+type SqlCatalogConstraint internal (
+    name: string,
+    kind: SqlCatalogConstraintKind,
+    columns: IReadOnlyList<string>,
+    referencedTable: string,
+    referencedColumns: IReadOnlyList<string>) =
+    /// Null for unnamed constraints; never an auto-generated database name.
+    member _.Name = name
+    member _.Kind = kind
+    member _.Columns = columns
+    /// Only populated for a ForeignKey. No implicit remote key inference.
+    member _.ReferencedTable = referencedTable
+    member _.ReferencedColumns = referencedColumns
+
 [<Sealed>]
 type SqlCatalogTable internal (
     name: string, knowledge: SqlCatalogKnowledge,
-    columns: IReadOnlyList<SqlCatalogColumn>) =
+    columns: IReadOnlyList<SqlCatalogColumn>,
+    constraints: IReadOnlyList<SqlCatalogConstraint>) =
+    new(name, knowledge, columns) =
+        SqlCatalogTable(name, knowledge, columns,
+                        Array.AsReadOnly(Array.empty<SqlCatalogConstraint>))
     member _.Name = name
     member _.Knowledge = knowledge
     member _.Columns = columns
+    member _.Constraints = constraints
 
 /// Immutable snapshot detached from the legacy SqlSchemaSnapshot. The latter
 /// requires known schema and must never receive an unknown/partial Catalog.
