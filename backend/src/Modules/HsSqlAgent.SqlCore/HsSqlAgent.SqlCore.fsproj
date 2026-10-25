@@ -50,6 +50,7 @@
     <Compile Include="RewriteResourceBudget.fs" />
     <Compile Include="RewriteCatalogIdentifierProof.fs" />
     <Compile Include="RewriteCatalogModel.fs" />
+    <Compile Include="RewriteCatalogSchemaResolution.fs" />
     <Compile Include="RewriteScopedContinuations.fs" />
     <Compile Include="RewriteStackSafety.fs" />
     <Compile Include="RewriteAstTraversal.fs" />

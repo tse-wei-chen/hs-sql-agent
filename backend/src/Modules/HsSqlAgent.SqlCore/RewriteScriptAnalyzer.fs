@@ -25,6 +25,17 @@ module internal RewriteScriptAnalyzer =
     let private changedColumn (syntax: SqlScriptStatementSyntax) name column operation =
         SqlCatalogChange(name, operation, SqlCatalogKnowledge.Known, syntax.Span, column)
 
+    let private changedExact (syntax: SqlScriptStatementSyntax)
+                             (name: SqlCatalogQualifiedName) operation certainty =
+        SqlCatalogChange(
+            name.DisplayName, operation, certainty, syntax.Span, null, name)
+
+    let private changedColumnExact (syntax: SqlScriptStatementSyntax)
+                                   (name: SqlCatalogQualifiedName) column operation =
+        SqlCatalogChange(
+            name.DisplayName, operation, SqlCatalogKnowledge.Known,
+            syntax.Span, column, name)
+
     let private analyzeDdl sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
                            (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
         let tokens =
@@ -47,7 +58,7 @@ module internal RewriteScriptAnalyzer =
             state, ([]: SqlCatalogChange list), ([]: SqlDiagnostic list)
         let exact (name: SqlCatalogQualifiedName) operation next =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
-            next, [changed syntax name.DisplayName operation SqlCatalogKnowledge.Known], []
+            next, [changedExact syntax name operation SqlCatalogKnowledge.Known], []
         let dependencyUnproven message =
             let unknown = RewriteCatalogModel.taintAll state
             let error =
@@ -57,6 +68,64 @@ module internal RewriteScriptAnalyzer =
             unknown,
             [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
             [error]
+        let scope = RewriteCatalogSchemaResolution.scope sourceDialect sourceProfile
+        let unsupportedDeclaredScope =
+            sourceDialect = SqlAgentToolType.Postgres
+            && not (isNull sourceProfile)
+            && not (isNull (sourceProfile.GetSessionSetting("SEARCH_PATH")))
+            && (match scope with
+                | RewriteCatalogSchemaResolution.Unproven -> true
+                | _ -> false)
+        let resolve = RewriteCatalogSchemaResolution.resolve scope
+        let resolveConstraint (constraintInfo: SqlCatalogConstraint) =
+            if isNull constraintInfo.ReferencedIdentity then constraintInfo
+            else
+                SqlCatalogConstraint(
+                    constraintInfo.Name, constraintInfo.Kind,
+                    constraintInfo.Columns,
+                    resolve constraintInfo.ReferencedIdentity,
+                    constraintInfo.ReferencedColumns)
+        let resolvedOperation = function
+            | Create(name, columns, constraints, conditional) ->
+                Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
+            | Drop(name, conditional) -> Drop(resolve name, conditional)
+            | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
+            | CreateIndex(name, indexName, cols) -> CreateIndex(resolve name, indexName, cols)
+            | DropIndex(indexName, target) -> DropIndex(indexName, Option.map resolve target)
+            | AddConstraint(name, constraintInfo) ->
+                AddConstraint(resolve name, resolveConstraint constraintInfo)
+            | DropConstraint(name, constraintName) -> DropConstraint(resolve name, constraintName)
+        // Inspect raw AST parts before qualifying them; a converted two-part
+        // name must never hide an unsupported one-part lookup.
+        let rawNames =
+            match parsed with
+            | Recognized operation ->
+                match operation with
+                | Create(name, _, constraints, _) ->
+                    name :: (constraints |> List.choose (fun c ->
+                        if isNull c.ReferencedIdentity then None
+                        else Some c.ReferencedIdentity))
+                | AddConstraint(name, constraintInfo) ->
+                    [name] @
+                    (if isNull constraintInfo.ReferencedIdentity then []
+                     else [constraintInfo.ReferencedIdentity])
+                | Drop(name, _)
+                | AlterColumns(name, _)
+                | CreateIndex(name, _, _)
+                | DropConstraint(name, _) -> [name]
+                | DropIndex(_, target) -> Option.toList target
+            | _ -> []
+        let rawUnqualified =
+            rawNames |> List.exists (fun n -> n.Parts.Count = 1)
+        let rawSystemName =
+            rawNames |> List.exists (fun n ->
+                n.Parts.Count = 1 &&
+                n.Parts[0].StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
+        let parsed =
+            match parsed with
+            | Recognized operation -> Recognized(resolvedOperation operation)
+            | other -> other
+
         let referencedTableName = function
             | Create(name, _, _, _)
             | Drop(name, _)
@@ -66,6 +135,23 @@ module internal RewriteScriptAnalyzer =
             | DropConstraint(name, _) -> Some name
             | DropIndex(_, target) -> target
         match parsed with
+        | Recognized operation when
+            unsupportedDeclaredScope && rawUnqualified ->
+            dependencyUnproven "Declared PostgreSQL SEARCH_PATH is outside the supported single ordinary ASCII schema proof."
+        | Recognized operation when
+            rawSystemName &&
+            (match scope with
+             | RewriteCatalogSchemaResolution.SingleSchema _ -> true
+             | _ -> false) ->
+            dependencyUnproven "PostgreSQL pg_catalog/pg_temp implicit name resolution is not proven by a single user schema."
+        | Recognized operation when
+            (match scope with
+             | RewriteCatalogSchemaResolution.SingleSchema _ ->
+                 not (RewriteCatalogSchemaResolution.canProject scope state)
+                 && (referencedTableName operation
+                     |> Option.exists (fun n -> n.Parts.Count = 2))
+             | _ -> false) ->
+            dependencyUnproven "Declared schema cannot be applied to a Catalog containing unqualified or system-schema identities."
         | Recognized operation when
             referencedTableName operation
             |> Option.exists (RewriteCatalogModel.hasUnqualifiedScopeConflict state) ->
@@ -146,10 +232,18 @@ module internal RewriteScriptAnalyzer =
             else
                 let owners =
                     state.Tables |> Seq.filter (fun t ->
-                        (match target with
-                         | Some tableName ->
-                             String.Equals(tableName.Key, t.QualifiedName.Key, StringComparison.Ordinal)
-                         | None -> true)
+                        let matchesScope =
+                            match scope, target with
+                            | RewriteCatalogSchemaResolution.SingleSchema schema, None ->
+                                t.QualifiedName.Parts.Count = 2
+                                && String.Equals(t.QualifiedName.Parts[0], schema, StringComparison.Ordinal)
+                            | _ -> true
+                        let matchesTarget =
+                            match target with
+                            | Some tableName ->
+                                String.Equals(tableName.Key, t.QualifiedName.Key, StringComparison.Ordinal)
+                            | None -> true
+                        matchesScope && matchesTarget
                         && (t.Indexes |> Seq.exists (fun idx ->
                             String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
                     |> Seq.toList
@@ -219,7 +313,7 @@ module internal RewriteScriptAnalyzer =
                                     " already exists.")
                             else
                                 working.Add column
-                                pending.Add(changedColumn syntax name.DisplayName column.Name SqlCatalogOperation.AddColumn)
+                                pending.Add(changedColumnExact syntax name column.Name SqlCatalogOperation.AddColumn)
                         | Remove(columnName, ifExists) ->
                             match locate columnName with
                             | Some index when working.Count = 1 ->
@@ -229,7 +323,7 @@ module internal RewriteScriptAnalyzer =
                                 match RewriteSchemaDependencies.canDropColumn state name columnName with
                                 | RewriteSchemaDependencies.Proven ->
                                     working.RemoveAt index
-                                    pending.Add(changedColumn syntax name.DisplayName columnName SqlCatalogOperation.DropColumn)
+                                    pending.Add(changedColumnExact syntax name columnName SqlCatalogOperation.DropColumn)
                                 | RewriteSchemaDependencies.Invalid message ->
                                     failure <- Some message
                                 | RewriteSchemaDependencies.Unproven message ->
