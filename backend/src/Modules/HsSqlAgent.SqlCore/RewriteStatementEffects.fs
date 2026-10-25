@@ -109,6 +109,8 @@ module internal RewriteStatementEffects =
                  (changes: IReadOnlyList<SqlCatalogChange>) =
         let coverage =
             match syntax.Kind, status, certainty with
+            | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
+                SqlEffectCoverage.Complete
             | SqlScriptStatementKind.Schema, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
             | (SqlScriptStatementKind.Query | SqlScriptStatementKind.Mutation),
@@ -128,6 +130,9 @@ module internal RewriteStatementEffects =
                 | SqlScriptStatementKind.Mutation when syntax.Status = SqlScriptParseStatus.Parsed ->
                     astEffects sourceDialect sourceProfile syntax
                 | SqlScriptStatementKind.Schema -> catalog
+                | SqlScriptStatementKind.Session when status = SqlStatementAnalysisStatus.Analyzed ->
+                    [effect SqlEffectKind.ChangeSession SqlStatementEffectOperation.SetSearchPath
+                        null null SqlCatalogKnowledge.Known syntax.Span noDependencies]
                 | SqlScriptStatementKind.Transaction ->
                     let certainty =
                         if status = SqlStatementAnalysisStatus.Analyzed then
