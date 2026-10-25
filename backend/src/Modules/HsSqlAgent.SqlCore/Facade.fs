@@ -9,6 +9,7 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite
 open HsSqlAgent.SqlCore.Script
+open HsSqlAgent.SqlCore.Catalog
 
 type private SqlCoreTryState<'T> =
     | CapturedSuccess of 'T
@@ -282,6 +283,33 @@ module private FacadeCompile =
 type SqlCoreFacade private () =
 
     /// Static source classification only. This never binds, authorizes, renders, or executes SQL.
+    /// Static Script analysis. Never opens a connection or produces a CompiledSqlCommand.
+    /// Without an initial Catalog, the world is open and all unmentioned objects
+    /// have UNKNOWN existence; callers must explicitly supply KnownEmpty() to
+    /// assert that an empty catalog is a proven starting point.
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(sql, sourceDialect, SqlCatalogState.Unknown(), null)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(sql, sourceDialect, initialCatalog, null)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState,
+        sourceProfile: SqlProviderCapabilityProfile | null) : SqlScriptAnalysisResult =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(initialCatalog)
+        match sourceProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
+        RewriteScriptAnalyzer.analyze sql sourceDialect sourceProfile initialCatalog
+
     static member ParseScript(
         sql: string,
         sourceDialect: SqlAgentToolType) : SqlScriptParseResult =
