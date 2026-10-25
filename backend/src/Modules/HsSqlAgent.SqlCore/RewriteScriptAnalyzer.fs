@@ -58,6 +58,11 @@ module internal RewriteScriptAnalyzer =
             [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
             [error]
         match parsed with
+        | Recognized _ when
+            RewriteCatalogIdentifierProof.mode sourceDialect sourceProfile =
+                RewriteCatalogIdentifierProof.FoldAscii
+            && not (RewriteCatalogIdentifierProof.isAsciiSql syntax.Text) ->
+            dependencyUnproven "Identifier names outside the ASCII-safe provider proof subset cannot establish a known DDL Catalog."
         | Invalid message -> fail message
         | Unsupported ->
             let unknown = RewriteCatalogModel.taintAll state
@@ -74,7 +79,7 @@ module internal RewriteScriptAnalyzer =
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
                 fail ("CREATE TABLE " + name + " already exists in the known catalog.")
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
-                match RewriteSchemaDependencies.validateCreate sourceDialect state name columns constraints with
+                match RewriteSchemaDependencies.validateCreate sourceDialect sourceProfile state name columns constraints with
                 | RewriteSchemaDependencies.Proven ->
                     RewriteCatalogModel.knownTableWithConstraints state name columns constraints
                     |> exact name SqlCatalogOperation.CreateTable
@@ -150,7 +155,7 @@ module internal RewriteScriptAnalyzer =
         | Recognized (AddConstraint(tableName, newConstraint)) ->
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
-                match RewriteSchemaDependencies.validateNewConstraint sourceDialect state
+                match RewriteSchemaDependencies.validateNewConstraint sourceDialect sourceProfile state
                           tableName newConstraint with
                 | RewriteSchemaDependencies.Proven ->
                     let updated =
