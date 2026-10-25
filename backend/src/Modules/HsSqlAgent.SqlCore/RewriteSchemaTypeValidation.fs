@@ -43,10 +43,14 @@ module internal RewriteSchemaTypeValidation =
             value.ToUpperInvariant()
         | _ -> value
 
+    let private qualifiedKey parts =
+        parts |> List.map (fun (part: string) ->
+            part.Replace("\\", "\\\\").Replace(".", "\\.")) |> String.concat "."
+
     let private keyIdentifier dialect identifier =
         Identifier.parts identifier
         |> List.map (keyPart dialect)
-        |> String.concat "."
+        |> qualifiedKey
 
     let private fail span message =
         let diagnosticSpan =
@@ -80,9 +84,9 @@ module internal RewriteSchemaTypeValidation =
         let full = keyIdentifier catalog.Dialect name
         let tail = Identifier.parts name |> List.last |> keyPart catalog.Dialect
         match alias with
-        | Some part -> [ keyPart catalog.Dialect part ]
-        | None when full = tail -> [ full ]
-        | None -> [ full; tail ]
+        | Some part -> [ qualifiedKey [keyPart catalog.Dialect part] ]
+        | None when full = qualifiedKey [tail] -> [ full ]
+        | None -> [ full; qualifiedKey [tail] ]
 
     let private columnsSource qualifiers columns =
         let names = columns |> List.map fst
@@ -102,7 +106,7 @@ module internal RewriteSchemaTypeValidation =
         columnsSource (sourceKey catalog name alias) columns
 
     let private sourceAlias catalog alias columns =
-        columnsSource [ keyPart catalog.Dialect alias ] columns
+        columnsSource [ qualifiedKey [keyPart catalog.Dialect alias] ] columns
 
     let private cteSource catalog name alias ctes =
         columnsSource (sourceKey catalog name alias)
@@ -891,9 +895,7 @@ module internal RewriteSchemaTypeValidation =
             state.Tables
             |> Seq.map (fun table ->
                 RewriteResourceBudget.checkpoint ()
-                table.Name.Split('.')
-                |> Array.map (catalogPart dialect)
-                |> String.concat ".",
+                table.QualifiedName.BinderKey,
                 (table.Columns
                  |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
                  |> Seq.toList))

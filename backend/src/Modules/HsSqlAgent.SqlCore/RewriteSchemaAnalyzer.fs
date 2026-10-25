@@ -17,14 +17,14 @@ module internal RewriteSchemaAnalyzer =
         | Remove of column: string * ifExists: bool
 
     type DdlOperation =
-        | Create of table: string * columns: SqlCatalogColumn list *
+        | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
-        | Drop of table: string * ifExists: bool
-        | AlterColumns of table: string * actions: AlterColumnAction list
-        | CreateIndex of table: string * name: string * columns: string list
-        | DropIndex of name: string * table: string option
-        | AddConstraint of table: string * constraintInfo: SqlCatalogConstraint
-        | DropConstraint of table: string * name: string
+        | Drop of table: SqlCatalogQualifiedName * ifExists: bool
+        | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
+        | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list
+        | DropIndex of name: string * table: SqlCatalogQualifiedName option
+        | AddConstraint of table: SqlCatalogQualifiedName * constraintInfo: SqlCatalogConstraint
+        | DropConstraint of table: SqlCatalogQualifiedName * name: string
 
     type DdlSyntax =
         | Recognized of DdlOperation
@@ -129,8 +129,10 @@ module internal RewriteSchemaAnalyzer =
             | _ -> raise (Malformed("Expected a SQL identifier in TABLE DDL."))
         let qualifiedName () =
             let first = namePart ()
-            if symbol '.' then first + "." + namePart ()
-            else first
+            let parts =
+                if symbol '.' then [| first; namePart () |]
+                else [| first |]
+            SqlCatalogQualifiedName(Array.AsReadOnly(parts))
 
         let columnNames () =
             expectSymbol '('
@@ -264,7 +266,7 @@ module internal RewriteSchemaAnalyzer =
                         cols.Add(namePart ())
                     expectSymbol ')'
                     cols |> Seq.toList
-                let makeConstraint cname kind members remote remoteMembers =
+                let makeConstraint cname kind members (remote: SqlCatalogQualifiedName) remoteMembers =
                     SqlCatalogConstraint(
                         (match cname with Some value -> value | None -> null),
                         kind, Array.AsReadOnly(List.toArray members),
@@ -362,7 +364,7 @@ module internal RewriteSchemaAnalyzer =
             if not (accept "TABLE") then raise OutsideSubset
             let table = qualifiedName ()
             let constraintDefinition constraintName =
-                let make kind cols target targetCols =
+                let make kind cols (target: SqlCatalogQualifiedName) targetCols =
                     SqlCatalogConstraint(
                         constraintName, kind, Array.AsReadOnly(List.toArray cols),
                         target, Array.AsReadOnly(List.toArray targetCols))

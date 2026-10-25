@@ -59,7 +59,9 @@ module internal RewriteTransactionAnalyzer =
         let sameConstraint (a: SqlCatalogConstraint) (b: SqlCatalogConstraint) =
             String.Equals(a.Name, b.Name, StringComparison.Ordinal)
             && a.Kind = b.Kind
-            && String.Equals(a.ReferencedTable, b.ReferencedTable, StringComparison.Ordinal)
+            && (if isNull a.ReferencedIdentity || isNull b.ReferencedIdentity then
+                    isNull a.ReferencedIdentity && isNull b.ReferencedIdentity
+                else String.Equals(a.ReferencedIdentity.Key, b.ReferencedIdentity.Key, StringComparison.Ordinal))
             && a.Columns.Count = b.Columns.Count
             && Seq.forall2 (fun x y -> String.Equals(x, y, StringComparison.Ordinal))
                 a.Columns b.Columns
@@ -67,7 +69,7 @@ module internal RewriteTransactionAnalyzer =
             && Seq.forall2 (fun x y -> String.Equals(x, y, StringComparison.Ordinal))
                 a.ReferencedColumns b.ReferencedColumns
         let sameTable (a: SqlCatalogTable) (b: SqlCatalogTable) =
-            String.Equals(a.Name, b.Name, StringComparison.Ordinal)
+            String.Equals(a.QualifiedName.Key, b.QualifiedName.Key, StringComparison.Ordinal)
             && a.Knowledge = b.Knowledge
             && a.Columns.Count = b.Columns.Count
             && Seq.forall2 sameColumn a.Columns b.Columns

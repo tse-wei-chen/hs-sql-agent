@@ -22,6 +22,28 @@ type SqlCatalogOperation =
     | AddConstraint = 7
     | DropConstraint = 8
 
+/// Exact, normalized SQL identifier parts. A single quoted "a.b" is one
+/// part, while schema.table has two; neither can collide in Key.
+[<Sealed; AllowNullLiteral>]
+type SqlCatalogQualifiedName internal (parts: IReadOnlyList<string>) =
+    member _.Parts = parts
+    member _.IsQualified = parts.Count > 1
+    /// Display only: never use this to look up identity or schema dependencies.
+    member _.DisplayName = String.Join(".", parts)
+    /// Unambiguous, reversible key for structured identifier parts.
+    member _.Key =
+        parts |> Seq.map (fun part -> string part.Length + ":" + part)
+              |> String.concat ""
+    /// Key shared by strict AST virtual-catalog binders. Dot/backslash
+    /// escaping is applied per identifier part, never to a flattened string.
+    member _.BinderKey =
+        parts |> Seq.map (fun part ->
+            part.Replace("\\", "\\\\").Replace(".", "\\."))
+              |> String.concat "."
+
+    static member internal SinglePart(value: string) =
+        SqlCatalogQualifiedName(Array.AsReadOnly([| value |]))
+
 [<Sealed>]
 type SqlCatalogColumn internal (name: string, typeName: string, nullable: bool) =
     member _.Name = name
@@ -41,13 +63,25 @@ type SqlCatalogConstraint internal (
     kind: SqlCatalogConstraintKind,
     columns: IReadOnlyList<string>,
     referencedTable: string,
-    referencedColumns: IReadOnlyList<string>) =
+    referencedColumns: IReadOnlyList<string>,
+    referencedIdentity: SqlCatalogQualifiedName) =
+    new(name, kind, columns, referencedTable, referencedColumns) =
+        SqlCatalogConstraint(
+            name, kind, columns, referencedTable, referencedColumns,
+            if isNull referencedTable then null
+            else SqlCatalogQualifiedName.SinglePart(referencedTable))
+    new(name, kind, columns, referencedIdentity: SqlCatalogQualifiedName, referencedColumns) =
+        SqlCatalogConstraint(
+            name, kind, columns,
+            (if isNull referencedIdentity then null else referencedIdentity.DisplayName),
+            referencedColumns, referencedIdentity)
     /// Null for unnamed constraints; never an auto-generated database name.
     member _.Name = name
     member _.Kind = kind
     member _.Columns = columns
     /// Only populated for a ForeignKey. No implicit remote key inference.
     member _.ReferencedTable = referencedTable
+    member _.ReferencedIdentity = referencedIdentity
     member _.ReferencedColumns = referencedColumns
 
 [<Sealed>]
@@ -60,15 +94,22 @@ type SqlCatalogTable internal (
     name: string, knowledge: SqlCatalogKnowledge,
     columns: IReadOnlyList<SqlCatalogColumn>,
     constraints: IReadOnlyList<SqlCatalogConstraint>,
-    indexes: IReadOnlyList<SqlCatalogIndex>) =
+    indexes: IReadOnlyList<SqlCatalogIndex>,
+    identity: SqlCatalogQualifiedName) =
     new(name, knowledge, columns) =
         SqlCatalogTable(name, knowledge, columns,
                         Array.AsReadOnly(Array.empty<SqlCatalogConstraint>),
-                        Array.AsReadOnly(Array.empty<SqlCatalogIndex>))
+                        Array.AsReadOnly(Array.empty<SqlCatalogIndex>),
+                        SqlCatalogQualifiedName.SinglePart(name))
     new(name, knowledge, columns, constraints) =
         SqlCatalogTable(name, knowledge, columns, constraints,
-                        Array.AsReadOnly(Array.empty<SqlCatalogIndex>))
+                        Array.AsReadOnly(Array.empty<SqlCatalogIndex>),
+                        SqlCatalogQualifiedName.SinglePart(name))
+    new(name, knowledge, columns, constraints, indexes) =
+        SqlCatalogTable(name, knowledge, columns, constraints, indexes,
+                        SqlCatalogQualifiedName.SinglePart(name))
     member _.Name = name
+    member _.QualifiedName = identity
     member _.Knowledge = knowledge
     member _.Columns = columns
     member _.Constraints = constraints

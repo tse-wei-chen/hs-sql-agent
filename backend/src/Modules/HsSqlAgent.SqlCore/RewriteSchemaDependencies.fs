@@ -22,14 +22,14 @@ module internal RewriteSchemaDependencies =
         state.IsClosedWorld &&
         (state.Tables |> Seq.forall (fun t -> t.Knowledge = SqlCatalogKnowledge.Known))
 
-    let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) name
+    let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
                        (columns: SqlCatalogColumn list)
                        (constraints: SqlCatalogConstraint list) =
         if not (complete state) then
             Unproven "Existing Catalog is incomplete; referenced key dependencies cannot be proven."
         elif constraints |> List.exists (fun d ->
             d.Kind = SqlCatalogConstraintKind.ForeignKey)
-             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name) then
+             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name.DisplayName) then
             Unproven "Foreign-key table resolution needs a proven provider identifier case/collation contract."
         else
             let mutable error: DependencyProof option = None
@@ -69,18 +69,32 @@ module internal RewriteSchemaDependencies =
                         reject "Foreign-key column counts, target and uniqueness must be explicitly provable."
                     else
                         let parent =
-                            if equals item.ReferencedTable name then
+                            if not (isNull item.ReferencedIdentity) && equals item.ReferencedIdentity.Key name.Key then
                                 Some(columns, constraints)
                             else
-                                match RewriteCatalogModel.lookup state item.ReferencedTable with
+                                match RewriteCatalogModel.lookup state item.ReferencedIdentity with
                                 | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
                                     Some(table.Columns |> Seq.toList,
                                          table.Constraints |> Seq.toList)
                                 | _ -> None
                         match parent with
                         | None ->
-                            reject ("Foreign key references missing known table '" +
-                                    item.ReferencedTable + "'.")
+                            let uncertain =
+                                not (isNull item.ReferencedIdentity)
+                                && (RewriteCatalogModel.hasUnqualifiedScopeConflict
+                                        state item.ReferencedIdentity
+                                    || (name.IsQualified
+                                        && item.ReferencedIdentity.Parts.Count = 1
+                                        && equals
+                                            name.Parts[name.Parts.Count - 1]
+                                            item.ReferencedIdentity.Parts[0]))
+                            if uncertain then
+                                if error.IsNone then
+                                    error <- Some(Unproven(
+                                        "Foreign-key parent may resolve through an undeclared default schema/search_path."))
+                            else
+                                reject ("Foreign key references missing known table '" +
+                                        item.ReferencedTable + "'.")
                         | Some(parentColumns, parentConstraints) ->
                             let uniqueTarget =
                                 parentConstraints |> List.exists (fun key ->
@@ -105,7 +119,7 @@ module internal RewriteSchemaDependencies =
     let validateNewConstraint dialect profile state name
                               (constraintInfo: SqlCatalogConstraint) =
         match RewriteCatalogModel.lookup state name with
-        | None -> Invalid ("Cannot add constraint to missing table '" + name + "'.")
+        | None -> Invalid ("Cannot add constraint to missing table '" + name.DisplayName + "'.")
         | Some table ->
             if String.IsNullOrWhiteSpace constraintInfo.Name then
                 Unproven "ALTER ADD CONSTRAINT requires an explicit constraint name."
@@ -146,10 +160,10 @@ module internal RewriteSchemaDependencies =
         else
             let inbound =
                 RewriteCatalogModel.inboundForeignKeys state name
-                |> Seq.tryFind (fun (table, _) -> not (equals table.Name name))
+                |> Seq.tryFind (fun (table, _) -> not (equals table.QualifiedName.Key name.Key))
             match inbound with
             | Some(table, _) ->
-                Invalid ("DROP TABLE " + name +
+                Invalid ("DROP TABLE " + name.DisplayName +
                          " is blocked by a FOREIGN KEY in table '" + table.Name + "'.")
             | None -> Proven
 
@@ -161,5 +175,5 @@ module internal RewriteSchemaDependencies =
             | (owner, dependencyKind)::_ ->
                 Invalid ("DROP COLUMN " + columnName +
                          " is blocked by " + dependencyKind +
-                         " dependency in table '" + owner + "'.")
+                         " dependency in table '" + owner.DisplayName + "'.")
             | [] -> Proven

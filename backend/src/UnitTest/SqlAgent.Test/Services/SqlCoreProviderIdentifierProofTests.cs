@@ -145,31 +145,29 @@ public sealed class SqlCoreProviderIdentifierProofTests
         "CREATE TABLE `a.b` (id INT);SELECT id FROM `a.b`;")]
     [InlineData(SqlAgentToolType.MsSqlServer, "CATALOG_COLLATION", "Latin1_General_100_CI_AS",
         "CREATE TABLE [a.b] (id INT);SELECT id FROM [a.b];")]
-    [InlineData(SqlAgentToolType.MySQL, "LOWER_CASE_TABLE_NAMES", "1",
-        "CREATE TABLE db.users (id INT);SELECT id FROM db.users;")]
-    [InlineData(SqlAgentToolType.MsSqlServer, "CATALOG_COLLATION", "Latin1_General_100_CI_AS",
-        "CREATE TABLE dbo.users (id INT);SELECT id FROM dbo.users;")]
-    public void QualifiedAndDottedQuotedNamesNeedStructuredIdentifierProof(
+    public void QuotedDotsStillCannotMintAsciiFoldedFacts(
         SqlAgentToolType provider, string key, string setting, string sql)
     {
         var result = Analyze(provider, sql, Profile(provider, key, setting));
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[0].Status);
         Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].NameBinding);
-        if (sql.Contains("a.b", StringComparison.Ordinal))
-        {
-            // A quoted dot is an identifier character, not a schema-part
-            // separator. The DDL is rejected before it can mint Catalog facts.
-            Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[0].Status);
-            Assert.Contains(result.Statements[1].Diagnostics,
-                d => d.Code == "SQL_CATALOG_BINDING_INCOMPLETE");
-        }
-        else
-        {
-            // A qualified physical table can be analyzed structurally, but
-            // flat Catalog names cannot prove multi-part identity resolution.
-            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
-            Assert.Contains(result.Statements[1].Diagnostics,
-                d => d.Code == "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN");
-        }
+        Assert.Contains(result.Statements[1].Diagnostics,
+            d => d.Code == "SQL_CATALOG_BINDING_INCOMPLETE");
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL, "LOWER_CASE_TABLE_NAMES", "1",
+        "CREATE TABLE db.users (id INT);SELECT id FROM DB.USERS;")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "CATALOG_COLLATION", "Latin1_General_100_CI_AS",
+        "CREATE TABLE dbo.users (id INT);SELECT id FROM DBO.USERS;")]
+    public void StructuredAsciiQualifiedNamesNowHaveVerifiedBinding(
+        SqlAgentToolType provider, string key, string setting, string sql)
+    {
+        var result = Analyze(provider, sql, Profile(provider, key, setting));
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
+        Assert.Equal(2, Assert.Single(result.FinalCatalog.Tables).QualifiedName.Parts.Count);
+        Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[1].CatalogBinding);
+        Assert.Empty(result.Diagnostics);
     }
 
     [Theory]

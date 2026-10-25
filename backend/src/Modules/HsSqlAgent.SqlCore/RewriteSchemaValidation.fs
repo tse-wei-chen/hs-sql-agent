@@ -51,8 +51,12 @@ module internal RewriteSchemaValidation =
             value.ToUpperInvariant()
         | _ -> value
 
+    let private qualifiedKey parts =
+        parts |> List.map (fun (part: string) ->
+            part.Replace("\\", "\\\\").Replace(".", "\\.")) |> String.concat "."
+
     let private keyIdentifier dialect identifier =
-        Identifier.parts identifier |> List.map (keyPart dialect) |> String.concat "."
+        Identifier.parts identifier |> List.map (keyPart dialect) |> qualifiedKey
 
     let private keyCatalog dialect (value: string) =
         RewriteResourceBudget.charge (max 1L (int64 value.Length))
@@ -85,16 +89,16 @@ module internal RewriteSchemaValidation =
 
     let private namedSource dialect name alias columns =
         let full = keyIdentifier dialect name
-        let tail = Identifier.parts name |> List.last |> keyPart dialect
+        let tail = Identifier.parts name |> List.last |> keyPart dialect |> List.singleton |> qualifiedKey
         let keys =
             match alias with
-            | Some value -> [ keyPart dialect value ]
+            | Some value -> [ qualifiedKey [keyPart dialect value] ]
             | None when tail = full -> [ full ]
             | None -> [ full; tail ]
         { Qualifiers = keys; Columns = columns }
 
     let private aliasedSource dialect alias columns =
-        { Qualifiers = [ keyPart dialect alias ]; Columns = columns }
+        { Qualifiers = [ qualifiedKey [keyPart dialect alias] ]; Columns = columns }
 
     let private countColumn source key =
         source.Columns |> List.sumBy (fun name ->
@@ -727,9 +731,11 @@ module internal RewriteSchemaValidation =
             state.Tables
             |> Seq.map (fun table ->
                 RewriteResourceBudget.checkpoint ()
-                keyCatalog dialect table.Name,
+                table.QualifiedName.BinderKey,
                 (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
             |> Seq.toList
+        if tables.Length <> (tables |> List.map fst |> List.distinct |> List.length) then
+            invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
         let catalog = { Dialect = dialect; Tables = Map.ofList tables }
         (createValidation ()) catalog (Bound.value bound)
         bound

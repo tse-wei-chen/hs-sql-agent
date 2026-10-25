@@ -82,15 +82,26 @@ module internal RewriteCatalogBinding =
                         RewriteBinder.bind sourceDialect parsed)
                 // The Source inspection AST visitor is iterative, does not
                 // recurse through CTEs/subqueries and includes Mutation targets.
-                let physicalTableCount =
-                    RewriteInspection.inspectBound bound
-                    |> fun facts -> facts.ReferencedTables.Count
+                let inspected = RewriteInspection.inspectBound bound
+                let physicalTableCount = inspected.ReferencedTables.Count
+                let defaultSchemaAmbiguity =
+                    inspected.ReferencedTables
+                    |> Seq.exists (fun reference ->
+                        not (reference.Contains(".", StringComparison.Ordinal))
+                        && (state.Tables |> Seq.exists (fun table ->
+                            table.QualifiedName.IsQualified
+                            && String.Equals(
+                                table.QualifiedName.Parts[table.QualifiedName.Parts.Count - 1],
+                                reference, StringComparison.OrdinalIgnoreCase))))
                 // MySQL table casing is governed by lower_case_table_names /
                 // server filesystem; SQL Server identifiers by DB collation.
                 // SqlProviderCapabilityProfile has neither proof. A generic
                 // uppercasing schema binder cannot safely certify such names.
-                if physicalTableCount > 0
-                   && not (RewriteCatalogIdentifierProof.canProvePhysicalNames
+                if defaultSchemaAmbiguity then
+                    unverified syntax "SQL_CATALOG_DEFAULT_SCHEMA_UNPROVEN"
+                        "Unqualified physical table reference may resolve through an undeclared search_path or default schema."
+                elif physicalTableCount > 0
+                     && not (RewriteCatalogIdentifierProof.canProvePhysicalNames
                                 sourceDialect profile state syntax.Text) then
                     unverified syntax "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN"
                         "Provider identifier case/collation proof is absent or outside the restricted ASCII-safe subset; a normalized match is not authoritative."
