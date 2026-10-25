@@ -8,9 +8,10 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.SqlParsing
 
-/// Static binding of an already parsed DQL/DML Script statement against
-/// definite, closed-world virtual DDL facts. No policy, SQL rendering, schema
-/// snapshot, compile evidence or database access is available at this boundary.
+/// Non-executable strict AST name and type proofs against the *ordered* virtual
+/// catalog. Source-specific identifier/collation and affinity assumptions are
+/// explicit: a query must not receive a complete Verified result from a
+/// partially-modeled provider.
 module internal RewriteCatalogBinding =
 
     let private report (syntax: SqlScriptStatementSyntax) code stage category message =
@@ -21,8 +22,7 @@ module internal RewriteCatalogBinding =
            || code = "SQL_SCHEMA_MERGE_UNPROVABLE"
            || code = "SQL_SCHEMA_CONFLICT_UNPROVABLE" then
             SqlCatalogBindingStatus.Unverified
-        else
-            SqlCatalogBindingStatus.Rejected
+        else SqlCatalogBindingStatus.Rejected
 
     let private rejectedOrUnverified (syntax: SqlScriptStatementSyntax) (diagnostic: SqlDiagnostic) =
         let binding = statusForCode diagnostic.Code
@@ -42,25 +42,36 @@ module internal RewriteCatalogBinding =
                 diagnostic.Category,
                 diagnostic.Message,
                 offset)
-        binding, analysis, SqlCatalogKnowledge.Unknown, [adjusted]
+        let nameStatus, typeStatus =
+            if diagnostic.Code = "SQL_SCHEMA_TYPE_MISMATCH" then
+                SqlCatalogBindingStatus.Verified, binding
+            else
+                binding, SqlCatalogBindingStatus.NotApplicable
+        binding, nameStatus, typeStatus, analysis, SqlCatalogKnowledge.Unknown, [adjusted]
+
+    let private unverified syntax code message =
+        let d = report syntax code SqlDiagnosticStage.Binding SqlDiagnosticCategory.Capability message
+        SqlCatalogBindingStatus.Unverified, SqlCatalogBindingStatus.Unverified,
+        SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
+        SqlCatalogKnowledge.Unknown, [d]
+
+    let private typeUnverified syntax code message =
+        let d = report syntax code SqlDiagnosticStage.SemanticValidation SqlDiagnosticCategory.Capability message
+        SqlCatalogBindingStatus.Unverified, SqlCatalogBindingStatus.Verified,
+        SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
+        SqlCatalogKnowledge.Unknown, [d]
+
+    let private verified =
+        SqlCatalogBindingStatus.Verified, SqlCatalogBindingStatus.Verified,
+        SqlCatalogBindingStatus.Verified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
+        SqlCatalogKnowledge.Known, []
 
     let verify sourceDialect (profile: SqlProviderCapabilityProfile | null)
                (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
-        if sourceDialect <> SqlAgentToolType.Postgres then
-            let diagnostic =
-                report syntax "SQL_CATALOG_BINDING_DIALECT_UNPROVEN"
-                    SqlDiagnosticStage.Binding SqlDiagnosticCategory.Capability
-                    "Virtual Catalog DQL/DML binding is not yet proven for this source dialect."
-            SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-            SqlCatalogKnowledge.Unknown, [diagnostic]
-        elif not state.IsClosedWorld
-             || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
-            let diagnostic =
-                report syntax "SQL_CATALOG_BINDING_INCOMPLETE"
-                    SqlDiagnosticStage.Binding SqlDiagnosticCategory.Capability
-                    "Catalog is open or incomplete; referenced names and types cannot be proven."
-            SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-            SqlCatalogKnowledge.Unknown, [diagnostic]
+        if not state.IsClosedWorld
+           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+            unverified syntax "SQL_CATALOG_BINDING_INCOMPLETE"
+                "Catalog is open or incomplete; referenced names and types cannot be proven."
         else
             try
                 let parsed =
@@ -69,14 +80,35 @@ module internal RewriteCatalogBinding =
                 let bound =
                     RewriteResourceBudget.withStage "CatalogBinding" SqlDiagnosticStage.Binding (fun () ->
                         RewriteBinder.bind sourceDialect parsed)
-                let namesChecked =
-                    RewriteResourceBudget.withStage "CatalogNameValidation" SqlDiagnosticStage.Binding (fun () ->
-                        RewriteSchemaValidation.verifyVirtual sourceDialect state bound)
-                RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
-                    RewriteSchemaTypeValidation.verifyVirtual sourceDialect state namesChecked)
-                |> ignore
-                SqlCatalogBindingStatus.Verified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-                SqlCatalogKnowledge.Known, []
+                // The Source inspection AST visitor is iterative, does not
+                // recurse through CTEs/subqueries and includes Mutation targets.
+                let physicalTableCount =
+                    RewriteInspection.inspectBound bound
+                    |> fun facts -> facts.ReferencedTables.Count
+                // MySQL table casing is governed by lower_case_table_names /
+                // server filesystem; SQL Server identifiers by DB collation.
+                // SqlProviderCapabilityProfile has neither proof. A generic
+                // uppercasing schema binder cannot safely certify such names.
+                if physicalTableCount > 0
+                   && (sourceDialect = SqlAgentToolType.MySQL
+                       || sourceDialect = SqlAgentToolType.MsSqlServer) then
+                    unverified syntax "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN"
+                        "Provider table identifier case rules are unproven; a normalized name match is not authoritative."
+                else
+                    let namesChecked =
+                        RewriteResourceBudget.withStage "CatalogNameValidation" SqlDiagnosticStage.Binding (fun () ->
+                            RewriteSchemaValidation.verifyVirtual sourceDialect state bound)
+                    if sourceDialect = SqlAgentToolType.Sqlite && physicalTableCount > 0 then
+                        // SQLite storage classes have dynamic affinity: an
+                        // INTEGER column does not establish static Numeric-only
+                        // assignment semantics. Its names can still be proven.
+                        typeUnverified syntax "SQL_CATALOG_TYPE_SQLITE_AFFINITY_UNPROVEN"
+                            "SQLite column affinity is dynamic; table/column names are verified but assignment types are not."
+                    else
+                        RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
+                            RewriteSchemaTypeValidation.verifyVirtual sourceDialect state namesChecked)
+                        |> ignore
+                        verified
             with
             | :? SqlCompilationException as ex
                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
@@ -97,5 +129,6 @@ module internal RewriteCatalogBinding =
                 let diagnostic =
                     report syntax "SQL_CATALOG_REPARSE_INVALID"
                         SqlDiagnosticStage.Parse SqlDiagnosticCategory.Syntax ex.Message
-                SqlCatalogBindingStatus.Rejected, SqlStatementAnalysisStatus.Invalid,
+                SqlCatalogBindingStatus.Rejected, SqlCatalogBindingStatus.Rejected,
+                SqlCatalogBindingStatus.NotApplicable, SqlStatementAnalysisStatus.Invalid,
                 SqlCatalogKnowledge.Unknown, [diagnostic]
