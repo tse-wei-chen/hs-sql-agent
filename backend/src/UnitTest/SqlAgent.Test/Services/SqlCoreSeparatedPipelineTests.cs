@@ -79,14 +79,13 @@ public sealed class SqlCoreSeparatedPipelineTests
     [Fact]
     public void MutationPipeline_ExplicitFullTablePermissionRemainsEffective()
     {
-        var command = SqlCoreFacade.CompileDml(
-            "UPDATE users SET name = 'Ada'",
-            SqlAgentToolType.Postgres,
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            HsSqlAgent.SqlCore.SqlParsing.CoreSqlTextParser.ParseDml(
+                "UPDATE users SET name = 'Ada'",
+                SqlAgentToolType.Postgres),
             SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("separated-pipeline-full-table-v1"),
-            new DmlCompilationPolicy(false, true, true, false),
-            null,
-            null);
+            new DmlCompilationPolicy(false, true, true, false));
 
         Assert.Equal(SqlStatementKind.Update, command.Kind);
     }
