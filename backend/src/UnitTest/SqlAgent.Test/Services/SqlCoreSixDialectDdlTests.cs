@@ -164,7 +164,7 @@ public sealed class SqlCoreSixDialectDdlTests
         };
         var result = SqlCoreFacade.AnalyzeScript(
             $"CREATE TABLE users (id {typeName});" +
-            $"CREATE TABLE orders (id {typeName} PRIMARY KEY);",
+            $"CREATE TABLE orders (id {typeName}, CHECK(id > 0));",
             provider, SqlCatalogState.KnownEmpty());
 
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status);
