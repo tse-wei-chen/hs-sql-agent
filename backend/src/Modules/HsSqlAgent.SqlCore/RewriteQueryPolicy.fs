@@ -7,7 +7,7 @@ open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 /// Query-only row-limit policy: cannot receive a Mutation AST as a valid query.
 module internal RewriteQueryPolicy =
 
-    let private deny = RewritePolicy.deny
+    let private deny code span message : 'T = RewritePolicy.deny code span message
 
     let private clampQueryLimit span (rowCap: RowCap) (query: Query) =
         match rowCap with
