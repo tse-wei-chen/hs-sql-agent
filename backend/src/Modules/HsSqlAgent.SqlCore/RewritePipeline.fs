@@ -132,59 +132,80 @@ module internal RewritePipeline =
             RewriteResourceBudget.withStage "SchemaType" SqlDiagnosticStage.SemanticValidation (fun () ->
                 RewriteSchemaTypeValidation.verify sourceProviderType snapshot schemaChecked)
 
-    let private finishBound options bound =
+    /// Shared semantic engine, but without family-agnostic authorization.
+    /// Domain wrappers verify kind at Parse, Bind, Canonical and Validated
+    /// transitions; no Query policy can consume a Mutation stage (or vice versa).
+    let private normalize options bound =
         let source = options.Source
         let target = options.Target
         let sourceDialect = VerifiedSource.dialect source
         let sourceSemantics = VerifiedSource.semantics source
         let targetRuntime = VerifiedTarget.runtime target
+        RewriteResourceBudget.withStage "Normalization" SqlDiagnosticStage.SemanticValidation (fun () ->
+            RewriteStages.normalize
+                sourceSemantics.EnforceDialectSyntax
+                sourceDialect targetRuntime
+                sourceSemantics.Expressions.RegexMatch
+                sourceSemantics.Ordering
+                sourceSemantics.MySqlPipes
+                (VerifiedSource.profile source)
+                (VerifiedTarget.profile target)
+                bound)
 
-        let canonical =
-            RewriteResourceBudget.withStage "Normalization" SqlDiagnosticStage.SemanticValidation (fun () ->
-                RewriteStages.normalize
-                    sourceSemantics.EnforceDialectSyntax
-                    sourceDialect targetRuntime
-                    sourceSemantics.Expressions.RegexMatch
-                    sourceSemantics.Ordering
-                    sourceSemantics.MySqlPipes
-                    (VerifiedSource.profile source)
-                    (VerifiedTarget.profile target)
-                    bound)
-        let validated =
-            RewriteResourceBudget.withStage "Validation" SqlDiagnosticStage.SemanticValidation (fun () ->
-                RewriteStages.validate
-                    options.AllowedTables targetRuntime
-                    sourceSemantics.Expressions (VerifiedTarget.expressions target)
-                    sourceSemantics.Joins (VerifiedTarget.joins target)
-                    (VerifiedTarget.ordering target)
-                    sourceSemantics.Dml (VerifiedTarget.dml target)
-                    options.ConflictProofs canonical)
-        // Family-specific typestates guarantee that query row caps and mutation
-        // safety policies never authorize the opposite statement family.
-        // Shared binding, normalization and capability validation run once.
-        match (RewriteStages.Validated.value validated).Statement with
+    let private validate options canonical =
+        let sourceSemantics = VerifiedSource.semantics options.Source
+        let target = options.Target
+        RewriteResourceBudget.withStage "Validation" SqlDiagnosticStage.SemanticValidation (fun () ->
+            RewriteStages.validate
+                options.AllowedTables (VerifiedTarget.runtime target)
+                sourceSemantics.Expressions (VerifiedTarget.expressions target)
+                sourceSemantics.Joins (VerifiedTarget.joins target)
+                (VerifiedTarget.ordering target)
+                sourceSemantics.Dml (VerifiedTarget.dml target)
+                options.ConflictProofs canonical)
+
+    let private finishQueryBound options (bound: RewriteQueryPipeline.BoundQuery) =
+        let canonical = RewriteQueryPipeline.normalize (normalize options) bound
+        let validated = RewriteQueryPipeline.validate (validate options) canonical
+        let authorized =
+            RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
+                RewriteQueryPipeline.authorize options.Policy.QueryRows validated)
+        RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
+            RewriteQueryPipeline.render renderWithDiagnostic authorized)
+
+    let private finishMutationBound options (bound: RewriteMutationPipeline.BoundMutation) =
+        let canonical = RewriteMutationPipeline.normalize (normalize options) bound
+        let validated = RewriteMutationPipeline.validate (validate options) canonical
+        let authorized =
+            RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
+                RewriteMutationPipeline.authorize
+                    options.Policy.UpdateSafety
+                    options.Policy.DeleteSafety
+                    validated)
+        RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
+            RewriteMutationPipeline.render renderWithDiagnostic authorized)
+
+    /// Compatibility entry for the Query Inspection path, which has already
+    /// bound the AST to collect facts before running normalization/validation.
+    let private finishBound options bound =
+        match (Bound.value bound).Statement with
         | QueryStatement _ ->
-            let query = RewriteQueryPipeline.fromValidated validated
-            let authorized =
-                RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
-                    RewriteQueryPipeline.authorize options.Policy.QueryRows query)
-            RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
-                RewriteQueryPipeline.render renderWithDiagnostic authorized)
+            RewriteQueryPipeline.fromBound bound
+            |> finishQueryBound options
         | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
-            let mutation = RewriteMutationPipeline.fromValidated validated
-            let authorized =
-                RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
-                    RewriteMutationPipeline.authorize
-                        options.Policy.UpdateSafety
-                        options.Policy.DeleteSafety
-                        mutation)
-            RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
-                RewriteMutationPipeline.render renderWithDiagnostic authorized)
+            RewriteMutationPipeline.fromBound bound
+            |> finishMutationBound options
 
     let private finish options parsed =
-        parsed
-        |> bind options
-        |> finishBound options
+        match (Parsed.value parsed).Statement with
+        | QueryStatement _ ->
+            RewriteQueryPipeline.fromParsed parsed
+            |> RewriteQueryPipeline.bind (bind options)
+            |> finishQueryBound options
+        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+            RewriteMutationPipeline.fromParsed parsed
+            |> RewriteMutationPipeline.bind (bind options)
+            |> finishMutationBound options
 
     let private parse options sql =
         let source = options.Source
