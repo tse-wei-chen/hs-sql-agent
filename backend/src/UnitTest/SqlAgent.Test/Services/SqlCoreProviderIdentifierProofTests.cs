@@ -154,8 +154,22 @@ public sealed class SqlCoreProviderIdentifierProofTests
     {
         var result = Analyze(provider, sql, Profile(provider, key, setting));
         Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].NameBinding);
-        Assert.Contains(result.Statements[1].Diagnostics,
-            d => d.Code == "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN");
+        if (sql.Contains("a.b", StringComparison.Ordinal))
+        {
+            // A quoted dot is an identifier character, not a schema-part
+            // separator. The DDL is rejected before it can mint Catalog facts.
+            Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[0].Status);
+            Assert.Contains(result.Statements[1].Diagnostics,
+                d => d.Code == "SQL_CATALOG_BINDING_INCOMPLETE");
+        }
+        else
+        {
+            // A qualified physical table can be analyzed structurally, but
+            // flat Catalog names cannot prove multi-part identity resolution.
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
+            Assert.Contains(result.Statements[1].Diagnostics,
+                d => d.Code == "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN");
+        }
     }
 
     [Theory]
