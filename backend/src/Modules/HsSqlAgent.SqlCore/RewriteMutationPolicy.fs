@@ -7,7 +7,7 @@ open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 /// Mutation-only policy: no query plan can enter this authorization boundary.
 module internal RewriteMutationPolicy =
 
-    let private deny = RewritePolicy.deny
+    let private deny code span message : 'T = RewritePolicy.deny code span message
 
     // A conservative three-valued proof: only expressions that are TRUE for every row
     // are considered unbounded. Never simplify unknown column comparisons, NULL
