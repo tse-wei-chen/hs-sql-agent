@@ -24,7 +24,7 @@ type SqlCatalogOperation =
 
 /// Exact, normalized SQL identifier parts. A single quoted "a.b" is one
 /// part, while schema.table has two; neither can collide in Key.
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type SqlCatalogQualifiedName internal (parts: IReadOnlyList<string>) =
     member _.Parts = parts
     member _.IsQualified = parts.Count > 1
