@@ -48,14 +48,14 @@ module internal RewriteCatalogIdentifierProof =
 
     let isSimpleAsciiIdentifier (value: string) =
         not (String.IsNullOrEmpty value)
-        && value.Split('.')
-           |> Array.forall (fun part ->
+        && (value.Split('.')
+            |> Array.forall (fun part ->
                not (String.IsNullOrEmpty part)
                && (part |> Seq.forall (fun c ->
                    (c >= 'A' && c <= 'Z')
                    || (c >= 'a' && c <= 'z')
                    || (c >= '0' && c <= '9')
-                   || c = '_')))
+                   || c = '_'))))
 
     let safeCatalog (state: SqlCatalogState) =
         state.Tables |> Seq.forall (fun table ->
