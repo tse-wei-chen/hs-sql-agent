@@ -248,12 +248,12 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.SecurityIntents)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlSecurityIntent>
-    member _.DetailedEffects = detailedEffects
     let securityDependencies : IReadOnlyList<SqlSecurityDependency> =
         (statements
          |> Seq.collect (fun item -> item.SecurityDependencies)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlSecurityDependency>
+    member _.DetailedEffects = detailedEffects
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies
     member _.Statements = statements
