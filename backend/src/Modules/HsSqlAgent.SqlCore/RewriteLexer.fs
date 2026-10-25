@@ -44,7 +44,8 @@ module internal RewriteLexer =
           PostgresEscapeString: bool
           PostgresDollarQuotedString: bool
           OracleQuotedString: bool
-          HashPrefixedIdentifier: bool }
+          HashPrefixedIdentifier: bool
+          ScriptMySqlAccountSeparator: bool }
 
     module LexicalSemantics =
         let standard =
@@ -57,7 +58,8 @@ module internal RewriteLexer =
               PostgresEscapeString = false
               PostgresDollarQuotedString = false
               OracleQuotedString = false
-              HashPrefixedIdentifier = false }
+              HashPrefixedIdentifier = false
+              ScriptMySqlAccountSeparator = false }
 
         let mysql ansiQuotes noBackslashEscapes =
             { standard with
@@ -489,6 +491,11 @@ module internal RewriteLexer =
                 while i < length && isIdentifierPart sql[i] do i <- i + 1
                 let parameterText = sql.Substring(start, i - start)
                 parseError ("Unbound SQL parameter '" + parameterText + "'.") start (max 1 (i - start))
+            elif c = '@' && semantics.ScriptMySqlAccountSeparator then
+                // Script-only MySQL DCL account delimiter. The executable SQL
+                // parser uses a stricter lexer and continues to reject @params.
+                add (Symbol '@') i (i + 1)
+                i <- i + 1
             elif c = '@' then
                 let start = i
                 i <- i + 1
