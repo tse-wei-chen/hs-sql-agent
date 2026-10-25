@@ -173,12 +173,15 @@ public sealed class SqlCoreDclSecurityAnalyzerTests
     }
 
     [Fact]
-    public void MySqlHostQualifiedPrincipalFailsClosedAtLexicalBoundary()
+    public void MySqlExplicitAccountHostIsModeledAsPotentialIntentOnly()
     {
-        // MySQL user@host is NOT a plain SQL role; until the script Lexer
-        // accepts provider-native accounts, it is rejected before DCL analysis.
-        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
-            Analyze("GRANT SELECT ON app.users TO 'user'@'localhost'", SqlAgentToolType.MySQL));
+        var analysis = Analyze("GRANT SELECT ON app.users TO 'user'@'localhost'", SqlAgentToolType.MySQL);
+        var intent = Assert.Single(analysis.SecurityIntents);
+        Assert.Equal(SqlSecurityPrincipalKind.MySqlAccount, intent.PrincipalKind);
+        Assert.Equal("user", intent.Principal);
+        Assert.Equal("localhost", intent.PrincipalHost);
+        Assert.Equal(SqlCatalogKnowledge.Unknown, intent.Certainty);
+        Assert.Null(Assert.Single(analysis.DetailedEffects).ObjectIdentity);
     }
 
     [Fact]

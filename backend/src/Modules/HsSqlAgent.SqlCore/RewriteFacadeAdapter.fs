@@ -313,7 +313,8 @@ module internal RewriteFacadeAdapter =
           OracleQuotedString =
             grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.OracleQuotedString)
           HashPrefixedIdentifier =
-            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier) }
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier)
+          ScriptMySqlAccountSeparator = false }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { EnforceDialectSyntax = true
@@ -361,6 +362,16 @@ module internal RewriteFacadeAdapter =
     let tokenizeSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
         sourceDialect source |> ignore
         RewriteLexer.tokenizeWith (sourceLexicalSemantics source sourceProfile) sql
+
+    /// The script frontend can recognize MySQL 'user'@'host' as an opaque
+    /// DCL account spelling; raw SQL compilation remains strictly unchanged.
+    let tokenizeScriptValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
+        sourceDialect source |> ignore
+        let lexical = sourceLexicalSemantics source sourceProfile
+        if source = SqlAgentToolType.MySQL then
+            RewriteLexer.tokenizeWith { lexical with ScriptMySqlAccountSeparator = true } sql
+        else
+            RewriteLexer.tokenizeWith lexical sql
 
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
         RewriteParser.parseForWith

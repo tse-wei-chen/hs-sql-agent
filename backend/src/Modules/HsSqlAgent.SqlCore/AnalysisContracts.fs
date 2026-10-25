@@ -43,6 +43,7 @@ type SqlStatementEffectOperation =
     | SetSearchPath = 15
     | GrantPrivilege = 16
     | RevokePrivilege = 17
+    | DenyPrivilege = 18
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -83,6 +84,7 @@ type SqlCatalogBindingStatus =
 type SqlSecurityAction =
     | Grant = 0
     | Revoke = 1
+    | Deny = 2
 
 type SqlTablePrivilege =
     | Select = 0
@@ -95,6 +97,7 @@ type SqlSecurityPrincipalKind =
     | User = 1
     | Role = 2
     | Public = 3
+    | MySqlAccount = 4
 
 /// A parsed potential privilege change. Target is the syntax-qualified name,
 /// NEVER an identity proven to exist. Even a syntactically valid GRANT might
@@ -106,11 +109,15 @@ type SqlSecurityIntent internal (
     target: SqlCatalogQualifiedName,
     principal: string,
     principalKind: SqlSecurityPrincipalKind,
-    span: SqlDiagnosticSpan) =
+    span: SqlDiagnosticSpan,
+    principalHost: string | null) =
     member _.Action = action
     member _.Privilege = privilege
     member _.Target = target
     member _.Principal = principal
+    /// Explicit MySQL account Host as written in the script, NEVER a server
+    /// identity/ACL proof. Null for non-MySQL principals.
+    member _.PrincipalHost = principalHost
     member _.PrincipalKind = principalKind
     member _.Certainty = SqlCatalogKnowledge.Unknown
     member _.Span = span

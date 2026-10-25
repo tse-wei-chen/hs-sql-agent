@@ -137,9 +137,11 @@ module internal RewriteStatementEffects =
                     securityIntents
                     |> Seq.map (fun intent ->
                         let operation =
-                            if intent.Action = SqlSecurityAction.Grant then
-                                SqlStatementEffectOperation.GrantPrivilege
-                            else SqlStatementEffectOperation.RevokePrivilege
+                            match intent.Action with
+                            | SqlSecurityAction.Grant -> SqlStatementEffectOperation.GrantPrivilege
+                            | SqlSecurityAction.Revoke -> SqlStatementEffectOperation.RevokePrivilege
+                            | SqlSecurityAction.Deny -> SqlStatementEffectOperation.DenyPrivilege
+                            | _ -> SqlStatementEffectOperation.Unknown
                         effect SqlEffectKind.ChangePermissions operation
                             intent.Target.DisplayName null SqlCatalogKnowledge.Unknown
                             intent.Span noDependencies)
