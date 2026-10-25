@@ -93,7 +93,8 @@ public sealed class SqlCoreEarlyStageTypestateTests
         var inspected = SqlCoreFacade.CompileQueryWithFacts(
             sql, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, validation, policy);
 
-        Assert.Contains("LIMIT 3", direct.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIMIT", direct.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(direct.Parameters, parameter => Equals(parameter.Value, 3));
         Assert.Equal(direct.Sql, inspected.Command.Sql);
     }
 }
