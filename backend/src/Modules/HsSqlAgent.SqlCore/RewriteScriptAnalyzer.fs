@@ -113,17 +113,28 @@ module internal RewriteScriptAnalyzer =
             let results = ResizeArray<SqlStatementAnalysis>()
             let errors = ResizeArray<SqlDiagnostic>()
             let mutable current = initial
+            let mutable transaction = RewriteTransactionAnalyzer.Outside
 
             RewriteResourceBudget.withStage "ScriptAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
                 for syntax in parsed.Statements do
                     RewriteResourceBudget.checkpoint ()
                     let before = current
+                    let transactionBefore = RewriteTransactionAnalyzer.status transaction
                     let status, effects, certainty, bindingStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
                             SqlCatalogKnowledge.Unknown, SqlCatalogBindingStatus.Rejected, current, [],
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [syntax.Diagnostic])
+                        elif syntax.Kind = SqlScriptStatementKind.Transaction then
+                            let status, certainty, next, newTransaction, changes, diagnostics =
+                                RewriteTransactionAnalyzer.analyze sourceDialect sourceProfile current transaction syntax
+                            transaction <- newTransaction
+                            let effects =
+                                if changes.IsEmpty then SqlEffectKind.ChangeTransaction
+                                else SqlEffectKind.ChangeTransaction ||| SqlEffectKind.ChangeSchema
+                            status, effects, certainty, SqlCatalogBindingStatus.NotApplicable,
+                            next, changes, diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
                             let status, certainty, next, changes, diagnostics =
                                 if sourceDialect = SqlAgentToolType.Postgres then
@@ -170,10 +181,29 @@ module internal RewriteScriptAnalyzer =
                                     else [syntax.Diagnostic]
                                 parserDiagnostics @ catalogErrors
                             status, effects, certainty, bindingStatus, next, [], diagnostics
-                    current <- next
-                    for item in diagnostics do errors.Add item
+                    let nextTransaction =
+                        RewriteTransactionAnalyzer.invalidateIfUnproven transaction syntax.Kind status
+                    let stateBecameUnknown =
+                        transactionBefore = SqlTransactionState.Active
+                        && RewriteTransactionAnalyzer.status nextTransaction = SqlTransactionState.Unknown
+                    transaction <- nextTransaction
+                    let after =
+                        if stateBecameUnknown then RewriteCatalogModel.taintAll next else next
+                    let additionalErrors =
+                        if stateBecameUnknown then
+                            [diagnostic syntax "SQL_TRANSACTION_CONTEXT_UNPROVEN" SqlDiagnosticCategory.Capability
+                                "An unproven statement or failure has invalidated the active transaction and Catalog proofs."]
+                        else []
+                    let allDiagnostics = diagnostics @ additionalErrors
+                    current <- after
+                    for item in allDiagnostics do errors.Add item
                     results.Add(
                         SqlStatementAnalysis(
-                            syntax, status, effects, certainty, bindingStatus, before, next,
-                            readOnly changes, readOnly diagnostics)))
-            SqlScriptAnalysisResult(readOnly results, readOnly errors, current))
+                            syntax, status, effects,
+                            (if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty),
+                            bindingStatus, before, after,
+                            transactionBefore, RewriteTransactionAnalyzer.status transaction,
+                            readOnly changes, readOnly allDiagnostics)))
+            SqlScriptAnalysisResult(
+                readOnly results, readOnly errors, current,
+                RewriteTransactionAnalyzer.status transaction))
