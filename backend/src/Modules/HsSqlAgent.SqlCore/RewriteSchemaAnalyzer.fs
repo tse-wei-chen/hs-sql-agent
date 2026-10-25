@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 
 /// Source-dialect-aware TABLE DDL grammar. All dialects share the same
@@ -33,7 +34,14 @@ module internal RewriteSchemaAnalyzer =
           DropBareColumn: bool
           DropColumnIfExists: bool }
 
-    let private grammar = function
+    let private hasVersion (profile: SqlProviderCapabilityProfile | null) major minor =
+        match profile with
+        | null -> false
+        | value ->
+            not (isNull value.ServerVersion)
+            && value.ServerVersion.CompareTo(Version(major, minor)) >= 0
+
+    let private grammar sourceProfile = function
         | SqlAgentToolType.Postgres ->
             { CreateIfNotExists = true; DropIfExists = true
               AddColumnKeyword = true; AddParentheses = false
@@ -47,12 +55,11 @@ module internal RewriteSchemaAnalyzer =
         | SqlAgentToolType.Sqlite ->
             { CreateIfNotExists = true; DropIfExists = true
               AddColumnKeyword = true; AddParentheses = false
-              DropColumnKeyword = true; DropBareColumn = false
+              DropColumnKeyword = hasVersion sourceProfile 3 35; DropBareColumn = false
               DropColumnIfExists = false }
         | SqlAgentToolType.MsSqlServer ->
-            // DROP TABLE IF EXISTS is version-dependent (SQL Server 2016+).
-            // Until a profile/version proof is modeled, reject it.
-            { CreateIfNotExists = false; DropIfExists = false
+            // DROP TABLE IF EXISTS requires SQL Server 2016 (13.0).
+            { CreateIfNotExists = false; DropIfExists = hasVersion sourceProfile 13 0
               AddColumnKeyword = false; AddParentheses = false
               DropColumnKeyword = true; DropBareColumn = false
               DropColumnIfExists = false }
@@ -62,11 +69,10 @@ module internal RewriteSchemaAnalyzer =
               DropColumnKeyword = true; DropBareColumn = false
               DropColumnIfExists = false }
         | SqlAgentToolType.Firebird ->
-            // Firebird 5 / earlier stable syntax. COLUMN and IF EXISTS on
-            // DROP are newer version-specific features; not assumed here.
+            // COLUMN on DROP needs a Firebird 6+ source version proof.
             { CreateIfNotExists = false; DropIfExists = false
               AddColumnKeyword = false; AddParentheses = false
-              DropColumnKeyword = false; DropBareColumn = true
+              DropColumnKeyword = hasVersion sourceProfile 6 0; DropBareColumn = true
               DropColumnIfExists = false }
         | _ -> raise OutsideSubset
 
@@ -76,8 +82,8 @@ module internal RewriteSchemaAnalyzer =
         | Identifier(value, false) -> value.ToUpperInvariant()
         | _ -> ""
 
-    let parseFor sourceDialect (tokens: Token[]) =
-        let rules = grammar sourceDialect
+    let parseForWith sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) (tokens: Token[]) =
+        let rules = grammar sourceProfile sourceDialect
         let mutable index = 0
         let current () = tokens.[min index (tokens.Length - 1)]
         let word () = tokenWord (current ())
@@ -145,8 +151,9 @@ module internal RewriteSchemaAnalyzer =
                     set ["NUMBER"; "INTEGER"; "DATE"; "TIMESTAMP"; "FLOAT"],
                     set ["VARCHAR2"; "NVARCHAR2"; "CHAR"]
                 | SqlAgentToolType.Firebird ->
-                    set ["SMALLINT"; "INTEGER"; "INT"; "BIGINT"; "BOOLEAN"; "DATE"; "TIMESTAMP"],
-                    set ["VARCHAR"; "CHAR"]
+                    let baseTypes = set ["SMALLINT"; "INTEGER"; "INT"; "BIGINT"; "DATE"; "TIMESTAMP"]
+                    let fixed = if hasVersion sourceProfile 3 0 then Set.add "BOOLEAN" baseTypes else baseTypes
+                    fixed, set ["VARCHAR"; "CHAR"]
                 | _ -> raise OutsideSubset
             if Set.contains kind fixedTypes then kind
             elif Set.contains kind sizedTypes then
@@ -265,4 +272,6 @@ module internal RewriteSchemaAnalyzer =
         | OutsideSubset -> Unsupported
 
     /// Historic caller; preserve source semantics for direct internal uses.
+    let parseFor sourceDialect tokens = parseForWith sourceDialect null tokens
+
     let parse tokens = parseFor SqlAgentToolType.Postgres tokens
