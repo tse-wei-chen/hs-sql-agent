@@ -232,15 +232,18 @@ module internal RewriteScriptAnalyzer =
             else
                 let owners =
                     state.Tables |> Seq.filter (fun t ->
-                        (match scope, target with
-                         | RewriteCatalogSchemaResolution.SingleSchema schema, None ->
-                             t.QualifiedName.Parts.Count = 2
-                             && String.Equals(t.QualifiedName.Parts[0], schema, StringComparison.Ordinal)
-                         | _ -> true)
-                        && (match target with
-                         | Some tableName ->
-                             String.Equals(tableName.Key, t.QualifiedName.Key, StringComparison.Ordinal)
-                         | None -> true)
+                        let matchesScope =
+                            match scope, target with
+                            | RewriteCatalogSchemaResolution.SingleSchema schema, None ->
+                                t.QualifiedName.Parts.Count = 2
+                                && String.Equals(t.QualifiedName.Parts[0], schema, StringComparison.Ordinal)
+                            | _ -> true
+                        let matchesTarget =
+                            match target with
+                            | Some tableName ->
+                                String.Equals(tableName.Key, t.QualifiedName.Key, StringComparison.Ordinal)
+                            | None -> true
+                        matchesScope && matchesTarget
                         && (t.Indexes |> Seq.exists (fun idx ->
                             String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
                     |> Seq.toList
