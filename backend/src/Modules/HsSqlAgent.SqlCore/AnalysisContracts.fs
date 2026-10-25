@@ -41,6 +41,8 @@ type SqlStatementEffectOperation =
     | DropConstraint = 13
     | TransactionControl = 14
     | SetSearchPath = 15
+    | GrantPrivilege = 16
+    | RevokePrivilege = 17
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -74,6 +76,44 @@ type SqlCatalogBindingStatus =
     | Verified = 1
     | Unverified = 2
     | Rejected = 3
+
+
+/// DCL describes syntactic *intent*, not effective database permissions.
+/// No principal, grantor, inherited role, ownership or server ACL is attested.
+type SqlSecurityAction =
+    | Grant = 0
+    | Revoke = 1
+
+type SqlTablePrivilege =
+    | Select = 0
+    | Insert = 1
+    | Update = 2
+    | Delete = 3
+
+type SqlSecurityPrincipalKind =
+    | Named = 0
+    | User = 1
+    | Role = 2
+    | Public = 3
+
+/// A parsed potential privilege change. Target is the syntax-qualified name,
+/// NEVER an identity proven to exist. Even a syntactically valid GRANT might
+/// fail or be ignored, so Certainty is unconditionally Unknown.
+[<Sealed>]
+type SqlSecurityIntent internal (
+    action: SqlSecurityAction,
+    privilege: SqlTablePrivilege,
+    target: SqlCatalogQualifiedName,
+    principal: string,
+    principalKind: SqlSecurityPrincipalKind,
+    span: SqlDiagnosticSpan) =
+    member _.Action = action
+    member _.Privilege = privilege
+    member _.Target = target
+    member _.Principal = principal
+    member _.PrincipalKind = principalKind
+    member _.Certainty = SqlCatalogKnowledge.Unknown
+    member _.Span = span
 
 /// Static transaction state, not evidence of server execution.
 /// Unknown means no schema proof can survive unmodeled transaction effects.
@@ -109,6 +149,7 @@ type SqlStatementAnalysis internal (
     changes: IReadOnlyList<SqlCatalogChange>,
     detailedEffects: IReadOnlyList<SqlStatementEffect>,
     effectCoverage: SqlEffectCoverage,
+    securityIntents: IReadOnlyList<SqlSecurityIntent>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -129,6 +170,7 @@ type SqlStatementAnalysis internal (
     member _.Changes = changes
     member _.DetailedEffects = detailedEffects
     member _.EffectCoverage = effectCoverage
+    member _.SecurityIntents = securityIntents
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -143,7 +185,13 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.DetailedEffects)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlStatementEffect>
+    let securityIntents : IReadOnlyList<SqlSecurityIntent> =
+        (statements
+         |> Seq.collect (fun item -> item.SecurityIntents)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlSecurityIntent>
     member _.DetailedEffects = detailedEffects
+    member _.SecurityIntents = securityIntents
     member _.Statements = statements
     member _.Diagnostics = diagnostics
     member _.FinalCatalog = finalCatalog
