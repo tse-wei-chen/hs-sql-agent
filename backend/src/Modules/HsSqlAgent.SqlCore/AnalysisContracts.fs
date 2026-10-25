@@ -48,8 +48,8 @@ type SqlStatementEffectOperation =
 type SqlStatementEffect internal (
     kind: SqlEffectKind,
     operation: SqlStatementEffectOperation,
-    objectName: string,
-    objectIdentity: SqlCatalogQualifiedName,
+    objectName: string | null,
+    objectIdentity: SqlCatalogQualifiedName | null,
     certainty: SqlCatalogKnowledge,
     span: SqlDiagnosticSpan,
     dependencies: IReadOnlyList<string>) =
@@ -126,10 +126,10 @@ type SqlScriptAnalysisResult internal (
     finalCatalog: SqlCatalogState,
     finalTransaction: SqlTransactionState) =
     let detailedEffects : IReadOnlyList<SqlStatementEffect> =
-        statements
-        |> Seq.collect (fun item -> item.DetailedEffects)
-        |> Seq.toArray
-        |> Array.AsReadOnly
+        (statements
+         |> Seq.collect (fun item -> item.DetailedEffects)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlStatementEffect>
     member _.DetailedEffects = detailedEffects
     member _.Statements = statements
     member _.Diagnostics = diagnostics
