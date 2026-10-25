@@ -9,8 +9,15 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreSchemaDependencyTests
 {
     private static SqlScriptAnalysisResult Analyze(
-        SqlAgentToolType dialect, string script) =>
-        SqlCoreFacade.AnalyzeScript(script, dialect, SqlCatalogState.KnownEmpty());
+        SqlAgentToolType dialect, string script)
+    {
+        var profile = dialect == SqlAgentToolType.Sqlite
+            ? new HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile(
+                dialect, new Version(3, 35))
+            : null;
+        return SqlCoreFacade.AnalyzeScript(
+            script, dialect, SqlCatalogState.KnownEmpty(), profile);
+    }
 
     [Theory]
     [InlineData(SqlAgentToolType.Postgres, "INTEGER", "VARCHAR(32)")]
@@ -25,8 +32,9 @@ public sealed class SqlCoreSchemaDependencyTests
         var result = Analyze(dialect,
             $"CREATE TABLE users(id {numericType} NOT NULL PRIMARY KEY, " +
             $"name {textType} UNIQUE, note {textType});" +
-            "ALTER TABLE users DROP COLUMN name;" +
-            "ALTER TABLE users DROP COLUMN note;" +
+            (dialect == SqlAgentToolType.Firebird
+                ? "ALTER TABLE users DROP name; ALTER TABLE users DROP note;"
+                : "ALTER TABLE users DROP COLUMN name; ALTER TABLE users DROP COLUMN note;") +
             "DROP TABLE users;");
         Assert.Equal(4, result.Statements.Count);
         Assert.Empty(result.Statements[0].Diagnostics);
@@ -57,7 +65,9 @@ public sealed class SqlCoreSchemaDependencyTests
             $"CREATE TABLE parent(id {kind} NOT NULL PRIMARY KEY);" +
             $"CREATE TABLE child(id {kind}, parent_id {kind}, " +
             "CONSTRAINT fk_parent FOREIGN KEY (parent_id) REFERENCES parent(id));" +
-            "ALTER TABLE child DROP COLUMN parent_id;" +
+            (dialect == SqlAgentToolType.Firebird
+                ? "ALTER TABLE child DROP parent_id;"
+                : "ALTER TABLE child DROP COLUMN parent_id;") +
             "DROP TABLE parent;" +
             "DROP TABLE child;" +
             "DROP TABLE parent;");
@@ -88,7 +98,9 @@ public sealed class SqlCoreSchemaDependencyTests
             "CONSTRAINT pk_parent PRIMARY KEY(a,b));" +
             $"CREATE TABLE child(id {typeName}, x {typeName}, y {typeName}, " +
             "FOREIGN KEY(x,y) REFERENCES parent(a,b));" +
-            "ALTER TABLE parent DROP COLUMN b;");
+            (dialect == SqlAgentToolType.Firebird
+                ? "ALTER TABLE parent DROP b;"
+                : "ALTER TABLE parent DROP COLUMN b;"));
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
         Assert.Equal(2, result.Statements[1].CatalogAfter.Tables.Count);
