@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 
 /// Proven relational dependencies of a known, closed-world Virtual Catalog.
 /// This is a static safety model, NOT an authorization or execution plan.
@@ -21,14 +22,14 @@ module internal RewriteSchemaDependencies =
         state.IsClosedWorld &&
         (state.Tables |> Seq.forall (fun t -> t.Knowledge = SqlCatalogKnowledge.Known))
 
-    let validateCreate dialect (state: SqlCatalogState) name
+    let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) name
                        (columns: SqlCatalogColumn list)
                        (constraints: SqlCatalogConstraint list) =
         if not (complete state) then
             Unproven "Existing Catalog is incomplete; referenced key dependencies cannot be proven."
         elif constraints |> List.exists (fun d ->
             d.Kind = SqlCatalogConstraintKind.ForeignKey)
-             && (dialect = SqlAgentToolType.MySQL || dialect = SqlAgentToolType.MsSqlServer) then
+             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name) then
             Unproven "Foreign-key table resolution needs a proven provider identifier case/collation contract."
         else
             let mutable error: DependencyProof option = None
@@ -101,7 +102,7 @@ module internal RewriteSchemaDependencies =
                                     reject "Foreign key references a missing local/remote column."
             defaultArg error Proven
 
-    let validateNewConstraint dialect state name
+    let validateNewConstraint dialect profile state name
                               (constraintInfo: SqlCatalogConstraint) =
         match RewriteCatalogModel.lookup state name with
         | None -> Invalid ("Cannot add constraint to missing table '" + name + "'.")
@@ -113,7 +114,7 @@ module internal RewriteSchemaDependencies =
                 Invalid ("Constraint '" + constraintInfo.Name + "' already exists.")
             else
                 let proposed = Seq.append table.Constraints [constraintInfo] |> Seq.toList
-                match validateCreate dialect state name
+                match validateCreate dialect profile state name
                           (table.Columns |> Seq.toList) proposed with
                 | Proven ->
                     // Structural validity is not a proof of existing row data.

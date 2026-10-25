@@ -90,10 +90,10 @@ module internal RewriteCatalogBinding =
                 // SqlProviderCapabilityProfile has neither proof. A generic
                 // uppercasing schema binder cannot safely certify such names.
                 if physicalTableCount > 0
-                   && (sourceDialect = SqlAgentToolType.MySQL
-                       || sourceDialect = SqlAgentToolType.MsSqlServer) then
+                   && not (RewriteCatalogIdentifierProof.canProvePhysicalNames
+                                sourceDialect profile state syntax.Text) then
                     unverified syntax "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN"
-                        "Provider table identifier case rules are unproven; a normalized name match is not authoritative."
+                        "Provider identifier case/collation proof is absent or outside the restricted ASCII-safe subset; a normalized match is not authoritative."
                 else
                     let namesChecked =
                         RewriteResourceBudget.withStage "CatalogNameValidation" SqlDiagnosticStage.Binding (fun () ->
