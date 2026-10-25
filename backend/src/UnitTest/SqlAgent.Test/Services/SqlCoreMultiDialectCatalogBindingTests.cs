@@ -30,7 +30,9 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[1].NameBinding);
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[1].TypeBinding);
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[2].CatalogBinding);
-        Assert.Equal(SqlCatalogBindingStatus.Rejected, result.Statements[3].CatalogBinding);
+        Assert.True(result.Statements[3].CatalogBinding == SqlCatalogBindingStatus.Rejected,
+            $"{dialect}: {result.Statements[3].CatalogBinding} | " +
+            string.Join(" ; ", result.Statements[3].Diagnostics.Select(d => d.Code + ": " + d.Message)));
         Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[3].NameBinding);
         Assert.Equal(SqlCatalogBindingStatus.Rejected, result.Statements[3].TypeBinding);
         Assert.Contains(result.Statements[3].Diagnostics,
