@@ -22,7 +22,7 @@ module internal RewriteSchemaDependencies =
         state.IsClosedWorld &&
         (state.Tables |> Seq.forall (fun t -> t.Knowledge = SqlCatalogKnowledge.Known))
 
-    let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) name
+    let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
                        (columns: SqlCatalogColumn list)
                        (constraints: SqlCatalogConstraint list) =
         if not (complete state) then
