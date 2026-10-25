@@ -116,7 +116,7 @@ module internal RewriteScriptParser =
         RewriteResourceBudget.withCompilation (fun () ->
             let tokens =
                 RewriteResourceBudget.withStage "ScriptLexical" SqlDiagnosticStage.Lexical (fun () ->
-                    RewriteFacadeAdapter.tokenizeSourceValidated sql sourceDialect sourceProfile)
+                    RewriteFacadeAdapter.tokenizeScriptValidated sql sourceDialect sourceProfile)
                 |> List.toArray
             let result = ResizeArray<SqlScriptStatementSyntax>()
             let diagnostics = ResizeArray<SqlDiagnostic>()
