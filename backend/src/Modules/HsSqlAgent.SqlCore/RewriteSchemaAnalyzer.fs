@@ -118,6 +118,12 @@ module internal RewriteSchemaAnalyzer =
         let namePart () =
             match (current ()).Kind with
             | Identifier(name, quoted) ->
+                if RewriteCatalogIdentifierProof.mode sourceDialect sourceProfile =
+                       RewriteCatalogIdentifierProof.FoldAscii
+                   && not (RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier name) then
+                    // A quoted "a.b" is NOT a schema-qualified a.b. Do not
+                    // publish a known Catalog from an ambiguous flat name.
+                    raise OutsideSubset
                 index <- index + 1
                 normalizeName name quoted
             | _ -> raise (Malformed("Expected a SQL identifier in TABLE DDL."))
