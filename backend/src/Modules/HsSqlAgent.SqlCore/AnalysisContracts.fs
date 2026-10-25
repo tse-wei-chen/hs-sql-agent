@@ -22,6 +22,13 @@ type SqlStatementAnalysisStatus =
     | Unsupported = 2
     | Invalid = 3
 
+/// A separate proof of static name/type binding; never compiler authorization.
+type SqlCatalogBindingStatus =
+    | NotApplicable = 0
+    | Verified = 1
+    | Unverified = 2
+    | Rejected = 3
+
 /// Effects are *potential* unless certainty is Known. This is not an
 /// execution permission, SQL compiler proof, or security authorization.
 [<Sealed>]
@@ -30,6 +37,7 @@ type SqlStatementAnalysis internal (
     status: SqlStatementAnalysisStatus,
     effects: SqlEffectKind,
     certainty: SqlCatalogKnowledge,
+    catalogBinding: SqlCatalogBindingStatus,
     catalogBefore: SqlCatalogState,
     catalogAfter: SqlCatalogState,
     changes: IReadOnlyList<SqlCatalogChange>,
@@ -39,6 +47,7 @@ type SqlStatementAnalysis internal (
     member _.Status = status
     member _.Effects = effects
     member _.Certainty = certainty
+    member _.CatalogBinding = catalogBinding
     member _.CatalogBefore = catalogBefore
     member _.CatalogAfter = catalogAfter
     member _.Changes = changes
