@@ -141,10 +141,16 @@ type SqlCatalogChange internal (
     operation: SqlCatalogOperation,
     certainty: SqlCatalogKnowledge,
     span: SqlDiagnosticSpan,
-    columnName: string) =
+    columnName: string,
+    tableIdentity: SqlCatalogQualifiedName) =
     new(tableName, operation, certainty, span) =
-        SqlCatalogChange(tableName, operation, certainty, span, null)
+        SqlCatalogChange(tableName, operation, certainty, span, null, null)
+    new(tableName, operation, certainty, span, columnName: string) =
+        SqlCatalogChange(tableName, operation, certainty, span, columnName, null)
     member _.TableName = tableName
+    /// Proven structured physical table identity, unlike the ambiguous
+    /// human-readable TableName. Null for indeterminate/transaction effects.
+    member _.TableIdentity = tableIdentity
     member _.Operation = operation
     member _.Certainty = certainty
     member _.Span = span
