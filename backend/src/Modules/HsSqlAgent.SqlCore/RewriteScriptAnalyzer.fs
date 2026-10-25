@@ -48,6 +48,15 @@ module internal RewriteScriptAnalyzer =
         let exact name operation next =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
             next, [changed syntax name operation SqlCatalogKnowledge.Known], []
+        let dependencyUnproven message =
+            let unknown = RewriteCatalogModel.taintAll state
+            let error =
+                diagnostic syntax "SQL_SCHEMA_DEPENDENCY_UNPROVEN"
+                    SqlDiagnosticCategory.Capability message
+            SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
+            unknown,
+            [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
+            [error]
         match parsed with
         | Invalid message -> fail message
         | Unsupported ->
@@ -58,21 +67,29 @@ module internal RewriteScriptAnalyzer =
                     "Source dialect DDL is outside the statically proven TABLE subset; catalog facts are invalidated."
             SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
             unknown, [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown], [error]
-        | Recognized (Create(name, columns, ifNotExists)) ->
+        | Recognized (Create(name, columns, constraints, ifNotExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known && ifNotExists ->
                 noChange
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
                 fail ("CREATE TABLE " + name + " already exists in the known catalog.")
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
-                RewriteCatalogModel.knownTable state name columns
-                |> exact name SqlCatalogOperation.CreateTable
+                match RewriteSchemaDependencies.validateCreate sourceDialect state name columns constraints with
+                | RewriteSchemaDependencies.Proven ->
+                    RewriteCatalogModel.knownTableWithConstraints state name columns constraints
+                    |> exact name SqlCatalogOperation.CreateTable
+                | RewriteSchemaDependencies.Invalid message -> fail message
+                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ -> partial name SqlCatalogOperation.CreateTable
         | Recognized (Drop(name, ifExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
-                RewriteCatalogModel.dropKnown state name
-                |> exact name SqlCatalogOperation.DropTable
+                match RewriteSchemaDependencies.canDropTable state name with
+                | RewriteSchemaDependencies.Proven ->
+                    RewriteCatalogModel.dropKnown state name
+                    |> exact name SqlCatalogOperation.DropTable
+                | RewriteSchemaDependencies.Invalid message -> fail message
+                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ when RewriteCatalogModel.isKnownAbsent state name && ifExists ->
                 noChange
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
@@ -87,6 +104,7 @@ module internal RewriteScriptAnalyzer =
                 let working = ResizeArray<SqlCatalogColumn>(table.Columns)
                 let pending = ResizeArray<SqlCatalogChange>()
                 let mutable failure: string option = None
+                let mutable unknownDependency: string option = None
                 let locate column =
                     working |> Seq.tryFindIndex (fun c ->
                         String.Equals(c.Name, column, StringComparison.Ordinal))
@@ -108,17 +126,24 @@ module internal RewriteScriptAnalyzer =
                                 failure <- Some(
                                     "ALTER TABLE " + name + " cannot drop its last column.")
                             | Some index ->
-                                working.RemoveAt index
-                                pending.Add(changedColumn syntax name columnName SqlCatalogOperation.DropColumn)
+                                match RewriteSchemaDependencies.canDropColumn state name columnName with
+                                | RewriteSchemaDependencies.Proven ->
+                                    working.RemoveAt index
+                                    pending.Add(changedColumn syntax name columnName SqlCatalogOperation.DropColumn)
+                                | RewriteSchemaDependencies.Invalid message ->
+                                    failure <- Some message
+                                | RewriteSchemaDependencies.Unproven message ->
+                                    unknownDependency <- Some message
                             | None when ifExists -> ()
                             | None ->
                                 failure <- Some(
                                     "ALTER TABLE " + name + " column " + columnName +
                                     " does not exist.")
-                match failure with
-                | Some message -> fail message
-                | None when pending.Count = 0 -> noChange
-                | None ->
+                match failure, unknownDependency with
+                | Some message, _ -> fail message
+                | None, Some message -> dependencyUnproven message
+                | None, None when pending.Count = 0 -> noChange
+                | None, None ->
                     let updated = RewriteCatalogModel.knownTable state name working
                     SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
                     updated, (pending |> Seq.toList), []
