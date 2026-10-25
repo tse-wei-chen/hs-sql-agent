@@ -76,16 +76,16 @@ public sealed class SqlCoreStructuredStatementEffectsTests
     }
 
     [Fact]
-    public void UnsupportedStatementsPreserveUnknownPotentialEffects()
+    public void ParsedDclPreservesUnknownEffectivePermissionCertainty()
     {
         var result = Analyze("GRANT SELECT ON users TO reader;");
         var statement = Assert.Single(result.Statements);
         var effect = Assert.Single(statement.DetailedEffects);
-        Assert.Equal(SqlStatementEffectOperation.Unknown, effect.Operation);
-        Assert.True(effect.Kind.HasFlag(SqlEffectKind.ChangePermissions));
-        Assert.True(effect.Kind.HasFlag(SqlEffectKind.UnknownEffects));
+        Assert.Equal(SqlStatementEffectOperation.GrantPrivilege, effect.Operation);
+        Assert.Equal(SqlEffectKind.ChangePermissions, effect.Kind);
         Assert.Equal(SqlCatalogKnowledge.Unknown, effect.Certainty);
-        Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
+        Assert.Equal(SqlEffectCoverage.Partial, statement.EffectCoverage);
+        Assert.Equal(SqlCatalogKnowledge.Unknown, Assert.Single(statement.SecurityIntents).Certainty);
     }
 
     [Fact]
