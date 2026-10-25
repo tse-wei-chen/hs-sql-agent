@@ -260,8 +260,10 @@ module internal RewriteSchemaAnalyzer =
                 else raise OutsideSubset
             let element () =
                 RewriteResourceBudget.checkpoint ()
-                if word () = "PRIMARY" || word () = "UNIQUE"
-                   || word () = "FOREIGN" || word () = "CONSTRAINT" then
+                if word () = "CHECK" || word () = "EXCLUDE" then
+                    raise OutsideSubset
+                elif word () = "PRIMARY" || word () = "UNIQUE"
+                     || word () = "FOREIGN" || word () = "CONSTRAINT" then
                     constraints.Add(tableConstraint ())
                 else
                     let col = column ()
