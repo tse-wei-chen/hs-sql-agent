@@ -8,6 +8,7 @@ open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite
+open HsSqlAgent.SqlCore.Script
 
 type private SqlCoreTryState<'T> =
     | CapturedSuccess of 'T
@@ -279,6 +280,22 @@ module private FacadeCompile =
 /// immediately to the same closed DU and cannot bypass binding, validation, policy, or rendering.
 [<AbstractClass; Sealed>]
 type SqlCoreFacade private () =
+
+    /// Static source classification only. This never binds, authorizes, renders, or executes SQL.
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType) : SqlScriptParseResult =
+        SqlCoreFacade.ParseScript(sql, sourceDialect, null)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null) : SqlScriptParseResult =
+        ArgumentNullException.ThrowIfNull(sql)
+        match sourceProfile with
+        | null -> ()
+        | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
+        RewriteScriptParser.parse sql sourceDialect sourceProfile
 
     static member CompileQuery(
         parsed: ParsedStatement,
