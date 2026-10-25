@@ -6,6 +6,7 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
+open HsSqlAgent.SqlCore.SqlParsing
 
 /// Static binding of an already parsed DQL/DML Script statement against
 /// definite, closed-world virtual DDL facts. No policy, SQL rendering, schema
