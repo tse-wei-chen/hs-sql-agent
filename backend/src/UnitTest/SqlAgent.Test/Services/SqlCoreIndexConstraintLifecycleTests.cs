@@ -103,9 +103,12 @@ public sealed class SqlCoreIndexConstraintLifecycleTests
         var result = Analyze(provider,
             $"CREATE TABLE users(id {typeName} NOT NULL PRIMARY KEY);" +
             "DROP INDEX unknown;");
-        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status,
-            // The only supported DROP for MySQL/SQL Server has an ON target.
-            result.Statements[1].Status == SqlStatementAnalysisStatus.Unsupported ? null : null);
+        var expected = provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
+            ? SqlStatementAnalysisStatus.Unsupported
+            : SqlStatementAnalysisStatus.Invalid;
+        Assert.Equal(expected, result.Statements[1].Status);
+        Assert.Equal(SqlCatalogConstraintKind.PrimaryKey,
+            Assert.Single(Assert.Single(result.Statements[0].CatalogAfter.Tables).Constraints).Kind);
     }
 
     [Theory]
