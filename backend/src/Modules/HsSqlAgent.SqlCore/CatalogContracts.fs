@@ -73,7 +73,7 @@ type SqlCatalogConstraint internal (
     new(name, kind, columns, referencedIdentity: SqlCatalogQualifiedName, referencedColumns) =
         SqlCatalogConstraint(
             name, kind, columns,
-            if isNull referencedIdentity then null else referencedIdentity.DisplayName,
+            (if isNull referencedIdentity then null else referencedIdentity.DisplayName),
             referencedColumns, referencedIdentity)
     /// Null for unnamed constraints; never an auto-generated database name.
     member _.Name = name
