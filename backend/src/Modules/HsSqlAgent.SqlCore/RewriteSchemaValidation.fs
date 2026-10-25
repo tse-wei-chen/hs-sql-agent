@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
+open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -712,5 +713,23 @@ module internal RewriteSchemaValidation =
 
     let verify dialect snapshot (bound: BoundSql) =
         let catalog = buildCatalog dialect snapshot
+        (createValidation ()) catalog (Bound.value bound)
+        bound
+
+    /// Static analysis only. A complete Virtual Catalog is consumed directly,
+    /// without fabricating a runtime SqlSchemaSnapshot or execution proof.
+    /// The same scope/name/CTE algorithm as host-provided snapshots is used.
+    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+        if not state.IsClosedWorld
+           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+            invalidArg "state" "Strict catalog binding requires a complete known closed-world catalog."
+        let tables =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                keyCatalog dialect table.Name,
+                (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
+            |> Seq.toList
+        let catalog = { Dialect = dialect; Tables = Map.ofList tables }
         (createValidation ()) catalog (Bound.value bound)
         bound
