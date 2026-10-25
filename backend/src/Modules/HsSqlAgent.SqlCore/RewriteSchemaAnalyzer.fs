@@ -119,7 +119,10 @@ module internal RewriteSchemaAnalyzer =
                 columns.Add(column ())
                 while symbol ',' do
                     columns.Add(column ())
-                expectSymbol ')'
+                if not (symbol ')') then
+                    match (current ()).Kind with
+                    | End -> raise (Malformed("CREATE TABLE has no closing ')'."))
+                    | _ -> raise OutsideSubset
                 endOfStatement ()
                 let list = columns |> Seq.toList
                 let duplicate =
