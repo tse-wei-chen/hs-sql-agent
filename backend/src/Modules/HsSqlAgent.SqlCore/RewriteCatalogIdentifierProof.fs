@@ -70,14 +70,15 @@ module internal RewriteCatalogIdentifierProof =
             let all = values |> Seq.toList
             all.Length = (all |> List.distinct).Length
         let tables = state.Tables |> Seq.toList
-        distinctCanonical (tables |> Seq.map (fun table -> table.Name))
+        distinctCanonical (tables |> Seq.map (fun table -> table.QualifiedName.Key))
         && (tables |> List.forall (fun table ->
-            canonical table.Name
+            table.QualifiedName.Parts |> Seq.forall canonical
             && distinctCanonical (table.Columns |> Seq.map (fun col -> col.Name))
             && (table.Columns |> Seq.forall (fun col -> canonical col.Name))
             && (table.Constraints |> Seq.forall (fun key ->
                 optionalCanonical key.Name
-                && optionalCanonical key.ReferencedTable
+                && (isNull key.ReferencedIdentity ||
+                    (key.ReferencedIdentity.Parts |> Seq.forall canonical))
                 && (key.Columns |> Seq.forall canonical)
                 && (key.ReferencedColumns |> Seq.forall canonical)))
             && (table.Indexes |> Seq.forall (fun idx ->
@@ -89,6 +90,10 @@ module internal RewriteCatalogIdentifierProof =
         | Native -> true
         | FoldAscii -> isAsciiSql sql && safeCatalog state
         | Unproven -> false
+
+    /// Multi-part names are supported only when each part independently
+    /// meets the ASCII-safe canonicalization contract. The component boundary
+    /// is never recovered by splitting a flattened display string.
 
     /// Static canonical identity: MySQL lower_case_table_names=1 compares
     /// table names case-insensitively and column names are case-insensitive.
