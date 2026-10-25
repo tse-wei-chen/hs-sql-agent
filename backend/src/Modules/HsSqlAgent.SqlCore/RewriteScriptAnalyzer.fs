@@ -106,6 +106,8 @@ module internal RewriteScriptAnalyzer =
                         String.Equals(idx.Name, indexName, StringComparison.Ordinal))
                 if globalIndex then
                     fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
+                elif state.Tables |> Seq.exists (fun t -> t.Constraints.Count > 0) then
+                    dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
                 elif members.IsEmpty || List.distinct members <> members then
                     fail "CREATE INDEX has duplicate or empty column members."
                 elif members |> List.exists (fun memberName ->
@@ -140,7 +142,10 @@ module internal RewriteScriptAnalyzer =
                             not (String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
                     RewriteCatalogModel.withIndexes state owner.Name remaining
                     |> exact owner.Name SqlCatalogOperation.DropIndex
-                | [] -> fail ("DROP INDEX '" + indexName + "' is absent in the known Catalog.")
+                | [] ->
+                    dependencyUnproven
+                        ("DROP INDEX '" + indexName +
+                         "' is not a tracked standalone index; implicit constraint indexes cannot be ruled out.")
                 | _ -> dependencyUnproven "Index name resolves to more than one modeled owner."
         | Recognized (AddConstraint(tableName, newConstraint)) ->
             match RewriteCatalogModel.lookup state tableName with
