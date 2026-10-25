@@ -231,11 +231,28 @@ module internal RewriteSchemaAnalyzer =
                 let indexName = namePart ()
                 expect "ON"
                 let table = qualifiedName ()
-                let names = columnNames ()
+                // Expression/functional/partial indexes are valid SQL but
+                // outside the proven physical-column-only index subset.
+                match (current ()).Kind with
+                | Symbol '(' -> ()
+                | _ -> raise OutsideSubset
+                let names =
+                    expectSymbol '('
+                    let physical () =
+                        match (current ()).Kind with
+                        | Identifier _ -> namePart ()
+                        | _ -> raise OutsideSubset
+                    let cols = ResizeArray<string>()
+                    cols.Add(physical ())
+                    while symbol ',' do
+                        RewriteResourceBudget.checkpoint ()
+                        cols.Add(physical ())
+                    expectSymbol ')'
+                    cols |> Seq.toList
                 endOfStatement ()
                 Recognized(CreateIndex(table, indexName, names))
             else
-                expect "TABLE"
+                if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifNotExists ()
                 let table = qualifiedName ()
                 expectSymbol '('
@@ -341,7 +358,7 @@ module internal RewriteSchemaAnalyzer =
                 endOfStatement ()
                 Recognized(DropIndex(indexName, target))
             else
-                expect "TABLE"
+                if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifExists ()
                 let table = qualifiedName ()
                 endOfStatement ()
