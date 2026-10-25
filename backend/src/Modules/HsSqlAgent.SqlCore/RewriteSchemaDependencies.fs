@@ -69,10 +69,10 @@ module internal RewriteSchemaDependencies =
                         reject "Foreign-key column counts, target and uniqueness must be explicitly provable."
                     else
                         let parent =
-                            if equals item.ReferencedTable name then
+                            if not (isNull item.ReferencedIdentity) && equals item.ReferencedIdentity.Key name.Key then
                                 Some(columns, constraints)
                             else
-                                match RewriteCatalogModel.lookup state item.ReferencedTable with
+                                match RewriteCatalogModel.lookup state item.ReferencedIdentity with
                                 | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
                                     Some(table.Columns |> Seq.toList,
                                          table.Constraints |> Seq.toList)
@@ -105,7 +105,7 @@ module internal RewriteSchemaDependencies =
     let validateNewConstraint dialect profile state name
                               (constraintInfo: SqlCatalogConstraint) =
         match RewriteCatalogModel.lookup state name with
-        | None -> Invalid ("Cannot add constraint to missing table '" + name + "'.")
+        | None -> Invalid ("Cannot add constraint to missing table '" + name.DisplayName + "'.")
         | Some table ->
             if String.IsNullOrWhiteSpace constraintInfo.Name then
                 Unproven "ALTER ADD CONSTRAINT requires an explicit constraint name."
@@ -146,10 +146,10 @@ module internal RewriteSchemaDependencies =
         else
             let inbound =
                 RewriteCatalogModel.inboundForeignKeys state name
-                |> Seq.tryFind (fun (table, _) -> not (equals table.Name name))
+                |> Seq.tryFind (fun (table, _) -> not (equals table.QualifiedName.Key name.Key))
             match inbound with
             | Some(table, _) ->
-                Invalid ("DROP TABLE " + name +
+                Invalid ("DROP TABLE " + name.DisplayName +
                          " is blocked by a FOREIGN KEY in table '" + table.Name + "'.")
             | None -> Proven
 
@@ -161,5 +161,5 @@ module internal RewriteSchemaDependencies =
             | (owner, dependencyKind)::_ ->
                 Invalid ("DROP COLUMN " + columnName +
                          " is blocked by " + dependencyKind +
-                         " dependency in table '" + owner + "'.")
+                         " dependency in table '" + owner.DisplayName + "'.")
             | [] -> Proven
