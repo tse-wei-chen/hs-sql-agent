@@ -19,7 +19,8 @@ module internal RewriteStatementEffects =
     let private noDependencies : IReadOnlyList<string> =
         (Array.empty<string> |> Array.AsReadOnly) :> IReadOnlyList<string>
 
-    let private effect kind operation objectName identity certainty span dependencies =
+    let private effect kind operation (objectName: string | null)
+                       (identity: SqlCatalogQualifiedName | null) certainty span dependencies =
         SqlStatementEffect(kind, operation, objectName, identity, certainty, span, dependencies)
 
     let private catalogOperation = function
@@ -32,12 +33,13 @@ module internal RewriteStatementEffects =
         | SqlCatalogOperation.AddConstraint -> SqlStatementEffectOperation.AddConstraint
         | SqlCatalogOperation.DropConstraint -> SqlStatementEffectOperation.DropConstraint
         | SqlCatalogOperation.Indeterminate -> SqlStatementEffectOperation.Unknown
+        | _ -> SqlStatementEffectOperation.Unknown
 
     let private catalogEffect (change: SqlCatalogChange) =
         let unknown = change.Operation = SqlCatalogOperation.Indeterminate
         let certainty =
             if unknown then SqlCatalogKnowledge.Unknown else change.Certainty
-        let objectName =
+        let objectName : string | null =
             if unknown || change.TableName = "*" then null else change.TableName
         let identity =
             if certainty <> SqlCatalogKnowledge.Known then null else change.TableIdentity
