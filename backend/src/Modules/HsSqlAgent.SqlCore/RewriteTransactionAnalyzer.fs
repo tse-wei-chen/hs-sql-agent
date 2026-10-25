@@ -52,20 +52,20 @@ module internal RewriteTransactionAnalyzer =
         | _ -> Unsupported
 
     let private identical (left: SqlCatalogState) (right: SqlCatalogState) =
+        let sameColumn (a: SqlCatalogColumn) (b: SqlCatalogColumn) =
+            String.Equals(a.Name, b.Name, StringComparison.Ordinal)
+            && String.Equals(a.TypeName, b.TypeName, StringComparison.Ordinal)
+            && a.Nullable = b.Nullable
+        let sameTable (a: SqlCatalogTable) (b: SqlCatalogTable) =
+            String.Equals(a.Name, b.Name, StringComparison.Ordinal)
+            && a.Knowledge = b.Knowledge
+            && a.Columns.Count = b.Columns.Count
+            && Seq.forall2 sameColumn a.Columns b.Columns
         left.IsClosedWorld = right.IsClosedWorld
         && left.Tables.Count = right.Tables.Count
-        && (left.Tables |> Seq.forall (fun a ->
-            right.Tables |> Seq.exists (fun b ->
-                String.Equals(a.Name, b.Name, StringComparison.Ordinal)
-                && a.Knowledge = b.Knowledge
-                && a.Columns.Count = b.Columns.Count
-                && (a.Columns |> Seq.forall (fun col ->
-                    b.Columns |> Seq.exists (fun other ->
-                        String.Equals(col.Name, other.Name, StringComparison.Ordinal)
-                        && String.Equals(col.TypeName, other.TypeName, StringComparison.Ordinal)
-                        && col.Nullable = other.Nullable)))))
+        && Seq.forall2 sameTable left.Tables right.Tables
 
-    let private error syntax code message =
+    let private error (syntax: SqlScriptStatementSyntax) code message =
         SqlDiagnostic(
             code,
             SqlDiagnosticStage.SemanticValidation,
@@ -73,7 +73,7 @@ module internal RewriteTransactionAnalyzer =
             message,
             syntax.Span)
 
-    let private delta syntax certainty =
+    let private delta (syntax: SqlScriptStatementSyntax) certainty =
         SqlCatalogChange("*", SqlCatalogOperation.Indeterminate, certainty, syntax.Span)
 
     let analyze sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
