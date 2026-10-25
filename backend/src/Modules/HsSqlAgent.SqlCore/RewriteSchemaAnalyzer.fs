@@ -280,6 +280,10 @@ module internal RewriteSchemaAnalyzer =
                         actions.Add(addAction ())
                         while symbol ',' do
                             RewriteResourceBudget.checkpoint ()
+                            // T-SQL ADD expects a comma-separated column
+                            // definition, never another ALTER subcommand.
+                            if word () = "DROP" || word () = "ADD" then
+                                raise OutsideSubset
                             actions.Add(Add(column ()))
                         if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
                             raise OutsideSubset
