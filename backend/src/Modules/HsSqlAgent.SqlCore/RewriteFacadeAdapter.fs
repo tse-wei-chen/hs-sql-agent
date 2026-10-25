@@ -355,6 +355,13 @@ module internal RewriteFacadeAdapter =
             |> sourceCapabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
+    /// Reuse the same source-profile lexical contract for script segmentation.
+    /// A permissive second lexer could otherwise reinterpret semicolons inside
+    /// provider-specific string literals as statement boundaries.
+    let tokenizeSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
+        sourceDialect source |> ignore
+        RewriteLexer.tokenizeWith (sourceLexicalSemantics source sourceProfile) sql
+
     let parseSourceValidated sql source (sourceProfile: SqlProviderCapabilityProfile | null) =
         RewriteParser.parseForWith
             (sourceSemantics source sourceProfile)
