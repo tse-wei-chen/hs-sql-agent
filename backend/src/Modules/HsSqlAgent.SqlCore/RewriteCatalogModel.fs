@@ -15,6 +15,17 @@ module internal RewriteCatalogModel =
     let lookup (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
         state.Tables |> Seq.tryFind (fun t -> sameIdentity t.QualifiedName name)
 
+    /// An unqualified name may resolve into an explicitly qualified table
+    /// through a session search_path/default schema not modeled by Catalog.
+    /// Absence is not provable just by comparing the visible last component.
+    let hasUnqualifiedScopeConflict (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
+        name.Parts.Count = 1
+        && (state.Tables |> Seq.exists (fun table ->
+            table.QualifiedName.IsQualified
+            && String.Equals(
+                table.QualifiedName.Parts[table.QualifiedName.Parts.Count - 1],
+                name.Parts[0], StringComparison.Ordinal)))
+
     let isKnownAbsent (state: SqlCatalogState) name =
         state.IsClosedWorld && (lookup state name).IsNone
 
