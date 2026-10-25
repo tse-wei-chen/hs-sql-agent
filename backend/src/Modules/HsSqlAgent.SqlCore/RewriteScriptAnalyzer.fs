@@ -38,6 +38,9 @@ module internal RewriteScriptAnalyzer =
             let next = RewriteCatalogModel.unknownTable state name
             SqlStatementAnalysisStatus.PartiallyAnalyzed, SqlCatalogKnowledge.Unknown,
             next, [changed syntax name operation SqlCatalogKnowledge.Unknown], []
+        let noChange =
+            SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+            state, ([]: SqlCatalogChange list), ([]: SqlDiagnostic list)
         let exact name operation next =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
             next, [changed syntax name operation SqlCatalogKnowledge.Known], []
@@ -54,7 +57,7 @@ module internal RewriteScriptAnalyzer =
         | Recognized (Create(name, columns, ifNotExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known && ifNotExists ->
-                exact name SqlCatalogOperation.CreateTable state
+                noChange
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
                 fail ("CREATE TABLE " + name + " already exists in the known catalog.")
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
@@ -67,7 +70,7 @@ module internal RewriteScriptAnalyzer =
                 RewriteCatalogModel.dropKnown state name
                 |> exact name SqlCatalogOperation.DropTable
             | _ when RewriteCatalogModel.isKnownAbsent state name && ifExists ->
-                exact name SqlCatalogOperation.DropTable state
+                noChange
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
                 fail ("DROP TABLE " + name + " does not exist in the known catalog.")
             | _ -> partial name SqlCatalogOperation.DropTable
@@ -93,7 +96,7 @@ module internal RewriteScriptAnalyzer =
                 if not exists && not ifExists then
                     fail ("ALTER TABLE " + name + " column " + columnName + " does not exist.")
                 elif not exists then
-                    exact name SqlCatalogOperation.DropColumn state
+                    noChange
                 else
                     table.Columns
                     |> Seq.filter (fun c -> not (String.Equals(c.Name, columnName, StringComparison.Ordinal)))
