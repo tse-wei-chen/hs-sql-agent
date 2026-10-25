@@ -95,6 +95,32 @@ module internal RewriteScriptAnalyzer =
             | AddConstraint(name, constraintInfo) ->
                 AddConstraint(resolve name, resolveConstraint constraintInfo)
             | DropConstraint(name, constraintName) -> DropConstraint(resolve name, constraintName)
+        // Inspect raw AST parts before qualifying them; a converted two-part
+        // name must never hide an unsupported one-part lookup.
+        let rawNames =
+            match parsed with
+            | Recognized operation ->
+                match operation with
+                | Create(name, _, constraints, _) ->
+                    name :: (constraints |> List.choose (fun c ->
+                        if isNull c.ReferencedIdentity then None
+                        else Some c.ReferencedIdentity))
+                | AddConstraint(name, constraintInfo) ->
+                    [name] @
+                    (if isNull constraintInfo.ReferencedIdentity then []
+                     else [constraintInfo.ReferencedIdentity])
+                | Drop(name, _)
+                | AlterColumns(name, _)
+                | CreateIndex(name, _, _)
+                | DropConstraint(name, _) -> [name]
+                | DropIndex(_, target) -> Option.toList target
+            | _ -> []
+        let rawUnqualified =
+            rawNames |> List.exists (fun n -> n.Parts.Count = 1)
+        let rawSystemName =
+            rawNames |> List.exists (fun n ->
+                n.Parts.Count = 1 &&
+                n.Parts[0].StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
         let parsed =
             match parsed with
             | Recognized operation -> Recognized(resolvedOperation operation)
@@ -110,17 +136,13 @@ module internal RewriteScriptAnalyzer =
             | DropIndex(_, target) -> target
         match parsed with
         | Recognized operation when
-            unsupportedDeclaredScope
-            && (referencedTableName operation |> Option.exists (fun n -> n.Parts.Count = 1)) ->
+            unsupportedDeclaredScope && rawUnqualified ->
             dependencyUnproven "Declared PostgreSQL SEARCH_PATH is outside the supported single ordinary ASCII schema proof."
         | Recognized operation when
-            referencedTableName operation
-            |> Option.exists (fun n ->
-                n.Parts.Count = 1
-                && n.Parts[0].StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
-                && (match scope with
-                    | RewriteCatalogSchemaResolution.SingleSchema _ -> true
-                    | _ -> false)) ->
+            rawSystemName &&
+            (match scope with
+             | RewriteCatalogSchemaResolution.SingleSchema _ -> true
+             | _ -> false) ->
             dependencyUnproven "PostgreSQL pg_catalog/pg_temp implicit name resolution is not proven by a single user schema."
         | Recognized operation when
             (match scope with
