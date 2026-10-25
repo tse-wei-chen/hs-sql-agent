@@ -14,10 +14,10 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 module internal RewriteStatementEffects =
 
     let private readOnly (values: seq<'T>) : IReadOnlyList<'T> =
-        values |> Seq.toArray |> Array.AsReadOnly :> IReadOnlyList<'T>
+        (values |> Seq.toArray |> Array.AsReadOnly) :> IReadOnlyList<'T>
 
     let private noDependencies : IReadOnlyList<string> =
-        Array.empty<string> |> Array.AsReadOnly :> IReadOnlyList<string>
+        (Array.empty<string> |> Array.AsReadOnly) :> IReadOnlyList<string>
 
     let private effect kind operation objectName identity certainty span dependencies =
         SqlStatementEffect(kind, operation, objectName, identity, certainty, span, dependencies)
@@ -45,8 +45,8 @@ module internal RewriteStatementEffects =
             objectName identity certainty change.Span noDependencies
 
     let private physicalReferences document =
-        RewriteInspection.inspectDocument document
-            .ReferencedTables
+        let facts = RewriteInspection.inspectDocument document
+        facts.ReferencedTables
         |> Seq.sortWith (fun a b -> StringComparer.Ordinal.Compare(a, b))
         |> Seq.toList
 
