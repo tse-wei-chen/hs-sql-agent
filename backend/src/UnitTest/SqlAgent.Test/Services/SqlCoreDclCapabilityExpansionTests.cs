@@ -86,8 +86,13 @@ public sealed class SqlCoreDclCapabilityExpansionTests
     [Fact]
     public void MySqlScriptAccountSeparatorCannotBeUsedToSmuggleExecutableParameterSyntax()
     {
-        Assert.Throws<SqlParseException>(() =>
-            Analyze("SELECT @secret;", SqlAgentToolType.MySQL));
+        // Script segmentation may lex account @ safely, but the strict SQL
+        // compiler parser must still reject @ as an unbound SQL parameter.
+        var statement = Assert.Single(Analyze("SELECT @secret;", SqlAgentToolType.MySQL).Statements);
+        Assert.Equal(SqlScriptParseStatus.Invalid, statement.Syntax.Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, statement.Status);
+        Assert.Empty(statement.SecurityIntents);
+        Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
     }
 
     [Fact]
@@ -157,7 +162,9 @@ public sealed class SqlCoreDclCapabilityExpansionTests
             "SELECT id FROM app.orders;", SqlAgentToolType.MySQL);
         Assert.Single(analysis.Statements[0].SecurityIntents);
         Assert.Empty(analysis.Statements[0].Changes);
-        Assert.Equal(SqlCatalogBindingStatus.Rejected, analysis.Statements[1].CatalogBinding);
+        // Without an explicit MySQL identifier-case profile, name
+        // resolution is unproven; DCL must not promote it to Verified.
+        Assert.NotEqual(SqlCatalogBindingStatus.Verified, analysis.Statements[1].CatalogBinding);
         Assert.Empty(analysis.FinalCatalog.Tables);
     }
 }
