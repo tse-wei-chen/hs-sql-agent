@@ -29,7 +29,7 @@ module internal RewriteSchemaDependencies =
             Unproven "Existing Catalog is incomplete; referenced key dependencies cannot be proven."
         elif constraints |> List.exists (fun d ->
             d.Kind = SqlCatalogConstraintKind.ForeignKey)
-             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name) then
+             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name.DisplayName) then
             Unproven "Foreign-key table resolution needs a proven provider identifier case/collation contract."
         else
             let mutable error: DependencyProof option = None
