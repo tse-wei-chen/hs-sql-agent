@@ -14,7 +14,7 @@ open HsSqlAgent.SqlCore.Rewrite.RewriteSchemaAnalyzer
 module internal RewriteScriptAnalyzer =
 
     let private readOnly (items: seq<'T>) : IReadOnlyList<'T> =
-        items |> Seq.toArray |> Array.AsReadOnly
+        (items |> Seq.toArray |> Array.AsReadOnly) :> IReadOnlyList<'T>
 
     let private diagnostic (syntax: SqlScriptStatementSyntax) code category message =
         SqlDiagnostic(code, SqlDiagnosticStage.SemanticValidation, category, message, syntax.Span)
