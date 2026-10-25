@@ -72,7 +72,7 @@ module internal RewriteCatalogIdentifierProof =
         let tables = state.Tables |> Seq.toList
         distinctCanonical (tables |> Seq.map (fun table -> table.QualifiedName.Key))
         && (tables |> List.forall (fun table ->
-            table.QualifiedName.Parts |> Seq.forall canonical
+            (table.QualifiedName.Parts |> Seq.forall canonical)
             && distinctCanonical (table.Columns |> Seq.map (fun col -> col.Name))
             && (table.Columns |> Seq.forall (fun col -> canonical col.Name))
             && (table.Constraints |> Seq.forall (fun key ->
