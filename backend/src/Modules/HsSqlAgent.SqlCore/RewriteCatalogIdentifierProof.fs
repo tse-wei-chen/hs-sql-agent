@@ -57,19 +57,32 @@ module internal RewriteCatalogIdentifierProof =
                    || (c >= '0' && c <= '9')
                    || c = '_'))))
 
+    /// Require a canonical *already normalized* input Catalog. A manually
+    /// supplied closed-world Catalog with both Users/users is not a proof:
+    /// Map.ofList in the AST name binder would otherwise hide a collision.
     let safeCatalog (state: SqlCatalogState) =
-        state.Tables |> Seq.forall (fun table ->
-            isSimpleAsciiIdentifier table.Name
-            && (table.Columns |> Seq.forall (fun col ->
-                isSimpleAsciiIdentifier col.Name))
+        let canonical (name: string) =
+            isSimpleAsciiIdentifier name
+            && String.Equals(name, name.ToUpperInvariant(), StringComparison.Ordinal)
+        let optionalCanonical name =
+            isNull name || canonical name
+        let distinctCanonical (values: seq<string>) =
+            let all = values |> Seq.toList
+            all.Length = (all |> List.distinct).Length
+        let tables = state.Tables |> Seq.toList
+        distinctCanonical (tables |> Seq.map (fun table -> table.Name))
+        && (tables |> List.forall (fun table ->
+            canonical table.Name
+            && distinctCanonical (table.Columns |> Seq.map (fun col -> col.Name))
+            && (table.Columns |> Seq.forall (fun col -> canonical col.Name))
             && (table.Constraints |> Seq.forall (fun key ->
-                (isNull key.Name || isSimpleAsciiIdentifier key.Name)
-                && (isNull key.ReferencedTable || isSimpleAsciiIdentifier key.ReferencedTable)
-                && (key.Columns |> Seq.forall isSimpleAsciiIdentifier)
-                && (key.ReferencedColumns |> Seq.forall isSimpleAsciiIdentifier)))
+                optionalCanonical key.Name
+                && optionalCanonical key.ReferencedTable
+                && (key.Columns |> Seq.forall canonical)
+                && (key.ReferencedColumns |> Seq.forall canonical)))
             && (table.Indexes |> Seq.forall (fun idx ->
-                isSimpleAsciiIdentifier idx.Name
-                && (idx.Columns |> Seq.forall isSimpleAsciiIdentifier))))
+                canonical idx.Name
+                && (idx.Columns |> Seq.forall canonical)))))
 
     let canProvePhysicalNames dialect profile state (sql: string) =
         match mode dialect profile with
