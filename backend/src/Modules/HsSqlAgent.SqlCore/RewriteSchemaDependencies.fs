@@ -79,8 +79,22 @@ module internal RewriteSchemaDependencies =
                                 | _ -> None
                         match parent with
                         | None ->
-                            reject ("Foreign key references missing known table '" +
-                                    item.ReferencedTable + "'.")
+                            let uncertain =
+                                not (isNull item.ReferencedIdentity)
+                                && (RewriteCatalogModel.hasUnqualifiedScopeConflict
+                                        state item.ReferencedIdentity
+                                    || (name.IsQualified
+                                        && item.ReferencedIdentity.Parts.Count = 1
+                                        && equals
+                                            name.Parts[name.Parts.Count - 1]
+                                            item.ReferencedIdentity.Parts[0]))
+                            if uncertain then
+                                if error.IsNone then
+                                    error <- Some(Unproven(
+                                        "Foreign-key parent may resolve through an undeclared default schema/search_path."))
+                            else
+                                reject ("Foreign key references missing known table '" +
+                                        item.ReferencedTable + "'.")
                         | Some(parentColumns, parentConstraints) ->
                             let uniqueTarget =
                                 parentConstraints |> List.exists (fun key ->
