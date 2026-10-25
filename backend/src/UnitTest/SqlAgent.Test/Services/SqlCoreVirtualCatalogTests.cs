@@ -100,7 +100,11 @@ public sealed class SqlCoreVirtualCatalogTests
         var analysis = Analyze("CREATE TABLE users (id INTEGER, id TEXT); SELECT id FROM users;");
 
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, analysis.Statements[0].Status);
-        Assert.Equal("SQL_SCHEMA_SEMANTIC_INVALID", Assert.Single(analysis.Diagnostics).Code);
+        Assert.Contains(analysis.Diagnostics, d => d.Code == "SQL_SCHEMA_SEMANTIC_INVALID");
+        // A failed CREATE must not invent a table for the following SELECT.
+        Assert.Equal(SqlCatalogBindingStatus.Rejected, analysis.Statements[1].CatalogBinding);
+        Assert.Contains(analysis.Statements[1].Diagnostics,
+            d => d.Code == "SQL_SCHEMA_TABLE_NOT_FOUND");
         Assert.Empty(analysis.Statements[0].Changes);
         Assert.Empty(analysis.FinalCatalog.Tables);
         Assert.Equal(SqlCatalogKnowledge.Known, analysis.FinalCatalog.Knowledge);
