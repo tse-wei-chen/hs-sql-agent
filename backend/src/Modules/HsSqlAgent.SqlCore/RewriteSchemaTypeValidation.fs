@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
+open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -864,4 +865,36 @@ module internal RewriteSchemaTypeValidation =
     let verify dialect snapshot (bound: BoundSql) =
         let catalog = catalog dialect snapshot
         (createValidation ()) catalog (Bound.value bound)
+        bound
+
+    /// Never promote partial/unknown Virtual Catalog facts to typed binding.
+    /// This is a static copy of the already proven DDL column types, consumed
+    /// by the existing AST expression compatibility checker.
+    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+        if not state.IsClosedWorld
+           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+            invalidArg "state" "Typed catalog binding requires a complete known closed-world catalog."
+        let typeKind (name: string) =
+            match name.ToUpperInvariant() with
+            | "BOOLEAN" -> SqlSchemaValueKind.Boolean
+            | "SMALLINT" | "INTEGER" | "INT" | "BIGINT" -> SqlSchemaValueKind.Numeric
+            | "TEXT" | "CHAR" | "VARCHAR" -> SqlSchemaValueKind.Text
+            | "DATE" | "TIMESTAMP" -> SqlSchemaValueKind.Temporal
+            | value when value.StartsWith("CHAR(", StringComparison.Ordinal)
+                      || value.StartsWith("VARCHAR(", StringComparison.Ordinal) ->
+                SqlSchemaValueKind.Text
+            | _ -> SqlSchemaValueKind.Unknown
+        let tables =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                table.Name.Split('.')
+                |> Array.map (catalogPart dialect)
+                |> String.concat ".",
+                (table.Columns
+                 |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
+                 |> Seq.toList))
+            |> Map.ofSeq
+        let virtualCatalog : Catalog = { Dialect = dialect; Tables = tables }
+        (createValidation ()) virtualCatalog (Bound.value bound)
         bound
