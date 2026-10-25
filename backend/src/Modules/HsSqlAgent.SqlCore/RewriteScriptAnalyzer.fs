@@ -41,13 +41,13 @@ module internal RewriteScriptAnalyzer =
         let partial name operation =
             let next = RewriteCatalogModel.unknownTable state name
             SqlStatementAnalysisStatus.PartiallyAnalyzed, SqlCatalogKnowledge.Unknown,
-            next, [changed syntax name operation SqlCatalogKnowledge.Unknown], []
+            next, [changed syntax name.DisplayName operation SqlCatalogKnowledge.Unknown], []
         let noChange =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
             state, ([]: SqlCatalogChange list), ([]: SqlDiagnostic list)
         let exact name operation next =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
-            next, [changed syntax name operation SqlCatalogKnowledge.Known], []
+            next, [changed syntax name.DisplayName operation SqlCatalogKnowledge.Known], []
         let dependencyUnproven message =
             let unknown = RewriteCatalogModel.taintAll state
             let error =
@@ -77,7 +77,7 @@ module internal RewriteScriptAnalyzer =
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known && ifNotExists ->
                 noChange
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
-                fail ("CREATE TABLE " + name + " already exists in the known catalog.")
+                fail ("CREATE TABLE " + name.DisplayName + " already exists in the known catalog.")
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
                 match RewriteSchemaDependencies.validateCreate sourceDialect sourceProfile state name columns constraints with
                 | RewriteSchemaDependencies.Proven ->
@@ -98,7 +98,7 @@ module internal RewriteScriptAnalyzer =
             | _ when RewriteCatalogModel.isKnownAbsent state name && ifExists ->
                 noChange
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
-                fail ("DROP TABLE " + name + " does not exist in the known catalog.")
+                fail ("DROP TABLE " + name.DisplayName + " does not exist in the known catalog.")
             | _ -> partial name SqlCatalogOperation.DropTable
         | Recognized (CreateIndex(tableName, indexName, members)) ->
             match RewriteCatalogModel.lookup state tableName with
@@ -135,7 +135,7 @@ module internal RewriteScriptAnalyzer =
                     state.Tables |> Seq.filter (fun t ->
                         (match target with
                          | Some tableName ->
-                             String.Equals(tableName, t.Name, StringComparison.Ordinal)
+                             String.Equals(tableName.Key, t.QualifiedName.Key, StringComparison.Ordinal)
                          | None -> true)
                         && (t.Indexes |> Seq.exists (fun idx ->
                             String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
@@ -145,8 +145,8 @@ module internal RewriteScriptAnalyzer =
                     let remaining =
                         owner.Indexes |> Seq.filter (fun idx ->
                             not (String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
-                    RewriteCatalogModel.withIndexes state owner.Name remaining
-                    |> exact owner.Name SqlCatalogOperation.DropIndex
+                    RewriteCatalogModel.withIndexes state owner.QualifiedName remaining
+                    |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
                 | [] ->
                     dependencyUnproven
                         ("DROP INDEX '" + indexName +
@@ -202,21 +202,21 @@ module internal RewriteScriptAnalyzer =
                         | Add column ->
                             if locate column.Name |> Option.isSome then
                                 failure <- Some(
-                                    "ALTER TABLE " + name + " column " + column.Name +
+                                    "ALTER TABLE " + name.DisplayName + " column " + column.Name +
                                     " already exists.")
                             else
                                 working.Add column
-                                pending.Add(changedColumn syntax name column.Name SqlCatalogOperation.AddColumn)
+                                pending.Add(changedColumn syntax name.DisplayName column.Name SqlCatalogOperation.AddColumn)
                         | Remove(columnName, ifExists) ->
                             match locate columnName with
                             | Some index when working.Count = 1 ->
                                 failure <- Some(
-                                    "ALTER TABLE " + name + " cannot drop its last column.")
+                                    "ALTER TABLE " + name.DisplayName + " cannot drop its last column.")
                             | Some index ->
                                 match RewriteSchemaDependencies.canDropColumn state name columnName with
                                 | RewriteSchemaDependencies.Proven ->
                                     working.RemoveAt index
-                                    pending.Add(changedColumn syntax name columnName SqlCatalogOperation.DropColumn)
+                                    pending.Add(changedColumn syntax name.DisplayName columnName SqlCatalogOperation.DropColumn)
                                 | RewriteSchemaDependencies.Invalid message ->
                                     failure <- Some message
                                 | RewriteSchemaDependencies.Unproven message ->
@@ -224,7 +224,7 @@ module internal RewriteScriptAnalyzer =
                             | None when ifExists -> ()
                             | None ->
                                 failure <- Some(
-                                    "ALTER TABLE " + name + " column " + columnName +
+                                    "ALTER TABLE " + name.DisplayName + " column " + columnName +
                                     " does not exist.")
                 match failure, unknownDependency with
                 | Some message, _ -> fail message
@@ -235,7 +235,7 @@ module internal RewriteScriptAnalyzer =
                     SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
                     updated, (pending |> Seq.toList), []
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
-                fail ("ALTER TABLE " + name + " does not exist in the known catalog.")
+                fail ("ALTER TABLE " + name.DisplayName + " does not exist in the known catalog.")
             | _ ->
                 // The referenced table/columns are not proven. A composite
                 // ALTER cannot claim its individual mutations succeeded.
