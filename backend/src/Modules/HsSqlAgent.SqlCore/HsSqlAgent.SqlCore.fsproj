@@ -77,6 +77,7 @@
     <Compile Include="RewriteFacadeAdapter.fs" />
     <Compile Include="RewriteScriptParser.fs" />
     <Compile Include="RewriteSchemaAnalyzer.fs" />
+    <Compile Include="RewriteSchemaDependencies.fs" />
     <Compile Include="RewriteTransactionAnalyzer.fs" />
     <Compile Include="RewriteCatalogBinding.fs" />
     <Compile Include="RewriteScriptAnalyzer.fs" />
