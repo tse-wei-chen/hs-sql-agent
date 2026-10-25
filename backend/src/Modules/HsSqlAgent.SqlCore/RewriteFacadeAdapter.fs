@@ -313,7 +313,8 @@ module internal RewriteFacadeAdapter =
           OracleQuotedString =
             grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.OracleQuotedString)
           HashPrefixedIdentifier =
-            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier) }
+            grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier)
+          ScriptMySqlAccountSeparator = false }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { EnforceDialectSyntax = true
