@@ -141,6 +141,24 @@ public sealed class SqlCoreProviderIdentifierProofTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.MySQL, "LOWER_CASE_TABLE_NAMES", "1",
+        "CREATE TABLE `a.b` (id INT);SELECT id FROM `a.b`;")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "CATALOG_COLLATION", "Latin1_General_100_CI_AS",
+        "CREATE TABLE [a.b] (id INT);SELECT id FROM [a.b];")]
+    [InlineData(SqlAgentToolType.MySQL, "LOWER_CASE_TABLE_NAMES", "1",
+        "CREATE TABLE db.users (id INT);SELECT id FROM db.users;")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "CATALOG_COLLATION", "Latin1_General_100_CI_AS",
+        "CREATE TABLE dbo.users (id INT);SELECT id FROM dbo.users;")]
+    public void QualifiedAndDottedQuotedNamesNeedStructuredIdentifierProof(
+        SqlAgentToolType provider, string key, string setting, string sql)
+    {
+        var result = Analyze(provider, sql, Profile(provider, key, setting));
+        Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].NameBinding);
+        Assert.Contains(result.Statements[1].Diagnostics,
+            d => d.Code == "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN");
+    }
+
+    [Theory]
     [InlineData(SqlAgentToolType.MySQL, "LOWER_CASE_TABLE_NAMES", "1")]
     [InlineData(SqlAgentToolType.MsSqlServer, "CATALOG_COLLATION", "Latin1_General_100_CI_AS")]
     public void DeclaredProfileCannotGrantExecutableScript(
