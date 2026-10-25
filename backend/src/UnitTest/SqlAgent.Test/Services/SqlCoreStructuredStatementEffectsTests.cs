@@ -55,8 +55,8 @@ public sealed class SqlCoreStructuredStatementEffectsTests
     [Fact]
     public void SelectSourcesUseAstInspectionNotKeywordMatching()
     {
-        var result = Analyze("SELECT id FROM users;");
-        var statement = Assert.Single(result.Statements);
+        var result = Analyze("CREATE TABLE users (id INTEGER); SELECT id FROM users;");
+        var statement = result.Statements[1];
         var effect = Assert.Single(statement.DetailedEffects);
         Assert.Equal(SqlStatementEffectOperation.ReadTable, effect.Operation);
         Assert.Equal("users", effect.ObjectName);
