@@ -143,20 +143,21 @@ module internal RewriteScriptParser =
                                 RewriteResourceBudget.withStage "ScriptStatementParse" SqlDiagnosticStage.Parse (fun () ->
                                     RewriteFacadeAdapter.parseSourceValidated text sourceDialect sourceProfile
                                     |> ignore)
-                                SqlScriptParseStatus.Parsed, null
+                                SqlScriptParseStatus.Parsed, None
                             with
                             | :? SqlParseException as ex ->
                                 SqlScriptParseStatus.Invalid,
-                                invalidDiagnostic ex absoluteStart length
+                                Some(invalidDiagnostic ex absoluteStart length)
                         | _ ->
                             SqlScriptParseStatus.Unsupported,
-                            SqlDiagnostic(
-                                "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
-                                SqlDiagnosticStage.Parse,
-                                SqlDiagnosticCategory.Capability,
-                                "Statement family recognized, but semantic analysis is not implemented.",
-                                SqlDiagnosticSpan(absoluteStart, length))
-                    if not (isNull diagnostic) then diagnostics.Add diagnostic
+                            Some(
+                                SqlDiagnostic(
+                                    "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
+                                    SqlDiagnosticStage.Parse,
+                                    SqlDiagnosticCategory.Capability,
+                                    "Statement family recognized, but semantic analysis is not implemented.",
+                                    SqlDiagnosticSpan(absoluteStart, length)))
+                    diagnostic |> Option.iter diagnostics.Add
                     result.Add(
                         SqlScriptStatementSyntax(
                             publicKind family,
@@ -164,7 +165,7 @@ module internal RewriteScriptParser =
                             batch,
                             SqlDiagnosticSpan(absoluteStart, length),
                             text,
-                            diagnostic))
+                            Option.defaultValue Unchecked.defaultof<SqlDiagnostic> diagnostic))
                 start <- -1
                 nesting <- 0
                 opaque <- false
