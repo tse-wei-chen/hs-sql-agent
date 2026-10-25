@@ -152,8 +152,10 @@ module internal RewriteSchemaAnalyzer =
                     set ["VARCHAR2"; "NVARCHAR2"; "CHAR"]
                 | SqlAgentToolType.Firebird ->
                     let baseTypes = set ["SMALLINT"; "INTEGER"; "INT"; "BIGINT"; "DATE"; "TIMESTAMP"]
-                    let fixed = if hasVersion sourceProfile 3 0 then Set.add "BOOLEAN" baseTypes else baseTypes
-                    fixed, set ["VARCHAR"; "CHAR"]
+                    let fixedTypesForVersion =
+                        if hasVersion sourceProfile 3 0 then Set.add "BOOLEAN" baseTypes
+                        else baseTypes
+                    fixedTypesForVersion, set ["VARCHAR"; "CHAR"]
                 | _ -> raise OutsideSubset
             if Set.contains kind fixedTypes then kind
             elif Set.contains kind sizedTypes then
