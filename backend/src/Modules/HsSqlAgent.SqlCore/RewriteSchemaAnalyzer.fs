@@ -80,8 +80,13 @@ module internal RewriteSchemaAnalyzer =
         let column () =
             let name = namePart ()
             let typeName = parseType ()
-            let nullable = if accept "NOT" then expect "NULL"; false
-                           else accept "NULL" |> ignore; true
+            let nullable =
+                if accept "NOT" then
+                    expect "NULL"
+                    false
+                else
+                    accept "NULL" |> ignore
+                    true
             SqlCatalogColumn(name, typeName, nullable)
         let endOfStatement () =
             match (current ()).Kind with
