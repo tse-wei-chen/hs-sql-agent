@@ -56,11 +56,23 @@ module internal RewriteTransactionAnalyzer =
             String.Equals(a.Name, b.Name, StringComparison.Ordinal)
             && String.Equals(a.TypeName, b.TypeName, StringComparison.Ordinal)
             && a.Nullable = b.Nullable
+        let sameConstraint (a: SqlCatalogConstraint) (b: SqlCatalogConstraint) =
+            String.Equals(a.Name, b.Name, StringComparison.Ordinal)
+            && a.Kind = b.Kind
+            && String.Equals(a.ReferencedTable, b.ReferencedTable, StringComparison.Ordinal)
+            && a.Columns.Count = b.Columns.Count
+            && Seq.forall2 (fun x y -> String.Equals(x, y, StringComparison.Ordinal))
+                a.Columns b.Columns
+            && a.ReferencedColumns.Count = b.ReferencedColumns.Count
+            && Seq.forall2 (fun x y -> String.Equals(x, y, StringComparison.Ordinal))
+                a.ReferencedColumns b.ReferencedColumns
         let sameTable (a: SqlCatalogTable) (b: SqlCatalogTable) =
             String.Equals(a.Name, b.Name, StringComparison.Ordinal)
             && a.Knowledge = b.Knowledge
             && a.Columns.Count = b.Columns.Count
             && Seq.forall2 sameColumn a.Columns b.Columns
+            && a.Constraints.Count = b.Constraints.Count
+            && Seq.forall2 sameConstraint a.Constraints b.Constraints
         left.IsClosedWorld = right.IsClosedWorld
         && left.Tables.Count = right.Tables.Count
         && Seq.forall2 sameTable left.Tables right.Tables
