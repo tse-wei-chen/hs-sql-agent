@@ -118,10 +118,10 @@ module internal RewriteScriptAnalyzer =
                 for syntax in parsed.Statements do
                     RewriteResourceBudget.checkpoint ()
                     let before = current
-                    let status, effects, certainty, next, changes, diagnostics =
+                    let status, effects, certainty, bindingStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
-                            SqlCatalogKnowledge.Unknown, current, [],
+                            SqlCatalogKnowledge.Unknown, SqlCatalogBindingStatus.Rejected, current, [],
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
@@ -137,7 +137,7 @@ module internal RewriteScriptAnalyzer =
                                     RewriteCatalogModel.taintAll current,
                                     [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown],
                                     [warning]
-                            status, SqlEffectKind.ChangeSchema, certainty, next, changes, diagnostics
+                            status, SqlEffectKind.ChangeSchema, certainty, SqlCatalogBindingStatus.NotApplicable, next, changes, diagnostics
                         else
                             let effects =
                                 match syntax.Kind with
@@ -148,10 +148,16 @@ module internal RewriteScriptAnalyzer =
                                 | SqlScriptStatementKind.Session -> SqlEffectKind.ChangeSession
                                 | SqlScriptStatementKind.Utility -> SqlEffectKind.Administrative
                                 | _ -> SqlEffectKind.None
-                            let status =
-                                match syntax.Status with
-                                | SqlScriptParseStatus.Parsed -> SqlStatementAnalysisStatus.PartiallyAnalyzed
-                                | _ -> SqlStatementAnalysisStatus.Unsupported
+                            let bindingStatus, status, certainty, catalogErrors =
+                                if syntax.Status = SqlScriptParseStatus.Parsed
+                                   && (syntax.Kind = SqlScriptStatementKind.Query
+                                       || syntax.Kind = SqlScriptStatementKind.Mutation) then
+                                    RewriteCatalogBinding.verify sourceDialect sourceProfile current syntax
+                                else
+                                    SqlCatalogBindingStatus.NotApplicable,
+                                    SqlStatementAnalysisStatus.Unsupported,
+                                    SqlCatalogKnowledge.Unknown,
+                                    []
                             let next =
                                 if syntax.Kind = SqlScriptStatementKind.Session
                                    || syntax.Kind = SqlScriptStatementKind.Procedural
@@ -159,13 +165,15 @@ module internal RewriteScriptAnalyzer =
                                     RewriteCatalogModel.taintAll current
                                 else current
                             let diagnostics =
-                                if Object.ReferenceEquals(syntax.Diagnostic, null) then []
-                                else [syntax.Diagnostic]
-                            status, effects, SqlCatalogKnowledge.Unknown, next, [], diagnostics
+                                let parserDiagnostics =
+                                    if Object.ReferenceEquals(syntax.Diagnostic, null) then []
+                                    else [syntax.Diagnostic]
+                                parserDiagnostics @ catalogErrors
+                            status, effects, certainty, bindingStatus, next, [], diagnostics
                     current <- next
                     for item in diagnostics do errors.Add item
                     results.Add(
                         SqlStatementAnalysis(
-                            syntax, status, effects, certainty, before, next,
+                            syntax, status, effects, certainty, bindingStatus, before, next,
                             readOnly changes, readOnly diagnostics)))
             SqlScriptAnalysisResult(readOnly results, readOnly errors, current))
