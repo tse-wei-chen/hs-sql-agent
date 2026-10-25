@@ -106,11 +106,14 @@ module internal RewriteStatementEffects =
                  (syntax: SqlScriptStatementSyntax)
                  (status: SqlStatementAnalysisStatus) (certainty: SqlCatalogKnowledge)
                  (legacyEffects: SqlEffectKind)
-                 (changes: IReadOnlyList<SqlCatalogChange>) =
+                 (changes: IReadOnlyList<SqlCatalogChange>)
+                 (securityIntents: IReadOnlyList<SqlSecurityIntent>) =
         let coverage =
             match syntax.Kind, status, certainty with
             | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
+            | SqlScriptStatementKind.Security, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
+                when securityIntents.Count > 0 -> SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Schema, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
             | (SqlScriptStatementKind.Query | SqlScriptStatementKind.Mutation),
@@ -130,6 +133,17 @@ module internal RewriteStatementEffects =
                 | SqlScriptStatementKind.Mutation when syntax.Status = SqlScriptParseStatus.Parsed ->
                     astEffects sourceDialect sourceProfile syntax
                 | SqlScriptStatementKind.Schema -> catalog
+                | SqlScriptStatementKind.Security when securityIntents.Count > 0 ->
+                    securityIntents
+                    |> Seq.map (fun intent ->
+                        let operation =
+                            if intent.Action = SqlSecurityAction.Grant then
+                                SqlStatementEffectOperation.GrantPrivilege
+                            else SqlStatementEffectOperation.RevokePrivilege
+                        effect SqlEffectKind.ChangePermissions operation
+                            intent.Target.DisplayName null SqlCatalogKnowledge.Unknown
+                            intent.Span noDependencies)
+                    |> Seq.toList
                 | SqlScriptStatementKind.Session when status = SqlStatementAnalysisStatus.Analyzed ->
                     [effect SqlEffectKind.ChangeSession SqlStatementEffectOperation.SetSearchPath
                         null null SqlCatalogKnowledge.Known syntax.Span noDependencies]
