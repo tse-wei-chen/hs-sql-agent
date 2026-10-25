@@ -114,19 +114,7 @@ module internal RewriteSchemaAnalyzer =
             if not (symbol c) then
                 raise (Malformed("Expected '" + string c + "' in TABLE DDL."))
         let normalizeName (name: string) quoted =
-            match sourceDialect with
-            | SqlAgentToolType.Postgres -> if quoted then name else name.ToLowerInvariant()
-            | SqlAgentToolType.Oracle | SqlAgentToolType.Firebird ->
-                if quoted then name else name.ToUpperInvariant()
-            | SqlAgentToolType.MySQL ->
-                // MySQL identifier casing depends on lower_case_table_names
-                // and the server filesystem. Retain source spelling until a
-                // provider-profile collation/casing proof is available.
-                name
-            | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Sqlite ->
-                // Matches the conservative existing snapshot name binder.
-                name.ToUpperInvariant()
-            | _ -> name
+            RewriteCatalogIdentifierProof.canonicalName sourceDialect sourceProfile name quoted
         let namePart () =
             match (current ()).Kind with
             | Identifier(name, quoted) ->
