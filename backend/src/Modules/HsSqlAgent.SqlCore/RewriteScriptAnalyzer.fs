@@ -52,7 +52,7 @@ module internal RewriteScriptAnalyzer =
         let partial (name: SqlCatalogQualifiedName) operation =
             let next = RewriteCatalogModel.unknownTable state name
             SqlStatementAnalysisStatus.PartiallyAnalyzed, SqlCatalogKnowledge.Unknown,
-            next, [changedExact syntax name operation SqlCatalogKnowledge.Unknown], []
+            next, [changed syntax name.DisplayName operation SqlCatalogKnowledge.Unknown], []
         let noChange =
             SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
             state, ([]: SqlCatalogChange list), ([]: SqlDiagnostic list)
