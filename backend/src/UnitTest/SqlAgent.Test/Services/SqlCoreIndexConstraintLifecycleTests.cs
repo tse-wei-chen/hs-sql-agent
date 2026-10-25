@@ -32,8 +32,8 @@ public sealed class SqlCoreIndexConstraintLifecycleTests
         var afterCreate = Assert.Single(result.Statements[1].CatalogAfter.Tables);
         var idx = Assert.Single(afterCreate.Indexes);
         Assert.Equal(SqlCatalogOperation.CreateIndex, Assert.Single(result.Statements[1].Changes).Operation);
-        Assert.Equal(result.Statements[1].CatalogBefore.Tables[0].Indexes.Count, 0);
-        Assert.Equal(1, idx.Columns.Count);
+        Assert.Empty(result.Statements[1].CatalogBefore.Tables[0].Indexes);
+        Assert.Single(idx.Columns);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
         Assert.Equal(SqlCatalogOperation.DropIndex, Assert.Single(result.Statements[3].Changes).Operation);
         Assert.Empty(Assert.Single(result.FinalCatalog.Tables).Indexes);
@@ -103,10 +103,10 @@ public sealed class SqlCoreIndexConstraintLifecycleTests
         var result = Analyze(provider,
             $"CREATE TABLE users(id {typeName} NOT NULL PRIMARY KEY);" +
             "DROP INDEX unknown;");
-        var expected = provider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-            ? SqlStatementAnalysisStatus.Unsupported
-            : SqlStatementAnalysisStatus.Invalid;
-        Assert.Equal(expected, result.Statements[1].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[1].Status);
+        // Name-only DROP cannot rule out an implicit key index; MySQL/SQL
+        // Server also require the provider-native ON table syntax.
+        Assert.Equal(SqlCatalogKnowledge.Unknown, result.Statements[1].Certainty);
         Assert.Equal(SqlCatalogConstraintKind.PrimaryKey,
             Assert.Single(Assert.Single(result.Statements[0].CatalogAfter.Tables).Constraints).Kind);
     }
