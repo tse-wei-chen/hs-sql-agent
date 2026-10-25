@@ -12,7 +12,7 @@ module internal RewriteCatalogModel =
     let lookup (state: SqlCatalogState) name =
         state.Tables |> Seq.tryFind (fun t -> sameName t.Name name)
 
-    let isKnownAbsent state name =
+    let isKnownAbsent (state: SqlCatalogState) name =
         state.IsClosedWorld && (lookup state name).IsNone
 
     let private replace (state: SqlCatalogState) name (replacement: SqlCatalogTable option) =
@@ -22,7 +22,7 @@ module internal RewriteCatalogModel =
             match replacement with
             | Some value -> Array.append retained [| value |]
             | None -> retained
-        Array.sortInPlaceWith (fun left right -> StringComparer.Ordinal.Compare(left.Name, right.Name)) tables
+        Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) -> StringComparer.Ordinal.Compare(left.Name, right.Name)) tables
         SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables))
 
     let knownTable state name columns =
