@@ -42,6 +42,12 @@ public sealed class SqlCoreAtomicMultiAlterTests
             SqlCatalogOperation.DropColumn,
             SqlCatalogOperation.AddColumn
         }, mutation.Changes.Select(change => change.Operation));
+        Assert.Equal(new[]
+        {
+            addedName1,
+            provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL ? "old_col" : "OLD_COL",
+            addedName2
+        }, mutation.Changes.Select(change => change.ColumnName));
         var before = Assert.Single(mutation.CatalogBefore.Tables);
         var after = Assert.Single(mutation.CatalogAfter.Tables);
         Assert.Equal(tableName, after.Name);
