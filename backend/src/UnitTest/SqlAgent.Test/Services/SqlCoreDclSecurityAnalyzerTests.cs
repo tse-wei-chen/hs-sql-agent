@@ -144,15 +144,22 @@ public sealed class SqlCoreDclSecurityAnalyzerTests
         Assert.NotEqual(SqlStatementAnalysisStatus.PartiallyAnalyzed, statement.Status);
         Assert.Empty(statement.SecurityIntents);
         Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
-        Assert.Equal(SqlStatementEffectOperation.Unknown,
-            Assert.Single(statement.DetailedEffects).Operation);
-        Assert.Equal(SqlCatalogKnowledge.Unknown,
-            Assert.Single(statement.DetailedEffects).Certainty);
+        if (statement.Status == SqlStatementAnalysisStatus.Invalid)
+        {
+            // Malformed statements do not provide even a potential parsed intent.
+            Assert.Empty(statement.DetailedEffects);
+        }
+        else
+        {
+            var effect = Assert.Single(statement.DetailedEffects);
+            Assert.Equal(SqlStatementEffectOperation.Unknown, effect.Operation);
+            Assert.Equal(SqlCatalogKnowledge.Unknown, effect.Certainty);
+        }
         Assert.Contains(statement.Diagnostics, d => d.Code.StartsWith("SQL_SECURITY_"));
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL, "GRANT SELECT ON app.users TO 'user'@'localhost'")]
+    [InlineData(SqlAgentToolType.MySQL, "GRANT SELECT ON app.users TO analyst")]
     [InlineData(SqlAgentToolType.Sqlite, "GRANT SELECT ON users TO analyst")]
     [InlineData(SqlAgentToolType.MsSqlServer, "GRANT SELECT ON users TO analyst")]
     [InlineData(SqlAgentToolType.Firebird, "GRANT SELECT ON TABLE users TO analyst")]
@@ -163,6 +170,15 @@ public sealed class SqlCoreDclSecurityAnalyzerTests
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
         Assert.Empty(statement.SecurityIntents);
         Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
+    }
+
+    [Fact]
+    public void MySqlHostQualifiedPrincipalFailsClosedAtLexicalBoundary()
+    {
+        // MySQL user@host is NOT a plain SQL role; until the script Lexer
+        // accepts provider-native accounts, it is rejected before DCL analysis.
+        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            Analyze("GRANT SELECT ON app.users TO 'user'@'localhost'", SqlAgentToolType.MySQL));
     }
 
     [Fact]
@@ -195,6 +211,6 @@ public sealed class SqlCoreDclSecurityAnalyzerTests
         Assert.Single(intent.Target.Parts);
         Assert.Equal("users", intent.Target.DisplayName);
         Assert.Equal(SqlCatalogKnowledge.Unknown, intent.Certainty);
-        Assert.Equal("app", analysis.FinalSession.SearchPath);
+        Assert.Equal("app", analysis.FinalSession.SearchPath!);
     }
 }
