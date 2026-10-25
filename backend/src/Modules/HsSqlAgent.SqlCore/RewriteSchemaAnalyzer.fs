@@ -234,94 +234,95 @@ module internal RewriteSchemaAnalyzer =
                 let names = columnNames ()
                 endOfStatement ()
                 Recognized(CreateIndex(table, indexName, names))
-            elif not (accept "TABLE") then raise OutsideSubset
-            let conditional = ifNotExists ()
-            let table = qualifiedName ()
-            expectSymbol '('
-            let columns = ResizeArray<SqlCatalogColumn>()
-            let constraints = ResizeArray<SqlCatalogConstraint>()
-            let optionalConstraintName () =
-                if accept "CONSTRAINT" then Some(namePart ())
-                else None
-            let columnList () =
+            else
+                expect "TABLE"
+                let conditional = ifNotExists ()
+                let table = qualifiedName ()
                 expectSymbol '('
-                let cols = ResizeArray<string>()
-                cols.Add(namePart ())
-                while symbol ',' do
-                    RewriteResourceBudget.checkpoint ()
+                let columns = ResizeArray<SqlCatalogColumn>()
+                let constraints = ResizeArray<SqlCatalogConstraint>()
+                let optionalConstraintName () =
+                    if accept "CONSTRAINT" then Some(namePart ())
+                    else None
+                let columnList () =
+                    expectSymbol '('
+                    let cols = ResizeArray<string>()
                     cols.Add(namePart ())
-                expectSymbol ')'
-                cols |> Seq.toList
-            let makeConstraint cname kind members remote remoteMembers =
-                SqlCatalogConstraint(
-                    (match cname with Some value -> value | None -> null),
-                    kind, Array.AsReadOnly(List.toArray members),
-                    remote, Array.AsReadOnly(List.toArray remoteMembers))
-            let foreign cname members =
-                expect "REFERENCES"
-                let remote = qualifiedName ()
-                // Omitted target column / implicit PK selection is deliberately
-                // not inferred: require an explicit column list.
-                let remoteMembers = columnList ()
-                makeConstraint cname SqlCatalogConstraintKind.ForeignKey
-                    members remote remoteMembers
-            let tableConstraint () =
-                let cname = optionalConstraintName ()
-                if accept "PRIMARY" then
-                    expect "KEY"
-                    makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
-                        (columnList ()) null []
-                elif accept "UNIQUE" then
-                    makeConstraint cname SqlCatalogConstraintKind.Unique
-                        (columnList ()) null []
-                elif accept "FOREIGN" then
-                    expect "KEY"
-                    let members = columnList ()
-                    foreign cname members
-                else raise OutsideSubset
-            let element () =
-                RewriteResourceBudget.checkpoint ()
-                if word () = "CHECK" || word () = "EXCLUDE" then
-                    raise OutsideSubset
-                elif word () = "PRIMARY" || word () = "UNIQUE"
-                     || word () = "FOREIGN" || word () = "CONSTRAINT" then
-                    constraints.Add(tableConstraint ())
-                else
-                    let col = column ()
-                    columns.Add col
+                    while symbol ',' do
+                        RewriteResourceBudget.checkpoint ()
+                        cols.Add(namePart ())
+                    expectSymbol ')'
+                    cols |> Seq.toList
+                let makeConstraint cname kind members remote remoteMembers =
+                    SqlCatalogConstraint(
+                        (match cname with Some value -> value | None -> null),
+                        kind, Array.AsReadOnly(List.toArray members),
+                        remote, Array.AsReadOnly(List.toArray remoteMembers))
+                let foreign cname members =
+                    expect "REFERENCES"
+                    let remote = qualifiedName ()
+                    // Omitted target column / implicit PK selection is deliberately
+                    // not inferred: require an explicit column list.
+                    let remoteMembers = columnList ()
+                    makeConstraint cname SqlCatalogConstraintKind.ForeignKey
+                        members remote remoteMembers
+                let tableConstraint () =
                     let cname = optionalConstraintName ()
                     if accept "PRIMARY" then
                         expect "KEY"
-                        constraints.Add(
-                            makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
-                                [col.Name] null [])
+                        makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
+                            (columnList ()) null []
                     elif accept "UNIQUE" then
-                        constraints.Add(
-                            makeConstraint cname SqlCatalogConstraintKind.Unique
-                                [col.Name] null [])
-                    elif accept "REFERENCES" then
-                        // REFERENCES was consumed by the inline grammar.
-                        let remote = qualifiedName ()
-                        let remoteColumns = columnList ()
-                        constraints.Add(
-                            makeConstraint cname SqlCatalogConstraintKind.ForeignKey
-                                [col.Name] remote remoteColumns)
-                    elif cname.IsSome then
+                        makeConstraint cname SqlCatalogConstraintKind.Unique
+                            (columnList ()) null []
+                    elif accept "FOREIGN" then
+                        expect "KEY"
+                        let members = columnList ()
+                        foreign cname members
+                    else raise OutsideSubset
+                let element () =
+                    RewriteResourceBudget.checkpoint ()
+                    if word () = "CHECK" || word () = "EXCLUDE" then
                         raise OutsideSubset
-            element ()
-            while symbol ',' do element ()
-            if not (symbol ')') then
-                match (current ()).Kind with
-                | End -> raise (Malformed("CREATE TABLE has no closing ')'."))
-                | _ -> raise OutsideSubset
-            endOfStatement ()
-            let members = columns |> Seq.toList
-            let deps = constraints |> Seq.toList
-            if members.IsEmpty then Invalid "CREATE TABLE must contain a physical column."
-            elif (members |> Seq.groupBy (fun x -> x.Name)
-                  |> Seq.exists (fun (_, items) -> Seq.length items > 1)) then
-                Invalid "CREATE TABLE contains duplicate column names."
-            else Recognized(Create(table, members, deps, conditional))
+                    elif word () = "PRIMARY" || word () = "UNIQUE"
+                         || word () = "FOREIGN" || word () = "CONSTRAINT" then
+                        constraints.Add(tableConstraint ())
+                    else
+                        let col = column ()
+                        columns.Add col
+                        let cname = optionalConstraintName ()
+                        if accept "PRIMARY" then
+                            expect "KEY"
+                            constraints.Add(
+                                makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
+                                    [col.Name] null [])
+                        elif accept "UNIQUE" then
+                            constraints.Add(
+                                makeConstraint cname SqlCatalogConstraintKind.Unique
+                                    [col.Name] null [])
+                        elif accept "REFERENCES" then
+                            // REFERENCES was consumed by the inline grammar.
+                            let remote = qualifiedName ()
+                            let remoteColumns = columnList ()
+                            constraints.Add(
+                                makeConstraint cname SqlCatalogConstraintKind.ForeignKey
+                                    [col.Name] remote remoteColumns)
+                        elif cname.IsSome then
+                            raise OutsideSubset
+                element ()
+                while symbol ',' do element ()
+                if not (symbol ')') then
+                    match (current ()).Kind with
+                    | End -> raise (Malformed("CREATE TABLE has no closing ')'."))
+                    | _ -> raise OutsideSubset
+                endOfStatement ()
+                let members = columns |> Seq.toList
+                let deps = constraints |> Seq.toList
+                if members.IsEmpty then Invalid "CREATE TABLE must contain a physical column."
+                elif (members |> Seq.groupBy (fun x -> x.Name)
+                      |> Seq.exists (fun (_, items) -> Seq.length items > 1)) then
+                    Invalid "CREATE TABLE contains duplicate column names."
+                else Recognized(Create(table, members, deps, conditional))
         let parseDrop () =
             expect "DROP"
             if accept "INDEX" then
@@ -339,11 +340,12 @@ module internal RewriteSchemaAnalyzer =
                         | _ -> None
                 endOfStatement ()
                 Recognized(DropIndex(indexName, target))
-            elif not (accept "TABLE") then raise OutsideSubset
-            let conditional = ifExists ()
-            let table = qualifiedName ()
-            endOfStatement ()
-            Recognized(Drop(table, conditional))
+            else
+                expect "TABLE"
+                let conditional = ifExists ()
+                let table = qualifiedName ()
+                endOfStatement ()
+                Recognized(Drop(table, conditional))
         let parseAlter () =
             expect "ALTER"
             if not (accept "TABLE") then raise OutsideSubset
