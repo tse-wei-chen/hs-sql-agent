@@ -15,6 +15,51 @@ type SqlEffectKind =
     | ChangeTransaction = 16
     | ChangeSession = 32
     | Administrative = 64
+    | UnknownEffects = 128
+
+/// The declared scope of the static effect description, NOT a proof of runtime behavior.
+type SqlEffectCoverage =
+    | Complete = 0
+    | Partial = 1
+    | Unknown = 2
+
+/// Typed operation tags. Unknown preserves unmodeled or conditional behavior.
+type SqlStatementEffectOperation =
+    | Unknown = 0
+    | ReadTable = 1
+    | Insert = 2
+    | Update = 3
+    | Delete = 4
+    | Merge = 5
+    | CreateTable = 6
+    | DropTable = 7
+    | AddColumn = 8
+    | DropColumn = 9
+    | CreateIndex = 10
+    | DropIndex = 11
+    | AddConstraint = 12
+    | DropConstraint = 13
+    | TransactionControl = 14
+
+/// Static potential effect. ObjectName and Dependencies are diagnostic names,
+/// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
+/// Known certainty means a proven static catalog delta, never server execution.
+[<Sealed>]
+type SqlStatementEffect internal (
+    kind: SqlEffectKind,
+    operation: SqlStatementEffectOperation,
+    objectName: string,
+    objectIdentity: SqlCatalogQualifiedName,
+    certainty: SqlCatalogKnowledge,
+    span: SqlDiagnosticSpan,
+    dependencies: IReadOnlyList<string>) =
+    member _.Kind = kind
+    member _.Operation = operation
+    member _.ObjectName = objectName
+    member _.ObjectIdentity = objectIdentity
+    member _.Certainty = certainty
+    member _.Span = span
+    member _.Dependencies = dependencies
 
 type SqlStatementAnalysisStatus =
     | Analyzed = 0
@@ -52,6 +97,8 @@ type SqlStatementAnalysis internal (
     transactionBefore: SqlTransactionState,
     transactionAfter: SqlTransactionState,
     changes: IReadOnlyList<SqlCatalogChange>,
+    detailedEffects: IReadOnlyList<SqlStatementEffect>,
+    effectCoverage: SqlEffectCoverage,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -68,6 +115,8 @@ type SqlStatementAnalysis internal (
     member _.TransactionBefore = transactionBefore
     member _.TransactionAfter = transactionAfter
     member _.Changes = changes
+    member _.DetailedEffects = detailedEffects
+    member _.EffectCoverage = effectCoverage
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -76,6 +125,12 @@ type SqlScriptAnalysisResult internal (
     diagnostics: IReadOnlyList<SqlDiagnostic>,
     finalCatalog: SqlCatalogState,
     finalTransaction: SqlTransactionState) =
+    let detailedEffects : IReadOnlyList<SqlStatementEffect> =
+        statements
+        |> Seq.collect (fun item -> item.DetailedEffects)
+        |> Seq.toArray
+        |> Array.AsReadOnly
+    member _.DetailedEffects = detailedEffects
     member _.Statements = statements
     member _.Diagnostics = diagnostics
     member _.FinalCatalog = finalCatalog
