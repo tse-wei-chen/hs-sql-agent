@@ -5,6 +5,7 @@ open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
+open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.RewriteParser
 open HsSqlAgent.SqlCore.Rewrite.RewritePolicy
 open HsSqlAgent.SqlCore.Rewrite.RewriteRenderer
@@ -158,11 +159,27 @@ module internal RewritePipeline =
                     (VerifiedTarget.ordering target)
                     sourceSemantics.Dml (VerifiedTarget.dml target)
                     options.ConflictProofs canonical)
-        let executable =
-            RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
-                RewritePolicy.authorize options.Policy validated)
-        RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
-            renderWithDiagnostic executable)
+        // Family-specific typestates guarantee that query row caps and mutation
+        // safety policies never authorize the opposite statement family.
+        // Shared binding, normalization and capability validation run once.
+        match (RewriteStages.Validated.value validated).Statement with
+        | QueryStatement _ ->
+            let query = RewriteQueryPipeline.fromValidated validated
+            let authorized =
+                RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
+                    RewriteQueryPipeline.authorize options.Policy.QueryRows query)
+            RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
+                RewriteQueryPipeline.render renderWithDiagnostic authorized)
+        | InsertStatement _ | UpdateStatement _ | DeleteStatement _ | MergeStatement _ ->
+            let mutation = RewriteMutationPipeline.fromValidated validated
+            let authorized =
+                RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
+                    RewriteMutationPipeline.authorize
+                        options.Policy.UpdateSafety
+                        options.Policy.DeleteSafety
+                        mutation)
+            RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
+                RewriteMutationPipeline.render renderWithDiagnostic authorized)
 
     let private finish options parsed =
         parsed

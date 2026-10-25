@@ -65,6 +65,10 @@
     <Compile Include="RewriteInspection.fs" />
     <Compile Include="RewriteStages.fs" />
     <Compile Include="RewritePolicy.fs" />
+    <Compile Include="RewriteQueryPolicy.fs" />
+    <Compile Include="RewriteMutationPolicy.fs" />
+    <Compile Include="RewriteQueryPipeline.fs" />
+    <Compile Include="RewriteMutationPipeline.fs" />
     <Compile Include="RewriteRenderer.fs" />
     <Compile Include="RewritePipeline.fs" />
     <Compile Include="RewriteFacadeAdapter.fs" />
