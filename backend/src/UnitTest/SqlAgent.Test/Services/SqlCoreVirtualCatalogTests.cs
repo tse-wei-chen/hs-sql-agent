@@ -73,6 +73,7 @@ public sealed class SqlCoreVirtualCatalogTests
 
         Assert.Empty(analysis.Diagnostics);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, analysis.Statements[1].Status);
+        Assert.Empty(analysis.Statements[1].Changes);
         Assert.Equal("id", Assert.Single(Assert.Single(analysis.FinalCatalog.Tables).Columns).Name);
     }
 
@@ -112,8 +113,34 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, invalid.Statements[0].Status);
         var accepted = Analyze("DROP TABLE IF EXISTS missing;");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, accepted.Statements[0].Status);
+        Assert.Empty(accepted.Statements[0].Changes);
         Assert.Empty(accepted.Diagnostics);
         Assert.Empty(accepted.FinalCatalog.Tables);
+    }
+
+    [Fact]
+    public void Postgres_AlterDropColumnIfExists_DoesNotProducePhantomDeltas()
+    {
+        var analysis = Analyze(
+            "CREATE TABLE users(id INTEGER);" +
+            "ALTER TABLE users DROP COLUMN IF EXISTS missing;");
+
+        Assert.Empty(analysis.Diagnostics);
+        Assert.Empty(analysis.Statements[1].Changes);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, analysis.Statements[1].Status);
+        Assert.Equal("id", Assert.Single(Assert.Single(analysis.FinalCatalog.Tables).Columns).Name);
+    }
+
+    [Fact]
+    public void Postgres_UnsupportedAlter_DoesNotKeepPreviouslyKnownColumns()
+    {
+        var analysis = Analyze(
+            "CREATE TABLE users(id INTEGER);" +
+            "ALTER TABLE users ADD COLUMN name TEXT DEFAULT 'Ada';");
+
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, analysis.Statements[1].Status);
+        Assert.Equal(SqlCatalogKnowledge.Unknown,
+            Assert.Single(analysis.FinalCatalog.Tables).Knowledge);
     }
 
     [Fact]
