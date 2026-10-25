@@ -9,27 +9,31 @@ module internal RewriteCatalogModel =
     let private sameName left right =
         String.Equals(left, right, StringComparison.Ordinal)
 
-    let lookup (state: SqlCatalogState) name =
-        state.Tables |> Seq.tryFind (fun t -> sameName t.Name name)
+    let private sameIdentity (a: SqlCatalogQualifiedName) (b: SqlCatalogQualifiedName) =
+        sameName a.Key b.Key
+
+    let lookup (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
+        state.Tables |> Seq.tryFind (fun t -> sameIdentity t.QualifiedName name)
 
     let isKnownAbsent (state: SqlCatalogState) name =
         state.IsClosedWorld && (lookup state name).IsNone
 
-    let private replace (state: SqlCatalogState) name (replacement: SqlCatalogTable option) =
+    let private replace (state: SqlCatalogState) (name: SqlCatalogQualifiedName) (replacement: SqlCatalogTable option) =
         let retained =
-            state.Tables |> Seq.filter (fun t -> not (sameName t.Name name)) |> Seq.toArray
+            state.Tables |> Seq.filter (fun t -> not (sameIdentity t.QualifiedName name)) |> Seq.toArray
         let tables =
             match replacement with
             | Some value -> Array.append retained [| value |]
             | None -> retained
-        Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) -> StringComparer.Ordinal.Compare(left.Name, right.Name)) tables
+        Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) ->
+            StringComparer.Ordinal.Compare(left.QualifiedName.Key, right.QualifiedName.Key)) tables
         SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables))
 
     let replaceTable state name columns constraints indexes =
         let cols = columns |> Seq.toArray |> Array.AsReadOnly
         let keys = constraints |> Seq.toArray |> Array.AsReadOnly
         let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
-        replace state name (Some(SqlCatalogTable(name, SqlCatalogKnowledge.Known, cols, keys, idxs)))
+        replace state name (Some(SqlCatalogTable(name.DisplayName, SqlCatalogKnowledge.Known, cols, keys, idxs, name)))
 
     let knownTableWithConstraints state name columns constraints =
         replaceTable state name columns constraints Seq.empty
@@ -58,7 +62,8 @@ module internal RewriteCatalogModel =
             table.Constraints
             |> Seq.filter (fun constraintInfo ->
                 constraintInfo.Kind = SqlCatalogConstraintKind.ForeignKey
-                && sameName constraintInfo.ReferencedTable targetTable)
+                && not (isNull constraintInfo.ReferencedIdentity)
+                && sameIdentity constraintInfo.ReferencedIdentity targetTable)
             |> Seq.map (fun constraintInfo -> table, constraintInfo))
 
     let columnDependencies (state: SqlCatalogState) tableName columnName =
@@ -68,20 +73,20 @@ module internal RewriteCatalogModel =
                 table.Constraints
                 |> Seq.filter (fun item ->
                     item.Columns |> Seq.exists (sameName columnName))
-                |> Seq.map (fun item -> table.Name, item)
+                |> Seq.map (fun item -> table.QualifiedName, item)
             | None -> Seq.empty
         let incoming =
             inboundForeignKeys state tableName
             |> Seq.filter (fun (_, item) ->
                 item.ReferencedColumns |> Seq.exists (sameName columnName))
-            |> Seq.map (fun (table, item) -> table.Name, item)
+            |> Seq.map (fun (table, item) -> table.QualifiedName, item)
         let indexed =
             match lookup state tableName with
             | Some table ->
                 table.Indexes
                 |> Seq.filter (fun index ->
                     index.Columns |> Seq.exists (sameName columnName))
-                |> Seq.map (fun index -> table.Name, index.Name)
+                |> Seq.map (fun index -> table.QualifiedName, index.Name)
             | None -> Seq.empty
         (Seq.append local incoming |> Seq.map (fun (owner, item) -> owner, string item.Kind))
         |> Seq.append indexed
@@ -89,8 +94,11 @@ module internal RewriteCatalogModel =
 
     let unknownTable state name =
         replace state name
-            (Some(SqlCatalogTable(name, SqlCatalogKnowledge.Unknown,
-                                  Array.AsReadOnly(Array.empty<SqlCatalogColumn>))))
+            (Some(SqlCatalogTable(name.DisplayName, SqlCatalogKnowledge.Unknown,
+                                  Array.AsReadOnly(Array.empty<SqlCatalogColumn>),
+                                  Array.AsReadOnly(Array.empty<SqlCatalogConstraint>),
+                                  Array.AsReadOnly(Array.empty<SqlCatalogIndex>),
+                                  name)))
 
     let dropKnown state name = replace state name None
 
@@ -101,7 +109,10 @@ module internal RewriteCatalogModel =
             state.Tables
             |> Seq.map (fun t ->
                 SqlCatalogTable(t.Name, SqlCatalogKnowledge.Unknown,
-                                Array.AsReadOnly(Array.empty<SqlCatalogColumn>)))
+                                Array.AsReadOnly(Array.empty<SqlCatalogColumn>),
+                                Array.AsReadOnly(Array.empty<SqlCatalogConstraint>),
+                                Array.AsReadOnly(Array.empty<SqlCatalogIndex>),
+                                t.QualifiedName))
             |> Seq.toArray
             |> Array.AsReadOnly
         SqlCatalogState(false, tables)
