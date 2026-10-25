@@ -29,6 +29,13 @@ type SqlCatalogBindingStatus =
     | Unverified = 2
     | Rejected = 3
 
+/// Static transaction state, not evidence of server execution.
+/// Unknown means no schema proof can survive unmodeled transaction effects.
+type SqlTransactionState =
+    | Outside = 0
+    | Active = 1
+    | Unknown = 2
+
 /// Effects are *potential* unless certainty is Known. This is not an
 /// execution permission, SQL compiler proof, or security authorization.
 [<Sealed>]
@@ -40,6 +47,8 @@ type SqlStatementAnalysis internal (
     catalogBinding: SqlCatalogBindingStatus,
     catalogBefore: SqlCatalogState,
     catalogAfter: SqlCatalogState,
+    transactionBefore: SqlTransactionState,
+    transactionAfter: SqlTransactionState,
     changes: IReadOnlyList<SqlCatalogChange>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
@@ -50,6 +59,8 @@ type SqlStatementAnalysis internal (
     member _.CatalogBinding = catalogBinding
     member _.CatalogBefore = catalogBefore
     member _.CatalogAfter = catalogAfter
+    member _.TransactionBefore = transactionBefore
+    member _.TransactionAfter = transactionAfter
     member _.Changes = changes
     member _.Diagnostics = diagnostics
 
@@ -57,7 +68,9 @@ type SqlStatementAnalysis internal (
 type SqlScriptAnalysisResult internal (
     statements: IReadOnlyList<SqlStatementAnalysis>,
     diagnostics: IReadOnlyList<SqlDiagnostic>,
-    finalCatalog: SqlCatalogState) =
+    finalCatalog: SqlCatalogState,
+    finalTransaction: SqlTransactionState) =
     member _.Statements = statements
     member _.Diagnostics = diagnostics
     member _.FinalCatalog = finalCatalog
+    member _.FinalTransaction = finalTransaction
