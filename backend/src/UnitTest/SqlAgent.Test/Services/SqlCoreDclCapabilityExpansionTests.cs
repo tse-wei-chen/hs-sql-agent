@@ -113,7 +113,9 @@ public sealed class SqlCoreDclCapabilityExpansionTests
             Assert.Null(intent.PrincipalHost);
             Assert.Equal(SqlCatalogKnowledge.Unknown, intent.Certainty);
             Assert.Equal(SqlSecurityPrincipalKind.Named, intent.PrincipalKind);
-            Assert.Equal("dbo.orders", intent.Target.DisplayName);
+            // SQL Server's existing canonical table identifier contract uses
+            // uppercase ASCII normalization; don't invent a second DCL rule.
+            Assert.Equal("DBO.ORDERS", intent.Target.DisplayName);
         });
         Assert.All(deny.DetailedEffects, effect =>
         {
