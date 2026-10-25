@@ -1,8 +1,7 @@
 name: SqlCore baseline comparison
 
 on:
-  pull_request:
-    branches: [main]
+  pull_request: {}
   workflow_dispatch:
 
 permissions:
