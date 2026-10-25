@@ -30,7 +30,7 @@ module internal RewriteScriptAnalyzer =
             |> List.toArray
         let parsed =
             RewriteResourceBudget.withStage "SchemaParsing" SqlDiagnosticStage.Parse (fun () ->
-                RewriteSchemaAnalyzer.parseFor sourceDialect tokens)
+                RewriteSchemaAnalyzer.parseForWith sourceDialect sourceProfile tokens)
         let fail message =
             let error = diagnostic syntax "SQL_SCHEMA_SEMANTIC_INVALID" SqlDiagnosticCategory.Semantic message
             SqlStatementAnalysisStatus.Invalid, SqlCatalogKnowledge.Known,
