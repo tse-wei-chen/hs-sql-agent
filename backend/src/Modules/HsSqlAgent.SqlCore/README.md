@@ -78,6 +78,31 @@ privilege subsets. SQLite does not claim SQL GRANT/REVOKE support.
 Neither these intents nor `DetailedEffects` authorize DML or change the
 virtual Catalog. Database permission enforcement remains the host's duty.
 
+### PostgreSQL role and delegation dependency analysis
+
+`AnalyzeScript` additionally exposes read-only `SecurityDependencies` on
+both each statement and the complete script. Edges have a typed kind:
+`RoleMembership` (role → recipient), or `TableDelegation` (table privilege
+and potential delegation option → recipient). A dependency is **only a
+syntactically observed possible edge**. It is not a persisted role graph,
+server ACL snapshot, proof of inheritance, delegated authority, or permission
+check. `Certainty` is always `Unknown`.
+
+The modeled PostgreSQL subset includes `GRANT reporting TO analyst`,
+`GRANT reporting TO analyst WITH ADMIN OPTION`,
+`REVOKE ADMIN OPTION FOR reporting FROM analyst RESTRICT`,
+`GRANT SELECT ON TABLE sales.orders TO analyst WITH GRANT OPTION`, and
+`REVOKE GRANT OPTION FOR SELECT ON TABLE sales.orders FROM analyst CASCADE`.
+Ordinary `REVOKE` also reports potential delegation impact. `CascadeMode`
+records the author's `CASCADE` / `RESTRICT` choice, **not** that any
+recursive revoke succeeded or which principals actually lost access.
+
+The graph is not used by the executable SQL compiler. Dependencies are bounded
+to 128 syntactic edges per DCL statement. Unmodeled role options (`SET`,
+`INHERIT`, grantor attribution, version-specific semantics), `PUBLIC` role
+membership, and delegation syntax for other database providers remain
+fail-closed until modeled separately.
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:

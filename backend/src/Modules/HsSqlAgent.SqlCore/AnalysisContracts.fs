@@ -44,6 +44,8 @@ type SqlStatementEffectOperation =
     | GrantPrivilege = 16
     | RevokePrivilege = 17
     | DenyPrivilege = 18
+    | GrantRoleMembership = 19
+    | RevokeRoleMembership = 20
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -99,6 +101,47 @@ type SqlSecurityPrincipalKind =
     | Public = 3
     | MySqlAccount = 4
 
+
+/// How a syntactic DCL statement treats possible downstream grants.
+/// This is not a proof that any dependent ACL or role actually exists.
+type SqlSecurityCascadeMode =
+    | None = 0
+    | Cascade = 1
+    | Restrict = 2
+
+type SqlSecurityDependencyKind =
+    | RoleMembership = 0
+    | TableDelegation = 1
+
+/// Directed *potential* edge only. RoleMembership means Principal may become
+/// a member of Role; TableDelegation means Principal may delegate Privilege
+/// on Table. The graph is not a representation of effective server ACLs.
+[<Sealed>]
+type SqlSecurityDependency internal (
+    kind: SqlSecurityDependencyKind,
+    action: SqlSecurityAction,
+    principal: string,
+    principalKind: SqlSecurityPrincipalKind,
+    role: string | null,
+    table: SqlCatalogQualifiedName | null,
+    privilege: Nullable<SqlTablePrivilege>,
+    withDelegationOption: bool,
+    revokeOptionOnly: bool,
+    cascadeMode: SqlSecurityCascadeMode,
+    span: SqlDiagnosticSpan) =
+    member _.Kind = kind
+    member _.Action = action
+    member _.Principal = principal
+    member _.PrincipalKind = principalKind
+    member _.Role = role
+    member _.Table = table
+    member _.Privilege = privilege
+    member _.WithDelegationOption = withDelegationOption
+    member _.RevokeOptionOnly = revokeOptionOnly
+    member _.CascadeMode = cascadeMode
+    member _.Span = span
+    member _.Certainty = SqlCatalogKnowledge.Unknown
+
 /// A parsed potential privilege change. Target is the syntax-qualified name,
 /// NEVER an identity proven to exist. Even a syntactically valid GRANT might
 /// fail or be ignored, so Certainty is unconditionally Unknown.
@@ -110,7 +153,10 @@ type SqlSecurityIntent internal (
     principal: string,
     principalKind: SqlSecurityPrincipalKind,
     span: SqlDiagnosticSpan,
-    principalHost: string | null) =
+    principalHost: string | null,
+    withDelegationOption: bool,
+    revokeOptionOnly: bool,
+    cascadeMode: SqlSecurityCascadeMode) =
     member _.Action = action
     member _.Privilege = privilege
     member _.Target = target
@@ -119,6 +165,9 @@ type SqlSecurityIntent internal (
     /// identity/ACL proof. Null for non-MySQL principals.
     member _.PrincipalHost = principalHost
     member _.PrincipalKind = principalKind
+    member _.WithDelegationOption = withDelegationOption
+    member _.RevokeOptionOnly = revokeOptionOnly
+    member _.CascadeMode = cascadeMode
     member _.Certainty = SqlCatalogKnowledge.Unknown
     member _.Span = span
 
@@ -157,6 +206,7 @@ type SqlStatementAnalysis internal (
     detailedEffects: IReadOnlyList<SqlStatementEffect>,
     effectCoverage: SqlEffectCoverage,
     securityIntents: IReadOnlyList<SqlSecurityIntent>,
+    securityDependencies: IReadOnlyList<SqlSecurityDependency>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -178,6 +228,7 @@ type SqlStatementAnalysis internal (
     member _.DetailedEffects = detailedEffects
     member _.EffectCoverage = effectCoverage
     member _.SecurityIntents = securityIntents
+    member _.SecurityDependencies = securityDependencies
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -197,8 +248,14 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.SecurityIntents)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlSecurityIntent>
+    let securityDependencies : IReadOnlyList<SqlSecurityDependency> =
+        (statements
+         |> Seq.collect (fun item -> item.SecurityDependencies)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlSecurityDependency>
     member _.DetailedEffects = detailedEffects
     member _.SecurityIntents = securityIntents
+    member _.SecurityDependencies = securityDependencies
     member _.Statements = statements
     member _.Diagnostics = diagnostics
     member _.FinalCatalog = finalCatalog
