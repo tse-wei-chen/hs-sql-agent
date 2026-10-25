@@ -365,6 +365,7 @@ module internal RewriteScriptAnalyzer =
                     let before = current
                     let transactionBefore = RewriteTransactionAnalyzer.status transaction
                     let sessionBefore = RewriteSessionAnalyzer.snapshot session
+                    let mutable securityIntents : SqlSecurityIntent list = []
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
@@ -395,6 +396,16 @@ module internal RewriteScriptAnalyzer =
                             status, effects, certainty, SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable, SqlCatalogBindingStatus.NotApplicable,
                             next, changes, diagnostics
+                        elif syntax.Kind = SqlScriptStatementKind.Security then
+                            let status, intents, diagnostics =
+                                RewriteResourceBudget.withStage "SecurityAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
+                                    RewriteSecurityAnalyzer.analyze sourceDialect sourceProfile syntax)
+                            securityIntents <- intents
+                            status, SqlEffectKind.ChangePermissions, SqlCatalogKnowledge.Unknown,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            current, ([]: SqlCatalogChange list), diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Session then
                             let status, certainty, nextSession, nextCatalog, diagnostics =
                                 RewriteSessionAnalyzer.analyze sourceDialect sourceProfile session current syntax
@@ -466,7 +477,7 @@ module internal RewriteScriptAnalyzer =
                     let detailedEffects, effectCoverage =
                         RewriteResourceBudget.withStage "ScriptEffects" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteStatementEffects.describe sourceDialect sourceProfile syntax
-                                status certainty effects (readOnly changes))
+                                status certainty effects (readOnly changes) (readOnly securityIntents))
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -475,7 +486,7 @@ module internal RewriteScriptAnalyzer =
                             transactionBefore, RewriteTransactionAnalyzer.status transaction,
                             sessionBefore, RewriteSessionAnalyzer.snapshot session,
                             readOnly changes, detailedEffects, effectCoverage,
-                            readOnly allDiagnostics)))
+                            readOnly securityIntents, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,
