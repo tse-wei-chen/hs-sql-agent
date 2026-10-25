@@ -110,6 +110,38 @@ public sealed class SqlCoreStructuredQualifiedNameTests
         Assert.Single(result.FinalCatalog.Tables);
     }
 
+    [Fact]
+    public void UnqualifiedReferenceToKnownQualifiedTable_NeedsSearchPathProof()
+    {
+        var result = Analyze(
+            "CREATE TABLE app.users(id INTEGER);" +
+            "SELECT id FROM users;");
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
+        Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].NameBinding);
+        Assert.Contains(result.Statements[1].Diagnostics,
+            d => d.Code == "SQL_CATALOG_DEFAULT_SCHEMA_UNPROVEN");
+    }
+
+    [Fact]
+    public void UnqualifiedDdlAndFkCannotInventDefaultSchemaResolution()
+    {
+        var ddl = Analyze(
+            "CREATE TABLE app.users(id INTEGER);" +
+            "DROP TABLE users;");
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, ddl.Statements[1].Status);
+        Assert.Contains(ddl.Statements[1].Diagnostics,
+            d => d.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
+        Assert.False(ddl.FinalCatalog.IsClosedWorld);
+
+        var foreign = Analyze(
+            "CREATE TABLE app.parent(id INTEGER NOT NULL PRIMARY KEY);" +
+            "CREATE TABLE child(fk INTEGER REFERENCES parent(id));");
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, foreign.Statements[1].Status);
+        Assert.Contains(foreign.Statements[1].Diagnostics,
+            d => d.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
+        Assert.False(foreign.FinalCatalog.IsClosedWorld);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Postgres, "public", "users", "INTEGER")]
     [InlineData(SqlAgentToolType.Oracle, "APP", "USERS", "NUMBER")]
