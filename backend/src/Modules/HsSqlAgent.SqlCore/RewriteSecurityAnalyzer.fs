@@ -137,7 +137,8 @@ module internal RewriteSecurityAnalyzer =
             let target =
                 match sourceDialect with
                 | SqlAgentToolType.MsSqlServer ->
-                    expect "OBJECT"
+                    if not (accept "OBJECT") then
+                        raise (UnsupportedGrammar "SQL Server DCL requires the proven OBJECT::schema.table form.")
                     // SQL Server object qualifier must use OBJECT::, not an
                     // invented portable TABLE notation.
                     match current () with
@@ -152,6 +153,8 @@ module internal RewriteSecurityAnalyzer =
                 | SqlAgentToolType.Oracle ->
                     // Oracle's object privilege grammar has ON object, not
                     // PostgreSQL's optional TABLE keyword.
+                    if word () = "TABLE" then
+                        raise (UnsupportedGrammar "Oracle's modeled table privilege grammar uses ON object, without TABLE.")
                     qualifiedName ()
                 | SqlAgentToolType.Postgres
                 | SqlAgentToolType.Firebird ->
