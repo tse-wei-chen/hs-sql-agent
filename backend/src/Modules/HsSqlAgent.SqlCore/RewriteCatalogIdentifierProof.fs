@@ -47,15 +47,15 @@ module internal RewriteCatalogIdentifierProof =
         value |> Seq.forall (fun c -> int c <= 127)
 
     let isSimpleAsciiIdentifier (value: string) =
+        // A dotted quoted identifier and a multi-part SQL name are different
+        // AST shapes. CatalogState currently stores both as a flat string:
+        // forbid dots until it persists structured identifier parts.
         not (String.IsNullOrEmpty value)
-        && (value.Split('.')
-            |> Array.forall (fun part ->
-               not (String.IsNullOrEmpty part)
-               && (part |> Seq.forall (fun c ->
-                   (c >= 'A' && c <= 'Z')
-                   || (c >= 'a' && c <= 'z')
-                   || (c >= '0' && c <= '9')
-                   || c = '_'))))
+        && (value |> Seq.forall (fun c ->
+            (c >= 'A' && c <= 'Z')
+            || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9')
+            || c = '_'))
 
     /// Require a canonical *already normalized* input Catalog. A manually
     /// supplied closed-world Catalog with both Users/users is not a proof:
