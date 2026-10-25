@@ -480,8 +480,8 @@ module internal RewriteSchemaAnalyzer =
                         elif accept "DROP" then [dropAction ()]
                         else raise OutsideSubset
                     | _ -> raise OutsideSubset
-            endOfStatement ()
-            Recognized(AlterColumns(table, actions))
+                endOfStatement ()
+                Recognized(AlterColumns(table, actions))
 
         try
             match word () with
