@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <Compile Include="ClrContracts.fs" />
+    <Compile Include="ScriptContracts.fs" />
     <Compile Include="CompatibilityTemporalLiteralParser.fs" />
     <Compile Include="LegacyDtoContracts.fs" />
     <Compile Include="CompatibilityAstTypes.fs" />
@@ -67,6 +68,7 @@
     <Compile Include="RewriteRenderer.fs" />
     <Compile Include="RewritePipeline.fs" />
     <Compile Include="RewriteFacadeAdapter.fs" />
+    <Compile Include="RewriteScriptParser.fs" />
     <Compile Include="InspectionFacade.fs" />
     <Compile Include="CompatibilityParserFacade.fs" />
     <Compile Include="CompatibilityDmlBatchParser.fs" />
