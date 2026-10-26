@@ -834,6 +834,14 @@ module internal RewriteParser =
             | _ -> fail cursor.Current "Invalid local DATETIME literal in CAST"
         | _ -> Cast(expression, target)
 
+    // Oracle MINUS is a contextual set-boundary operator. Do not reserve
+    // an identifier token in the five other source dialects.
+    let private isOracleMinusSet (cursor: Cursor) =
+        match cursor.Current.Kind with
+        | Identifier(value, false) when cursor.Dialect = SourceDialect.Oracle ->
+            value.Equals("MINUS", StringComparison.OrdinalIgnoreCase)
+        | _ -> false
+
     let rec private parseExpression (cursor: Cursor) : Expr =
         RewriteResourceBudget.checkpoint ()
         let boundary = ExpressionBoundary cursor.Position
@@ -1677,6 +1685,7 @@ module internal RewriteParser =
     and private parseSelectAlias cursor =
         let alias =
             if acceptKeyword "AS" cursor then Some(aliasIdentifierPart cursor)
+            elif isOracleMinusSet cursor then None
             else
                 match cursor.Current.Kind with
                 | Identifier _ -> Some(identifierPart cursor)
@@ -1794,6 +1803,7 @@ module internal RewriteParser =
             let name = identifier cursor
             let alias =
                 if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+                elif isOracleMinusSet cursor then None
                 else
                     match cursor.Current.Kind with
                     | Identifier _ -> Some(identifierPart cursor)
@@ -2087,6 +2097,12 @@ module internal RewriteParser =
             else
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Except
+        elif isOracleMinusSet cursor then
+            let token = cursor.Current
+            cursor.Advance()
+            if isKeyword "ALL" cursor.Current then
+                fail token "Oracle MINUS ALL requires an Oracle 21c+ duplicate-preserving set capability proof and stays fail-closed"
+            Some SetOperator.Except
         else None
 
     and private parseQueryTail (cursor: Cursor) =
@@ -2257,11 +2273,13 @@ module internal RewriteParser =
                               Span = head.Span }
                         let intersects = ResizeArray<SetBranch>()
                         let lowerBranches = ResizeArray<SetBranch>()
+                        let mutable sawUnparenthesizedIntersect = false
 
                         let rec scanInitialIntersects () =
                             if isKeyword "INTERSECT" cursor.Current then
                                 match parseSetOperator cursor with
                                 | Some operator ->
+                                    sawUnparenthesizedIntersect <- true
                                     scheduleOperand (fun branch ->
                                         intersects.Add { Operator = operator; Query = branch }
                                         push scanInitialIntersects)
@@ -2270,10 +2288,19 @@ module internal RewriteParser =
 
                         and scanLowerBranches () =
                             if isKeyword "UNION" cursor.Current
-                               || isKeyword "EXCEPT" cursor.Current then
+                               || isKeyword "EXCEPT" cursor.Current
+                               || isOracleMinusSet cursor then
+                                if cursor.Dialect = SourceDialect.Oracle
+                                   && sawUnparenthesizedIntersect then
+                                    fail cursor.Current "Oracle mixed INTERSECT and MINUS/UNION/EXCEPT precedence is not modeled; refuse source semantics change"
                                 match parseSetOperator cursor with
                                 | Some operator ->
                                     scheduleOperandWithIntersects (fun branch ->
+                                        if cursor.Dialect = SourceDialect.Oracle
+                                           && (branch.SetOperations |> List.exists (fun item ->
+                                               item.Operator = SetOperator.Intersect
+                                               || item.Operator = SetOperator.IntersectAll)) then
+                                            fail cursor.Current "Oracle mixed INTERSECT and MINUS/UNION/EXCEPT precedence is not modeled; refuse source semantics change"
                                         lowerBranches.Add { Operator = operator; Query = branch }
                                         push scanLowerBranches)
                                 | None -> push finish
@@ -2331,6 +2358,7 @@ module internal RewriteParser =
                 let name = identifier cursor
                 let alias =
                     if acceptKeyword "AS" cursor then Some(identifierPart cursor)
+                    elif isOracleMinusSet cursor then None
                     else
                         match cursor.Current.Kind with
                         | Identifier _ -> Some(identifierPart cursor)
