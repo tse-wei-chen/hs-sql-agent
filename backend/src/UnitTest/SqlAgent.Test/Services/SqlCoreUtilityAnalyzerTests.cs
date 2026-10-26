@@ -101,6 +101,18 @@ public sealed class SqlCoreUtilityAnalyzerTests
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 
+    [Fact]
+    public void MySqlExplainAnalyzeRequiresDedicatedVersionAndFormatProof()
+    {
+        var result = Analyze("EXPLAIN ANALYZE SELECT 1", SqlAgentToolType.MySQL);
+        var statement = Assert.Single(result.Statements);
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
+        Assert.Empty(result.UtilityIntents);
+        Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
+        Assert.Contains(statement.Diagnostics, d => d.Code == "SQL_UTILITY_UNSUPPORTED");
+        Assert.False(result.FinalCatalog.IsClosedWorld);
+    }
+
     [Theory]
     [InlineData("EXPLAIN (ANALYZE FALSE) SELECT 1")]
     [InlineData("EXPLAIN (ANALYZE OFF) SELECT 1")]
@@ -138,7 +150,6 @@ public sealed class SqlCoreUtilityAnalyzerTests
     [InlineData(SqlAgentToolType.Oracle, "EXPLAIN SELECT 1")]
     [InlineData(SqlAgentToolType.Firebird, "EXPLAIN SELECT 1")]
     [InlineData(SqlAgentToolType.Sqlite, "EXPLAIN ANALYZE SELECT 1")]
-    [InlineData(SqlAgentToolType.MySQL, "EXPLAIN ANALYZE SELECT 1")]
     [InlineData(SqlAgentToolType.MySQL, "VACUUM app.orders")]
     [InlineData(SqlAgentToolType.MySQL, "ANALYZE app.orders")]
     [InlineData(SqlAgentToolType.MsSqlServer, "ANALYZE app.orders")]
