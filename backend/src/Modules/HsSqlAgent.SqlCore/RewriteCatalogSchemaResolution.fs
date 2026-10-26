@@ -12,7 +12,11 @@ module internal RewriteCatalogSchemaResolution =
 
     type SchemaScope =
         | Unproven
+        /// PostgreSQL declared single ordinary search_path schema.
         | SingleSchema of string
+        /// MySQL current database, only when identifier-folding rules
+        /// are an explicit caller-declared capability premise.
+        | SingleDatabase of string
 
     let scope dialect (profile: SqlProviderCapabilityProfile | null) =
         match dialect, profile with
@@ -32,7 +36,7 @@ module internal RewriteCatalogSchemaResolution =
 
     let resolve scope (name: SqlCatalogQualifiedName) =
         match scope with
-        | SingleSchema schema when name.Parts.Count = 1 ->
+        | (SingleSchema schema | SingleDatabase schema) when name.Parts.Count = 1 ->
             partName [| schema; name.Parts[0] |]
         | _ -> name
 
@@ -44,6 +48,7 @@ module internal RewriteCatalogSchemaResolution =
         match scope with
         | Unproven -> false
         | SingleSchema _ -> not (unqualifiedSystemName name)
+        | SingleDatabase _ -> true
 
     let private samePart a b =
         String.Equals(a, b, StringComparison.Ordinal)
@@ -55,13 +60,16 @@ module internal RewriteCatalogSchemaResolution =
     let canProject scope (state: SqlCatalogState) =
         match scope with
         | Unproven -> false
-        | SingleSchema schema ->
+        | SingleSchema schema
+        | SingleDatabase schema ->
             not (state.Tables |> Seq.exists (fun table ->
                 let name = table.QualifiedName
                 (name.Parts.Count = 1)
                 || (name.Parts.Count = 2
                     && samePart name.Parts[0] schema
-                    && name.Parts[1].StartsWith("pg_", StringComparison.OrdinalIgnoreCase))))
+                    && (match scope with
+                        | SingleSchema _ -> name.Parts[1].StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+                        | _ -> false))))
 
     /// Transient aliases are an interpretation of the declared search_path.
     /// Never persist the aliases to the state or create extra Catalog Delta.
@@ -70,7 +78,8 @@ module internal RewriteCatalogSchemaResolution =
     let projectForBinding scope (state: SqlCatalogState) =
         match scope with
         | Unproven -> state
-        | SingleSchema schema ->
+        | SingleSchema schema
+        | SingleDatabase schema ->
             let aliases =
                 state.Tables
                 |> Seq.choose (fun table ->

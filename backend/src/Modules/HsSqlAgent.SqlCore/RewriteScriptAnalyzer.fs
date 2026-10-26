@@ -146,7 +146,8 @@ module internal RewriteScriptAnalyzer =
             dependencyUnproven "PostgreSQL pg_catalog/pg_temp implicit name resolution is not proven by a single user schema."
         | Recognized operation when
             (match scope with
-             | RewriteCatalogSchemaResolution.SingleSchema _ ->
+             | RewriteCatalogSchemaResolution.SingleSchema _
+             | RewriteCatalogSchemaResolution.SingleDatabase _ ->
                  not (RewriteCatalogSchemaResolution.canProject scope state)
                  && (referencedTableName operation
                      |> Option.exists (fun n -> n.Parts.Count = 2))
@@ -368,6 +369,7 @@ module internal RewriteScriptAnalyzer =
                     let mutable securityIntents : SqlSecurityIntent list = []
                     let mutable securityDependencies : SqlSecurityDependency list = []
                     let mutable utilityIntents : SqlUtilityIntent list = []
+                    let mutable sessionOperation = SqlStatementEffectOperation.Unknown
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
@@ -427,10 +429,15 @@ module internal RewriteScriptAnalyzer =
                             SqlCatalogBindingStatus.NotApplicable,
                             next, ([]: SqlCatalogChange list), diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Session then
-                            let status, certainty, nextSession, nextCatalog, diagnostics =
+                            let status, certainty, nextSession, nextCatalog, diagnostics, operation =
                                 RewriteSessionAnalyzer.analyze sourceDialect sourceProfile session current syntax
                             session <- nextSession
-                            status, SqlEffectKind.ChangeSession, certainty,
+                            sessionOperation <- operation
+                            let sessionEffects =
+                                if status = SqlStatementAnalysisStatus.PartiallyAnalyzed then
+                                    SqlEffectKind.ChangeSession ||| SqlEffectKind.UnknownEffects
+                                else SqlEffectKind.ChangeSession
+                            status, sessionEffects, certainty,
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
@@ -499,7 +506,7 @@ module internal RewriteScriptAnalyzer =
                             RewriteStatementEffects.describe sourceDialect sourceProfile syntax
                                 status certainty effects (readOnly changes)
                                 (readOnly securityIntents) (readOnly securityDependencies)
-                                (readOnly utilityIntents))
+                                (readOnly utilityIntents) sessionOperation)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,

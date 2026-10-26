@@ -50,6 +50,8 @@ type SqlStatementEffectOperation =
     | ExplainExecute = 22
     | AnalyzeStatistics = 23
     | VacuumMaintenance = 24
+    | UseDatabase = 25
+    | SetNoCount = 26
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -216,9 +218,21 @@ type SqlTransactionState =
 /// Immutable static session scope. A known SearchPath is a caller/script
 /// premise, never evidence from a live server or a compilation permission.
 [<Sealed>]
-type SqlSessionAnalysisState internal (searchPath: string | null) =
+type SqlSessionAnalysisState internal (
+    searchPath: string | null,
+    currentDatabase: string | null,
+    isDatabaseScopeProven: bool,
+    noCount: Nullable<bool>) =
     member _.SearchPath = searchPath
     member _.IsSearchPathProven = not (isNull searchPath)
+    /// Script/caller-declared current database, not proof it exists or that
+    /// the executing principal has access.
+    member _.CurrentDatabase = currentDatabase
+    /// A single-schema lookup can be projected only when the provider's
+    /// identifier rules AND the existing virtual Catalog are safe.
+    member _.IsDatabaseScopeProven = isDatabaseScopeProven
+    /// SQL Server NOCOUNT as a statically parsed option; null = unknown.
+    member _.NoCount = noCount
 
 /// Effects are *potential* unless certainty is Known. This is not an
 /// execution permission, SQL compiler proof, or security authorization.
