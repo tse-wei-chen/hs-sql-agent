@@ -97,7 +97,7 @@ public sealed class SqlCoreProceduralIntentTests
     [Theory]
     [InlineData(SqlAgentToolType.Postgres, "CREATE PROCEDURE app.do_work() LANGUAGE SQL AS $$ BEGIN UPDATE users SET id=1; DELETE FROM users; END $$; SELECT 1;")]
     [InlineData(SqlAgentToolType.MsSqlServer, "CREATE OR ALTER PROCEDURE dbo.do_work AS BEGIN SELECT 1; DELETE FROM users; END; SELECT 1;")]
-    [InlineData(SqlAgentToolType.Firebird, "EXECUTE BLOCK AS BEGIN DELETE FROM users; SELECT id FROM users INTO :id; END; SELECT 1;")]
+    [InlineData(SqlAgentToolType.Firebird, "EXECUTE BLOCK AS BEGIN DELETE FROM users; DELETE FROM logs; END; SELECT 1;")]
     [InlineData(SqlAgentToolType.Oracle, "BEGIN DELETE FROM users; UPDATE users SET id=1; END; SELECT 1;")]
     public void OpaqueBodiesCannotBeSplitIntoFalselyVerifiedNestedStatements(
         SqlAgentToolType provider, string sql)
@@ -110,6 +110,16 @@ public sealed class SqlCoreProceduralIntentTests
         Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
         Assert.Contains(statement.Diagnostics, d => d.Code == "SQL_PROCEDURAL_UNSUPPORTED");
         Assert.False(report.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void FirebirdUnboundBlockVariablesRemainRejectedAtLexicalBoundary()
+    {
+        // This is not an implicit PSQL variable binding feature:
+        // the script lexer and execution compiler still reject :variables.
+        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            Analyze("EXECUTE BLOCK AS BEGIN SELECT 1 INTO :id; END;",
+                SqlAgentToolType.Firebird));
     }
 
     [Fact]
