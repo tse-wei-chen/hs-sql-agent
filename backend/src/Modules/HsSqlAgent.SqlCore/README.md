@@ -114,8 +114,9 @@ plans or permissions.
   `SqlUtilityExecutionMode.PlanningOnly` versus `ExecutesStatement`.
   A plain explain does **not** claim the underlying mutation ran.
 - PostgreSQL admits a bounded `EXPLAIN` / `EXPLAIN ANALYZE` subset;
-  MySQL admits simple `EXPLAIN` on queries/mutations and
-  `EXPLAIN ANALYZE SELECT`; SQLite supports `EXPLAIN QUERY PLAN SELECT`.
+  MySQL admits simple `EXPLAIN` on queries/mutations, while
+  `EXPLAIN ANALYZE` remains unsupported without proven server version and
+  `explain_format` session capabilities; SQLite supports `EXPLAIN QUERY PLAN SELECT`.
   All nested query/DML SQL must first pass the strict source parser and
   agree with its closed F# AST statement kind.
 - PostgreSQL `ANALYZE schema.table` and `VACUUM schema.table` are typed
