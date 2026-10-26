@@ -109,15 +109,17 @@ public sealed class SqlCoreFunctionParameterBindingTests
     [Fact]
     public void PositionalParametersNeverBypassStrictSourceLexer()
     {
-        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
-            Analyze("CREATE FUNCTION app.pos(arg integer) RETURNS integer LANGUAGE SQL AS $b$SELECT $1;$b$;"));
+        var report = Analyze("CREATE FUNCTION app.pos(arg integer) RETURNS integer LANGUAGE SQL AS $b$SELECT $1;$b$;");
+        Assert.Empty(report.ProceduralDefinitions);
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(report.Statements).Status);
+        Assert.Contains(report.Diagnostics, d => d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
     }
 
     [Fact]
     public void SymbolsAreIsolatedBetweenDefinitions()
     {
         var report = Analyze(
-            "CREATE FUNCTION app.first(arg integer) RETURNS integer LANGUAGE SQL AS $a$SELECT arg;$a$;" +
+            "CREATE FUNCTION app.primary_fn(arg integer) RETURNS integer LANGUAGE SQL AS $a$SELECT arg;$a$;" +
             "CREATE FUNCTION app.second(value_name text) RETURNS text LANGUAGE SQL AS $b$SELECT value_name;$b$;");
         Assert.Equal(2, report.ProceduralDefinitions.Count);
         Assert.Equal("arg", Assert.Single(report.ProceduralDefinitions[0].Parameters).Name);
