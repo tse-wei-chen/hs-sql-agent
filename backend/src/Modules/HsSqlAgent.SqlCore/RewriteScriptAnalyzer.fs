@@ -442,6 +442,27 @@ module internal RewriteScriptAnalyzer =
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
                             nextCatalog, ([]: SqlCatalogChange list), diagnostics
+                        elif syntax.Kind = SqlScriptStatementKind.Schema
+                             && sourceDialect = SqlAgentToolType.MySQL
+                             && transactionBefore = SqlTransactionState.Active then
+                            // MySQL non-temporary DDL implicitly commits, but
+                            // temporary-table variants and storage engines
+                            // have distinct rules. Do not run the generic DDL
+                            // virtual-Catalog mutation then pretend an outer
+                            // ROLLBACK can restore its original state.
+                            let warning =
+                                diagnostic syntax "SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN"
+                                    SqlDiagnosticCategory.Capability
+                                    "MySQL DDL may cause an implicit commit or use nontransactional storage; transaction/catalog rollback proof is invalid."
+                            SqlStatementAnalysisStatus.Unsupported,
+                            SqlEffectKind.ChangeSchema ||| SqlEffectKind.ChangeTransaction
+                                ||| SqlEffectKind.UnknownEffects,
+                            SqlCatalogKnowledge.Unknown,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            RewriteCatalogModel.taintAll current,
+                            ([]: SqlCatalogChange list), [warning]
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
                             let status, certainty, next, changes, diagnostics =
                                 analyzeDdl sourceDialect sourceProfile (RewriteSessionAnalyzer.scope session) current syntax
@@ -483,7 +504,7 @@ module internal RewriteScriptAnalyzer =
                                 parserDiagnostics @ catalogErrors
                             status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, [], diagnostics
                     let nextTransaction =
-                        RewriteTransactionAnalyzer.invalidateIfUnproven transaction syntax.Kind status
+                        RewriteTransactionAnalyzer.invalidateIfUnproven sourceDialect transaction syntax.Kind status
                     let stateBecameUnknown =
                         transactionBefore = SqlTransactionState.Active
                         && RewriteTransactionAnalyzer.status nextTransaction = SqlTransactionState.Unknown
