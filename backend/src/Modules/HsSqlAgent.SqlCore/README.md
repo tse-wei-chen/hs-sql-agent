@@ -349,6 +349,16 @@ The closed F# AST can establish only these evidence categories:
   int4/int8 arithmetic has the `bigint` result type.
 - `VoidNoValueRequired`: void does not require a final result SELECT.
 
+Literal classification now goes through the internal
+`RewriteScalarTypeEvidence` DU (`Unproven`, `FamilyOnly`, `ExactPrimitive`).
+The six-provider schema validator consumes only its conservative family
+projection; Function return evidence consumes only an exact modeled
+primitive type. A family-only Numeric fact (such as a decimal/float
+literal or schema snapshot column) cannot silently become `integer` or
+`bigint`; `NULL` remains unproven. Neither projection implies a server
+CAST, runtime result or authorization. The six-dialect typed-schema
+regression matrix and the Function evidence matrix guard this boundary.
+
 Both the source-validated Query AST and Function-only positional AST
 now use one internal `RewritePrimitiveTypeEvidence` rule set for
 primitive literals, unary operators, integer/boolean binary operators,

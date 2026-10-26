@@ -184,17 +184,10 @@ module internal RewriteSchemaTypeValidation =
                 |> Some
         kindInScope scope qualifier column
 
+    // The type validator consumes ONLY the family projection. The separate
+    // exact Function type proof is never manufactured from a family-only fact.
     let private literalKind scalar =
-        match scalar with
-        | ScalarValue.Null -> None
-        | ScalarValue.Boolean _ -> Some SqlSchemaValueKind.Boolean
-        | ScalarValue.Integer _ | ScalarValue.Decimal _ | ScalarValue.Floating _ ->
-            Some SqlSchemaValueKind.Numeric
-        | ScalarValue.Text _ -> Some SqlSchemaValueKind.Text
-        | ScalarValue.Date _ | ScalarValue.Time _ | ScalarValue.LocalDateTime _
-        | ScalarValue.OffsetDateTime _ | ScalarValue.Duration _ ->
-            Some SqlSchemaValueKind.Temporal
-        | ScalarValue.Bytes _ -> Some SqlSchemaValueKind.Binary
+        RewriteScalarTypeEvidence.literalFamily scalar
 
     let private requireKind span expected actual operation =
         match actual with

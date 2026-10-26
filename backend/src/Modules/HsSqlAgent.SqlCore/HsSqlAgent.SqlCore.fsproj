@@ -46,6 +46,7 @@
     <Compile Include="TranslationContracts.fs" />
     <Compile Include="RuntimeContracts.fs" />
     <Compile Include="RewriteCoreModel.fs" />
+    <Compile Include="RewriteScalarTypeEvidence.fs" />
     <Compile Include="RewriteTypestate.fs" />
     <Compile Include="RewriteResourceBudget.fs" />
     <Compile Include="RewriteCatalogIdentifierProof.fs" />
