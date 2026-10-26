@@ -121,12 +121,9 @@ public sealed class SqlCoreTransactionCatalogTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void UnprovenDialectTransactionsNeverInferPostgresqlRollbackSemantics(SqlAgentToolType dialect)
+    public void UnmodeledProviderTransactionsNeverInferPostgresqlRollbackSemantics(SqlAgentToolType dialect)
     {
         var result = SqlCoreFacade.AnalyzeScript(
             "BEGIN TRANSACTION; SELECT 1; ROLLBACK;",
