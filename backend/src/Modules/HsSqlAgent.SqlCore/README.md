@@ -37,6 +37,35 @@ foreach (var parameter in command.Parameters)
 For mutations, use `CoreSqlTextParser.ParseDml` with `CoreDmlCompiler`. Compilation produces an
 immutable `CompiledSqlCommand`; this package does not open database connections or execute SQL.
 
+## Cooperative cancellation for static SQL scripts
+
+`ParseScript` and `AnalyzeScript` have `CancellationToken` overloads so an
+ASP.NET host or other .NET caller can abandon an expensive analysis without
+waiting for the resource deadline. The previous overloads remain available.
+
+```csharp
+using System.Threading;
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Enums;
+
+using var cts = new CancellationTokenSource();
+var syntax = SqlCoreFacade.ParseScript(
+    "CREATE TABLE demo (id INT); SELECT id FROM demo;",
+    SqlAgentToolType.Postgres, cts.Token);
+
+var analysis = SqlCoreFacade.AnalyzeScript(
+    "CREATE TABLE demo (id INT); SELECT id FROM demo;",
+    SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), cts.Token);
+```
+
+Cancellation is **cooperative**: the token is checked at compiler work checkpoints,
+stage boundaries, and before returning. Cancellation throws
+`OperationCanceledException` rather than returning a partial result marked
+`Analyzed`. The scope is restored even when analysis fails, and any nested
+analysis inherits its caller's active cancellation. This is strictly static
+SQL parsing/analysis; neither method opens a database connection or executes SQL.
+
 ## Static script DCL analysis (no authorization)
 
 `SqlCoreFacade.AnalyzeScript` can report potential, strongly typed permission

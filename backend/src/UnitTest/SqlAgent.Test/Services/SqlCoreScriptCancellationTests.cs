@@ -74,7 +74,9 @@ public sealed class SqlCoreScriptCancellationTests
             Assert.IsAssignableFrom<OperationCanceledException>(error.InnerException);
             return new object();
         });
-        scope.Invoke(null, new object[] { cancellation.Token, callback });
+        var scopeError = Assert.Throws<TargetInvocationException>(() =>
+            scope.Invoke(null, new object[] { cancellation.Token, callback }));
+        Assert.IsAssignableFrom<OperationCanceledException>(scopeError.InnerException);
 
         // The ambient cancellation scope must be restored after exiting.
         Assert.Single(SqlCoreFacade.ParseScript("SELECT 1", SqlAgentToolType.Postgres).Statements);
