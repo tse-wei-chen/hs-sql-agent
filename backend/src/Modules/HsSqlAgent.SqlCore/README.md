@@ -89,7 +89,7 @@ var report = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres,
     SqlCatalogState.KnownEmpty());
 Console.WriteLine(report.EffectCoverage);
 foreach (var delta in report.CatalogChanges)
-    Console.WriteLine($"{delta.Operation}: {delta.Name}");
+    Console.WriteLine($"{delta.Operation}: {delta.TableName}");
 ```
 
 ## Static script DCL analysis (no authorization)
