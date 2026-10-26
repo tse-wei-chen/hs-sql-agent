@@ -232,8 +232,9 @@ module internal RewriteProceduralBodyAnalyzer =
                     | Some SqlFunctionReturnType.Boolean, Some SqlFunctionReturnType.Boolean ->
                         Some SqlFunctionReturnType.Boolean
                     | _ -> None
-                | Expr.Binary ((BinaryOperator.Add | BinaryOperator.Subtract
-                                | BinaryOperator.Multiply), left, right) ->
+                | Expr.Binary (op, left, right) when
+                    op = BinaryOperator.Add || op = BinaryOperator.Subtract
+                    || op = BinaryOperator.Multiply ->
                     match infer left, infer right with
                     | Some SqlFunctionReturnType.Integer, Some SqlFunctionReturnType.Integer ->
                         Some SqlFunctionReturnType.Integer
