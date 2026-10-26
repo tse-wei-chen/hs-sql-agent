@@ -146,6 +146,16 @@ supported non-Oracle targets render `EXCEPT`. The keyword is recognized
 contextually only at Oracle set boundaries, preserving existing identifier
 lexing in the other five providers.
 
+The source grammar also admits Oracle left-to-right-compatible
+`INTERSECT` prefixes followed by `MINUS`, `EXCEPT`, or `UNION`.
+Explicitly parenthesized right-side compound set operands are preserved
+as nested closed Query AST branches. Oracle and PostgreSQL render the
+required parentheses around these nested branches; no precedence is
+silently reassociated when lowering `MINUS` to `EXCEPT`.
+Unparenthesized right-side `INTERSECT` after `MINUS` / `UNION` /
+`EXCEPT` remains rejected. This is a bounded, provenance-preserving
+expansion rather than full Oracle mixed-set associativity emulation.
+
 **Fail-closed:** `MINUS ALL` requires Oracle 21c+ duplicate-preserving
 set capability proof and remains rejected in the current matrix. Oracle
 native unparenthesized set operators evaluate left-to-right, whereas
