@@ -45,7 +45,7 @@ public sealed class SqlCoreFunctionPrimitiveTypeParityTests
             var statement = Assert.Single(report.Statements);
             var function = Assert.Single(report.ProceduralDefinitions);
             Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, statement.Status);
-            Assert.Equal(SqlFunctionReturnType.Void == function.FunctionReturn!.DeclaredType, false);
+            Assert.NotEqual(SqlFunctionReturnType.Void, function.FunctionReturn!.DeclaredType);
             Assert.Equal(evidence, function.FunctionReturn.Evidence);
             Assert.False(function.FunctionReturn.IsRuntimeReturnProven);
             Assert.Equal(SqlCatalogKnowledge.Unknown, function.FunctionReturn.RuntimeCertainty);
