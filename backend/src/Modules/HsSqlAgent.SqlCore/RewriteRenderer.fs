@@ -486,10 +486,15 @@ module internal RewriteRenderer =
         | OnJoinKind.Right -> "NATURAL RIGHT JOIN"
         | OnJoinKind.Full -> "NATURAL FULL OUTER JOIN"
 
-    let private setText = function
-        | SetOperator.Union -> "UNION" | SetOperator.UnionAll -> "UNION ALL"
-        | SetOperator.Intersect -> "INTERSECT" | SetOperator.IntersectAll -> "INTERSECT ALL"
-        | SetOperator.Except -> "EXCEPT" | SetOperator.ExceptAll -> "EXCEPT ALL"
+    let private setText provider operator =
+        match provider, operator with
+        | Oracle, SetOperator.Except -> "MINUS"
+        | _, SetOperator.Union -> "UNION"
+        | _, SetOperator.UnionAll -> "UNION ALL"
+        | _, SetOperator.Intersect -> "INTERSECT"
+        | _, SetOperator.IntersectAll -> "INTERSECT ALL"
+        | _, SetOperator.Except -> "EXCEPT"
+        | _, SetOperator.ExceptAll -> "EXCEPT ALL"
 
     let private frameBoundText = function
         | WindowFrameBound.UnboundedPreceding -> "UNBOUNDED PRECEDING"
@@ -1693,7 +1698,7 @@ module internal RewriteRenderer =
                         Offset = None
                         FetchPercent = None
                         FetchWithTies = false }
-                sql.Append(" ").Append(setText branch.Operator).Append(" ") |> ignore
+                sql.Append(" ").Append(setText ctx.Provider branch.Operator).Append(" ") |> ignore
                 if ctx.Provider = PostgreSql
                    && not branchNoTail.SetOperations.IsEmpty
                    && branchNoTail.Head.Ctes.IsEmpty then

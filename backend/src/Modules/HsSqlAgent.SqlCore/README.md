@@ -137,6 +137,23 @@ plans or permissions.
 The analyzer only *describes* possible execution; it never opens a connection
 or issues `EXPLAIN`, `ANALYZE`, `VACUUM`, or any inner query/DML.
 
+## Oracle MINUS set-operation capability
+
+The Oracle source parser now recognizes the traditional unquoted `MINUS`
+set operator and represents its duplicate-eliminating semantics using
+the closed `SetOperator.Except` AST. Oracle targets render native `MINUS`;
+supported non-Oracle targets render `EXCEPT`. The keyword is recognized
+contextually only at Oracle set boundaries, preserving existing identifier
+lexing in the other five providers.
+
+**Fail-closed:** `MINUS ALL` requires Oracle 21c+ duplicate-preserving
+set capability proof and remains rejected in the current matrix. Oracle
+native unparenthesized set operators evaluate left-to-right, whereas
+Core's portable AST gives `INTERSECT` precedence. Mixed unparenthesized
+`INTERSECT` with `MINUS` / `EXCEPT` / `UNION` is conservatively
+rejected rather than silently changing result semantics. No executable
+SQL text substitution or DML authorization changes are involved.
+
 ## Cross-provider static Session capabilities
 
 `SqlCoreFacade.AnalyzeScript` exposes immutable `SessionBefore`,
