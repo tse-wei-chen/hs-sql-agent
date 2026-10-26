@@ -220,25 +220,34 @@ module internal RewriteProceduralBodyAnalyzer =
                 | None -> false
             | _ -> false)
 
+    /// Shared FROM-free single-expression return shape for both successful
+    /// evidence and narrowly proven mismatch diagnostics. All other SQL
+    /// shapes are *unproven*, never treated as a provable type conflict.
+    let private singleReturnExpression (last: Document) =
+        match last.Statement with
+        | Statement.QueryStatement query when
+            query.Head.Ctes.IsEmpty
+            && query.Head.From.IsNone
+            && query.Head.Joins.IsEmpty
+            && query.Head.Where.IsNone
+            && query.Head.GroupBy.IsEmpty
+            && query.Head.Having.IsNone
+            && query.SetOperations.IsEmpty
+            && query.OrderBy.IsEmpty
+            && query.Limit.IsNone && query.Offset.IsNone
+            && query.FetchPercent.IsNone && not query.FetchWithTies
+            && query.Head.DistinctMode = SelectDistinct.AllRows
+            && query.Head.Projection.Length = 1 ->
+            Some query.Head.Projection.Head.Expression
+        | _ -> None
+
     let private returnEvidence declared (symbols: SqlFunctionParameterSymbol list) (last: Document) =
         if declared = SqlFunctionReturnType.Void then
             Some SqlFunctionReturnEvidence.VoidNoValueRequired
         else
-            match last.Statement with
-            | Statement.QueryStatement query when
-                query.Head.Ctes.IsEmpty
-                && query.Head.From.IsNone
-                && query.Head.Joins.IsEmpty
-                && query.Head.Where.IsNone
-                && query.Head.GroupBy.IsEmpty
-                && query.Head.Having.IsNone
-                && query.SetOperations.IsEmpty
-                && query.OrderBy.IsEmpty
-                && query.Limit.IsNone && query.Offset.IsNone
-                && query.FetchPercent.IsNone && not query.FetchWithTies
-                && query.Head.DistinctMode = SelectDistinct.AllRows
-                && query.Head.Projection.Length = 1 ->
-                match Expr.unspan query.Head.Projection.Head.Expression with
+            match singleReturnExpression last with
+            | Some expression ->
+                match Expr.unspan expression with
                 | Expr.Literal literal when
                     declared <> SqlFunctionReturnType.BigInteger
                     && RewritePrimitiveTypeEvidence.literalCompatible declared literal ->
@@ -250,12 +259,24 @@ module internal RewriteProceduralBodyAnalyzer =
                         Some SqlFunctionReturnEvidence.ParameterSymbolMatch
                     else None
                 | Expr.Unary _ | Expr.Binary _ ->
-                    if primitiveExpressionType symbols query.Head.Projection.Head.Expression
-                       = Some declared then
+                    if primitiveExpressionType symbols expression = Some declared then
                         Some SqlFunctionReturnEvidence.PrimitiveExpressionMatch
                     else None
                 | _ -> None
-            | _ -> None
+            | None -> None
+
+    /// Only an exact source-validated primitive expression can produce a
+    /// *static* type mismatch. A CAST, function call, NULL, division, sourced
+    /// column or arbitrary expression is deliberately unproven here.
+    /// This does not decide PostgreSQL's runtime assignment casts.
+    let private knownReturnType (symbols: SqlFunctionParameterSymbol list) (last: Document) =
+        singleReturnExpression last
+        |> Option.bind (fun expression ->
+            match Expr.unspan expression with
+            | Expr.Literal literal -> RewritePrimitiveTypeEvidence.literalType literal
+            | Expr.Column identifier -> parameterType symbols identifier
+            | Expr.Unary _ | Expr.Binary _ -> primitiveExpressionType symbols expression
+            | _ -> None)
 
     let private bodyStatements profile (body: string) absoluteBodyStart =
         if body.Length > MaxCharacters then None
@@ -574,19 +595,31 @@ module internal RewriteProceduralBodyAnalyzer =
                     | _ -> None
         infer expression
 
+    /// Function-only body assessment; never converted into an executable
+    /// Query AST. Unknown type evidence is distinct from a proven mismatch.
+    type private PositionalBodyResult =
+        | PositionalProven of IReadOnlyList<SqlProceduralBodyStatement> * SqlFunctionReturnEvidence
+        | PositionalMismatch of SqlFunctionReturnType
+        | PositionalUnproven
+        | PositionalUnsupported
+
     /// One FROM-free SELECT and one expression, with no execution or
     /// server-side type/authorization proof. The original absolute span
     /// and conservative potential effects remain unchanged.
     let private positionalBody (body: string) bodyStart
                                (symbols: SqlFunctionParameterSymbol list) declared =
         RewriteResourceBudget.checkpoint ()
-        if body.Length = 0 || body.Length > MaxCharacters || symbols.IsEmpty then None
+        if body.Length = 0 || body.Length > MaxCharacters || symbols.IsEmpty then
+            PositionalUnsupported
         else
-            positionalExpr symbols body
-            |> Option.bind (positionalReturn symbols)
-            |> Option.bind (fun (inferred,evidence) ->
-                if inferred <> declared then None
-                else
+            match positionalExpr symbols body with
+            | None -> PositionalUnsupported
+            | Some expression ->
+                match positionalReturn symbols expression with
+                | None -> PositionalUnproven
+                | Some(inferred,_) when inferred <> declared ->
+                    PositionalMismatch inferred
+                | Some(_, evidence) ->
                     let statement =
                         SqlProceduralBodyStatement(
                             SqlScriptStatementKind.Query,
@@ -594,19 +627,26 @@ module internal RewriteProceduralBodyAnalyzer =
                             SqlEffectKind.ReadData ||| SqlEffectKind.UnknownEffects,
                             readOnly Seq.empty<string>,
                             SqlDiagnosticSpan(bodyStart, body.Length))
-                    Some (readOnly [statement], evidence))
+                    PositionalProven(readOnly [statement], evidence)
 
-    let private error (syntax: SqlScriptStatementSyntax) code message =
+    /// A static proof failure is *not* proof that PostgreSQL would reject
+    /// CREATE FUNCTION or apply no implicit assignment cast.
+    type private BodyProofFailure =
+        | KnownPrimitiveMismatch of SqlFunctionReturnType * SqlDiagnosticSpan
+        | ReturnTypeUnproven of SqlDiagnosticSpan
+        | BodyGrammarUnsupported of SqlDiagnosticSpan
+
+    let private errorAt span code category message =
         SqlDiagnostic(
             code, SqlDiagnosticStage.SemanticValidation,
-            SqlDiagnosticCategory.Capability, message, syntax.Span)
+            category, message, span)
 
     /// Do not produce partial function contracts on return-shape mismatch.
     let analyze profile (syntax: SqlScriptStatementSyntax) (tokens: Token[]) =
         match header profile syntax tokens with
         | None ->
             SqlStatementAnalysisStatus.Unsupported, [],
-            [error syntax "SQL_PROCEDURAL_UNSUPPORTED"
+            [errorAt syntax.Span "SQL_PROCEDURAL_UNSUPPORTED" SqlDiagnosticCategory.Capability
                 "Only qualified zero-argument PostgreSQL LANGUAGE SQL dollar-quoted PROCEDURE/FUNCTION headers with narrow scalar RETURNS are modeled."]
         | Some header ->
             let routine, body, bodyStart, declared, symbols =
@@ -614,46 +654,62 @@ module internal RewriteProceduralBodyAnalyzer =
                 | ProcedureHeader(name,sql,start) -> name,sql,start,None,[]
                 | FunctionHeader(name,sql,start,returnType,parameters) ->
                     name,sql,start,Some returnType,parameters
+            // Body-local, absolute diagnostic positions: the failure is
+            // about the bounded SELECT result rather than the CREATE header.
+            let fallbackSpan = SqlDiagnosticSpan(bodyStart, body.Length)
             let candidate =
                 match bodyStatements profile body bodyStart with
                 | Some (statements, last) ->
-                    // The ordinary closed SQL AST remains authoritative for
-                    // existing body shapes. Do not reinterpret it as $n syntax.
+                    let span = (statements |> Seq.last).Span
+                    // Keep all existing safety gates on parameterized
+                    // multi-statement bodies and unmodeled SQL expressions.
                     let parametersSafe =
                         symbols.IsEmpty || (statements.Count = 1
                                             && statements[0].Kind = SqlScriptStatementKind.Query)
-                    let contract =
-                        match declared with
-                        | None -> Some null
-                        | Some returnType ->
-                            if not parametersSafe then None
-                            else returnEvidence returnType symbols last
-                            |> Option.map (fun evidence ->
-                                let span = (statements |> Seq.last).Span
-                                SqlFunctionReturnContract(returnType,evidence,span))
-                    match contract with
-                    | Some result -> Ok (statements,result)
-                    | None -> Error "SQL_PROCEDURAL_RETURN_UNPROVEN"
+                    match declared with
+                    | None -> Ok (statements, null)
+                    | Some returnType when not parametersSafe ->
+                        Error (ReturnTypeUnproven span)
+                    | Some returnType ->
+                        match returnEvidence returnType symbols last with
+                        | Some evidence ->
+                            Ok (statements, SqlFunctionReturnContract(returnType,evidence,span))
+                        | None ->
+                            match knownReturnType symbols last with
+                            | Some actual when actual <> returnType ->
+                                Error (KnownPrimitiveMismatch(actual,span))
+                            | _ -> Error (ReturnTypeUnproven span)
                 | None ->
-                    // Only a PostgreSQL FUNCTION with declared IN parameters
-                    // can enter this private positional syntax-only path.
+                    // Only the named-parameter PostgreSQL Function grammar
+                    // may enter the private positional-only parser.
                     match declared with
                     | Some returnType when not symbols.IsEmpty ->
                         match positionalBody body bodyStart symbols returnType with
-                        | Some (statements,evidence) ->
+                        | PositionalProven(statements,evidence) ->
                             let span = (statements |> Seq.last).Span
                             Ok (statements,SqlFunctionReturnContract(returnType,evidence,span))
-                        | None -> Error "SQL_PROCEDURAL_BODY_UNSUPPORTED"
-                    | _ -> Error "SQL_PROCEDURAL_BODY_UNSUPPORTED"
+                        | PositionalMismatch actual ->
+                            Error (KnownPrimitiveMismatch(actual,fallbackSpan))
+                        | PositionalUnproven -> Error (ReturnTypeUnproven fallbackSpan)
+                        | PositionalUnsupported -> Error (BodyGrammarUnsupported fallbackSpan)
+                    | _ -> Error (BodyGrammarUnsupported fallbackSpan)
 
             match candidate with
-            | Error "SQL_PROCEDURAL_RETURN_UNPROVEN" ->
+            | Error (KnownPrimitiveMismatch(actual,span)) ->
                 SqlStatementAnalysisStatus.Unsupported, [],
-                [error syntax "SQL_PROCEDURAL_RETURN_UNPROVEN"
+                [errorAt span "SQL_PROCEDURAL_RETURN_TYPE_MISMATCH"
+                    SqlDiagnosticCategory.Semantic
+                    (sprintf "Modeled static primitive result %A differs from RETURNS %A. Implicit casts, server behavior and execution have not been proven."
+                        actual (Option.get declared))]
+            | Error (ReturnTypeUnproven span) ->
+                SqlStatementAnalysisStatus.Unsupported, [],
+                [errorAt span "SQL_PROCEDURAL_RETURN_UNPROVEN"
+                    SqlDiagnosticCategory.Capability
                     "Function return type is unproven by the bounded literal, typed parameter, primitive expression or explicit-cast AST rules."]
-            | Error _ ->
+            | Error (BodyGrammarUnsupported span) ->
                 SqlStatementAnalysisStatus.Unsupported, [],
-                [error syntax "SQL_PROCEDURAL_BODY_UNSUPPORTED"
+                [errorAt span "SQL_PROCEDURAL_BODY_UNSUPPORTED"
+                    SqlDiagnosticCategory.Capability
                     "SQL-language routine body exceeds budget or contains invalid/unmodeled SQL."]
             | Ok (statements, contract) ->
                 let effects =

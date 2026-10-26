@@ -77,7 +77,7 @@ public sealed class SqlCoreFunctionParameterBindingTests
             " LANGUAGE SQL AS $b$" + body + "$b$;");
         Assert.Empty(report.ProceduralDefinitions);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(report.Statements).Status);
-        Assert.Contains(report.Diagnostics, d => d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN"
+        Assert.Contains(report.Diagnostics, d => d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN" || d.Code == "SQL_PROCEDURAL_RETURN_TYPE_MISMATCH"
             || d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
         Assert.False(report.FinalCatalog.IsClosedWorld);
     }
