@@ -95,7 +95,6 @@ public sealed class SqlCoreProceduralIntentTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.Postgres, "CREATE PROCEDURE app.do_work() LANGUAGE SQL AS $$ BEGIN UPDATE users SET id=1; DELETE FROM users; END $$; SELECT 1;")]
     [InlineData(SqlAgentToolType.MsSqlServer, "CREATE OR ALTER PROCEDURE dbo.do_work AS BEGIN SELECT 1; DELETE FROM users; END; SELECT 1;")]
     [InlineData(SqlAgentToolType.Firebird, "EXECUTE BLOCK AS BEGIN DELETE FROM users; DELETE FROM logs; END; SELECT 1;")]
     [InlineData(SqlAgentToolType.Oracle, "BEGIN DELETE FROM users; UPDATE users SET id=1; END; SELECT 1;")]
@@ -110,6 +109,22 @@ public sealed class SqlCoreProceduralIntentTests
         Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
         Assert.Contains(statement.Diagnostics, d => d.Code == "SQL_PROCEDURAL_UNSUPPORTED");
         Assert.False(report.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void PostgreSqlOpaqueSqlProcedureBodyIsNotSplitButFollowingQueryIsIndependent()
+    {
+        var result = Analyze(
+            "CREATE PROCEDURE app.do_work() LANGUAGE SQL AS $ BEGIN UPDATE users SET id=1; DELETE FROM users; END $; SELECT 1;",
+            SqlAgentToolType.Postgres);
+        Assert.Equal(2, result.Statements.Count);
+        Assert.Equal(SqlScriptStatementKind.Procedural, result.Statements[0].Kind);
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[0].Status);
+        Assert.Empty(result.ProceduralDefinitions);
+        Assert.Equal(SqlScriptStatementKind.Query, result.Statements[1].Kind);
+        Assert.Contains(result.Statements[0].Diagnostics, d =>
+            d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
+        Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 
     [Fact]
