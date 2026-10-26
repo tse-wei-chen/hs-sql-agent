@@ -369,6 +369,7 @@ module internal RewriteScriptAnalyzer =
                     let mutable securityDependencies : SqlSecurityDependency list = []
                     let mutable utilityIntents : SqlUtilityIntent list = []
                     let mutable proceduralIntents : SqlProceduralIntent list = []
+                    let mutable proceduralDefinitions : SqlProceduralDefinition list = []
                     let mutable sessionOperation = SqlStatementEffectOperation.Unknown
                     let mutable controlOperation = SqlTransactionControlOperation.None
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
@@ -423,10 +424,11 @@ module internal RewriteScriptAnalyzer =
                             SqlCatalogBindingStatus.NotApplicable,
                             next, ([]: SqlCatalogChange list), diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Procedural then
-                            let status, intents, next, diagnostics =
+                            let status, intents, definitions, next, diagnostics =
                                 RewriteResourceBudget.withStage "ProceduralAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
                                     RewriteProceduralAnalyzer.analyze sourceDialect sourceProfile current syntax)
                             proceduralIntents <- intents
+                            proceduralDefinitions <- definitions
                             // Stored procedures may change rows, schema, session,
                             // transaction boundaries or permissions. Neither CALL
                             // syntax nor a procedure header proves the body.
@@ -435,6 +437,12 @@ module internal RewriteScriptAnalyzer =
                                 ||| SqlEffectKind.ChangeSchema ||| SqlEffectKind.ChangePermissions
                                 ||| SqlEffectKind.ChangeTransaction ||| SqlEffectKind.ChangeSession
                                 ||| SqlEffectKind.Administrative ||| SqlEffectKind.UnknownEffects
+                            let flags =
+                                if not definitions.IsEmpty then
+                                    // Creating a routine changes metadata;
+                                    // statements in its body have NOT run.
+                                    SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects
+                                else flags
                             status, flags, SqlCatalogKnowledge.Unknown,
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
@@ -547,7 +555,7 @@ module internal RewriteScriptAnalyzer =
                                 status certainty effects (readOnly changes)
                                 (readOnly securityIntents) (readOnly securityDependencies)
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
-                                sessionOperation)
+                                (readOnly proceduralDefinitions) sessionOperation)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -558,6 +566,7 @@ module internal RewriteScriptAnalyzer =
                             readOnly changes, detailedEffects, effectCoverage,
                             readOnly securityIntents, readOnly securityDependencies,
                             readOnly utilityIntents, readOnly proceduralIntents,
+                            readOnly proceduralDefinitions,
                             provenance, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
