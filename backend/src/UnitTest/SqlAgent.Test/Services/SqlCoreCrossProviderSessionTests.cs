@@ -96,18 +96,23 @@ public sealed class SqlCoreCrossProviderSessionTests
     [Fact]
     public void SqlServerNoCountIsTypedAndDoesNotInvalidateExistingCatalog()
     {
-        var analysis = Analyze(
-            "CREATE TABLE dbo.users(id INTEGER); SET NOCOUNT ON; SET NOCOUNT OFF;",
-            SqlAgentToolType.MsSqlServer);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, analysis.Statements[1].Status);
-        Assert.Equal(true, analysis.Statements[1].SessionAfter.NoCount);
-        Assert.Equal(false, analysis.Statements[2].SessionAfter.NoCount);
+        // Do not mix in unrelated SQL Server DDL collation capability
+        // requirements. NOCOUNT is provably orthogonal to a supplied Catalog.
+        var initial = SqlCatalogState.KnownEmpty();
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            "SET NOCOUNT ON; SET NOCOUNT OFF;",
+            SqlAgentToolType.MsSqlServer, initial);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, analysis.Statements[0].Status);
+        Assert.Equal(true, analysis.Statements[0].SessionAfter.NoCount);
+        Assert.Equal(false, analysis.Statements[1].SessionAfter.NoCount);
         Assert.Null(analysis.Statements[0].SessionBefore.NoCount);
         Assert.Equal(SqlStatementEffectOperation.SetNoCount,
-            Assert.Single(analysis.Statements[1].DetailedEffects).Operation);
-        Assert.Equal(SqlEffectCoverage.Complete, analysis.Statements[2].EffectCoverage);
+            Assert.Single(analysis.Statements[0].DetailedEffects).Operation);
+        Assert.Equal(SqlEffectCoverage.Complete, analysis.Statements[1].EffectCoverage);
+        Assert.Same(initial, analysis.Statements[0].CatalogAfter);
+        Assert.Same(initial, analysis.FinalCatalog);
         Assert.True(analysis.FinalCatalog.IsClosedWorld);
-        Assert.Single(analysis.FinalCatalog.Tables);
+        Assert.Empty(analysis.FinalCatalog.Tables);
     }
 
     [Theory]
