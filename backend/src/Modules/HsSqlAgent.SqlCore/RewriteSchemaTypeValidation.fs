@@ -296,6 +296,16 @@ module internal RewriteSchemaTypeValidation =
                 ". Use an explicit CAST if intended." + evidenceSuffix origins)
         | _ -> ()
 
+    let private knownKindMismatch expected actual =
+        match actual with
+        | Some family when family <> expected -> true
+        | _ -> false
+
+    let private knownFamilyMismatch left right =
+        match left,right with
+        | Some a,Some b when a <> b -> true
+        | _ -> false
+
     let private targetOrigin (name: string) kind =
         kind
         |> Option.map (fun family ->
@@ -552,31 +562,35 @@ module internal RewriteSchemaTypeValidation =
                         requireKind currentSpan SqlSchemaValueKind.Numeric result "Unary arithmetic"
                         results.Add(result)
                 | FinishTypedBinary(currentSpan, op, left, right) ->
-                    let proofOrigins =
-                        [ expressionOrigin catalog scope left
-                          expressionOrigin catalog scope right ]
                     let rightKind = pop ()
                     let leftKind = pop ()
                     let result =
                         match op with
                         | BinaryOperator.Add | BinaryOperator.Subtract
                         | BinaryOperator.Multiply | BinaryOperator.Divide | BinaryOperator.Modulo ->
-                            requireKindWith currentSpan SqlSchemaValueKind.Numeric leftKind
-                                "Arithmetic" [ expressionOrigin catalog scope left ]
-                            requireKindWith currentSpan SqlSchemaValueKind.Numeric rightKind
-                                "Arithmetic" [ expressionOrigin catalog scope right ]
+                            if knownKindMismatch SqlSchemaValueKind.Numeric leftKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Numeric leftKind
+                                    "Arithmetic" [ expressionOrigin catalog scope left ]
+                            if knownKindMismatch SqlSchemaValueKind.Numeric rightKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Numeric rightKind
+                                    "Arithmetic" [ expressionOrigin catalog scope right ]
                             bothNumeric leftKind rightKind
                         | BinaryOperator.Equal | BinaryOperator.NotEqual
                         | BinaryOperator.GreaterThan | BinaryOperator.LessThan
                         | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
                         | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom ->
-                            compatibleWith currentSpan leftKind rightKind "Comparison" proofOrigins
+                            if knownFamilyMismatch leftKind rightKind then
+                                compatibleWith currentSpan leftKind rightKind "Comparison"
+                                    [ expressionOrigin catalog scope left
+                                      expressionOrigin catalog scope right ]
                             Some SqlSchemaValueKind.Boolean
                         | BinaryOperator.And | BinaryOperator.Or ->
-                            requireKindWith currentSpan SqlSchemaValueKind.Boolean leftKind
-                                "Boolean operator" [ expressionOrigin catalog scope left ]
-                            requireKindWith currentSpan SqlSchemaValueKind.Boolean rightKind
-                                "Boolean operator" [ expressionOrigin catalog scope right ]
+                            if knownKindMismatch SqlSchemaValueKind.Boolean leftKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Boolean leftKind
+                                    "Boolean operator" [ expressionOrigin catalog scope left ]
+                            if knownKindMismatch SqlSchemaValueKind.Boolean rightKind then
+                                requireKindWith currentSpan SqlSchemaValueKind.Boolean rightKind
+                                    "Boolean operator" [ expressionOrigin catalog scope right ]
                             Some SqlSchemaValueKind.Boolean
                         | BinaryOperator.Concat -> None
                     results.Add(result)
@@ -928,11 +942,12 @@ module internal RewriteSchemaTypeValidation =
                         if values.Length = columnTypes.Length then
                             List.zip insert.Columns (List.zip columnTypes values)
                             |> List.iter (fun (target, (targetKind, value)) ->
-                                compatibleWith (expressionSpanOr document.Span value) targetKind
-                                    (expression catalog ctes root Span.unknown value)
-                                    "INSERT assignment"
-                                    [ targetOrigin target.Value targetKind
-                                      expressionOrigin catalog root value ]))
+                                let valueKind = expression catalog ctes root Span.unknown value
+                                if knownFamilyMismatch targetKind valueKind then
+                                    compatibleWith (expressionSpanOr document.Span value)
+                                        targetKind valueKind "INSERT assignment"
+                                        [ targetOrigin target.Value targetKind
+                                          expressionOrigin catalog root value ]))
                 | QuerySource query ->
                     let projections = queryTypes catalog ctes None query |> List.map snd
                     // Implicit target-column order is not proven by the portable snapshot.
@@ -950,12 +965,12 @@ module internal RewriteSchemaTypeValidation =
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun item ->
                     let targetKind = columnKind catalog targetScope item.Target
-                    compatibleWith (expressionSpanOr document.Span item.Value)
-                        targetKind
-                        (expression catalog ctes scope Span.unknown item.Value)
-                        "UPDATE assignment"
-                        [ targetOrigin (Identifier.text item.Target) targetKind
-                          expressionOrigin catalog scope item.Value ])
+                    let valueKind = expression catalog ctes scope Span.unknown item.Value
+                    if knownFamilyMismatch targetKind valueKind then
+                        compatibleWith (expressionSpanOr document.Span item.Value)
+                            targetKind valueKind "UPDATE assignment"
+                            [ targetOrigin (Identifier.text item.Target) targetKind
+                              expressionOrigin catalog scope item.Value ])
                 update.Where |> Option.iter (inspect scope)
                 update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
             | DeleteStatement delete ->
