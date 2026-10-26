@@ -395,14 +395,24 @@ type SqlCapabilityMatrix private () =
                 cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")
                 cap("select.cte_set","query",translated,"Root CTEs and set operations are represented structurally.")
                 cap("select.recursive_cte","query",recursiveCteStatus,recursiveCteDetail)
-                cap("set.intersect_all","query",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                cap("set.intersect_all","query",
+                    (if isNull (SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider, profile)) then
+                        (if provider = SqlAgentToolType.Oracle then translated else supported)
+                     else rejected),
                     if provider=SqlAgentToolType.Postgres then
                         "PostgreSQL INTERSECT ALL duplicate-preserving semantics are represented explicitly and rendered natively."
+                    elif provider=SqlAgentToolType.Oracle then
+                        "Oracle 21c+ INTERSECT ALL requires target ServerVersion 21.0+ and NLS_SORT=BINARY; source and target profiles are independently validated."
                     else
                         "Duplicate-preserving INTERSECT ALL remains fail-closed for this target provider until a provider/version-specific semantic contract is declared.")
-                cap("set.except_all","query",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                cap("set.except_all","query",
+                    (if isNull (SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider, profile)) then
+                        (if provider = SqlAgentToolType.Oracle then translated else supported)
+                     else rejected),
                     if provider=SqlAgentToolType.Postgres then
                         "PostgreSQL EXCEPT ALL duplicate-preserving semantics are represented explicitly and rendered natively."
+                    elif provider=SqlAgentToolType.Oracle then
+                        "Oracle 21c+ MINUS ALL / EXCEPT ALL requires target ServerVersion 21.0+ and NLS_SORT=BINARY. Canonical lowering preserves duplicate and NULL cardinalities without guessing collation equivalence."
                     else
                         "Duplicate-preserving EXCEPT ALL remains fail-closed for this target provider until a provider/version-specific semantic contract is declared.")
                 cap("select.cte_derived","query",nestedStatus, if nestedStatus=translated then "Derived-table-local CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")

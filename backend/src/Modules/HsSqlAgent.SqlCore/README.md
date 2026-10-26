@@ -156,13 +156,20 @@ Unparenthesized right-side `INTERSECT` after `MINUS` / `UNION` /
 `EXCEPT` remains rejected. This is a bounded, provenance-preserving
 expansion rather than full Oracle mixed-set associativity emulation.
 
-**Fail-closed:** `MINUS ALL` requires Oracle 21c+ duplicate-preserving
-set capability proof and remains rejected in the current matrix. Oracle
-native unparenthesized set operators evaluate left-to-right, whereas
-Core's portable AST gives `INTERSECT` precedence. Mixed unparenthesized
-`INTERSECT` with `MINUS` / `EXCEPT` / `UNION` is conservatively
-rejected rather than silently changing result semantics. No executable
-SQL text substitution or DML authorization changes are involved.
+**Version-gated Set ALL (Oracle 21c+):** With an explicitly declared
+Oracle source capability profile (`ServerVersion >= 21.0` and session
+`NLS_SORT=BINARY`), raw Oracle `MINUS ALL`, `EXCEPT ALL`, and
+`INTERSECT ALL` enter the corresponding existing closed
+`SetOperator.ExceptAll` / `IntersectAll` cases. The target validates
+its **own** profile independently: 21c+ Oracle renders native
+`MINUS ALL` and `INTERSECT ALL`; PostgreSQL retains native
+`EXCEPT ALL` and `INTERSECT ALL`. Missing/older versions and
+case-insensitive/accent-insensitive or unknown `NLS_SORT` fail closed
+because Oracle may substitute equivalent character values in Set ALL.
+Unparenthesized unsafe mixed precedence is still rejected; explicit
+parenthesized grouping remains available. This is a type-and-runtime
+capability boundary, not execution or SQL text substitution.
+
 
 ## Cross-provider static Session capabilities
 
