@@ -274,6 +274,47 @@ foreach (var evidence in report.TransactionProvenance)
                       $"{evidence.RollbackScope}; server proof={evidence.IsServerRollbackProven}");
 ```
 
+## Opaque procedural invocation analysis
+
+`SqlCoreFacade.AnalyzeScript` reports `ProceduralIntents` on each statement
+and on the full script, preserving source order. The first provider-specific
+subset recognizes **zero-argument static procedure invocations** only:
+
+- PostgreSQL: `CALL schema.procedure()`.
+- MySQL: `CALL database.procedure()` or `CALL database.procedure`.
+- Oracle: `CALL schema.procedure()`.
+- SQL Server: `EXEC schema.procedure` or `EXECUTE schema.procedure`.
+- Firebird: `EXECUTE PROCEDURE procedure` (a syntactic procedure name
+  only, **not** a resolved package/database identity).
+- SQLite: no native stored procedure invocation is claimed.
+
+The API exposes `SqlProceduralInvocationKind`, the syntactically normalized
+`Routine` name, `PotentialEffects`, `Span`, and fixed proof boundaries:
+`BodyAnalyzed = false`, `RuntimeCertainty = Unknown`.
+`MayExecuteSql = true` describes *potential server-side behavior* and
+does not cause execution. The typed `InvokeProcedure` DetailedEffect always
+has unknown certainty and **no trusted ObjectIdentity**. Since a procedure
+may issue DQL, DML, DDL, security changes, session changes, transaction
+control or dynamic SQL, all potential effect categories include
+`UnknownEffects`. Every invocation invalidates the Virtual Catalog's
+closed-world completeness; invocations in active transactions invalidate
+transaction rollback proof.
+
+Parameters, expressions, dynamic `EXEC`, unqualified/ambiguous SQL Server,
+PostgreSQL, MySQL and Oracle names, and procedure/function/trigger bodies
+remain **fail-closed** with `SQL_PROCEDURAL_UNSUPPORTED`. Unknown calls do
+not emit partial intents. Routine definitions and anonymous PL/SQL, T-SQL or
+Firebird blocks are treated as **opaque script regions**, so their internal
+semicolons cannot be misclassified as validated independent SQL.
+No procedure body is parsed, compiled, executed, or authenticated, and an
+invocation is not a proof that the target exists or is callable.
+
+Sources:
+[PostgreSQL CALL](https://www.postgresql.org/docs/current/sql-call.html),
+[MySQL CALL](https://dev.mysql.com/doc/refman/8.4/en/call.html),
+[SQL Server EXEC](https://learn.microsoft.com/en-us/sql/relational-databases/stored-procedures/execute-a-stored-procedure),
+[Firebird EXECUTE PROCEDURE](https://www.firebirdsql.org/file/documentation/chunk/en/refdocs/fblangref60/langref-dml-execproc.html).
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:

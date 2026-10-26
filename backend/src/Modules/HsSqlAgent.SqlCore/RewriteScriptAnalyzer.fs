@@ -368,6 +368,7 @@ module internal RewriteScriptAnalyzer =
                     let mutable securityIntents : SqlSecurityIntent list = []
                     let mutable securityDependencies : SqlSecurityDependency list = []
                     let mutable utilityIntents : SqlUtilityIntent list = []
+                    let mutable proceduralIntents : SqlProceduralIntent list = []
                     let mutable sessionOperation = SqlStatementEffectOperation.Unknown
                     let mutable controlOperation = SqlTransactionControlOperation.None
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
@@ -416,6 +417,24 @@ module internal RewriteScriptAnalyzer =
                                    || status = SqlStatementAnalysisStatus.Invalid then
                                     flags ||| SqlEffectKind.UnknownEffects
                                 else flags
+                            status, flags, SqlCatalogKnowledge.Unknown,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            next, ([]: SqlCatalogChange list), diagnostics
+                        elif syntax.Kind = SqlScriptStatementKind.Procedural then
+                            let status, intents, next, diagnostics =
+                                RewriteResourceBudget.withStage "ProceduralAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
+                                    RewriteProceduralAnalyzer.analyze sourceDialect sourceProfile current syntax)
+                            proceduralIntents <- intents
+                            // Stored procedures may change rows, schema, session,
+                            // transaction boundaries or permissions. Neither CALL
+                            // syntax nor a procedure header proves the body.
+                            let flags =
+                                SqlEffectKind.ReadData ||| SqlEffectKind.WriteData
+                                ||| SqlEffectKind.ChangeSchema ||| SqlEffectKind.ChangePermissions
+                                ||| SqlEffectKind.ChangeTransaction ||| SqlEffectKind.ChangeSession
+                                ||| SqlEffectKind.Administrative ||| SqlEffectKind.UnknownEffects
                             status, flags, SqlCatalogKnowledge.Unknown,
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
@@ -527,7 +546,8 @@ module internal RewriteScriptAnalyzer =
                             RewriteStatementEffects.describe sourceDialect sourceProfile syntax
                                 status certainty effects (readOnly changes)
                                 (readOnly securityIntents) (readOnly securityDependencies)
-                                (readOnly utilityIntents) sessionOperation)
+                                (readOnly utilityIntents) (readOnly proceduralIntents)
+                                sessionOperation)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -537,7 +557,8 @@ module internal RewriteScriptAnalyzer =
                             sessionBefore, RewriteSessionAnalyzer.snapshot session,
                             readOnly changes, detailedEffects, effectCoverage,
                             readOnly securityIntents, readOnly securityDependencies,
-                            readOnly utilityIntents, provenance, readOnly allDiagnostics)))
+                            readOnly utilityIntents, readOnly proceduralIntents,
+                            provenance, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,

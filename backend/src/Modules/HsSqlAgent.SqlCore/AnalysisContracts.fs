@@ -52,6 +52,7 @@ type SqlStatementEffectOperation =
     | VacuumMaintenance = 24
     | UseDatabase = 25
     | SetNoCount = 26
+    | InvokeProcedure = 27
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -175,6 +176,29 @@ type SqlSecurityIntent internal (
     member _.RevokeOptionOnly = revokeOptionOnly
     member _.CascadeMode = cascadeMode
     member _.Certainty = SqlCatalogKnowledge.Unknown
+    member _.Span = span
+
+/// Source-provider invocation syntax recognized without inspecting a body.
+/// A procedure can invoke DML, DDL, dynamic SQL, external code and routines.
+type SqlProceduralInvocationKind =
+    | Call = 0
+    | Exec = 1
+    | ExecuteProcedure = 2
+
+/// Syntactic *potential* invocation only. Target is untrusted script text,
+/// not a Catalog identity, executable plan, authorized routine or body proof.
+[<Sealed>]
+type SqlProceduralIntent internal (
+    invocationKind: SqlProceduralInvocationKind,
+    routine: SqlCatalogQualifiedName,
+    potentialEffects: SqlEffectKind,
+    span: SqlDiagnosticSpan) =
+    member _.InvocationKind = invocationKind
+    member _.Routine = routine
+    member _.PotentialEffects = potentialEffects
+    member _.MayExecuteSql = true
+    member _.BodyAnalyzed = false
+    member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
     member _.Span = span
 
 /// Provider-specific static utility operation. Not an executable SQL plan.
@@ -310,6 +334,7 @@ type SqlStatementAnalysis internal (
     securityIntents: IReadOnlyList<SqlSecurityIntent>,
     securityDependencies: IReadOnlyList<SqlSecurityDependency>,
     utilityIntents: IReadOnlyList<SqlUtilityIntent>,
+    proceduralIntents: IReadOnlyList<SqlProceduralIntent>,
     transactionProvenance: SqlTransactionEffectProvenance,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
@@ -334,6 +359,7 @@ type SqlStatementAnalysis internal (
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies
     member _.UtilityIntents = utilityIntents
+    member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
     member _.Diagnostics = diagnostics
 
@@ -369,7 +395,13 @@ type SqlScriptAnalysisResult internal (
          |> Seq.map (fun item -> item.TransactionProvenance)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlTransactionEffectProvenance>
+    let proceduralIntents : IReadOnlyList<SqlProceduralIntent> =
+        (statements
+         |> Seq.collect (fun item -> item.ProceduralIntents)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlProceduralIntent>
     member _.DetailedEffects = detailedEffects
+    member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
     member _.UtilityIntents = utilityIntents
     member _.SecurityIntents = securityIntents

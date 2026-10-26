@@ -40,16 +40,23 @@ module internal RewriteScriptParser =
         | "INSERT" | "UPDATE" | "DELETE" | "MERGE" -> Mutation
         | "CREATE" ->
             let keywordPosition =
-                if second = "OR" && word tokens (index + 2) = "REPLACE" then index + 3
+                if second = "OR"
+                   && (word tokens (index + 2) = "REPLACE"
+                       || (sourceDialect = SqlAgentToolType.MsSqlServer
+                           && word tokens (index + 2) = "ALTER")) then index + 3
                 else index + 1
             match word tokens keywordPosition with
             | "PROCEDURE" | "PROC" | "FUNCTION" | "TRIGGER" -> Procedural
             | _ -> Schema
+        | "ALTER" when second = "PROCEDURE" || second = "PROC"
+                         || second = "FUNCTION" || second = "TRIGGER" -> Procedural
         | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" -> Schema
         | "GRANT" | "REVOKE" | "DENY" -> Security
         | "BEGIN" when sourceDialect = SqlAgentToolType.MsSqlServer
                        && second <> "TRAN" && second <> "TRANSACTION"
                        && second <> "DISTRIBUTED" -> Procedural
+        | "BEGIN" when sourceDialect = SqlAgentToolType.Oracle
+                       || sourceDialect = SqlAgentToolType.Firebird -> Procedural
         | "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" -> Transaction
         | "SAVE" when sourceDialect = SqlAgentToolType.MsSqlServer
                       && (second = "TRAN" || second = "TRANSACTION") -> Transaction
@@ -76,7 +83,10 @@ module internal RewriteScriptParser =
         match classify tokens start dialect with
         | Procedural ->
             let first = word tokens start
-            first = "CREATE" || first = "DO" || first = "DECLARE" || first = "BEGIN"
+            first = "CREATE" || first = "ALTER"
+            || first = "DO" || first = "DECLARE" || first = "BEGIN"
+            || (dialect = SqlAgentToolType.Firebird
+                && first = "EXECUTE" && word tokens (start + 1) = "BLOCK")
         | _ -> false
 
     /// GO is a SQL Server client-side batch separator ONLY on a line by itself.
