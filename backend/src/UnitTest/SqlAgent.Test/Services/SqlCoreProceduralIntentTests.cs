@@ -115,7 +115,7 @@ public sealed class SqlCoreProceduralIntentTests
     public void PostgreSqlOpaqueSqlProcedureBodyIsNotSplitButFollowingQueryIsIndependent()
     {
         var result = Analyze(
-            "CREATE PROCEDURE app.do_work() LANGUAGE SQL AS $ BEGIN UPDATE users SET id=1; DELETE FROM users; END $; SELECT 1;",
+            "CREATE PROCEDURE app.do_work() LANGUAGE SQL AS $opaque$ BEGIN UPDATE users SET id=1; DELETE FROM users; END $opaque$; SELECT 1;",
             SqlAgentToolType.Postgres);
         Assert.Equal(2, result.Statements.Count);
         Assert.Equal(SqlScriptStatementKind.Procedural, result.Statements[0].Kind);
