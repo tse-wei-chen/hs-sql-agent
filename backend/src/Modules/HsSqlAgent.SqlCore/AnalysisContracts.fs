@@ -99,6 +99,31 @@ type SqlScriptDependencyReference internal (
     /// Syntactic dependencies never prove the server object exists.
     member _.Certainty = SqlCatalogKnowledge.Unknown
 
+/// Only final, statically proven declarations in the Virtual Catalog are
+/// represented as Symbols; SQL aliases and lexical references are not inferred.
+type SqlScriptSymbolKind =
+    | Table = 0
+    | Column = 1
+
+[<Sealed>]
+type SqlScriptSymbol internal (
+    kind: SqlScriptSymbolKind,
+    name: string,
+    tableIdentity: SqlCatalogQualifiedName,
+    typeName: string | null,
+    nullable: Nullable<bool>) =
+    member _.Kind = kind
+    /// Normalized declaration name in the final Virtual Catalog.
+    member _.Name = name
+    /// Structured table identity. Never derive it by splitting Name on dots.
+    member _.TableIdentity = tableIdentity
+    /// Present for Column declarations, null for Table.
+    member _.TypeName = typeName
+    /// Populated only for columns. Null is not equivalent to nullable=true.
+    member _.Nullable = nullable
+    /// Knowledge of the modeled virtual declaration, NOT live database existence.
+    member _.Certainty = SqlCatalogKnowledge.Known
+
 type SqlStatementAnalysisStatus =
     | Analyzed = 0
     | PartiallyAnalyzed = 1
@@ -561,6 +586,31 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptDependencyReference>
 
+    // The Symbol projection describes FINAL virtual Catalog declarations only.
+    // Never reconstruct identities from lossy display names or claim unknown
+    // table shapes were verified. DDL rolled back/dropped mid-script disappears.
+    let hasCompleteSymbolCatalog =
+        finalCatalog.IsClosedWorld
+        && (finalCatalog.Tables
+            |> Seq.forall (fun table -> table.Knowledge = SqlCatalogKnowledge.Known))
+
+    let symbols : IReadOnlyList<SqlScriptSymbol> =
+        (finalCatalog.Tables
+         |> Seq.filter (fun table -> table.Knowledge = SqlCatalogKnowledge.Known)
+         |> Seq.collect (fun table ->
+             seq {
+                 yield SqlScriptSymbol(
+                     SqlScriptSymbolKind.Table, table.Name,
+                     table.QualifiedName, null, Nullable<bool>())
+                 for column in table.Columns do
+                     yield SqlScriptSymbol(
+                         SqlScriptSymbolKind.Column, column.Name,
+                         table.QualifiedName, column.TypeName,
+                         Nullable<bool>(column.Nullable))
+             })
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptSymbol>
+
     let securityIntents : IReadOnlyList<SqlSecurityIntent> =
         (statements
          |> Seq.collect (fun item -> item.SecurityIntents)
@@ -599,6 +649,12 @@ type SqlScriptAnalysisResult internal (
     /// Unverified object references from typed effects, never effective permissions
     /// or physical-object identity proofs. Does not include DDL declarations.
     member _.Dependencies = dependencies
+    /// Proven declarations of the final Virtual Catalog only: Table and Column.
+    /// Never a full SQL lexical symbol table or proof of live server existence.
+    member _.Symbols = symbols
+    /// False when the caller's initial Catalog or any later statement leaves
+    /// parts of the virtual symbol universe unknown.
+    member _.HasCompleteSymbolCatalog = hasCompleteSymbolCatalog
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
