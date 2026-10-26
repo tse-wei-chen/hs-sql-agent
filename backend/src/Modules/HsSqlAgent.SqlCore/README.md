@@ -349,6 +349,16 @@ The closed F# AST can establish only these evidence categories:
   int4/int8 arithmetic has the `bigint` result type.
 - `VoidNoValueRequired`: void does not require a final result SELECT.
 
+Proven family mismatches now include non-sensitive evidence origins in
+the existing diagnostic message: a resolved column identifier with its
+lexical scope depth, the primitive literal's family (never its actual
+value), or the target field for DML assignments. This is only attached
+after a known incompatibility has been found. Unknown, ambiguous or
+missing schema facts do **not** create a new mismatch or speculative
+diagnostic; name binding still rejects invalid/ambiguous identifiers
+before typed compilation. Compiler results and diagnostic codes remain
+backwards compatible.
+
 For proven type-family mismatches, diagnostics retain the established
 `SQL_SCHEMA_TYPE_MISMATCH` code and SemanticValidation stage. Scalar
 Query operator/operand spans continue through the closed AST; for

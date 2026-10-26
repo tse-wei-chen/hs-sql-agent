@@ -197,7 +197,7 @@ module internal RewriteSchemaTypeValidation =
                     doneWalking <- true
         result
 
-    let private columnKind catalog scope identifier =
+    let private columnEvidence catalog scope identifier =
         let parts = Identifier.parts identifier
         let column = parts |> List.last |> keyPart catalog.Dialect
         let qualifier =
@@ -208,7 +208,10 @@ module internal RewriteSchemaTypeValidation =
                 |> List.map (keyPart catalog.Dialect)
                 |> String.concat "."
                 |> Some
-        match kindInScope scope qualifier column with
+        kindInScope scope qualifier column
+
+    let private columnKind catalog scope identifier =
+        match columnEvidence catalog scope identifier with
         | ProvenKind(_,kind) -> Some kind
         | KnownNameUnknownFamily _
         | AmbiguousName _
@@ -242,6 +245,62 @@ module internal RewriteSchemaTypeValidation =
                 operation + " has incompatible proven SQL type families: " +
                 string a + " and " + string b + ". Use an explicit CAST if intended.")
         | _ -> ()
+
+    // Diagnostic annotations describe only validated, *proven* type-family
+    // origins; a missing, ambiguous or unknown type remains silent here and
+    // is never converted into a fabricated mismatch. Do not include SQL
+    // literal contents, catalog values or runtime query results in messages.
+    let private columnOrigin catalog scope identifier =
+        match columnEvidence catalog scope identifier with
+        | ProvenKind(depth,kind) ->
+            Some(sprintf "proven column '%s' (%A, scope depth %d)"
+                (Identifier.text identifier) kind depth)
+        | _ -> None
+
+    let private expressionOrigin catalog scope expression =
+        match Expr.unspan expression with
+        | Column identifier | BoundColumn(identifier, ColumnBinding.RowSource) ->
+            columnOrigin catalog scope identifier
+        | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
+            match scope.Parent with
+            | Some parent ->
+                // The binder has already established the correlation. The
+                // depth here is relative to the outer scope we inspect.
+                columnOrigin catalog parent identifier
+            | None -> None
+        | Literal scalar ->
+            literalKind scalar
+            |> Option.map (fun family -> sprintf "proven literal (%A family)" family)
+        | _ -> None
+
+    let private evidenceSuffix items =
+        let proven = items |> List.choose id
+        if List.isEmpty proven then ""
+        else " Evidence: " + String.concat "; " proven + "."
+
+    let private requireKindWith span expected actual operation origins =
+        match actual with
+        | Some value when value <> expected ->
+            fail span (
+                operation + " requires " + string expected +
+                ", but the schema proves " + string value + "." +
+                evidenceSuffix origins)
+        | _ -> ()
+
+    let private compatibleWith span left right operation origins =
+        match left,right with
+        | Some a,Some b when a <> b ->
+            fail span (
+                operation + " has incompatible proven SQL type families: " +
+                string a + " and " + string b +
+                ". Use an explicit CAST if intended." + evidenceSuffix origins)
+        | _ -> ()
+
+    let private targetOrigin identifier kind =
+        kind
+        |> Option.map (fun family ->
+            sprintf "proven assignment target '%s' (%A family)"
+                (Identifier.text identifier) family)
 
     let private bothNumeric left right =
         match left, right with
@@ -343,7 +402,7 @@ module internal RewriteSchemaTypeValidation =
     type private TypedScalarFrame =
         | EnterTyped of Span * Expr
         | FinishTypedUnary of Span * UnaryOperator
-        | FinishTypedBinary of Span * BinaryOperator
+        | FinishTypedBinary of Span * BinaryOperator * Expr * Expr
 
     type private TypedQueryFrame =
         | ResumeTypedCte of Map<string, (string * SqlSchemaValueKind option) list> * Scope option * Query * Cte
@@ -478,7 +537,7 @@ module internal RewriteSchemaTypeValidation =
                     pending.Add(FinishTypedUnary(currentSpan, op))
                     enter Span.unknown operand
                 | EnterTyped(currentSpan, Binary(op, left, right)) ->
-                    pending.Add(FinishTypedBinary(currentSpan, op))
+                    pending.Add(FinishTypedBinary(currentSpan, op, left, right))
                     enter Span.unknown right
                     enter Span.unknown left
                 | EnterTyped(currentSpan, terminal) ->
@@ -492,25 +551,32 @@ module internal RewriteSchemaTypeValidation =
                     | UnaryOperator.Negate | UnaryOperator.Positive ->
                         requireKind currentSpan SqlSchemaValueKind.Numeric result "Unary arithmetic"
                         results.Add(result)
-                | FinishTypedBinary(currentSpan, op) ->
+                | FinishTypedBinary(currentSpan, op, left, right) ->
+                    let proofOrigins =
+                        [ expressionOrigin catalog scope left
+                          expressionOrigin catalog scope right ]
                     let rightKind = pop ()
                     let leftKind = pop ()
                     let result =
                         match op with
                         | BinaryOperator.Add | BinaryOperator.Subtract
                         | BinaryOperator.Multiply | BinaryOperator.Divide | BinaryOperator.Modulo ->
-                            requireKind currentSpan SqlSchemaValueKind.Numeric leftKind "Arithmetic"
-                            requireKind currentSpan SqlSchemaValueKind.Numeric rightKind "Arithmetic"
+                            requireKindWith currentSpan SqlSchemaValueKind.Numeric leftKind
+                                "Arithmetic" [ expressionOrigin catalog scope left ]
+                            requireKindWith currentSpan SqlSchemaValueKind.Numeric rightKind
+                                "Arithmetic" [ expressionOrigin catalog scope right ]
                             bothNumeric leftKind rightKind
                         | BinaryOperator.Equal | BinaryOperator.NotEqual
                         | BinaryOperator.GreaterThan | BinaryOperator.LessThan
                         | BinaryOperator.GreaterThanOrEqual | BinaryOperator.LessThanOrEqual
                         | BinaryOperator.DistinctFrom | BinaryOperator.NotDistinctFrom ->
-                            compatible currentSpan leftKind rightKind "Comparison"
+                            compatibleWith currentSpan leftKind rightKind "Comparison" proofOrigins
                             Some SqlSchemaValueKind.Boolean
                         | BinaryOperator.And | BinaryOperator.Or ->
-                            requireKind currentSpan SqlSchemaValueKind.Boolean leftKind "Boolean operator"
-                            requireKind currentSpan SqlSchemaValueKind.Boolean rightKind "Boolean operator"
+                            requireKindWith currentSpan SqlSchemaValueKind.Boolean leftKind
+                                "Boolean operator" [ expressionOrigin catalog scope left ]
+                            requireKindWith currentSpan SqlSchemaValueKind.Boolean rightKind
+                                "Boolean operator" [ expressionOrigin catalog scope right ]
                             Some SqlSchemaValueKind.Boolean
                         | BinaryOperator.Concat -> None
                     results.Add(result)
@@ -860,10 +926,13 @@ module internal RewriteSchemaTypeValidation =
                         let values = NonEmpty.toList row
                         values |> List.iter (inspect root)
                         if values.Length = columnTypes.Length then
-                            List.zip columnTypes values
-                            |> List.iter (fun (targetKind, value) ->
-                                compatible (expressionSpanOr document.Span value) targetKind
-                                    (expression catalog ctes root Span.unknown value) "INSERT assignment"))
+                            List.zip insert.Columns (List.zip columnTypes values)
+                            |> List.iter (fun (target, (targetKind, value)) ->
+                                compatibleWith (expressionSpanOr document.Span value) targetKind
+                                    (expression catalog ctes root Span.unknown value)
+                                    "INSERT assignment"
+                                    [ targetOrigin target targetKind
+                                      expressionOrigin catalog root value ]))
                 | QuerySource query ->
                     let projections = queryTypes catalog ctes None query |> List.map snd
                     // Implicit target-column order is not proven by the portable snapshot.
@@ -880,10 +949,13 @@ module internal RewriteSchemaTypeValidation =
                 let scope = makeScope None (target :: others)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun item ->
-                    compatible (expressionSpanOr document.Span item.Value)
-                        (columnKind catalog targetScope item.Target)
+                    let targetKind = columnKind catalog targetScope item.Target
+                    compatibleWith (expressionSpanOr document.Span item.Value)
+                        targetKind
                         (expression catalog ctes scope Span.unknown item.Value)
-                        "UPDATE assignment")
+                        "UPDATE assignment"
+                        [ targetOrigin item.Target targetKind
+                          expressionOrigin catalog scope item.Value ])
                 update.Where |> Option.iter (inspect scope)
                 update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
             | DeleteStatement delete ->
