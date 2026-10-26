@@ -227,6 +227,14 @@ module internal RewriteSchemaTypeValidation =
                 ", but the schema proves " + string value + ".")
         | _ -> ()
 
+    /// Diagnostic provenance must stay on the failing value rather than
+    /// the enclosing DML statement. Unknown AST spans use the statement as
+    /// a conservative fallback, never fabricate character offsets.
+    let private expressionSpanOr fallback value =
+        let precise = Expr.span value
+        if Span.isKnown precise && precise.Length > 0 then precise
+        else fallback
+
     let private compatible span left right operation =
         match left, right with
         | Some a, Some b when a <> b ->
@@ -854,7 +862,7 @@ module internal RewriteSchemaTypeValidation =
                         if values.Length = columnTypes.Length then
                             List.zip columnTypes values
                             |> List.iter (fun (targetKind, value) ->
-                                compatible document.Span targetKind
+                                compatible (expressionSpanOr document.Span value) targetKind
                                     (expression catalog ctes root Span.unknown value) "INSERT assignment"))
                 | QuerySource query ->
                     let projections = queryTypes catalog ctes None query |> List.map snd
@@ -872,7 +880,7 @@ module internal RewriteSchemaTypeValidation =
                 let scope = makeScope None (target :: others)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun item ->
-                    compatible document.Span
+                    compatible (expressionSpanOr document.Span item.Value)
                         (columnKind catalog targetScope item.Target)
                         (expression catalog ctes scope Span.unknown item.Value)
                         "UPDATE assignment")
