@@ -109,11 +109,15 @@ module internal RewriteStatementEffects =
                  (changes: IReadOnlyList<SqlCatalogChange>)
                  (securityIntents: IReadOnlyList<SqlSecurityIntent>)
                  (securityDependencies: IReadOnlyList<SqlSecurityDependency>)
-                 (utilityIntents: IReadOnlyList<SqlUtilityIntent>) =
+                 (utilityIntents: IReadOnlyList<SqlUtilityIntent>)
+                 (sessionOperation: SqlStatementEffectOperation) =
         let coverage =
             match syntax.Kind, status, certainty with
             | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
+            | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
+                when sessionOperation <> SqlStatementEffectOperation.Unknown ->
+                SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Security, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
                 when securityIntents.Count > 0 || securityDependencies.Count > 0 -> SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Utility, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
@@ -175,9 +179,12 @@ module internal RewriteStatementEffects =
                         effect intent.PotentialEffects operation intent.TargetName null
                             SqlCatalogKnowledge.Unknown intent.Span noDependencies)
                     |> Seq.toList
-                | SqlScriptStatementKind.Session when status = SqlStatementAnalysisStatus.Analyzed ->
-                    [effect SqlEffectKind.ChangeSession SqlStatementEffectOperation.SetSearchPath
-                        null null SqlCatalogKnowledge.Known syntax.Span noDependencies]
+                | SqlScriptStatementKind.Session when
+                    sessionOperation <> SqlStatementEffectOperation.Unknown ->
+                    [effect legacyEffects sessionOperation
+                        null null (if status = SqlStatementAnalysisStatus.Analyzed then
+                                       SqlCatalogKnowledge.Known else SqlCatalogKnowledge.Unknown)
+                        syntax.Span noDependencies]
                 | SqlScriptStatementKind.Transaction ->
                     let certainty =
                         if status = SqlStatementAnalysisStatus.Analyzed then
