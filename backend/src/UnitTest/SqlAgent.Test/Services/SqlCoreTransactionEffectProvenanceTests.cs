@@ -99,13 +99,17 @@ public sealed class SqlCoreTransactionEffectProvenanceTests
     [Fact]
     public void PostgreSqlDmlDoesNotAdvertiseRuntimeRollbackGuarantee()
     {
-        var result = Analyze("BEGIN; INSERT INTO users(id) VALUES (1); COMMIT;");
-        var provenance = result.Statements[1].TransactionProvenance;
+        // The virtual table must be known before INSERT. A missing table
+        // would correctly invalidate the transaction itself before this test
+        // could isolate the runtime rollback-evidence boundary.
+        var result = Analyze("CREATE TABLE users(id INTEGER); BEGIN;" +
+            "INSERT INTO users(id) VALUES (1); COMMIT;");
+        var provenance = result.Statements[2].TransactionProvenance;
         Assert.Equal(SqlTransactionEffectOrigin.UnprovenRuntimeEffects, provenance.Origin);
         Assert.Equal(SqlTransactionRollbackScope.Unproven, provenance.RollbackScope);
         Assert.True(provenance.PotentialEffects.HasFlag(SqlEffectKind.WriteData));
         Assert.False(provenance.IsServerRollbackProven);
-        Assert.Equal(SqlTransactionState.Active, result.Statements[1].TransactionAfter);
+        Assert.Equal(SqlTransactionState.Active, result.Statements[2].TransactionAfter);
     }
 
     [Theory]
