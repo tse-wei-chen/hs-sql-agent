@@ -48,7 +48,7 @@ module internal RewriteProceduralBodyAnalyzer =
 
     type private ParsedHeader =
         | ProcedureHeader of SqlCatalogQualifiedName * string * int
-        | FunctionHeader of SqlCatalogQualifiedName * string * int * SqlFunctionReturnType
+        | FunctionHeader of SqlCatalogQualifiedName * string * int * SqlFunctionReturnType * SqlFunctionParameterSymbol list
 
     let private returnType token =
         match word token with
@@ -58,6 +58,48 @@ module internal RewriteProceduralBodyAnalyzer =
         | "TEXT" -> Some SqlFunctionReturnType.Text
         | "VOID" -> Some SqlFunctionReturnType.Void
         | _ -> None
+
+    [<Literal>]
+    let private MaxParameters = 8
+
+    /// IN-only, named primitive parameters. Parser tracks *tokens*, never
+    /// rewrites user SQL or promotes a parameter to an identifier/value.
+    let private parameters profile (syntax: SqlScriptStatementSyntax) (tokens: Token[]) first =
+        let mutable cursor = first
+        let found = ResizeArray<SqlFunctionParameterSymbol>()
+        let mutable valid = true
+        let mutable doneReading = false
+        while valid && not doneReading && cursor < tokens.Length do
+            RewriteResourceBudget.checkpoint ()
+            if isSymbol ')' tokens[cursor] then
+                doneReading <- true
+            elif found.Count >= MaxParameters || cursor + 1 >= tokens.Length then
+                valid <- false
+            else
+                let named =
+                    match tokens[cursor].Kind with
+                    | RewriteLexer.Identifier(value,false) ->
+                        name profile tokens[cursor]
+                    | _ -> None
+                match named, returnType tokens[cursor+1] with
+                | Some paramName, Some paramType when paramType <> SqlFunctionReturnType.Void
+                                            && not (found |> Seq.exists (fun item -> item.Name = paramName)) ->
+                    let sp = SqlDiagnosticSpan(
+                        syntax.Span.Start + tokens[cursor].Start,
+                        tokens[cursor].Length + tokens[cursor+1].Start
+                            + tokens[cursor+1].Length - tokens[cursor].Start)
+                    found.Add(SqlFunctionParameterSymbol(found.Count+1,paramName,paramType,sp))
+                    cursor <- cursor + 2
+                    if cursor < tokens.Length && isSymbol ',' tokens[cursor] then
+                        cursor <- cursor+1
+                        if cursor >= tokens.Length || isSymbol ')' tokens[cursor] then
+                            valid <- false
+                    elif cursor < tokens.Length && isSymbol ')' tokens[cursor] then
+                        doneReading <- true
+                    else valid <- false
+                | _ -> valid <- false
+        if valid && doneReading then Some (cursor,List.ofSeq found)
+        else None
 
     let private bodyLiteral (syntax: SqlScriptStatementSyntax) (token: Token) =
         match token.Kind with
@@ -90,31 +132,37 @@ module internal RewriteProceduralBodyAnalyzer =
         match offset with
         | Some i when tokens.Length >= i+10
                       && symbol (i+2) '.'
-                      && symbol (i+4) '(' && symbol (i+5) ')' ->
+                      && symbol (i+4) '(' ->
             match name profile tokens[i+1], name profile tokens[i+3] with
             | Some schema, Some routineName ->
                 let routine =
                     SqlCatalogQualifiedName(Array.AsReadOnly([|schema;routineName|]))
                 if at i "PROCEDURE" && tokens.Length = i+10
+                    && symbol (i+5) ')'
                     && at (i+6) "LANGUAGE" && at (i+7) "SQL"
                     && at (i+8) "AS" then
                     bodyLiteral syntax tokens[i+9]
                     |> Option.map (fun (body,offset) -> ProcedureHeader(routine,body,offset))
-                elif at i "FUNCTION" && tokens.Length = i+12
-                     && at (i+6) "RETURNS" then
-                    match returnType tokens[i+7] with
+                elif at i "FUNCTION" then
+                    match parameters profile syntax tokens (i+5) with
                     | None -> None
-                    | Some declared ->
-                        let tokenIndex =
-                            if at (i+8) "LANGUAGE" && at (i+9) "SQL"
-                               && at (i+10) "AS" then Some (i+11)
-                            elif at (i+8) "AS" && at (i+10) "LANGUAGE"
-                                 && at (i+11) "SQL" then Some (i+9)
-                            else None
-                        tokenIndex |> Option.bind (fun index ->
-                            bodyLiteral syntax tokens[index]
-                            |> Option.map (fun (body,offset) ->
-                                FunctionHeader(routine,body,offset,declared)))
+                    | Some (closeIndex, symbols) ->
+                        let r = closeIndex+1
+                        if tokens.Length <> r+6 || not (at r "RETURNS") then None
+                        else
+                            match returnType tokens[r+1] with
+                            | None -> None
+                            | Some declared ->
+                                let tokenIndex =
+                                    if at (r+2) "LANGUAGE" && at (r+3) "SQL"
+                                       && at (r+4) "AS" then Some (r+5)
+                                    elif at (r+2) "AS" && at (r+4) "LANGUAGE"
+                                         && at (r+5) "SQL" then Some (r+3)
+                                    else None
+                                tokenIndex |> Option.bind (fun index ->
+                                    bodyLiteral syntax tokens[index]
+                                    |> Option.map (fun (body,offset) ->
+                                        FunctionHeader(routine,body,offset,declared,symbols)))
                 else None
             | _ -> None
         | _ -> None
@@ -144,7 +192,7 @@ module internal RewriteProceduralBodyAnalyzer =
             | Expr.Literal literal -> literalCompatible declared literal
             | _ -> false)
 
-    let private returnEvidence declared (last: Document) =
+    let private returnEvidence declared (symbols: SqlFunctionParameterSymbol list) (last: Document) =
         if declared = SqlFunctionReturnType.Void then
             Some SqlFunctionReturnEvidence.VoidNoValueRequired
         else
@@ -169,6 +217,17 @@ module internal RewriteProceduralBodyAnalyzer =
                     Some SqlFunctionReturnEvidence.LiteralMatch
                 | Expr.Cast(value,target) when castCompatible declared target value ->
                     Some SqlFunctionReturnEvidence.ExplicitCastMatch
+                | Expr.Column identifier ->
+                    // PostgreSQL resolves column names before parameter names.
+                    // This proof requires a FROM-free query (checked above)
+                    // and a single explicit, unquoted local parameter name.
+                    match Identifier.parts identifier with
+                    | [part] when not part.WasQuoted ->
+                        match symbols |> List.tryFind (fun symbol -> symbol.Name = part.Value) with
+                        | Some symbol when symbol.DeclaredType = declared ->
+                            Some SqlFunctionReturnEvidence.ParameterSymbolMatch
+                        | _ -> None
+                    | _ -> None
                 | _ -> None
             | _ -> None
 
@@ -242,22 +301,28 @@ module internal RewriteProceduralBodyAnalyzer =
             [error syntax "SQL_PROCEDURAL_UNSUPPORTED"
                 "Only qualified zero-argument PostgreSQL LANGUAGE SQL dollar-quoted PROCEDURE/FUNCTION headers with narrow scalar RETURNS are modeled."]
         | Some header ->
-            let routine, body, bodyStart, declared =
+            let routine, body, bodyStart, declared, symbols =
                 match header with
-                | ProcedureHeader(name,sql,start) -> name,sql,start,None
-                | FunctionHeader(name,sql,start,returnType) ->
-                    name,sql,start,Some returnType
+                | ProcedureHeader(name,sql,start) -> name,sql,start,None,[]
+                | FunctionHeader(name,sql,start,returnType,parameters) ->
+                    name,sql,start,Some returnType,parameters
             match bodyStatements profile body bodyStart with
             | None ->
                 SqlStatementAnalysisStatus.Unsupported, [],
                 [error syntax "SQL_PROCEDURAL_BODY_UNSUPPORTED"
                     "SQL-language routine body exceeds budget or contains invalid/unmodeled SQL."]
             | Some (statements, last) ->
+                // Until every expression in a multi-statement parameterized
+                // body is name-bound, admit only a standalone SELECT result.
+                let parametersSafe =
+                    symbols.IsEmpty || (statements.Count = 1
+                                        && statements[0].Kind = SqlScriptStatementKind.Query)
                 let returnContract =
                     match declared with
                     | None -> Some null
                     | Some returnType ->
-                        returnEvidence returnType last
+                        if not parametersSafe then None
+                        else returnEvidence returnType symbols last
                         |> Option.map (fun evidence ->
                             let span = (statements |> Seq.last).Span
                             SqlFunctionReturnContract(returnType,evidence,span))
@@ -274,5 +339,7 @@ module internal RewriteProceduralBodyAnalyzer =
                         if declared.IsSome then SqlProceduralDefinitionKind.Function
                         else SqlProceduralDefinitionKind.Procedure
                     let definition =
-                        SqlProceduralDefinition(kind,routine,statements,effects,syntax.Span,contract)
+                        SqlProceduralDefinition(
+                            kind,routine,statements,effects,syntax.Span,contract,
+                            readOnly symbols)
                     SqlStatementAnalysisStatus.PartiallyAnalyzed, [definition], []
