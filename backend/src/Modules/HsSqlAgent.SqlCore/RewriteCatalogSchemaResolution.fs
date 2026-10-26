@@ -36,8 +36,7 @@ module internal RewriteCatalogSchemaResolution =
 
     let resolve scope (name: SqlCatalogQualifiedName) =
         match scope with
-        | SingleSchema schema when name.Parts.Count = 1
-        | SingleDatabase schema when name.Parts.Count = 1 ->
+        | (SingleSchema schema | SingleDatabase schema) when name.Parts.Count = 1 ->
             partName [| schema; name.Parts[0] |]
         | _ -> name
 
