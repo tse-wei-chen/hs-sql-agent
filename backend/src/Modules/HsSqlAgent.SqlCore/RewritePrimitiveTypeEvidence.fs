@@ -9,17 +9,9 @@ open HsSqlAgent.SqlCore.Rewrite.CoreModel
 /// these same rules. No server/catalog/authorization/execution proof is implied.
 module internal RewritePrimitiveTypeEvidence =
 
-    let integerType (number: int64) =
-        if number >= int64 Int32.MinValue
-           && number <= int64 Int32.MaxValue then
-            SqlFunctionReturnType.Integer
-        else SqlFunctionReturnType.BigInteger
+    let integerType = RewriteScalarTypeEvidence.integerType
 
-    let literalType = function
-        | ScalarValue.Integer value -> Some (integerType value)
-        | ScalarValue.Boolean _ -> Some SqlFunctionReturnType.Boolean
-        | ScalarValue.Text _ -> Some SqlFunctionReturnType.Text
-        | _ -> None
+    let literalType literal = RewriteScalarTypeEvidence.literalPrimitive literal
 
     let literalCompatible declared literal =
         match declared, literal with
