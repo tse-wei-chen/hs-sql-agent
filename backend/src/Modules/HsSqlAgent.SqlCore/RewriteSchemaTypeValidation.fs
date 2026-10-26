@@ -296,11 +296,11 @@ module internal RewriteSchemaTypeValidation =
                 ". Use an explicit CAST if intended." + evidenceSuffix origins)
         | _ -> ()
 
-    let private targetOrigin identifier kind =
+    let private targetOrigin (name: string) kind =
         kind
         |> Option.map (fun family ->
             sprintf "proven assignment target '%s' (%A family)"
-                (Identifier.text identifier) family)
+                name family)
 
     let private bothNumeric left right =
         match left, right with
@@ -931,7 +931,7 @@ module internal RewriteSchemaTypeValidation =
                                 compatibleWith (expressionSpanOr document.Span value) targetKind
                                     (expression catalog ctes root Span.unknown value)
                                     "INSERT assignment"
-                                    [ targetOrigin target targetKind
+                                    [ targetOrigin target.Value targetKind
                                       expressionOrigin catalog root value ]))
                 | QuerySource query ->
                     let projections = queryTypes catalog ctes None query |> List.map snd
@@ -954,7 +954,7 @@ module internal RewriteSchemaTypeValidation =
                         targetKind
                         (expression catalog ctes scope Span.unknown item.Value)
                         "UPDATE assignment"
-                        [ targetOrigin item.Target targetKind
+                        [ targetOrigin (Identifier.text item.Target) targetKind
                           expressionOrigin catalog scope item.Value ])
                 update.Where |> Option.iter (inspect scope)
                 update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
