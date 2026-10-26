@@ -125,6 +125,33 @@ foreach (var delta in report.CatalogChanges)
     Console.WriteLine($"{delta.Operation}: {delta.TableName}");
 ```
 
+## Script-wide static object dependencies
+
+`SqlScriptAnalysisResult.Dependencies` projects immutable, source-ordered,
+**potential object references** from existing `DetailedEffects`. Each
+`SqlScriptDependencyReference` records `StatementIndex` (zero-based),
+`Kind` (`ReadTable`, `MutationTarget`, `PermissionTarget`, or
+`RoutineInvocation`), diagnostic `ObjectName` and `Span`.
+`Certainty` is **always `Unknown`**. A span may cover the whole
+statement, rather than the exact identifier token.
+
+These are **not** resolved object identities, complete query lineage,
+proven foreign-key/schema dependencies, effective SQL privileges, or
+authorization to execute anything. Unsupported and invalid statements
+never create fabricated references. DDL declarations belong to
+`CatalogChanges`, not `Dependencies`. The same object can appear in
+different statements or different reference kinds; within one statement,
+duplicate same-kind and exact-name references are collapsed. Quoted names
+are not silently case-folded.
+
+```csharp
+var report = SqlCoreFacade.AnalyzeScript(
+    "SELECT id FROM users; DELETE FROM orders WHERE id = 1;",
+    new SqlScriptAnalysisOptions(SqlAgentToolType.Postgres));
+foreach (var reference in report.Dependencies)
+    Console.WriteLine($"{reference.StatementIndex}: {reference.Kind} {reference.ObjectName}");
+```
+
 ## Static script DCL analysis (no authorization)
 
 `SqlCoreFacade.AnalyzeScript` can report potential, strongly typed permission
