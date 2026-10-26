@@ -80,10 +80,10 @@
     <Compile Include="RewriteScriptParser.fs" />
     <Compile Include="RewriteSchemaAnalyzer.fs" />
     <Compile Include="RewriteSchemaDependencies.fs" />
+    <Compile Include="RewriteSessionAnalyzer.fs" />
     <Compile Include="RewriteTransactionAnalyzer.fs" />
     <Compile Include="RewriteCatalogBinding.fs" />
     <Compile Include="RewriteStatementEffects.fs" />
-    <Compile Include="RewriteSessionAnalyzer.fs" />
     <Compile Include="RewriteSecurityAnalyzer.fs" />
     <Compile Include="RewriteUtilityAnalyzer.fs" />
     <Compile Include="RewriteScriptAnalyzer.fs" />

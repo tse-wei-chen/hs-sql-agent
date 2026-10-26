@@ -209,15 +209,17 @@ public sealed class SqlCoreMultiDialectTransactionTests
     }
 
     [Fact]
-    public void PostgreSqlSessionMutationAfterSavepointCannotPretendToRestoreScope()
+    public void PostgreSqlSavepointRollbackRestoresExactSessionScope()
     {
         var result = Analyze(
             "SET search_path TO app; BEGIN; SAVEPOINT mark;" +
             "SET search_path TO sales; ROLLBACK TO mark;",
             SqlAgentToolType.Postgres);
-        Assert.Equal(SqlTransactionState.Unknown, result.FinalTransaction);
-        Assert.False(result.FinalSession.IsSearchPathProven);
-        Assert.False(result.FinalCatalog.IsClosedWorld);
+        Assert.Equal(SqlTransactionState.Active, result.FinalTransaction);
+        Assert.Equal("app", result.FinalSession.SearchPath);
+        Assert.True(result.FinalSession.IsSearchPathProven);
+        Assert.True(result.FinalCatalog.IsClosedWorld);
+        Assert.Empty(result.Diagnostics);
     }
 
     [Fact]

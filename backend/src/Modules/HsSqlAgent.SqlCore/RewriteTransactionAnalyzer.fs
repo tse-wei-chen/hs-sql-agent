@@ -8,22 +8,24 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 
-/// PostgreSQL's simple transactional-DDL subset. All other transaction
-/// syntaxes/dialects stay unknown until their server semantics are proven.
-/// No database connection or executable proof is produced.
+/// Bounded provider-specific transactional Catalog/Sessions snapshot machine.
+/// Only PostgreSQL SET search_path is modeled as rollbackable session state.
+/// None of the snapshots prove actual server execution or authorization.
 module internal RewriteTransactionAnalyzer =
 
     type SavepointMark = {
         Name: string
         Catalog: SqlCatalogState
+        Session: RewriteSessionAnalyzer.SessionContext
     }
 
     // Most-recent savepoint first. OuterSavepoint only represents SQLite's
     // standalone SAVEPOINT, which itself begins a transaction.
     type TransactionContext =
         | Outside
-        | Active of original: SqlCatalogState * marks: SavepointMark list *
-                    outerSavepoint: string option
+        | Active of original: SqlCatalogState *
+                    originalSession: RewriteSessionAnalyzer.SessionContext *
+                    marks: SavepointMark list * outerSavepoint: string option
         | Unknown
 
     let status = function
@@ -143,8 +145,8 @@ module internal RewriteTransactionAnalyzer =
     /// engine or server runtime is attested. This is deliberately stricter
     /// than native SQL for uncertain implicit commits/distributed operations.
     let analyze sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
-                (current: SqlCatalogState) (context: TransactionContext)
-                (syntax: SqlScriptStatementSyntax) =
+                (current: SqlCatalogState) (currentSession: RewriteSessionAnalyzer.SessionContext)
+                (context: TransactionContext) (syntax: SqlScriptStatementSyntax) =
         let parsed =
             RewriteResourceBudget.withStage "TransactionLexical" SqlDiagnosticStage.Lexical (fun () ->
                 RewriteFacadeAdapter.tokenizeSourceValidated syntax.Text sourceDialect sourceProfile)
@@ -154,44 +156,60 @@ module internal RewriteTransactionAnalyzer =
             SqlStatementAnalysisStatus.Unsupported,
             SqlCatalogKnowledge.Unknown,
             state,
+            RewriteSessionAnalyzer.unknown,
             Unknown,
             [delta syntax SqlCatalogKnowledge.Unknown],
             [error syntax code message]
-        let success next newContext changes =
+        let success next nextSession newContext changes =
             SqlStatementAnalysisStatus.Analyzed,
-            SqlCatalogKnowledge.Known, next, newContext, changes, []
+            SqlCatalogKnowledge.Known, next, nextSession, newContext, changes, []
         let rollbackEffects target =
             if identical current target then [] else [delta syntax SqlCatalogKnowledge.Known]
         let maxSavepoints = 32
         match operation, context with
         | Begin, Outside ->
-            success current (Active(current, [], None)) []
+            success current currentSession (Active(current, currentSession, [], None)) []
         | Commit, Active _ ->
-            success current Outside []
-        | Rollback, Active(original, _, _) ->
-            success original Outside (rollbackEffects original)
+            // PostgreSQL SET without LOCAL survives COMMIT; all other session
+            // operations remain independent of the Catalog rollback model.
+            success current currentSession Outside []
+        | Rollback, Active(original, originalSession, _, _) ->
+            // PostgreSQL SET (SESSION) is transaction-scoped until COMMIT.
+            // MySQL USE and SQL Server NOCOUNT are NOT proven rollbackable.
+            let restoredSession =
+                if sourceDialect = SqlAgentToolType.Postgres then originalSession
+                else currentSession
+            success original restoredSession Outside (rollbackEffects original)
         | Savepoint name, Outside when sourceDialect = SqlAgentToolType.Sqlite ->
-            success current
-                (Active(current, [{Name=name; Catalog=current}], Some name)) []
-        | Savepoint name, Active(original, marks, outer) ->
+            success current currentSession
+                (Active(current, currentSession,
+                        [{Name=name; Catalog=current; Session=currentSession}], Some name)) []
+        | Savepoint name, Active(original, originalSession, marks, outer) ->
             if List.length marks >= maxSavepoints then
                 uncertain "SQL_TRANSACTION_SAVEPOINT_BUDGET"
                     "Savepoint nesting exceeds the static analysis budget."
             else
-                success current (Active(original, {Name=name; Catalog=current}::marks, outer)) []
-        | RollbackTo name, Active(original, marks, outer) ->
+                let mark = {Name=name; Catalog=current; Session=currentSession}
+                success current currentSession
+                    (Active(original, originalSession, mark::marks, outer)) []
+        | RollbackTo name, Active(original, originalSession, marks, outer) ->
             // Most recent matching savepoint wins. The mark itself remains
-            // active, while newer marks are discarded.
+            // active, while newer marks are discarded. The PostgreSQL
+            // session snapshot is restored atomically with the Catalog.
             match marks |> List.tryFindIndex (fun mark -> mark.Name = name) with
             | Some index ->
                 let remaining = marks |> List.skip index
-                let restored = remaining.Head.Catalog
-                success restored (Active(original, remaining, outer))
-                    (rollbackEffects restored)
+                let target = remaining.Head
+                let restoredSession =
+                    if sourceDialect = SqlAgentToolType.Postgres then target.Session
+                    else currentSession
+                success target.Catalog restoredSession
+                    (Active(original, originalSession, remaining, outer))
+                    (rollbackEffects target.Catalog)
             | None ->
                 uncertain "SQL_TRANSACTION_SAVEPOINT_UNKNOWN"
                     "ROLLBACK target is not a modeled active savepoint."
-        | Release name, Active(original, marks, outer) ->
+        | Release name, Active(original, originalSession, marks, outer) ->
             if sourceDialect = SqlAgentToolType.MsSqlServer then
                 uncertain "SQL_TRANSACTION_RELEASE_UNSUPPORTED"
                     "SQL Server SAVE TRAN has no RELEASE; only COMMIT or rollback is modeled."
@@ -201,8 +219,9 @@ module internal RewriteTransactionAnalyzer =
                     let remaining = marks |> List.skip (index + 1)
                     if outer.IsSome && remaining.IsEmpty then
                         // SQLite outermost RELEASE commits the transaction.
-                        success current Outside []
-                    else success current (Active(original, remaining, outer)) []
+                        success current currentSession Outside []
+                    else success current currentSession
+                            (Active(original, originalSession, remaining, outer)) []
                 | None ->
                     uncertain "SQL_TRANSACTION_SAVEPOINT_UNKNOWN"
                         "RELEASE target is not a modeled active savepoint."
@@ -231,15 +250,14 @@ module internal RewriteTransactionAnalyzer =
     let invalidateIfUnproven sourceDialect context (kind: SqlScriptStatementKind)
                 (status: SqlStatementAnalysisStatus) =
         match context with
-        | Active(_, marks, _) when status = SqlStatementAnalysisStatus.Invalid
+        | Active(_, _, marks, _) when status = SqlStatementAnalysisStatus.Invalid
                                   || status = SqlStatementAnalysisStatus.Unsupported
                                   || kind = SqlScriptStatementKind.Utility
                                   || kind = SqlScriptStatementKind.Procedural
                                   || kind = SqlScriptStatementKind.Unknown
                                   || kind = SqlScriptStatementKind.Security
                                   || (kind = SqlScriptStatementKind.Session
-                                      && (sourceDialect <> SqlAgentToolType.Postgres
-                                          || not marks.IsEmpty))
+                                      && sourceDialect <> SqlAgentToolType.Postgres)
                                   || (kind = SqlScriptStatementKind.Mutation
                                       && (sourceDialect = SqlAgentToolType.MySQL
                                           || sourceDialect = SqlAgentToolType.MsSqlServer)) ->

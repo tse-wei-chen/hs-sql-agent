@@ -358,7 +358,6 @@ module internal RewriteScriptAnalyzer =
             let mutable current = initial
             let mutable transaction = RewriteTransactionAnalyzer.Outside
             let mutable session = RewriteSessionAnalyzer.initial sourceDialect sourceProfile
-            let mutable transactionSession : RewriteSessionAnalyzer.SessionContext option = None
 
             RewriteResourceBudget.withStage "ScriptAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
                 for syntax in parsed.Statements do
@@ -378,22 +377,14 @@ module internal RewriteScriptAnalyzer =
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Transaction then
-                            let status, certainty, next, newTransaction, changes, diagnostics =
-                                RewriteTransactionAnalyzer.analyze sourceDialect sourceProfile current transaction syntax
+                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics =
+                                RewriteTransactionAnalyzer.analyze
+                                    sourceDialect sourceProfile current session transaction syntax
+                            // A transaction boundary or savepoint rollback is
+                            // responsible for BOTH catalog and session state.
+                            // No separate coordinator-side rollback heuristic.
                             transaction <- newTransaction
-                            if status = SqlStatementAnalysisStatus.Analyzed then
-                                match transactionBefore, RewriteTransactionAnalyzer.status newTransaction with
-                                | SqlTransactionState.Outside, SqlTransactionState.Active ->
-                                    transactionSession <- Some session
-                                | SqlTransactionState.Active, SqlTransactionState.Outside ->
-                                    // Only recognized ROLLBACK reaches this branch.
-                                    if syntax.Text.TrimStart().StartsWith("ROLLBACK", StringComparison.OrdinalIgnoreCase) then
-                                        session <- Option.defaultValue RewriteSessionAnalyzer.unknown transactionSession
-                                    transactionSession <- None
-                                | _ -> ()
-                            else
-                                session <- RewriteSessionAnalyzer.unknown
-                                transactionSession <- None
+                            session <- nextSession
                             let effects =
                                 if changes.IsEmpty then SqlEffectKind.ChangeTransaction
                                 else SqlEffectKind.ChangeTransaction ||| SqlEffectKind.ChangeSchema
@@ -511,7 +502,6 @@ module internal RewriteScriptAnalyzer =
                     transaction <- nextTransaction
                     if stateBecameUnknown then
                         session <- RewriteSessionAnalyzer.unknown
-                        transactionSession <- None
                     let after =
                         if stateBecameUnknown then RewriteCatalogModel.taintAll next else next
                     let additionalErrors =

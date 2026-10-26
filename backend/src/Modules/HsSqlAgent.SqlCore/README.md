@@ -187,9 +187,13 @@ outside effective transaction execution/authorization proof.
   `SAVEPOINT name`, `ROLLBACK TO [SAVEPOINT] name`, and
   `RELEASE [SAVEPOINT] name` retain transactional DDL catalog snapshots.
   Most-recent matching duplicate names win; `ROLLBACK TO` keeps the targeted
-  mark, whereas `RELEASE` removes it and newer marks. Session mutations
-  while a savepoint is active invalidate the static transaction proof until
-  independent savepoint session snapshots are modeled.
+  mark, whereas `RELEASE` removes it and newer marks. Plain
+  `SET search_path TO schema` / `= schema` is now snapshotted atomically
+  with the Virtual Catalog on every savepoint: `ROLLBACK TO` restores both
+  without ending the transaction; `RELEASE` preserves the current Session
+  scope, and full `ROLLBACK` restores the state before `BEGIN`.
+  Conditional settings, `SET LOCAL` and unknown Session commands remain
+  fail-closed.
 - **SQLite:** Basic `BEGIN`/`COMMIT`/`ROLLBACK`, nested savepoints, and
   standalone outermost `SAVEPOINT` are supported. Releasing that outermost
   savepoint ends the transaction; `ROLLBACK TO` leaves it active. The
@@ -222,6 +226,7 @@ Vendor documentation:
 [MySQL implicit commits](https://dev.mysql.com/doc/refman/8.4/en/implicit-commit.html),
 [SQL Server SAVE TRANSACTION](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/save-transaction-transact-sql),
 [PostgreSQL ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/current/sql-rollback-to.html),
+[PostgreSQL SET](https://www.postgresql.org/docs/current/sql-set.html),
 [SQLite Savepoints](https://www.sqlite.org/lang_savepoint.html).
 
 ## Architecture invariants
