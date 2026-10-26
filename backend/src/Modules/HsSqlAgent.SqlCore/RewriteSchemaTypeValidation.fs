@@ -128,10 +128,25 @@ module internal RewriteSchemaTypeValidation =
           Sources = sources
           Unqualified = sources |> List.collect sourceOutput }
 
+    // Local lexical provenance for type *family* evidence. The name binder
+    // already rejects absent/ambiguous SQL columns before this validation
+    // stage. Keeping the cases separate here prevents a shadowing untyped
+    // column from inheriting the type of an outer typed column.
+    //
+    // These cases never become compiler typestate, authorization or an
+    // exact SQL primitive type; their sole consumer projects ProvenKind to
+    // the existing optional family result.
+    type private ScopedFamilyEvidence =
+        | MissingName
+        | KnownNameUnknownFamily of scopeDepth: int
+        | AmbiguousName of scopeDepth: int
+        | ProvenKind of scopeDepth: int * kind: SqlSchemaValueKind
+
     let private kindInScope scope qualifier column =
         let mutable current = Some scope
+        let mutable depth = 0
+        let mutable result = MissingName
         let mutable doneWalking = false
-        let mutable result = None
         while current.IsSome && not doneWalking do
             RewriteResourceBudget.checkpoint ()
             let active = Option.get current
@@ -145,6 +160,10 @@ module internal RewriteSchemaTypeValidation =
                         source.Qualifiers |> List.exists (fun name ->
                             RewriteResourceBudget.checkpoint ()
                             name = value))
+            // All hits must be counted, even when the source only proves a
+            // column name and its declared type family is Unknown. Unknown
+            // never means the name was absent and never authorizes walking
+            // outward to a coincidentally typed column.
             let hits =
                 match qualifier with
                 | None ->
@@ -158,17 +177,24 @@ module internal RewriteSchemaTypeValidation =
                         RewriteResourceBudget.checkpoint ()
                         Map.tryFind column source.Kinds |> Option.map typeKnown)
             match hits with
-            | [ found ] ->
-                result <- found
+            | [ Some kind ] ->
+                result <- ProvenKind(depth,kind)
+                doneWalking <- true
+            | [ None ] ->
+                result <- KnownNameUnknownFamily depth
+                doneWalking <- true
+            | _ :: _ ->
+                result <- AmbiguousName depth
                 doneWalking <- true
             | [] ->
                 match active.Parent with
                 | Some parent when qualifier.IsNone || sources.IsEmpty ->
                     current <- Some parent
-                | _ -> doneWalking <- true
-            | _ ->
-                // Name binding rejects ambiguity; no speculative type proof.
-                doneWalking <- true
+                    depth <- depth + 1
+                | _ ->
+                    // A qualifier resolved in this scope cannot borrow a
+                    // column from a different scope when its field is absent.
+                    doneWalking <- true
         result
 
     let private columnKind catalog scope identifier =
@@ -182,7 +208,11 @@ module internal RewriteSchemaTypeValidation =
                 |> List.map (keyPart catalog.Dialect)
                 |> String.concat "."
                 |> Some
-        kindInScope scope qualifier column
+        match kindInScope scope qualifier column with
+        | ProvenKind(_,kind) -> Some kind
+        | KnownNameUnknownFamily _
+        | AmbiguousName _
+        | MissingName -> None
 
     // The type validator consumes ONLY the family projection. The separate
     // exact Function type proof is never manufactured from a family-only fact.
