@@ -93,12 +93,14 @@ public sealed class SqlCoreSchemaTypeDiagnosticOriginTests
     }
 
     [Theory]
-    [InlineData("SELECT u.id FROM items u WHERE EXISTS (SELECT 1 WHERE u.id = 'bad')", "u.id")]
-    [InlineData("WITH x AS (SELECT id FROM items) SELECT id FROM x WHERE id = 'bad'", "id")]
-    [InlineData("SELECT d.id FROM (SELECT id FROM items) d WHERE d.id = 'bad'", "d.id")]
-    public void NestedScopesRetainKnownFamilyOrigin(string sql, string name)
+    [InlineData("SELECT u.id FROM items u WHERE EXISTS (SELECT 1 WHERE u.id = 'bad')", "u.id", 1)]
+    [InlineData("WITH x AS (SELECT id FROM items) SELECT id FROM x WHERE id = 'bad'", "id", 0)]
+    [InlineData("SELECT d.id FROM (SELECT id FROM items) d WHERE d.id = 'bad'", "d.id", 0)]
+    public void NestedScopesRetainKnownFamilyOrigin(string sql, string name, int depth)
     {
-        Check(Failure(SqlAgentToolType.Postgres, sql), name);
+        var error = Failure(SqlAgentToolType.Postgres, sql);
+        Check(error, name);
+        Assert.Contains("scope depth " + depth, error.Diagnostic!.Message);
     }
 
     [Theory]

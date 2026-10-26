@@ -250,12 +250,15 @@ module internal RewriteSchemaTypeValidation =
     // origins; a missing, ambiguous or unknown type remains silent here and
     // is never converted into a fabricated mismatch. Do not include SQL
     // literal contents, catalog values or runtime query results in messages.
-    let private columnOrigin catalog scope identifier =
+    let private columnOriginAt offset catalog scope identifier =
         match columnEvidence catalog scope identifier with
         | ProvenKind(depth,kind) ->
             Some(sprintf "proven column '%s' (%A, scope depth %d)"
-                (Identifier.text identifier) kind depth)
+                (Identifier.text identifier) kind (depth + offset))
         | _ -> None
+
+    let private columnOrigin catalog scope identifier =
+        columnOriginAt 0 catalog scope identifier
 
     let private expressionOrigin catalog scope expression =
         match Expr.unspan expression with
@@ -264,9 +267,10 @@ module internal RewriteSchemaTypeValidation =
         | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
             match scope.Parent with
             | Some parent ->
-                // The binder has already established the correlation. The
-                // depth here is relative to the outer scope we inspect.
-                columnOrigin catalog parent identifier
+                // The binder has already established this correlation.
+                // Count the transition from the expression's local scope
+                // before traversing any further outer lexical scopes.
+                columnOriginAt 1 catalog parent identifier
             | None -> None
         | Literal scalar ->
             literalKind scalar
