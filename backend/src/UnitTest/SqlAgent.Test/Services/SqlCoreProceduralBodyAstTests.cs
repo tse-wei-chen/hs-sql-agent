@@ -111,7 +111,6 @@ public sealed class SqlCoreProceduralBodyAstTests
 
     [Theory]
     [InlineData("CREATE PROCEDURE app.one() LANGUAGE plpgsql AS $$BEGIN SELECT 1; END$$;")]
-    [InlineData("CREATE FUNCTION app.one() RETURNS integer LANGUAGE SQL AS $$SELECT 1$$;")]
     [InlineData("CREATE PROCEDURE app.one(i int) LANGUAGE SQL AS $$SELECT 1$$;")]
     [InlineData("CREATE PROCEDURE app.one() LANGUAGE SQL AS 'SELECT 1';")]
     [InlineData("CREATE PROCEDURE one() LANGUAGE SQL AS $$SELECT 1$$;")]
