@@ -111,6 +111,7 @@ module internal RewriteStatementEffects =
                  (securityDependencies: IReadOnlyList<SqlSecurityDependency>)
                  (utilityIntents: IReadOnlyList<SqlUtilityIntent>)
                  (proceduralIntents: IReadOnlyList<SqlProceduralIntent>)
+                 (proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>)
                  (sessionOperation: SqlStatementEffectOperation) =
         let coverage =
             match syntax.Kind, status, certainty with
@@ -124,7 +125,8 @@ module internal RewriteStatementEffects =
             | SqlScriptStatementKind.Utility, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
                 when utilityIntents.Count > 0 -> SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Procedural, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
-                when proceduralIntents.Count > 0 -> SqlEffectCoverage.Partial
+                when proceduralIntents.Count > 0 || proceduralDefinitions.Count > 0 ->
+                SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Schema, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
             | (SqlScriptStatementKind.Query | SqlScriptStatementKind.Mutation),
@@ -181,6 +183,14 @@ module internal RewriteStatementEffects =
                             | _ -> SqlStatementEffectOperation.Unknown
                         effect intent.PotentialEffects operation intent.TargetName null
                             SqlCatalogKnowledge.Unknown intent.Span noDependencies)
+                    |> Seq.toList
+                | SqlScriptStatementKind.Procedural when proceduralDefinitions.Count > 0 ->
+                    proceduralDefinitions
+                    |> Seq.map (fun definition ->
+                        effect (SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects)
+                            SqlStatementEffectOperation.DefineProcedure
+                            definition.Routine.DisplayName null SqlCatalogKnowledge.Unknown
+                            definition.Span noDependencies)
                     |> Seq.toList
                 | SqlScriptStatementKind.Procedural when proceduralIntents.Count > 0 ->
                     proceduralIntents

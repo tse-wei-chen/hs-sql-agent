@@ -101,13 +101,19 @@ module internal RewriteProceduralAnalyzer =
             |> List.filter (fun token -> token.Kind <> End)
             |> List.toArray
         let next = RewriteCatalogModel.taintAll catalog
-        match parsedInvocation sourceDialect sourceProfile tokens with
-        | Some (kind, routine) ->
-            let intent =
-                SqlProceduralIntent(kind, routine, potentialEffects, syntax.Span)
-            // Only the invocation spelling is modeled. The body is opaque,
-            // side effects are unknown, and no Catalog state survives.
-            SqlStatementAnalysisStatus.PartiallyAnalyzed, [intent], next, []
-        | None ->
-            SqlStatementAnalysisStatus.Unsupported, [], next,
-            [diagnostic syntax]
+        if sourceDialect = SqlAgentToolType.Postgres
+           && tokens.Length > 0 && word tokens[0] = "CREATE" then
+            let status, definitions, diagnostics =
+                RewriteProceduralBodyAnalyzer.analyze sourceProfile syntax tokens
+            status, [], definitions, next, diagnostics
+        else
+            match parsedInvocation sourceDialect sourceProfile tokens with
+            | Some (kind, routine) ->
+                let intent =
+                    SqlProceduralIntent(kind, routine, potentialEffects, syntax.Span)
+                // Invocation is NEVER a body proof, even if a definition
+                // was analyzed earlier in this same script.
+                SqlStatementAnalysisStatus.PartiallyAnalyzed, [intent], [], next, []
+            | None ->
+                SqlStatementAnalysisStatus.Unsupported, [], [], next,
+                [diagnostic syntax]

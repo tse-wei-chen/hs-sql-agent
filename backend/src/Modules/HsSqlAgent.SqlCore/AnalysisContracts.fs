@@ -53,6 +53,7 @@ type SqlStatementEffectOperation =
     | UseDatabase = 25
     | SetNoCount = 26
     | InvokeProcedure = 27
+    | DefineProcedure = 28
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -201,6 +202,46 @@ type SqlProceduralIntent internal (
     member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
     member _.Span = span
 
+/// Strictly syntax-level PostgreSQL SQL-language routine definition.
+/// Functions need separate return-value/volatility proofs and remain opaque.
+type SqlProceduralDefinitionKind =
+    | Procedure = 0
+
+/// One closed F# AST statement in a bounded SQL-language procedure body.
+/// No semantic Catalog binding, function effects, triggers or permission
+/// checks are implied. Span is absolute in the submitted SQL script.
+[<Sealed>]
+type SqlProceduralBodyStatement internal (
+    kind: SqlScriptStatementKind,
+    operation: SqlStatementEffectOperation,
+    effects: SqlEffectKind,
+    referencedTables: IReadOnlyList<string>,
+    span: SqlDiagnosticSpan) =
+    member _.Kind = kind
+    member _.Operation = operation
+    member _.PotentialEffects = effects
+    member _.ReferencedTables = referencedTables
+    member _.Span = span
+    member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
+
+/// Static inspection of a SQL-language PROCEDURE definition, not its
+/// execution, existence on the server or resolved effect closure.
+[<Sealed>]
+type SqlProceduralDefinition internal (
+    kind: SqlProceduralDefinitionKind,
+    routine: SqlCatalogQualifiedName,
+    bodyStatements: IReadOnlyList<SqlProceduralBodyStatement>,
+    potentialBodyEffects: SqlEffectKind,
+    span: SqlDiagnosticSpan) =
+    member _.Kind = kind
+    member _.Routine = routine
+    member _.BodyStatements = bodyStatements
+    member _.PotentialBodyEffects = potentialBodyEffects
+    member _.Span = span
+    member _.BodyAnalyzed = true
+    member _.IsBodyExecutionProven = false
+    member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
+
 /// Provider-specific static utility operation. Not an executable SQL plan.
 type SqlUtilityOperation =
     | ExplainPlan = 0
@@ -335,6 +376,7 @@ type SqlStatementAnalysis internal (
     securityDependencies: IReadOnlyList<SqlSecurityDependency>,
     utilityIntents: IReadOnlyList<SqlUtilityIntent>,
     proceduralIntents: IReadOnlyList<SqlProceduralIntent>,
+    proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>,
     transactionProvenance: SqlTransactionEffectProvenance,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
@@ -360,6 +402,7 @@ type SqlStatementAnalysis internal (
     member _.SecurityDependencies = securityDependencies
     member _.UtilityIntents = utilityIntents
     member _.ProceduralIntents = proceduralIntents
+    member _.ProceduralDefinitions = proceduralDefinitions
     member _.TransactionProvenance = transactionProvenance
     member _.Diagnostics = diagnostics
 
@@ -400,7 +443,13 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.ProceduralIntents)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlProceduralIntent>
+    let proceduralDefinitions : IReadOnlyList<SqlProceduralDefinition> =
+        (statements
+         |> Seq.collect (fun item -> item.ProceduralDefinitions)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlProceduralDefinition>
     member _.DetailedEffects = detailedEffects
+    member _.ProceduralDefinitions = proceduralDefinitions
     member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
     member _.UtilityIntents = utilityIntents
