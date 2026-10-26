@@ -283,6 +283,24 @@ module private FacadeCompile =
 [<AbstractClass; Sealed>]
 type SqlCoreFacade private () =
 
+    /// Immutable CLR options use the same source validation, Catalog and cancellation
+    /// path as the historical overloads; they do not carry compiler authorization.
+    static member AnalyzeScript(
+        sql: string,
+        options: SqlScriptAnalysisOptions) : SqlScriptAnalysisResult =
+        ArgumentNullException.ThrowIfNull(options)
+        SqlCoreFacade.AnalyzeScript(
+            sql, options.SourceDialect, options.InitialCatalog,
+            options.SourceProfile, options.CancellationToken)
+
+    static member ParseScript(
+        sql: string,
+        options: SqlScriptParseOptions) : SqlScriptParseResult =
+        ArgumentNullException.ThrowIfNull(options)
+        SqlCoreFacade.ParseScript(
+            sql, options.SourceDialect, options.SourceProfile,
+            options.CancellationToken)
+
     /// Static source classification only. This never binds, authorizes, renders, or executes SQL.
     /// Static Script analysis. Never opens a connection or produces a CompiledSqlCommand.
     /// Without an initial Catalog, the world is open and all unmentioned objects
