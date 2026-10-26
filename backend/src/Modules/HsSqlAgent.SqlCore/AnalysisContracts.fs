@@ -226,7 +226,7 @@ type SqlFunctionReturnEvidence =
     | ExplicitCastMatch = 1
     | VoidNoValueRequired = 2
 
-[<Sealed>]
+[<Sealed; AllowNullLiteral>]
 type SqlFunctionReturnContract internal (
     declaredType: SqlFunctionReturnType,
     evidence: SqlFunctionReturnEvidence,
