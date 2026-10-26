@@ -46,10 +46,40 @@ module internal RewriteProceduralBodyAnalyzer =
                       SqlAgentToolType.Postgres profile value false)
         | _ -> None
 
-    /// The only accepted header is CREATE [OR REPLACE] PROCEDURE
-    /// schema.name() LANGUAGE SQL AS $tag$...$tag$.
-    /// The body source span must be exactly recoverable from the original
-    /// dollar-tag string token, not a decoded/escaped approximation.
+    type private ParsedHeader =
+        | ProcedureHeader of SqlCatalogQualifiedName * string * int
+        | FunctionHeader of SqlCatalogQualifiedName * string * int * SqlFunctionReturnType
+
+    let private returnType token =
+        match word token with
+        | "INTEGER" | "INT" | "INT4" -> Some SqlFunctionReturnType.Integer
+        | "BIGINT" | "INT8" -> Some SqlFunctionReturnType.BigInteger
+        | "BOOLEAN" | "BOOL" -> Some SqlFunctionReturnType.Boolean
+        | "TEXT" -> Some SqlFunctionReturnType.Text
+        | "VOID" -> Some SqlFunctionReturnType.Void
+        | _ -> None
+
+    let private bodyLiteral (syntax: SqlScriptStatementSyntax) (token: Token) =
+        match token.Kind with
+        | StringLiteral body ->
+            let source = syntax.Text
+            if token.Start >= source.Length || source[token.Start] <> '$' then None
+            else
+                let closeTag = source.IndexOf('$', token.Start+1)
+                if closeTag < 0 then None
+                else
+                    let delimiter = source.Substring(token.Start, closeTag-token.Start+1)
+                    let beginIndex = token.Start + delimiter.Length
+                    let bodyLength = token.Length - 2*delimiter.Length
+                    if bodyLength < 0 || bodyLength <> body.Length
+                        || beginIndex + bodyLength + delimiter.Length > source.Length
+                        || not (String.Equals(source.Substring(beginIndex,bodyLength),body,StringComparison.Ordinal))
+                        || not (String.Equals(source.Substring(beginIndex+bodyLength,delimiter.Length),delimiter,StringComparison.Ordinal)) then None
+                    else Some (body, syntax.Span.Start + beginIndex)
+        | _ -> None
+
+    /// Admits either PostgreSQL header ordering, with no volatility,
+    /// SECURITY DEFINER, SET, output parameters or implicit result casts.
     let private header profile (syntax: SqlScriptStatementSyntax) (tokens: Token[]) =
         let at i value = i < tokens.Length && word tokens[i] = value
         let symbol i c = i < tokens.Length && isSymbol c tokens[i]
@@ -58,41 +88,89 @@ module internal RewriteProceduralBodyAnalyzer =
             elif at 0 "CREATE" then Some 1
             else None
         match offset with
-        | Some i when at i "PROCEDURE" ->
-            if tokens.Length <> i+10
-                || not (symbol (i+2) '.')
-                || not (symbol (i+4) '(')
-                || not (symbol (i+5) ')')
-                || not (at (i+6) "LANGUAGE")
-                || not (at (i+7) "SQL")
-                || not (at (i+8) "AS") then None
-            else
-                match name profile tokens[i+1], name profile tokens[i+3], tokens[i+9].Kind with
-                | Some schema, Some routineName, StringLiteral body ->
-                    let source = syntax.Text
-                    let tok = tokens[i+9]
-                    if tok.Start >= source.Length || source[tok.Start] <> '$' then None
-                    else
-                        let lastTagChar = source.IndexOf('$', tok.Start+1)
-                        if lastTagChar < 0 then None
-                        else
-                            let delimiter = source.Substring(tok.Start, lastTagChar-tok.Start+1)
-                            let bodyOffset = tok.Start + delimiter.Length
-                            let rawLength = tok.Length - (2*delimiter.Length)
-                            if rawLength < 0 || rawLength <> body.Length
-                                || bodyOffset + rawLength + delimiter.Length > source.Length
-                                || not (String.Equals(
-                                    source.Substring(bodyOffset, rawLength), body,
-                                    StringComparison.Ordinal))
-                                || not (String.Equals(
-                                    source.Substring(bodyOffset+rawLength, delimiter.Length),
-                                    delimiter, StringComparison.Ordinal)) then None
-                            else
-                                let qualified =
-                                    SqlCatalogQualifiedName(Array.AsReadOnly([|schema; routineName|]))
-                                Some (qualified, body, syntax.Span.Start + bodyOffset)
-                | _ -> None
+        | Some i when tokens.Length >= i+10
+                      && symbol (i+2) '.'
+                      && symbol (i+4) '(' && symbol (i+5) ')' ->
+            match name profile tokens[i+1], name profile tokens[i+3] with
+            | Some schema, Some routineName ->
+                let routine =
+                    SqlCatalogQualifiedName(Array.AsReadOnly([|schema;routineName|]))
+                if at i "PROCEDURE" && tokens.Length = i+10
+                    && at (i+6) "LANGUAGE" && at (i+7) "SQL"
+                    && at (i+8) "AS" then
+                    bodyLiteral syntax tokens[i+9]
+                    |> Option.map (fun (body,offset) -> ProcedureHeader(routine,body,offset))
+                elif at i "FUNCTION" && tokens.Length = i+12
+                     && at (i+6) "RETURNS" then
+                    match returnType tokens[i+7] with
+                    | None -> None
+                    | Some declared ->
+                        let tokenIndex =
+                            if at (i+8) "LANGUAGE" && at (i+9) "SQL"
+                               && at (i+10) "AS" then Some (i+11)
+                            elif at (i+8) "AS" && at (i+10) "LANGUAGE"
+                                 && at (i+11) "SQL" then Some (i+9)
+                            else None
+                        tokenIndex |> Option.bind (fun index ->
+                            bodyLiteral syntax tokens[index]
+                            |> Option.map (fun (body,offset) ->
+                                FunctionHeader(routine,body,offset,declared)))
+                else None
+            | _ -> None
         | _ -> None
+
+    /// No server type inference, implicit casts, column lookups, subqueries
+    /// or expression evaluation. Only a single direct closed AST literal
+    /// or an explicit primitive CAST of a compatible literal is accepted.
+    let private literalCompatible declared (value: ScalarValue) =
+        match declared, value with
+        | SqlFunctionReturnType.Integer, ScalarValue.Integer n ->
+            n >= int64 Int32.MinValue && n <= int64 Int32.MaxValue
+        | SqlFunctionReturnType.BigInteger, ScalarValue.Integer _ -> true
+        | SqlFunctionReturnType.Boolean, ScalarValue.Boolean _ -> true
+        | SqlFunctionReturnType.Text, ScalarValue.Text _ -> true
+        | _ -> false
+
+    let private castCompatible declared (target: CastType) (value: Expr) =
+        let castMatches =
+            match declared, CastType.semantic target with
+            | SqlFunctionReturnType.Integer, Some SqlType.SqlInteger
+            | SqlFunctionReturnType.BigInteger, Some SqlType.SqlBigInteger
+            | SqlFunctionReturnType.Boolean, Some SqlType.SqlBoolean
+            | SqlFunctionReturnType.Text, Some SqlType.SqlText -> true
+            | _ -> false
+        castMatches
+        && (match Expr.unspan value with
+            | Expr.Literal literal -> literalCompatible declared literal
+            | _ -> false)
+
+    let private returnEvidence declared (last: Document) =
+        if declared = SqlFunctionReturnType.Void then
+            Some SqlFunctionReturnEvidence.VoidNoValueRequired
+        else
+            match last.Statement with
+            | Statement.QueryStatement query when
+                query.Head.Ctes.IsEmpty
+                && query.Head.From.IsNone
+                && query.Head.Joins.IsEmpty
+                && query.Head.Where.IsNone
+                && query.Head.GroupBy.IsEmpty
+                && query.Head.Having.IsNone
+                && query.SetOperations.IsEmpty
+                && query.OrderBy.IsEmpty
+                && query.Limit.IsNone && query.Offset.IsNone
+                && query.FetchPercent.IsNone && not query.FetchWithTies
+                && query.Head.DistinctMode = SelectDistinct.AllRows
+                && query.Head.Projection.Length = 1 ->
+                match Expr.unspan query.Head.Projection.Head.Expression with
+                | Expr.Literal literal when
+                    declared <> SqlFunctionReturnType.BigInteger
+                    && literalCompatible declared literal ->
+                    Some SqlFunctionReturnEvidence.LiteralMatch
+                | Expr.Cast(value,target) when castCompatible declared target value ->
+                    Some SqlFunctionReturnEvidence.ExplicitCastMatch
+                | _ -> None
+            | _ -> None
 
     let private bodyStatements profile (body: string) absoluteBodyStart =
         if body.Length > MaxCharacters then None
@@ -106,6 +184,7 @@ module internal RewriteProceduralBodyAnalyzer =
                 else
                     let statements = ResizeArray<SqlProceduralBodyStatement>()
                     let mutable supported = true
+                    let mutable lastDocument : Document option = None
                     for item in parsed.Statements do
                         RewriteResourceBudget.checkpoint ()
                         let ast =
@@ -125,6 +204,7 @@ module internal RewriteProceduralBodyAnalyzer =
                             | _ -> None
                         match statementKind with
                         | Some (kind, op) when kind = item.Kind ->
+                            lastDocument <- Some ast
                             let refs = RewriteInspection.inspectDocument ast
                             let tables =
                                 refs.ReferencedTables
@@ -139,7 +219,9 @@ module internal RewriteProceduralBodyAnalyzer =
                             statements.Add(
                                 SqlProceduralBodyStatement(kind, op, potential, tables, sourceSpan))
                         | _ -> supported <- false
-                    if supported then Some (readOnly statements) else None
+                    if supported then
+                        lastDocument |> Option.map (fun last -> readOnly statements, last)
+                    else None
             with
             | :? SqlParseException as ex ->
                 if not (isNull ex.Diagnostic)
@@ -152,25 +234,45 @@ module internal RewriteProceduralBodyAnalyzer =
             code, SqlDiagnosticStage.SemanticValidation,
             SqlDiagnosticCategory.Capability, message, syntax.Span)
 
-    /// No partially built body is ever exposed on an unsupported definition.
+    /// Do not produce partial function contracts on return-shape mismatch.
     let analyze profile (syntax: SqlScriptStatementSyntax) (tokens: Token[]) =
         match header profile syntax tokens with
         | None ->
             SqlStatementAnalysisStatus.Unsupported, [],
             [error syntax "SQL_PROCEDURAL_UNSUPPORTED"
-                "Only qualified zero-argument PostgreSQL LANGUAGE SQL AS dollar-quoted PROCEDURE definitions are modeled."]
-        | Some (routine, body, bodyStart) ->
+                "Only qualified zero-argument PostgreSQL LANGUAGE SQL dollar-quoted PROCEDURE/FUNCTION headers with narrow scalar RETURNS are modeled."]
+        | Some header ->
+            let routine, body, bodyStart, declared =
+                match header with
+                | ProcedureHeader(name,sql,start) -> name,sql,start,None
+                | FunctionHeader(name,sql,start,returnType) ->
+                    name,sql,start,Some returnType
             match bodyStatements profile body bodyStart with
             | None ->
                 SqlStatementAnalysisStatus.Unsupported, [],
                 [error syntax "SQL_PROCEDURAL_BODY_UNSUPPORTED"
-                    "Procedure body exceeds the statement budget or contains unmodeled, invalid, or opaque SQL."]
-            | Some statements ->
-                let effects =
-                    statements |> Seq.fold (fun all item -> all ||| item.PotentialEffects)
-                        SqlEffectKind.UnknownEffects
-                let definition =
-                    SqlProceduralDefinition(
-                        SqlProceduralDefinitionKind.Procedure, routine, statements, effects,
-                        syntax.Span)
-                SqlStatementAnalysisStatus.PartiallyAnalyzed, [definition], []
+                    "SQL-language routine body exceeds budget or contains invalid/unmodeled SQL."]
+            | Some (statements, last) ->
+                let returnContract =
+                    match declared with
+                    | None -> Some null
+                    | Some returnType ->
+                        returnEvidence returnType last
+                        |> Option.map (fun evidence ->
+                            let span = (statements |> Seq.last).Span
+                            SqlFunctionReturnContract(returnType,evidence,span))
+                match returnContract with
+                | None ->
+                    SqlStatementAnalysisStatus.Unsupported, [],
+                    [error syntax "SQL_PROCEDURAL_RETURN_UNPROVEN"
+                        "Function return expression/type cannot be proven using the strict literal or explicit-cast AST subset."]
+                | Some contract ->
+                    let effects =
+                        statements |> Seq.fold (fun all item -> all ||| item.PotentialEffects)
+                            SqlEffectKind.UnknownEffects
+                    let kind =
+                        if declared.IsSome then SqlProceduralDefinitionKind.Function
+                        else SqlProceduralDefinitionKind.Procedure
+                    let definition =
+                        SqlProceduralDefinition(kind,routine,statements,effects,syntax.Span,contract)
+                    SqlStatementAnalysisStatus.PartiallyAnalyzed, [definition], []
