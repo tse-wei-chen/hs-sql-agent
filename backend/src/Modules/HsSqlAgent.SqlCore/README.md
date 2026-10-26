@@ -349,6 +349,14 @@ The closed F# AST can establish only these evidence categories:
   int4/int8 arithmetic has the `bigint` result type.
 - `VoidNoValueRequired`: void does not require a final result SELECT.
 
+Both the source-validated Query AST and Function-only positional AST
+now use one internal `RewritePrimitiveTypeEvidence` rule set for
+primitive literals, unary operators, integer/boolean binary operators,
+and exact or widening parameter CAST. This module belongs to Function
+analysis only: it is **not** a general Query/DML type checker, Catalog
+binding proof or executable compiler path. Paired grammar tests verify
+agreement on both accepted and rejected type shapes.
+
 All these are **static nominal type-shape observations**, not proof
 of server-side function/operator resolution, successful conversion,
 runtime arithmetic overflow safety, actual execution or permission.
