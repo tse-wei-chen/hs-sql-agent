@@ -35,6 +35,7 @@ module internal RewriteParser =
           FetchWithTies: CapabilityProof
           LateralDerivedTable: CapabilityProof
           RecursiveCte: CapabilityProof
+          SetAll: CapabilityProof
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -91,6 +92,10 @@ module internal RewriteParser =
               FetchWithTies = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
+              SetAll =
+                RejectedCapability(CapabilityRejection.create
+                    CapabilitySide.SourceCapability
+                    "Duplicate-preserving set syntax requires explicit source capability proof")
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -110,6 +115,10 @@ module internal RewriteParser =
               FetchWithTies = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
+              SetAll =
+                RejectedCapability(CapabilityRejection.create
+                    CapabilitySide.SourceCapability
+                    "Duplicate-preserving set syntax requires explicit source capability proof")
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     [<Struct>]
@@ -330,6 +339,7 @@ module internal RewriteParser =
         member _.SourceFetchWithTies = semantics.FetchWithTies
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
         member _.SourceRecursiveCte = semantics.RecursiveCte
+        member _.SourceSetAll = semantics.SetAll
 
     let private parsedSpan start (cursor: Cursor) =
         { Start = start
@@ -2072,6 +2082,12 @@ module internal RewriteParser =
             items |> Seq.toList
 
     and private parseSetOperator cursor =
+        let operatorToken = cursor.Current
+        let requireSetAll () =
+            // PostgreSQL's established native syntax needs no version
+            // gate. Oracle 21c+ must carry a Source capability proof.
+            if cursor.Dialect <> SourceDialect.PostgreSql then
+                requireSourceParseCapability operatorToken cursor.SourceSetAll
         if acceptKeyword "UNION" cursor then
             if acceptKeyword "ALL" cursor then Some SetOperator.UnionAll
             else
@@ -2079,30 +2095,24 @@ module internal RewriteParser =
                 Some SetOperator.Union
         elif acceptKeyword "INTERSECT" cursor then
             if acceptKeyword "ALL" cursor then
-                match SqlSetAllCapabilityRules.SourceValidationError(
-                          "INTERSECT",
-                          sourceDialectToolType cursor.Dialect) with
-                | null -> Some SetOperator.IntersectAll
-                | message -> fail cursor.Current message
+                requireSetAll ()
+                Some SetOperator.IntersectAll
             else
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Intersect
         elif acceptKeyword "EXCEPT" cursor then
             if acceptKeyword "ALL" cursor then
-                match SqlSetAllCapabilityRules.SourceValidationError(
-                          "EXCEPT",
-                          sourceDialectToolType cursor.Dialect) with
-                | null -> Some SetOperator.ExceptAll
-                | message -> fail cursor.Current message
+                requireSetAll ()
+                Some SetOperator.ExceptAll
             else
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Except
         elif isOracleMinusSet cursor then
-            let token = cursor.Current
             cursor.Advance()
-            if isKeyword "ALL" cursor.Current then
-                fail token "Oracle MINUS ALL requires an Oracle 21c+ duplicate-preserving set capability proof and stays fail-closed"
-            Some SetOperator.Except
+            if acceptKeyword "ALL" cursor then
+                requireSetAll ()
+                Some SetOperator.ExceptAll
+            else Some SetOperator.Except
         else None
 
     and private parseQueryTail (cursor: Cursor) =

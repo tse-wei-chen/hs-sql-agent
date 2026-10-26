@@ -785,25 +785,54 @@ module internal SqlUsingJoinCapabilityRules =
             "SQL capability 'join.using' is not supported by provider MsSqlServer because Transact-SQL has no native JOIN ... USING form and Core does not lower named-column join semantics to ON without a proven merged-column equivalence."
 
 module internal SqlSetAllCapabilityRules =
+    let OracleMinimumVersion = Version(21, 0)
+
     let private capabilityId (operatorName: string) =
         match operatorName.Trim().ToUpperInvariant() with
         | "INTERSECT" -> "set.intersect_all"
-        | "EXCEPT" -> "set.except_all"
+        | "EXCEPT" | "MINUS" -> "set.except_all"
         | value -> "set." + value.ToLowerInvariant() + "_all"
 
-    let private validationError (operatorName: string) (provider: SqlAgentToolType) (side: string) : string | null =
-        if provider = SqlAgentToolType.Postgres then null
+    // Oracle documents that BINARY_CI/BINARY_AI can substitute equivalent
+    // character values under Set ALL. NLS_SORT=BINARY is a required
+    // explicitly declared session invariant for cross-provider equivalence.
+    let private hasBinarySort (profile: SqlProviderCapabilityProfile) =
+        let settings = profile.SessionSettings
+        not (isNull settings)
+        && (settings
+            |> Seq.exists (fun entry ->
+                String.Equals(entry.Key, "NLS_SORT", StringComparison.OrdinalIgnoreCase)
+                && String.Equals(entry.Value, "BINARY", StringComparison.OrdinalIgnoreCase)))
+
+    let private oracleProven (profile: SqlProviderCapabilityProfile | null) =
+        match profile with
+        | null -> false
+        | value when value.Provider <> SqlAgentToolType.Oracle -> false
+        | value when isNull value.ServerVersion
+                     || value.ServerVersion.CompareTo(OracleMinimumVersion) < 0 -> false
+        | value -> hasBinarySort value
+
+    let private validationError operatorName provider profile (side: string) : string | null =
+        if provider = SqlAgentToolType.Postgres
+           || (provider = SqlAgentToolType.Oracle && oracleProven profile) then null
+        elif provider = SqlAgentToolType.Oracle then
+            "SQL capability '" + capabilityId operatorName
+            + "' requires an explicit Oracle " + side
+            + " capability profile with ServerVersion 21.0+ and NLS_SORT=BINARY "
+            + "to preserve duplicates, NULL cardinality and original character values."
         else
             "SQL capability '" + capabilityId operatorName + "' is not supported by " + side
             + " provider " + string provider
             + "; duplicate-preserving " + operatorName.Trim().ToUpperInvariant()
             + " ALL remains fail-closed until a provider/version-specific semantic contract is declared."
 
-    let SourceValidationError(operatorName: string, provider: SqlAgentToolType) : string | null =
-        validationError operatorName provider "source"
+    let SourceValidationError(operatorName: string, provider: SqlAgentToolType,
+                              profile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError operatorName provider profile "source"
 
-    let TargetValidationError(operatorName: string, provider: SqlAgentToolType) : string | null =
-        validationError operatorName provider "target"
+    let TargetValidationError(operatorName: string, provider: SqlAgentToolType,
+                              profile: SqlProviderCapabilityProfile | null) : string | null =
+        validationError operatorName provider profile "target"
 
 module internal SqlDistinctOnCapabilityRules =
     let SourceValidationError(provider: SqlAgentToolType) : string | null =

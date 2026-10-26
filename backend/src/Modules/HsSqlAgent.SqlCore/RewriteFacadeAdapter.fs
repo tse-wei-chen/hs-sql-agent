@@ -354,6 +354,9 @@ module internal RewriteFacadeAdapter =
           RecursiveCte =
             SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
+          SetAll =
+            SqlSetAllCapabilityRules.SourceValidationError("INTERSECT", source, sourceProfile)
+            |> sourceCapabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     /// Reuse the same source-profile lexical contract for script segmentation.
