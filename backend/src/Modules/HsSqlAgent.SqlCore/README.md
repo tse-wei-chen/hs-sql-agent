@@ -137,6 +137,45 @@ plans or permissions.
 The analyzer only *describes* possible execution; it never opens a connection
 or issues `EXPLAIN`, `ANALYZE`, `VACUUM`, or any inner query/DML.
 
+## Cross-provider static Session capabilities
+
+`SqlCoreFacade.AnalyzeScript` exposes immutable `SessionBefore`,
+`SessionAfter` and `FinalSession` snapshots. A recorded setting is a
+**script or caller-declared premise only**: the analyzer does not connect
+to a database, check whether a database exists or authorize access.
+
+- **PostgreSQL** retains the restricted single ordinary `SET search_path
+  TO schema` / `SET search_path = schema` model, including previously
+  proven transaction rollback snapshots.
+- **MySQL** recognizes `USE database` with a plain ASCII identifier.
+  `CurrentDatabase` preserves this requested context. Only an explicit
+  caller `SqlProviderCapabilityProfile` with
+  `SessionSettings["LOWER_CASE_TABLE_NAMES"]="1"`, and a safe fully
+  qualified virtual Catalog, can establish `IsDatabaseScopeProven` and
+  safely resolve subsequent unqualified table names. Otherwise switching
+  databases is `PartiallyAnalyzed`, invalidates old Catalog proofs, and
+  subsequent name binding remains unverified.
+- **SQL Server** recognizes `USE database` but never confuses database
+  context with a default schema. The old Virtual Catalog is invalidated
+  because unqualified and two-part table names may refer to a different
+  database. It recognizes `SET NOCOUNT ON|OFF` as a separate
+  `Nullable<bool>` `NoCount` snapshot without treating output-message
+  settings as authorization or schema changes.
+- Oracle, Firebird, SQLite, and unmodeled provider-specific session
+  statements are fail-closed. Unknown or syntactically unsupported
+  settings discard previous scope/option and Catalog proofs. Quoted,
+  multipart, wildcard, conditional or other complex `USE` statements
+  are not admitted by this restricted grammar.
+
+`DetailedEffects` distinguishes `SetSearchPath`, `UseDatabase`, and
+`SetNoCount`. A successful static `USE` never certifies that it ran
+on the server. MySQL and SQL Server do not borrow PostgreSQL's
+transactional `search_path` rollback behavior.
+
+References: [MySQL USE](https://dev.mysql.com/doc/refman/8.4/en/use.html),
+[SQL Server USE](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/use-transact-sql),
+[SQL Server SET NOCOUNT](https://learn.microsoft.com/en-us/sql/t-sql/statements/set-nocount-transact-sql).
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:
