@@ -102,7 +102,7 @@ public sealed class SqlCoreSchemaScopeTypeProvenanceTests
     [Theory]
     [InlineData("WITH c AS (SELECT id FROM users) SELECT id FROM c WHERE id = 'text'")]
     [InlineData("SELECT d.id FROM (SELECT id FROM users) d WHERE d.id = 'text'")]
-    [InlineData("SELECT d.id FROM (SELECT description FROM users) d WHERE d.description + 1 = 2")]
+    [InlineData("SELECT d.description FROM (SELECT description FROM users) d WHERE d.description + 1 = 2")]
     public void ProvenTypePropagatesAndRejectsWrongFamiliesThroughCteOrDerivedProjection(string sql)
     {
         RejectsProvenMismatch(SqlAgentToolType.Postgres, sql);
