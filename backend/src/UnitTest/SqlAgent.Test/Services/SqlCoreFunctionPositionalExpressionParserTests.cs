@@ -84,7 +84,7 @@ public sealed class SqlCoreFunctionPositionalExpressionParserTests
         Assert.Empty(result.ProceduralDefinitions);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(result.Statements).Status);
         Assert.Contains(result.Diagnostics, d =>
-            d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED" || d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN");
+            d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED" || d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN" || d.Code == "SQL_PROCEDURAL_RETURN_TYPE_MISMATCH");
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 

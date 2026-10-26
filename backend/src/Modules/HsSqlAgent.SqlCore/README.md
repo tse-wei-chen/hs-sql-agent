@@ -386,7 +386,13 @@ function calls, division, comparisons, NULL inference, overloaded
 operators, unmodeled casts, FROM-sourced names, implicit conversions
 and unproven expressions fail closed without a partial definition.
 Relevant diagnostic codes include `SQL_PROCEDURAL_RETURN_UNPROVEN`
-and `SQL_PROCEDURAL_BODY_UNSUPPORTED`.
+and `SQL_PROCEDURAL_BODY_UNSUPPORTED`. Known incompatible primitive
+result shapes now report `SQL_PROCEDURAL_RETURN_TYPE_MISMATCH`; unknown
+operators, ambiguous names, NULL and unmodeled coercions continue to
+report unproven/unsupported instead. Return failures carry an **absolute
+body-local SourceSpan** rather than just the encompassing CREATE statement.
+A mismatch is limited to the modeled static primitive evidence: it does
+not assert that PostgreSQL rejects all implicit assignment casts at runtime.
 
 References: [PostgreSQL SQL functions](https://www.postgresql.org/docs/current/xfunc-sql.html)
 and [CREATE FUNCTION](https://www.postgresql.org/docs/current/sql-createfunction.html).

@@ -112,7 +112,9 @@ public sealed class SqlCoreFunctionReturnContractTests
         var statement = Assert.Single(report.Statements);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
         Assert.Equal(SqlEffectCoverage.Unknown, statement.EffectCoverage);
-        Assert.Contains(statement.Diagnostics, d => d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN");
+        Assert.Contains(statement.Diagnostics, d =>
+            d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN" ||
+            d.Code == "SQL_PROCEDURAL_RETURN_TYPE_MISMATCH");
         Assert.False(report.FinalCatalog.IsClosedWorld);
     }
 

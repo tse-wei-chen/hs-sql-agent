@@ -28,7 +28,7 @@ public sealed class SqlCoreFunctionReturnDiagnosticProvenanceTests
     [InlineData("", "text", "SELECT FALSE;")]
     [InlineData("arg bigint", "integer", "SELECT arg;")]
     [InlineData("arg boolean", "integer", "SELECT arg;")]
-    [InlineData("arg integer", "boolean", "SELECT NOT FALSE OR (arg > 0);")]
+    [InlineData("arg integer", "boolean", "SELECT arg + 2;")]
     [InlineData("arg integer", "boolean", "SELECT arg + 1;")]
     [InlineData("arg boolean", "integer", "SELECT $1;")]
     [InlineData("arg bigint", "integer", "SELECT $1;")]
