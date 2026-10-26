@@ -13,7 +13,7 @@ open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 /// No database connection or executable proof is produced.
 module internal RewriteTransactionAnalyzer =
 
-    type private SavepointMark = {
+    type SavepointMark = {
         Name: string
         Catalog: SqlCatalogState
     }
