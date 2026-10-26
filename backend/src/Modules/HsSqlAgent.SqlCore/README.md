@@ -274,6 +274,44 @@ foreach (var evidence in report.TransactionProvenance)
                       $"{evidence.RollbackScope}; server proof={evidence.IsServerRollbackProven}");
 ```
 
+## PostgreSQL Function parameter symbol binding (strict subset)
+
+The bounded SQL-language Function analyzer now accepts up to **eight named,
+IN-only primitive arguments**, in declared source order. Each public
+`SqlFunctionParameterSymbol` records `Ordinal` (1-based), normalized
+`Name`, primitive `DeclaredType`, absolute header `Span`, and immutable
+`RuntimeCertainty = Unknown`. Function definitions expose their ordered
+read-only `Parameters` collection. Procedures and zero-argument Functions
+continue to return an empty collection.
+
+Only a **single standalone SELECT without FROM/CTEs/joins/filter/set
+operations** may use these named parameter symbols for return evidence.
+The result must be a single unquoted `Expr.Column` with exactly one
+identifier component, and its normalized name must match a declared
+parameter whose primitive type **exactly** matches `RETURNS`. This creates
+`SqlFunctionReturnEvidence.ParameterSymbolMatch`, not an executable
+binding or server type proof.
+
+```sql
+CREATE FUNCTION app.identity(amount integer)
+RETURNS integer LANGUAGE SQL
+AS $body$ SELECT amount; $body$;
+```
+
+Unknown names, duplicate declarations, missing names, quoted symbols,
+OUT/INOUT/default parameters, return type mismatches, expressions,
+ambiguous table-column names, and multi-statement parameterized bodies
+remain fail-closed. PostgreSQL `$1` positional parameters are
+**not yet modeled by the closed general query parser**; that syntax
+remains rejected at its existing strict lexical boundary. No SQL text
+substitution, synthetic identifiers, new executable parameter binding,
+or global lexer relaxation was introduced.
+
+This is deliberately a first, narrow *typed symbol* capability; it is
+not yet arithmetic type inference, full overload resolution, or routine
+execution evidence. See
+[PostgreSQL SQL function arguments](https://www.postgresql.org/docs/current/xfunc-sql.html).
+
 ## PostgreSQL SQL Function return contracts (static only)
 
 `SqlCoreFacade.AnalyzeScript` now recognizes a deliberately strict,

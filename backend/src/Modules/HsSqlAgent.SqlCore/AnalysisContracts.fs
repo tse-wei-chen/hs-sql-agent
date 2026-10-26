@@ -225,6 +225,7 @@ type SqlFunctionReturnEvidence =
     | LiteralMatch = 0
     | ExplicitCastMatch = 1
     | VoidNoValueRequired = 2
+    | ParameterSymbolMatch = 3
 
 [<Sealed; AllowNullLiteral>]
 type SqlFunctionReturnContract internal (
@@ -235,6 +236,21 @@ type SqlFunctionReturnContract internal (
     member _.Evidence = evidence
     member _.ResultSpan = resultSpan
     member _.IsRuntimeReturnProven = false
+    member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
+
+/// A declared PostgreSQL IN-only, primitive SQL-language function
+/// argument. Position is 1-based; normalized spelling is not a Catalog
+/// identity or a proof of execution, and quoted/OUT/default forms are excluded.
+[<Sealed>]
+type SqlFunctionParameterSymbol internal (
+    ordinal: int,
+    name: string,
+    declaredType: SqlFunctionReturnType,
+    span: SqlDiagnosticSpan) =
+    member _.Ordinal = ordinal
+    member _.Name = name
+    member _.DeclaredType = declaredType
+    member _.Span = span
     member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
 
 /// One closed F# AST statement in a bounded SQL-language procedure or function body.
@@ -263,13 +279,15 @@ type SqlProceduralDefinition internal (
     bodyStatements: IReadOnlyList<SqlProceduralBodyStatement>,
     potentialBodyEffects: SqlEffectKind,
     span: SqlDiagnosticSpan,
-    functionReturn: SqlFunctionReturnContract | null) =
+    functionReturn: SqlFunctionReturnContract | null,
+    parameters: IReadOnlyList<SqlFunctionParameterSymbol>) =
     member _.Kind = kind
     member _.Routine = routine
     member _.BodyStatements = bodyStatements
     member _.PotentialBodyEffects = potentialBodyEffects
     /// Null for PROCEDURE; a proven static shape only for FUNCTION.
     member _.FunctionReturn = functionReturn
+    member _.Parameters = parameters
     member _.Span = span
     member _.BodyAnalyzed = true
     member _.IsBodyExecutionProven = false

@@ -118,7 +118,6 @@ public sealed class SqlCoreFunctionReturnContractTests
     }
 
     [Theory]
-    [InlineData("CREATE FUNCTION app.f(a integer) RETURNS integer LANGUAGE SQL AS $b$SELECT 1;$b$;")]
     [InlineData("CREATE FUNCTION app.f() RETURNS SETOF integer LANGUAGE SQL AS $b$SELECT 1;$b$;")]
     [InlineData("CREATE FUNCTION app.f() RETURNS TABLE(value integer) LANGUAGE SQL AS $b$SELECT 1;$b$;")]
     [InlineData("CREATE FUNCTION app.f() RETURNS numeric LANGUAGE SQL AS $b$SELECT 1;$b$;")]
