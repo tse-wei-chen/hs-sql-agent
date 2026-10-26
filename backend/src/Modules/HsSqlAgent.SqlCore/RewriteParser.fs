@@ -2081,7 +2081,7 @@ module internal RewriteParser =
             while acceptSymbol ',' cursor do items.Add(parseOrderItem allowOrdinal cursor)
             items |> Seq.toList
 
-    and private parseSetOperator cursor =
+    and private parseSetOperator (cursor: Cursor) =
         let operatorToken = cursor.Current
         let requireSetAll () =
             // PostgreSQL's established native syntax needs no version

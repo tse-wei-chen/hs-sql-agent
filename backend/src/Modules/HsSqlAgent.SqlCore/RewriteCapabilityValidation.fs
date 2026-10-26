@@ -458,21 +458,21 @@ module internal RewriteCapabilityValidation =
         | QueryStatement query -> proveTargetQuery targetRuntime targetProfile expressionProofs query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs))
             | QuerySource query -> proveTargetQuery targetRuntime targetProfile expressionProofs query
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | UpdateStatement update ->
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime targetProfile expressionProofs assignment.Value)
-            update.From |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            update.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
+            update.From |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
+            update.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
             update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            delete.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
+            delete.Using |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
+            delete.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
             delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | MergeStatement merge ->
-            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
+            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
             proveTargetExpr targetRuntime targetProfile expressionProofs merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
@@ -481,7 +481,7 @@ module internal RewriteCapabilityValidation =
                     assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
+                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs))
         document
 
 
