@@ -66,6 +66,32 @@ stage boundaries, and before returning. Cancellation throws
 analysis inherits its caller's active cancellation. This is strictly static
 SQL parsing/analysis; neither method opens a database connection or executes SQL.
 
+## Script-wide effect coverage and Catalog change summary
+
+`SqlScriptAnalysisResult.EffectCoverage` is a conservative, read-only
+aggregation of the existing per-statement `EffectCoverage` and analysis status:
+
+- `Complete` means every statement's **static effect description** is complete
+  (also true for an empty script); it does **not** prove server execution,
+  effective permissions or success of future writes.
+- `Partial` means at least one statement was only partially modeled, and
+  none is invalid, unsupported or of unknown effect coverage.
+- `Unknown` means any statement is invalid, unsupported or has unknown
+  effects. Other fully-modeled statements cannot upgrade that uncertainty.
+
+`SqlScriptAnalysisResult.CatalogChanges` is a read-only, source-order
+projection of `Statements[*].Changes`, preserving intermediate changes and
+source spans (including tentative/unknown effects). It is **not** a
+transaction-commit log or a replacement for `FinalCatalog`.
+
+```csharp
+var report = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres,
+    SqlCatalogState.KnownEmpty());
+Console.WriteLine(report.EffectCoverage);
+foreach (var delta in report.CatalogChanges)
+    Console.WriteLine($"{delta.Operation}: {delta.Name}");
+```
+
 ## Static script DCL analysis (no authorization)
 
 `SqlCoreFacade.AnalyzeScript` can report potential, strongly typed permission

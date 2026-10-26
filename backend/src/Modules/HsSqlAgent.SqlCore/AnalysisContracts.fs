@@ -471,6 +471,31 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.DetailedEffects)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlStatementEffect>
+
+    // A script cannot provide stronger static effect evidence than its least
+    // certain statement. This is an analysis summary, never execution proof.
+    let effectCoverage =
+        if statements |> Seq.exists (fun item ->
+            item.EffectCoverage = SqlEffectCoverage.Unknown
+            || item.Status = SqlStatementAnalysisStatus.Invalid
+            || item.Status = SqlStatementAnalysisStatus.Unsupported) then
+            SqlEffectCoverage.Unknown
+        elif statements |> Seq.exists (fun item ->
+            item.EffectCoverage = SqlEffectCoverage.Partial
+            || item.Status = SqlStatementAnalysisStatus.PartiallyAnalyzed) then
+            SqlEffectCoverage.Partial
+        else
+            SqlEffectCoverage.Complete
+
+    // Preserve statement-order deltas (including uncertainty); do not compute
+    // this from FinalCatalog, which can hide drops, rollbacks, and intermediate
+    // changes in a multi-statement script.
+    let catalogChanges : IReadOnlyList<SqlCatalogChange> =
+        (statements
+         |> Seq.collect (fun item -> item.Changes)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlCatalogChange>
+
     let securityIntents : IReadOnlyList<SqlSecurityIntent> =
         (statements
          |> Seq.collect (fun item -> item.SecurityIntents)
@@ -502,6 +527,10 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlProceduralDefinition>
     member _.DetailedEffects = detailedEffects
+    /// Least-proven static effect coverage across the script. Not authorization.
+    member _.EffectCoverage = effectCoverage
+    /// All per-statement static Catalog deltas in source order, as an immutable snapshot.
+    member _.CatalogChanges = catalogChanges
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
