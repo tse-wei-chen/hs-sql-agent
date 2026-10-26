@@ -187,8 +187,12 @@ module internal RewriteStatementEffects =
                 | SqlScriptStatementKind.Procedural when proceduralDefinitions.Count > 0 ->
                     proceduralDefinitions
                     |> Seq.map (fun definition ->
+                        let operation =
+                            if definition.Kind = SqlProceduralDefinitionKind.Function then
+                                SqlStatementEffectOperation.DefineFunction
+                            else SqlStatementEffectOperation.DefineProcedure
                         effect (SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects)
-                            SqlStatementEffectOperation.DefineProcedure
+                            operation
                             definition.Routine.DisplayName null SqlCatalogKnowledge.Unknown
                             definition.Span noDependencies)
                     |> Seq.toList
