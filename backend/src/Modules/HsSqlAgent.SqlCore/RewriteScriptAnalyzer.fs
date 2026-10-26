@@ -369,6 +369,7 @@ module internal RewriteScriptAnalyzer =
                     let mutable securityDependencies : SqlSecurityDependency list = []
                     let mutable utilityIntents : SqlUtilityIntent list = []
                     let mutable sessionOperation = SqlStatementEffectOperation.Unknown
+                    let mutable controlOperation = SqlTransactionControlOperation.None
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
@@ -377,9 +378,10 @@ module internal RewriteScriptAnalyzer =
                             (if Object.ReferenceEquals(syntax.Diagnostic, null) then []
                              else [syntax.Diagnostic])
                         elif syntax.Kind = SqlScriptStatementKind.Transaction then
-                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics =
+                            let status, certainty, next, nextSession, newTransaction, changes, diagnostics, parsedControl =
                                 RewriteTransactionAnalyzer.analyze
                                     sourceDialect sourceProfile current session transaction syntax
+                            controlOperation <- parsedControl
                             // A transaction boundary or savepoint rollback is
                             // responsible for BOTH catalog and session state.
                             // No separate coordinator-side rollback heuristic.
@@ -510,6 +512,14 @@ module internal RewriteScriptAnalyzer =
                                 "An unproven statement or failure has invalidated the active transaction and Catalog proofs."]
                         else []
                     let allDiagnostics = diagnostics @ additionalErrors
+                    let runtimeCertainty =
+                        if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty
+                    let provenance =
+                        RewriteResourceBudget.withStage "TransactionProvenance" SqlDiagnosticStage.SemanticValidation (fun () ->
+                            RewriteTransactionProvenance.describe
+                                sourceDialect syntax status runtimeCertainty effects
+                                transactionBefore (RewriteTransactionAnalyzer.status transaction)
+                                controlOperation (readOnly allDiagnostics))
                     current <- after
                     for item in allDiagnostics do errors.Add item
                     let detailedEffects, effectCoverage =
@@ -521,13 +531,13 @@ module internal RewriteScriptAnalyzer =
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
-                            (if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty),
+                            runtimeCertainty,
                             bindingStatus, nameStatus, typeStatus, before, after,
                             transactionBefore, RewriteTransactionAnalyzer.status transaction,
                             sessionBefore, RewriteSessionAnalyzer.snapshot session,
                             readOnly changes, detailedEffects, effectCoverage,
                             readOnly securityIntents, readOnly securityDependencies,
-                            readOnly utilityIntents, readOnly allDiagnostics)))
+                            readOnly utilityIntents, provenance, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,

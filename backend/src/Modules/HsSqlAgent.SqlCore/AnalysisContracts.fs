@@ -215,6 +215,59 @@ type SqlTransactionState =
     | Active = 1
     | Unknown = 2
 
+/// Closed, provider-aware grammar classification. The command is recognized
+/// statically, not executed on a database server.
+type SqlTransactionControlOperation =
+    | None = 0
+    | Begin = 1
+    | Commit = 2
+    | Rollback = 3
+    | Savepoint = 4
+    | RollbackToSavepoint = 5
+    | ReleaseSavepoint = 6
+    | Unknown = 7
+
+/// What supports a *virtual* rollback claim. Even StaticCatalogAndSession
+/// NEVER implies that any database change has run or been rolled back.
+type SqlTransactionRollbackScope =
+    | NotApplicable = 0
+    | StaticCatalog = 1
+    | StaticCatalogAndSession = 2
+    | Unproven = 3
+
+/// Conservative, non-executable source of the per-statement transaction fact.
+type SqlTransactionEffectOrigin =
+    | OutsideTransaction = 0
+    | TransactionControl = 1
+    | CatalogMutation = 2
+    | SessionMutation = 3
+    | PossibleImplicitCommit = 4
+    | UnprovenRuntimeEffects = 5
+    | UnknownTransactionState = 6
+
+/// The statement's potential transaction effect and evidence boundary.
+/// The source dialect's static grammar can prove Catalog snapshot transitions;
+/// it can NEVER certify storage engine execution, successful COMMIT/ROLLBACK,
+/// effective permissions, or a physical server's transactional guarantees.
+[<Sealed>]
+type SqlTransactionEffectProvenance internal (
+    origin: SqlTransactionEffectOrigin,
+    rollbackScope: SqlTransactionRollbackScope,
+    controlOperation: SqlTransactionControlOperation,
+    effects: SqlEffectKind,
+    transactionBefore: SqlTransactionState,
+    transactionAfter: SqlTransactionState,
+    span: SqlDiagnosticSpan) =
+    member _.Origin = origin
+    member _.RollbackScope = rollbackScope
+    member _.ControlOperation = controlOperation
+    member _.PotentialEffects = effects
+    member _.TransactionBefore = transactionBefore
+    member _.TransactionAfter = transactionAfter
+    member _.Span = span
+    member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
+    member _.IsServerRollbackProven = false
+
 /// Immutable static session scope. A known SearchPath is a caller/script
 /// premise, never evidence from a live server or a compilation permission.
 [<Sealed>]
@@ -257,6 +310,7 @@ type SqlStatementAnalysis internal (
     securityIntents: IReadOnlyList<SqlSecurityIntent>,
     securityDependencies: IReadOnlyList<SqlSecurityDependency>,
     utilityIntents: IReadOnlyList<SqlUtilityIntent>,
+    transactionProvenance: SqlTransactionEffectProvenance,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -280,6 +334,7 @@ type SqlStatementAnalysis internal (
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies
     member _.UtilityIntents = utilityIntents
+    member _.TransactionProvenance = transactionProvenance
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -309,7 +364,13 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.UtilityIntents)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlUtilityIntent>
+    let transactionProvenance : IReadOnlyList<SqlTransactionEffectProvenance> =
+        (statements
+         |> Seq.map (fun item -> item.TransactionProvenance)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlTransactionEffectProvenance>
     member _.DetailedEffects = detailedEffects
+    member _.TransactionProvenance = transactionProvenance
     member _.UtilityIntents = utilityIntents
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies
