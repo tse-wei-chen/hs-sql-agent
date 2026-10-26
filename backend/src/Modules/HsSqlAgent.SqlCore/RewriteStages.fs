@@ -1999,7 +1999,7 @@ module internal RewriteStages =
                 mergeInsert.InsertValues
                 |> NonEmpty.iter (validateSemanticExpr targetRuntime InsertValueClause false false))
 
-    let validate allowedTables targetRuntime sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
+    let validate allowedTables targetRuntime targetProfile sourceExpressions targetExpressions sourceJoins targetJoins targetOrdering sourceDml targetDml conflictProofs canonical =
         let document = Canonical.value canonical
 
         let sourceCheck action =
@@ -2038,7 +2038,7 @@ module internal RewriteStages =
                 validateSemanticDocument targetRuntime document
                 validateDocument allowedTables document)
 
-        targetCheck (fun () -> RewriteCapabilityValidation.proveTargetDocument targetRuntime targetExpressions validated |> ignore)
+        targetCheck (fun () -> RewriteCapabilityValidation.proveTargetDocument targetRuntime targetProfile targetExpressions validated |> ignore)
         sourceCheck (fun () -> RewritePlanCapabilityValidation.proveJoins sourceCapabilityMessage sourceJoins validated)
         targetCheck (fun () -> RewritePlanCapabilityValidation.proveJoins targetCapabilityMessage targetJoins validated)
         targetCheck (fun () -> RewritePlanCapabilityValidation.proveOrderingAndPaging targetRuntime targetOrdering validated)

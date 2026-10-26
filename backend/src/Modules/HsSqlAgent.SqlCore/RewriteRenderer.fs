@@ -489,6 +489,7 @@ module internal RewriteRenderer =
     let private setText provider operator =
         match provider, operator with
         | Oracle, SetOperator.Except -> "MINUS"
+        | Oracle, SetOperator.ExceptAll -> "MINUS ALL"
         | _, SetOperator.Union -> "UNION"
         | _, SetOperator.UnionAll -> "UNION ALL"
         | _, SetOperator.Intersect -> "INTERSECT"

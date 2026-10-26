@@ -158,6 +158,7 @@ module internal RewritePipeline =
         RewriteResourceBudget.withStage "Validation" SqlDiagnosticStage.SemanticValidation (fun () ->
             RewriteStages.validate
                 options.AllowedTables (VerifiedTarget.runtime target)
+                (VerifiedTarget.profile target)
                 sourceSemantics.Expressions (VerifiedTarget.expressions target)
                 sourceSemantics.Joins (VerifiedTarget.joins target)
                 (VerifiedTarget.ordering target)

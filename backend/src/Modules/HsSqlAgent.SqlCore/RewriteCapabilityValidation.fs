@@ -386,7 +386,7 @@ module internal RewriteCapabilityValidation =
             RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
         | _ -> ()
 
-    let private proveTargetGraph targetRuntime expressionProofs root =
+    let private proveTargetGraph targetRuntime targetProfile expressionProofs root =
         let provider = TargetRuntime.provider targetRuntime
         let onQuery (node: Query) =
             if node.FetchPercent.IsSome then
@@ -431,11 +431,11 @@ module internal RewriteCapabilityValidation =
         let onSet operator =
             match operator with
             | SetOperator.IntersectAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider) with
+                match SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider, targetProfile) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.ExceptAll ->
-                match SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider) with
+                match SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider, targetProfile) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | SetOperator.Union | SetOperator.UnionAll
@@ -444,44 +444,44 @@ module internal RewriteCapabilityValidation =
             (proveTargetNode targetRuntime expressionProofs)
             onQuery onSelect onDistinct onSource onJoin onSet root
 
-    let private proveTargetExpr targetRuntime expressionProofs expression =
-        proveTargetGraph targetRuntime expressionProofs (VisitCapabilityExpr expression)
+    let private proveTargetExpr targetRuntime targetProfile expressionProofs expression =
+        proveTargetGraph targetRuntime targetProfile expressionProofs (VisitCapabilityExpr expression)
 
-    let private proveTargetSource targetRuntime expressionProofs source =
-        proveTargetGraph targetRuntime expressionProofs (VisitCapabilitySource source)
+    let private proveTargetSource targetRuntime targetProfile expressionProofs source =
+        proveTargetGraph targetRuntime targetProfile expressionProofs (VisitCapabilitySource source)
 
-    let private proveTargetQuery targetRuntime expressionProofs query =
-        proveTargetGraph targetRuntime expressionProofs (VisitCapabilityQuery query)
+    let private proveTargetQuery targetRuntime targetProfile expressionProofs query =
+        proveTargetGraph targetRuntime targetProfile expressionProofs (VisitCapabilityQuery query)
 
-    let proveTargetDocument targetRuntime expressionProofs document =
+    let proveTargetDocument targetRuntime targetProfile expressionProofs document =
         match document.Statement with
-        | QueryStatement query -> proveTargetQuery targetRuntime expressionProofs query
+        | QueryStatement query -> proveTargetQuery targetRuntime targetProfile expressionProofs query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
-            | QuerySource query -> proveTargetQuery targetRuntime expressionProofs query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs))
+            | QuerySource query -> proveTargetQuery targetRuntime targetProfile expressionProofs query
             | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+            insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | UpdateStatement update ->
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime expressionProofs assignment.Value)
-            update.From |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            update.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime targetProfile expressionProofs assignment.Value)
+            update.From |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
+            update.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
+            update.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | DeleteStatement delete ->
-            delete.Using |> List.iter (proveTargetSource targetRuntime expressionProofs)
-            delete.Where |> Option.iter (proveTargetExpr targetRuntime expressionProofs)
-            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Expression)
+            delete.Using |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
+            delete.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
+            delete.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | MergeStatement merge ->
-            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs)
-            proveTargetExpr targetRuntime expressionProofs merge.MatchPredicate
+            merge.Source.SourceValues |> NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)
+            proveTargetExpr targetRuntime targetProfile expressionProofs merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
                 | MergeDelete -> ()
                 | MergeUpdate assignments ->
-                    assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime expressionProofs item.Value))
+                    assignments |> NonEmpty.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime expressionProofs))
+                mergeInsert.InsertValues |> NonEmpty.iter (proveTargetExpr targetRuntime targetProfile expressionProofs))
         document
 
 
