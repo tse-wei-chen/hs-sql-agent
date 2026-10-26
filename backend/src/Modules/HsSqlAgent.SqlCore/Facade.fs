@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore
 
 open System
 open System.Collections.Generic
+open System.Threading
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
@@ -292,6 +293,14 @@ type SqlCoreFacade private () =
         sourceDialect: SqlAgentToolType) : SqlScriptAnalysisResult =
         SqlCoreFacade.AnalyzeScript(sql, sourceDialect, SqlCatalogState.Unknown(), null)
 
+    /// Cancel static analysis cooperatively without affecting the existing no-token API.
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        cancellationToken: CancellationToken) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(
+            sql, sourceDialect, SqlCatalogState.Unknown(), null, cancellationToken)
+
     static member AnalyzeScript(
         sql: string,
         sourceDialect: SqlAgentToolType,
@@ -302,13 +311,31 @@ type SqlCoreFacade private () =
         sql: string,
         sourceDialect: SqlAgentToolType,
         initialCatalog: SqlCatalogState,
+        cancellationToken: CancellationToken) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(
+            sql, sourceDialect, initialCatalog, null, cancellationToken)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState,
         sourceProfile: SqlProviderCapabilityProfile | null) : SqlScriptAnalysisResult =
+        SqlCoreFacade.AnalyzeScript(
+            sql, sourceDialect, initialCatalog, sourceProfile, CancellationToken.None)
+
+    static member AnalyzeScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        initialCatalog: SqlCatalogState,
+        sourceProfile: SqlProviderCapabilityProfile | null,
+        cancellationToken: CancellationToken) : SqlScriptAnalysisResult =
         ArgumentNullException.ThrowIfNull(sql)
         ArgumentNullException.ThrowIfNull(initialCatalog)
         match sourceProfile with
         | null -> ()
         | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
-        RewriteScriptAnalyzer.analyze sql sourceDialect sourceProfile initialCatalog
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            RewriteScriptAnalyzer.analyze sql sourceDialect sourceProfile initialCatalog)
 
     static member ParseScript(
         sql: string,
@@ -318,12 +345,26 @@ type SqlCoreFacade private () =
     static member ParseScript(
         sql: string,
         sourceDialect: SqlAgentToolType,
+        cancellationToken: CancellationToken) : SqlScriptParseResult =
+        SqlCoreFacade.ParseScript(sql, sourceDialect, null, cancellationToken)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
         sourceProfile: SqlProviderCapabilityProfile | null) : SqlScriptParseResult =
+        SqlCoreFacade.ParseScript(sql, sourceDialect, sourceProfile, CancellationToken.None)
+
+    static member ParseScript(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        sourceProfile: SqlProviderCapabilityProfile | null,
+        cancellationToken: CancellationToken) : SqlScriptParseResult =
         ArgumentNullException.ThrowIfNull(sql)
         match sourceProfile with
         | null -> ()
         | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
-        RewriteScriptParser.parse sql sourceDialect sourceProfile
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            RewriteScriptParser.parse sql sourceDialect sourceProfile)
 
     static member CompileQuery(
         parsed: ParsedStatement,

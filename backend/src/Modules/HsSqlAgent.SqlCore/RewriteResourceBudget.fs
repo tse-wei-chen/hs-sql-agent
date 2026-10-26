@@ -39,6 +39,38 @@ module internal RewriteResourceBudget =
     let private ambient = AsyncLocal<Session option>()
     let private events = new DiagnosticListener("HsSqlAgent.SqlCore.Compiler")
 
+    // Cancellation belongs to the caller's ambient execution scope, NOT a global
+    // compiler setting. Nested entry points must honor every enclosing token.
+    let private cancellationScopes = AsyncLocal<CancellationToken[]>()
+
+    let private checkCancellation () =
+        match cancellationScopes.Value with
+        | null -> ()
+        | tokens ->
+            for token in tokens do
+                token.ThrowIfCancellationRequested()
+
+    /// Cooperative cancellation for a public ParseScript/AnalyzeScript call.
+    /// Existing no-token entry points retain the ambient cancellation, if any.
+    let withCancellation (cancellationToken: CancellationToken) action =
+        if not cancellationToken.CanBeCanceled then
+            checkCancellation ()
+            let result = action ()
+            checkCancellation ()
+            result
+        else
+            let previous = cancellationScopes.Value
+            cancellationScopes.Value <-
+                if isNull previous then [| cancellationToken |]
+                else Array.append previous [| cancellationToken |]
+            try
+                checkCancellation ()
+                let result = action ()
+                checkCancellation ()
+                result
+            finally
+                cancellationScopes.Value <- previous
+
     let private fail code (stage: SqlDiagnosticStage) message : 'T =
         let diagnostic =
             SqlDiagnostic(
@@ -50,6 +82,7 @@ module internal RewriteResourceBudget =
             raise (SqlCompilationException(message, diagnostic))
 
     let private enforce (session: Session) (phase: Phase) =
+        checkCancellation ()
         if phase.Work > MaxStageWork then
             fail "SQL_COMPILER_STAGE_WORK_LIMIT" phase.DiagnosticStage
                 ("Compiler stage " + phase.Name + " exceeded its deterministic work-unit budget.")
@@ -68,6 +101,7 @@ module internal RewriteResourceBudget =
     /// A unit is one token, AST frame or renderer emission step. Work is
     /// intentionally NOT wall time, output bytes or allocation bytes.
     let charge units =
+        checkCancellation ()
         match ambient.Value with
         | Some session ->
             match session.Current with
