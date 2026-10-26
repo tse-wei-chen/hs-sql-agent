@@ -301,11 +301,19 @@ AS $body$ SELECT amount; $body$;
 Unknown names, duplicate declarations, missing names, quoted symbols,
 OUT/INOUT/default parameters, return type mismatches, unmodeled expressions,
 ambiguous table-column names, and multi-statement parameterized bodies
-remain fail-closed. PostgreSQL `$1` positional parameters are
-**not yet modeled by the closed general query parser**; that syntax
-remains rejected at its existing strict lexical boundary. No SQL text
-substitution, synthetic identifiers, new executable parameter binding,
-or global lexer relaxation was introduced.
+remain fail-closed. PostgreSQL `$1` positional parameters are **not accepted by the closed
+general query parser**. The Function Analyzer now has a separate,
+strictly bounded and non-executable grammar for one `SELECT $n`,
+`SELECT NOT $n`, or `SELECT $n <op> $m` statement, where `<op>` is
+`+`, `-`, `*`, `AND`, or `OR`. Ordinals must refer to one of at most
+eight declared named IN arguments. `PositionalParameterMatch` records
+direct type matching; eligible boolean/integer operators use
+`PrimitiveExpressionMatch`. This grammar never substitutes SQL text,
+promotes `$n` to a general SQL identifier, makes executable parameter
+bindings, or relaxes query/mutation compilation. It does not support
+arbitrary SQL expressions, casts, comments, additional statements,
+procedures, or other provider dialects; all such shapes fail closed.
+The inferred type is a static observation and not a runtime proof.
 
 This is a narrow *typed symbol* capability. Bounded primitive arithmetic
 and boolean expressions now have nominal type evidence, but full SQL type
