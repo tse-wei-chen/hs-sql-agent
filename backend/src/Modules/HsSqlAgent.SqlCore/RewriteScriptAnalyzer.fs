@@ -416,6 +416,11 @@ module internal RewriteScriptAnalyzer =
                             let flags =
                                 intents |> List.fold (fun all item -> all ||| item.PotentialEffects)
                                     SqlEffectKind.Administrative
+                            let flags =
+                                if status = SqlStatementAnalysisStatus.Unsupported
+                                   || status = SqlStatementAnalysisStatus.Invalid then
+                                    flags ||| SqlEffectKind.UnknownEffects
+                                else flags
                             status, flags, SqlCatalogKnowledge.Unknown,
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
