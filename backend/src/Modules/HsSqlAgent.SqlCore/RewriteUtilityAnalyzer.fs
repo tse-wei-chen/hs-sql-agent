@@ -26,7 +26,7 @@ module internal RewriteUtilityAnalyzer =
     let private word (token: Token) =
         match token.Kind with
         | Keyword value
-        | Identifier(value, false) -> value.ToUpperInvariant()
+        | RewriteLexer.Identifier(value, false) -> value.ToUpperInvariant()
         | _ -> ""
 
     let private isSymbol c token =
@@ -36,13 +36,13 @@ module internal RewriteUtilityAnalyzer =
 
     let private targetPart sourceDialect sourceProfile (token: Token) =
         match token.Kind with
-        | Identifier(name, quoted) when
+        | RewriteLexer.Identifier(name, quoted) when
             not (String.IsNullOrWhiteSpace name)
             && (quoted || RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier name) ->
             Some (RewriteCatalogIdentifierProof.canonicalName sourceDialect sourceProfile name quoted)
         | _ -> None
 
-    let private potential operation mode kind target flags syntax =
+    let private potential operation mode kind (target: string | null) flags (syntax: SqlScriptStatementSyntax) =
         Recognized(SqlUtilityIntent(operation, mode, kind, target, flags, syntax.Span))
 
     let private unsupported message = Unsupported message
