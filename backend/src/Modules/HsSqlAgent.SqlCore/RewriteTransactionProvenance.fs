@@ -3,6 +3,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 open System.Collections.Generic
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
 
 /// Static evidence of a statement's possible transactional effect.
