@@ -53,4 +53,8 @@
 		<ProjectReference Include="..\..\Modules\HsSqlAgent.Provider.Firebird\HsSqlAgent.Provider.Firebird.csproj" />
 		<ProjectReference Include="..\..\Modules\SqlAgent.Service\SqlAgent.Service.csproj" />
 	</ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="ScriptCorpus/p6-real-world-script-acceptance.json"
+      LogicalName="SqlAgent.Test.ScriptCorpus.p6-real-world-script-acceptance.json" />
+  </ItemGroup>
 </Project>
