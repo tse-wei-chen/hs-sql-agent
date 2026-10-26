@@ -68,10 +68,8 @@ public sealed class SqlCoreFunctionParameterBindingTests
     [InlineData("arg integer", "text", "SELECT arg;")]
     [InlineData("arg integer", "integer", "SELECT missing;")]
     [InlineData("arg integer", "integer", "SELECT arg FROM app.orders;")]
-    [InlineData("arg integer", "integer", "SELECT arg + 1;")]
     [InlineData("arg integer", "integer", "SELECT arg, 1;")]
     [InlineData("arg integer", "integer", "UPDATE app.orders SET id=1; SELECT arg;")]
-    [InlineData("arg integer", "integer", "SELECT CAST(arg AS INTEGER);")]
     [InlineData("arg integer", "integer", "SELECT arg WHERE true;")]
     public void AmbiguousOrUnprovenParameterUsageFailsClosed(string args, string resultType, string body)
     {

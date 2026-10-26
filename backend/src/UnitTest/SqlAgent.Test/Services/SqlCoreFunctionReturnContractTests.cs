@@ -95,7 +95,6 @@ public sealed class SqlCoreFunctionReturnContractTests
     [InlineData("text", "SELECT TRUE;")]
     [InlineData("integer", "SELECT 2147483648;")]
     [InlineData("bigint", "SELECT 1;")]
-    [InlineData("integer", "SELECT 1 + 2;")]
     [InlineData("integer", "SELECT id FROM app.orders;")]
     [InlineData("integer", "SELECT 1, 2;")]
     [InlineData("integer", "SELECT 1 UNION SELECT 2;")]

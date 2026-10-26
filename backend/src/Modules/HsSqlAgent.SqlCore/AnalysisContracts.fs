@@ -226,6 +226,7 @@ type SqlFunctionReturnEvidence =
     | ExplicitCastMatch = 1
     | VoidNoValueRequired = 2
     | ParameterSymbolMatch = 3
+    | PrimitiveExpressionMatch = 4
 
 [<Sealed; AllowNullLiteral>]
 type SqlFunctionReturnContract internal (
