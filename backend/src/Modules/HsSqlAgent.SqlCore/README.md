@@ -125,6 +125,35 @@ foreach (var delta in report.CatalogChanges)
     Console.WriteLine($"{delta.Operation}: {delta.TableName}");
 ```
 
+## Final Virtual Catalog symbol projection
+
+`SqlScriptAnalysisResult.Symbols` is an immutable, static **final state**
+projection of Table and Column declarations from `FinalCatalog`. Every
+`SqlScriptSymbol` includes `Kind`, normalized `Name`, structured
+`TableIdentity` (including original identifier part boundaries), and
+`Certainty = Known`. Column entries also expose `TypeName` and
+`Nullable`; table entries have null type and no nullable value.
+
+This does **not** reconstruct transient declarations that were dropped or
+rolled back, and it does not include query aliases, CTEs, variables,
+procedural/local symbols, or the effective set of live server objects.
+Tables whose Virtual Catalog state is not Known do **not** mint proven
+Symbols. `HasCompleteSymbolCatalog` is only true if the **virtual**
+FinalCatalog is closed-world and every table shape is Known; an empty list
+with `HasCompleteSymbolCatalog = false` **does not** mean the database
+has no objects. A confirmed virtual declaration is still never execution
+authorization or attestation of server-side existence.
+
+```csharp
+var analysis = SqlCoreFacade.AnalyzeScript(
+    "CREATE TABLE orders(id INTEGER);",
+    new SqlScriptAnalysisOptions(
+        SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty()));
+if (analysis.HasCompleteSymbolCatalog)
+    foreach (var symbol in analysis.Symbols)
+        Console.WriteLine($"{symbol.Kind}: {symbol.TableIdentity.Key} / {symbol.Name}");
+```
+
 ## Script-wide static object dependencies
 
 `SqlScriptAnalysisResult.Dependencies` projects immutable, source-ordered,
