@@ -384,12 +384,12 @@ module internal RewriteProceduralBodyAnalyzer =
     // Deliberately refuse comments, aliases, functions, literals, joins,
     // nested SELECT, quoted identifiers, arbitrary casts or more statements.
     // ASCII whitespace is explicit, avoiding dialect-dependent token gaps.
-    let private positionalDirect = positionalRegex
-        @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
-    let private positionalNot = positionalRegex
-        @"\A[ \t\r\n]*SELECT[ \t\r\n]+NOT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
-    let private positionalBinary = positionalRegex
-        @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]+(?<op>AND|OR|\+|-|\*)[ \t\r\n]+\$(?<two>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+    let private positionalDirect =
+        positionalRegex @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+    let private positionalNot =
+        positionalRegex @"\A[ \t\r\n]*SELECT[ \t\r\n]+NOT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+    let private positionalBinary =
+        positionalRegex @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]+(?<op>AND|OR|\+|-|\*)[ \t\r\n]+\$(?<two>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
 
     let private boundedOrdinal (group: System.Text.RegularExpressions.Group) =
         let mutable result = 0
