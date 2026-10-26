@@ -349,6 +349,18 @@ The closed F# AST can establish only these evidence categories:
   int4/int8 arithmetic has the `bigint` result type.
 - `VoidNoValueRequired`: void does not require a final result SELECT.
 
+Scoped typed-schema column lookups now preserve a closed, internal
+`ScopedFamilyEvidence` distinction: missing name, known name with
+unknown family, ambiguous source names, or proven family together with
+its lexical scope depth. This information is not executable compiler
+proof and is not exposed as a server type. When a nearer scope defines
+a column with unknown family, an outer scope's known type is **never**
+substituted; a genuine correlated outer reference still receives the
+usual family check. Name validation remains the mandatory preceding
+gate, so ambiguous and missing SQL identifiers still fail closed before
+type evaluation. Regression coverage exercises six provider dialects,
+correlated subqueries, derived projections and CTEs.
+
 Literal classification now goes through the internal
 `RewriteScalarTypeEvidence` DU (`Unproven`, `FamilyOnly`, `ExactPrimitive`).
 The six-provider schema validator consumes only its conservative family
