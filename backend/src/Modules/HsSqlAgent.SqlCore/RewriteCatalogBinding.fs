@@ -85,7 +85,8 @@ module internal RewriteCatalogBinding =
                 // recurse through CTEs/subqueries and includes Mutation targets.
                 let schemaScopeProven =
                     match scoped with
-                    | RewriteCatalogSchemaResolution.SingleSchema _ -> true
+                    | RewriteCatalogSchemaResolution.SingleSchema _
+                    | RewriteCatalogSchemaResolution.SingleDatabase _ -> true
                     | _ -> false
                 let catalogForBinding =
                     if schemaScopeProven && RewriteCatalogSchemaResolution.canProject scoped state then
