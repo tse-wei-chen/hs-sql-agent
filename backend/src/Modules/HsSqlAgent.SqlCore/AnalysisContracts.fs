@@ -54,6 +54,7 @@ type SqlStatementEffectOperation =
     | SetNoCount = 26
     | InvokeProcedure = 27
     | DefineProcedure = 28
+    | DefineFunction = 29
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -206,8 +207,37 @@ type SqlProceduralIntent internal (
 /// Functions need separate return-value/volatility proofs and remain opaque.
 type SqlProceduralDefinitionKind =
     | Procedure = 0
+    | Function = 1
 
-/// One closed F# AST statement in a bounded SQL-language procedure body.
+/// Closed, deliberately limited PostgreSQL SQL-language function returns.
+/// The analyzer does not infer arbitrary column, user-defined or implicit
+/// assignment-cast types from server metadata.
+type SqlFunctionReturnType =
+    | Integer = 0
+    | BigInteger = 1
+    | Boolean = 2
+    | Text = 3
+    | Void = 4
+
+/// The static AST evidence for the declared result shape, not proof that a
+/// CREATE FUNCTION, SELECT or actual server conversion ever succeeded.
+type SqlFunctionReturnEvidence =
+    | LiteralMatch = 0
+    | ExplicitCastMatch = 1
+    | VoidNoValueRequired = 2
+
+[<Sealed>]
+type SqlFunctionReturnContract internal (
+    declaredType: SqlFunctionReturnType,
+    evidence: SqlFunctionReturnEvidence,
+    resultSpan: SqlDiagnosticSpan) =
+    member _.DeclaredType = declaredType
+    member _.Evidence = evidence
+    member _.ResultSpan = resultSpan
+    member _.IsRuntimeReturnProven = false
+    member _.RuntimeCertainty = SqlCatalogKnowledge.Unknown
+
+/// One closed F# AST statement in a bounded SQL-language procedure or function body.
 /// No semantic Catalog binding, function effects, triggers or permission
 /// checks are implied. Span is absolute in the submitted SQL script.
 [<Sealed>]
@@ -232,11 +262,14 @@ type SqlProceduralDefinition internal (
     routine: SqlCatalogQualifiedName,
     bodyStatements: IReadOnlyList<SqlProceduralBodyStatement>,
     potentialBodyEffects: SqlEffectKind,
-    span: SqlDiagnosticSpan) =
+    span: SqlDiagnosticSpan,
+    functionReturn: SqlFunctionReturnContract | null) =
     member _.Kind = kind
     member _.Routine = routine
     member _.BodyStatements = bodyStatements
     member _.PotentialBodyEffects = potentialBodyEffects
+    /// Null for PROCEDURE; a proven static shape only for FUNCTION.
+    member _.FunctionReturn = functionReturn
     member _.Span = span
     member _.BodyAnalyzed = true
     member _.IsBodyExecutionProven = false
