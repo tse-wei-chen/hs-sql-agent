@@ -87,7 +87,10 @@ public sealed class SqlCoreProceduralBodyAstTests
         Assert.Equal(2, def.BodyStatements.Count);
         Assert.Equal(SqlScriptStatementKind.Query, result.Statements[1].Kind);
         Assert.Empty(result.ProceduralIntents);
-        Assert.Empty(result.Diagnostics);
+        // Defining a procedure invalidates the Catalog; the next query
+        // remains independently parsed but cannot claim verified binding.
+        Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[1].CatalogBinding);
+        Assert.Contains(result.Diagnostics, d => d.Code == "SQL_CATALOG_BINDING_INCOMPLETE");
     }
 
     [Fact]
@@ -139,9 +142,10 @@ public sealed class SqlCoreProceduralBodyAstTests
     [InlineData(SqlAgentToolType.Sqlite)]
     public void NoPostgresProcedureGrammarBorrowedByOtherProviders(SqlAgentToolType provider)
     {
-        var report = Analyze("CREATE PROCEDURE app.p() LANGUAGE SQL AS $$SELECT 1;$$;", provider);
-        Assert.Empty(report.ProceduralDefinitions);
-        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(report.Statements).Status);
+        // PostgreSQL dollar strings are rejected at the strict provider
+        // lexical boundary, before ProceduralBodyAnalyzer is reached.
+        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            Analyze("CREATE PROCEDURE app.p() LANGUAGE SQL AS $SELECT 1;$;", provider));
     }
 
     [Fact]
