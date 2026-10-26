@@ -9,26 +9,42 @@ open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.Rewrite.RewriteCatalogSchemaResolution
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
 
-/// Scoped, ordered, static session transitions. Only a single ordinary
-/// PostgreSQL search_path is modeled; all remaining session grammar is
-/// deliberately unproven and invalidates the old Catalog/scope premises.
+/// Ordered, immutable and non-executable provider-specific session premises.
+/// Search paths, database context and result-message options are deliberately
+/// separate: USE database is never evidence of SQL Server's default schema.
 module internal RewriteSessionAnalyzer =
 
-    type SessionContext = private SessionContext of SchemaScope
+    type SessionContext = private {
+        Scope: SchemaScope
+        CurrentDatabase: string | null
+        NoCount: Nullable<bool>
+    }
 
-    let initial dialect (profile: SqlProviderCapabilityProfile | null) =
-        SessionContext(RewriteCatalogSchemaResolution.scope dialect profile)
+    let initial dialect (profile: SqlProviderCapabilityProfile | null) = {
+        Scope = RewriteCatalogSchemaResolution.scope dialect profile
+        CurrentDatabase = null
+        NoCount = Nullable()
+    }
 
-    let scope (SessionContext value) = value
+    let scope context = context.Scope
 
-    let unknown = SessionContext Unproven
+    let unknown = {
+        Scope = Unproven
+        CurrentDatabase = null
+        NoCount = Nullable()
+    }
 
-    let snapshot (SessionContext context) =
-        let value : string | null =
-            match context with
+    let snapshot context =
+        let path : string | null =
+            match context.Scope with
             | SingleSchema schema -> schema
-            | Unproven -> null
-        SqlSessionAnalysisState(value)
+            | _ -> null
+        let databaseProven =
+            match context.Scope with
+            | SingleDatabase _ -> true
+            | _ -> false
+        SqlSessionAnalysisState(
+            path, context.CurrentDatabase, databaseProven, context.NoCount)
 
     let private word token =
         match token.Kind with
@@ -45,6 +61,13 @@ module internal RewriteSessionAnalyzer =
             Some value
         | _ -> None
 
+    let private plainDatabase token =
+        match token.Kind with
+        | Identifier(value, false) when
+            RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier value ->
+            Some value
+        | _ -> None
+
     let private isAssignment token =
         word token = "TO"
         || (match token.Kind with
@@ -57,12 +80,11 @@ module internal RewriteSessionAnalyzer =
             "SQL_SESSION_UNSUPPORTED",
             SqlDiagnosticStage.SemanticValidation,
             SqlDiagnosticCategory.Capability,
-            message,
-            syntax.Span)
+            message, syntax.Span)
 
-    /// Parsing this subset never executes SQL or changes the source profile.
-    /// An unsupported setting may affect name resolution, authorization,
-    /// parsing or transaction behavior; therefore old Catalog proofs are lost.
+    /// An unsupported setting may change parsing, identity, authorization
+    /// and transaction behavior. The previous Catalog/scope proofs cannot
+    /// safely carry across it.
     let analyze sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
                 (context: SessionContext) (catalog: SqlCatalogState)
                 (syntax: SqlScriptStatementSyntax) =
@@ -70,34 +92,90 @@ module internal RewriteSessionAnalyzer =
             RewriteResourceBudget.withStage "SessionLexical" SqlDiagnosticStage.Lexical (fun () ->
                 RewriteFacadeAdapter.tokenizeSourceValidated syntax.Text sourceDialect sourceProfile)
             |> List.filter (fun t -> t.Kind <> End)
-        let newScope =
-            match tokens with
-            | [command; setting; assign; schema] when
-                sourceDialect = SqlAgentToolType.Postgres
-                && word command = "SET"
-                && word setting = "SEARCH_PATH"
-                && isAssignment assign ->
-                match plainSchema schema with
-                | Some name ->
-                    // Reuse the same restricted proof as declared profile
-                    // scope: pg_*, information_schema, multi-path, $user and
-                    // case-sensitive/quoted names cannot be certified.
-                    if name.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
-                       || name = "information_schema" then None
-                    else Some(SingleSchema name)
-                | None -> None
-            | _ -> None
-        match newScope with
-        | Some known ->
-            SqlStatementAnalysisStatus.Analyzed,
-            SqlCatalogKnowledge.Known,
-            SessionContext known,
-            catalog,
-            []
-        | None ->
-            SqlStatementAnalysisStatus.Unsupported,
-            SqlCatalogKnowledge.Unknown,
-            unknown,
-            RewriteCatalogModel.taintAll catalog,
+
+        let success status certainty newContext next operation =
+            status, certainty, newContext, next, [],
+            operation
+
+        match tokens with
+        | [command; setting; assign; schema] when
+            sourceDialect = SqlAgentToolType.Postgres
+            && word command = "SET"
+            && word setting = "SEARCH_PATH"
+            && isAssignment assign ->
+            match plainSchema schema with
+            | Some name when
+                not (name.StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
+                && name <> "information_schema" ->
+                success SqlStatementAnalysisStatus.Analyzed SqlCatalogKnowledge.Known
+                    { context with Scope = SingleSchema name }
+                    catalog SqlStatementEffectOperation.SetSearchPath
+            | _ ->
+                SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
+                unknown, RewriteCatalogModel.taintAll catalog,
+                [diagnostic syntax "PostgreSQL SEARCH_PATH is outside the proven single ordinary user schema subset."],
+                SqlStatementEffectOperation.Unknown
+
+        | [command; database] when
+            word command = "USE"
+            && (sourceDialect = SqlAgentToolType.MySQL
+                || sourceDialect = SqlAgentToolType.MsSqlServer) ->
+            match plainDatabase database with
+            | Some name ->
+                let normalized =
+                    RewriteCatalogIdentifierProof.canonicalName
+                        sourceDialect sourceProfile name false
+                if sourceDialect = SqlAgentToolType.MySQL then
+                    // Only a declared lower_case_table_names=1 proof allows
+                    // table identities from the Virtual Catalog to be
+                    // projected into the new default database.
+                    let newScope = SingleDatabase normalized
+                    let provable =
+                        RewriteCatalogIdentifierProof.mode sourceDialect sourceProfile =
+                            RewriteCatalogIdentifierProof.FoldAscii
+                        && RewriteCatalogSchemaResolution.canProject newScope catalog
+                    let nextContext = {
+                        context with
+                            Scope = if provable then newScope else Unproven
+                            CurrentDatabase = normalized
+                    }
+                    success
+                        (if provable then SqlStatementAnalysisStatus.Analyzed
+                         else SqlStatementAnalysisStatus.PartiallyAnalyzed)
+                        (if provable then SqlCatalogKnowledge.Known
+                         else SqlCatalogKnowledge.Unknown)
+                        nextContext
+                        (if provable then catalog else RewriteCatalogModel.taintAll catalog)
+                        SqlStatementEffectOperation.UseDatabase
+                else
+                    // SQL Server USE is database-context switching, never a
+                    // default-schema premise. Catalog facts from the old DB
+                    // must not authorize a query in the newly selected DB.
+                    success SqlStatementAnalysisStatus.PartiallyAnalyzed
+                        SqlCatalogKnowledge.Unknown
+                        { context with
+                            Scope = Unproven
+                            CurrentDatabase = normalized }
+                        (RewriteCatalogModel.taintAll catalog)
+                        SqlStatementEffectOperation.UseDatabase
+            | None ->
+                SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
+                unknown, RewriteCatalogModel.taintAll catalog,
+                [diagnostic syntax "USE requires a single plain ASCII database identifier."],
+                SqlStatementEffectOperation.Unknown
+
+        | [command; optionName; value] when
+            sourceDialect = SqlAgentToolType.MsSqlServer
+            && word command = "SET"
+            && word optionName = "NOCOUNT"
+            && (word value = "ON" || word value = "OFF") ->
+            success SqlStatementAnalysisStatus.Analyzed SqlCatalogKnowledge.Known
+                { context with NoCount = Nullable(word value = "ON") }
+                catalog SqlStatementEffectOperation.SetNoCount
+
+        | _ ->
+            SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
+            unknown, RewriteCatalogModel.taintAll catalog,
             [diagnostic syntax
-                "Session command or source-dialect semantics are outside the proven single-schema PostgreSQL search_path subset."]
+                "Session command or provider-specific semantics are outside the proven session capability subset."],
+            SqlStatementEffectOperation.Unknown
