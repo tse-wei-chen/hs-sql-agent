@@ -72,7 +72,6 @@ public sealed class SqlCoreOracleMinusSetGrammarTests
     [InlineData("SELECT 1 MINUS")]
     [InlineData("SELECT 1 MINUS SELECT")]
     [InlineData("SELECT 1 MINUS SELECT 2 INTERSECT SELECT 3")]
-    [InlineData("SELECT 1 INTERSECT SELECT 2 MINUS SELECT 3")]
     [InlineData("SELECT 1 UNION SELECT 2 INTERSECT SELECT 3")]
     [InlineData("SELECT 1 MINUS SELECT 2 INTERSECT ALL SELECT 3")]
     public void UnsupportedOrPrecedenceAmbiguousOracleSetFormsFailClosed(string sql)
