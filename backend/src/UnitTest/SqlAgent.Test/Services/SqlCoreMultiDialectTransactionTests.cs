@@ -101,8 +101,8 @@ public sealed class SqlCoreMultiDialectTransactionTests
     public void SqliteOuterSavepointCanBeginAndCommitTransaction()
     {
         var result = Analyze("SAVEPOINT root; CREATE TABLE users(id INTEGER);" +
-            "SAVEPOINT inner; ALTER TABLE users ADD COLUMN x TEXT;" +
-            "ROLLBACK TO inner; RELEASE inner; RELEASE root;", SqlAgentToolType.Sqlite);
+            "SAVEPOINT child_mark; ALTER TABLE users ADD COLUMN x TEXT;" +
+            "ROLLBACK TO child_mark; RELEASE child_mark; RELEASE root;", SqlAgentToolType.Sqlite);
         Assert.Equal(SqlTransactionState.Active, result.Statements[0].TransactionAfter);
         Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
         Assert.True(result.FinalCatalog.IsClosedWorld);
