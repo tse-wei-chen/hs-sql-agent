@@ -216,8 +216,7 @@ module internal RewriteProceduralBodyAnalyzer =
             | Expr.Column identifier ->
                 match parameterType symbols identifier with
                 | Some source ->
-                    (RewritePrimitiveTypeEvidence.parameterCastType source declared)
-                    = Some declared
+                    RewritePrimitiveTypeEvidence.parameterCastType source declared = Some declared
                 | None -> false
             | _ -> false)
 
