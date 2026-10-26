@@ -156,6 +156,18 @@ Unparenthesized right-side `INTERSECT` after `MINUS` / `UNION` /
 `EXCEPT` remains rejected. This is a bounded, provenance-preserving
 expansion rather than full Oracle mixed-set associativity emulation.
 
+**Version-gated Oracle EXCEPT (21c+):** Oracle 18c/19c source grammar
+uses `MINUS`; the `EXCEPT` synonym entered Oracle's source grammar
+in 21c. A plain Oracle `EXCEPT` now requires an explicit matching
+Oracle **source** capability profile with `ServerVersion >= 21.0`.
+It does not need `NLS_SORT=BINARY`, because this is the ordinary
+distinct set operation; the stronger duplicate-preserving ALL proof
+continues to apply below. Oracle targets still render canonical
+`SetOperator.Except` as native `MINUS` even for 19c targets.
+Target-side profile evidence is never accepted in place of missing
+source-version proof; other source dialects keep their own EXCEPT
+grammar unchanged.
+
 **Version-gated Set ALL (Oracle 21c+):** With an explicitly declared
 Oracle source capability profile (`ServerVersion >= 21.0` and session
 `NLS_SORT=BINARY`), raw Oracle `MINUS ALL`, `EXCEPT ALL`, and

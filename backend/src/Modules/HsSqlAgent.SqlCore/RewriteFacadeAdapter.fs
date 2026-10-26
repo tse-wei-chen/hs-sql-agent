@@ -357,6 +357,9 @@ module internal RewriteFacadeAdapter =
           SetAll =
             SqlSetAllCapabilityRules.SourceValidationError("INTERSECT", source, sourceProfile)
             |> sourceCapabilityProof
+          OracleExceptSyntax =
+            SqlOracleExceptSourceCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           Lexical = sourceLexicalSemantics source sourceProfile }
 
     /// Reuse the same source-profile lexical contract for script segmentation.
