@@ -302,18 +302,23 @@ Unknown names, duplicate declarations, missing names, quoted symbols,
 OUT/INOUT/default parameters, return type mismatches, unmodeled expressions,
 ambiguous table-column names, and multi-statement parameterized bodies
 remain fail-closed. PostgreSQL `$1` positional parameters are **not accepted by the closed
-general query parser**. The Function Analyzer now has a separate,
-strictly bounded and non-executable grammar for one `SELECT $n`,
-`SELECT NOT $n`, or `SELECT $n <op> $m` statement, where `<op>` is
-`+`, `-`, `*`, `AND`, or `OR`. Ordinals must refer to one of at most
-eight declared named IN arguments. `PositionalParameterMatch` records
-direct type matching; eligible boolean/integer operators use
-`PrimitiveExpressionMatch`. This grammar never substitutes SQL text,
-promotes `$n` to a general SQL identifier, makes executable parameter
-bindings, or relaxes query/mutation compilation. It does not support
-arbitrary SQL expressions, casts, comments, additional statements,
-procedures, or other provider dialects; all such shapes fail closed.
-The inferred type is a static observation and not a runtime proof.
+general query parser**. The Function Analyzer now has a **separate bounded, non-executable
+expression parser** for one FROM-free `SELECT` using `$n` ordinal IN
+arguments. The closed internal expression DU accepts grouping, numeric
+`+`/`-`/`*`, boolean `NOT`/`AND`/`OR`, compatible primitive literals,
+named argument references mixed with `$n`, and exact-typed or int4-to-int8
+widening `CAST` of a directly referenced argument. Parentheses and operator
+precedence are parsed structurally; casts of computed expressions stay
+unsupported. The internal tokenizer is bounded to 64 tokens, expression
+depth to 16, and each ordinal must refer to one of at most eight declared
+IN parameters. Direct ordinal references receive `PositionalParameterMatch`,
+narrow casts receive `ExplicitCastMatch`, and arithmetic/boolean expressions
+receive `PrimitiveExpressionMatch`. This grammar never substitutes SQL text,
+introduces general SQL identifiers, exposes executable bindings, or relaxes
+ordinary query/mutation compilation. SQL comments, joins, aggregates,
+dynamic SQL, multiple statements, arbitrary casts, unmodeled types and
+other providers stay fail-closed. The inferred type is a static nominal
+observation, never proof of server execution, overload resolution or rights.
 
 This is a narrow *typed symbol* capability. Bounded primitive arithmetic
 and boolean expressions now have nominal type evidence, but full SQL type
@@ -358,7 +363,7 @@ LANGUAGE SQL AS $body$ SELECT NOT enabled; $body$;
 ```
 
 Potential mutations inside a function body are **not** actions executed
-by CREATE FUNCTION. Dynamic SQL, positional `$1` references, arbitrary
+by CREATE FUNCTION. Dynamic SQL, unmodeled positional argument forms, arbitrary
 function calls, division, comparisons, NULL inference, overloaded
 operators, unmodeled casts, FROM-sourced names, implicit conversions
 and unproven expressions fail closed without a partial definition.

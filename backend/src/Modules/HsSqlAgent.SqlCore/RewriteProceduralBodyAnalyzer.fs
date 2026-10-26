@@ -362,117 +362,294 @@ module internal RewriteProceduralBodyAnalyzer =
                     reraise()
                 None
 
-    // This local, non-executable grammar is intentionally NOT a mode on the
-    // general SQL lexer/parser. PostgreSQL positional $n parameter syntax
-    // belongs only to a single bounded SQL-language FUNCTION body; raw SQL,
-    // procedure bodies and other providers retain their strict lexical rules.
-    // Each admitted expression becomes a private typed syntax node; the text
-    // is never rewritten, interpolated, bound as an ordinary SQL identifier,
-    // or forwarded to executable rendering.
+    // Private Function-only parser. The normal SQL Lexer and executable
+    // compiler still reject PostgreSQL positional parameters. This parser
+    // never rewrites SQL or treats textual substitutions as typed binding.
     type private PositionalExpr =
         | OrdinalRef of int
-        | NotOrdinal of int
-        | BinaryOrdinals of int * BinaryOperator * int
+        | NamedRef of string
+        | IntegerValue of int64
+        | BooleanValue of bool
+        | UnaryValue of UnaryOperator * PositionalExpr
+        | BinaryValue of BinaryOperator * PositionalExpr * PositionalExpr
+        | CastValue of PositionalExpr * SqlFunctionReturnType
 
-    let private positionalRegex (pattern: string) =
-        System.Text.RegularExpressions.Regex(
-            pattern,
-            System.Text.RegularExpressions.RegexOptions.CultureInvariant
-            ||| System.Text.RegularExpressions.RegexOptions.IgnoreCase,
-            TimeSpan.FromMilliseconds 100.)
+    type private PositionalToken =
+        | WordToken of string
+        | OrdinalToken of int
+        | IntegerToken of int64
+        | PunctuationToken of char
 
-    // Deliberately refuse comments, aliases, functions, literals, joins,
-    // nested SELECT, quoted identifiers, arbitrary casts or more statements.
-    // ASCII whitespace is explicit, avoiding dialect-dependent token gaps.
-    let private positionalDirect =
-        positionalRegex @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
-    let private positionalNot =
-        positionalRegex @"\A[ \t\r\n]*SELECT[ \t\r\n]+NOT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
-    let private positionalBinary =
-        positionalRegex @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]+(?<op>AND|OR|\+|-|\*)[ \t\r\n]+\$(?<two>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+    [<Literal>]
+    let private MaxPositionalTokens = 64
 
-    let private boundedOrdinal (group: System.Text.RegularExpressions.Group) =
-        let mutable result = 0
-        if group.Success
-           && Int32.TryParse(group.Value, &result)
-           && result >= 1 && result <= MaxParameters then Some result
-        else None
+    [<Literal>]
+    let private MaxPositionalDepth = 16
 
-    let private positionalExpr (body: string) =
-        let direct = positionalDirect.Match(body)
-        if direct.Success then
-            boundedOrdinal direct.Groups["one"] |> Option.map OrdinalRef
+    let private isAsciiLetter ch =
+        (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch = '_'
+
+    let private isAsciiDigit ch = ch >= '0' && ch <= '9'
+
+    let private isAsciiSpace ch =
+        ch = ' ' || ch = '\t' || ch = '\r' || ch = '\n'
+
+    let private positionalTokens (body: string) =
+        if body.Length = 0 || body.Length > MaxCharacters then None
         else
-            let negated = positionalNot.Match(body)
-            if negated.Success then
-                boundedOrdinal negated.Groups["one"] |> Option.map NotOrdinal
-            else
-                let binary = positionalBinary.Match(body)
-                if not binary.Success then None
+            let tokens = ResizeArray<PositionalToken>()
+            let mutable cursor = 0
+            let mutable valid = true
+            let mutable hasOrdinal = false
+            while valid && cursor < body.Length && tokens.Count <= MaxPositionalTokens do
+                RewriteResourceBudget.checkpoint ()
+                let ch = body[cursor]
+                if isAsciiSpace ch then
+                    cursor <- cursor + 1
+                elif ch = '$' then
+                    let first = cursor + 1
+                    cursor <- first
+                    while cursor < body.Length && isAsciiDigit body[cursor] do
+                        cursor <- cursor + 1
+                    let digits = body.Substring(first, cursor - first)
+                    let mutable ordinal = 0
+                    if digits.Length = 0 || digits[0] = '0'
+                       || not (Int32.TryParse(digits, &ordinal))
+                       || ordinal < 1 || ordinal > MaxParameters then
+                        valid <- false
+                    else
+                        hasOrdinal <- true
+                        tokens.Add(OrdinalToken ordinal)
+                elif isAsciiLetter ch then
+                    let first = cursor
+                    cursor <- cursor + 1
+                    // $ is part of PostgreSQL unquoted identifier spelling,
+                    // so SELECT$1 is never split into keyword and ordinal.
+                    while cursor < body.Length
+                          && (isAsciiLetter body[cursor]
+                              || isAsciiDigit body[cursor]
+                              || body[cursor] = '$') do
+                        cursor <- cursor + 1
+                    tokens.Add(WordToken(body.Substring(first, cursor - first).ToUpperInvariant()))
+                elif isAsciiDigit ch then
+                    let first = cursor
+                    cursor <- cursor + 1
+                    while cursor < body.Length && isAsciiDigit body[cursor] do
+                        cursor <- cursor + 1
+                    let digits = body.Substring(first, cursor-first)
+                    let mutable value = 0L
+                    if not (Int64.TryParse(digits, &value)) then valid <- false
+                    else tokens.Add(IntegerToken value)
+                elif ch = '-' && cursor + 1 < body.Length && body[cursor+1] = '-' then
+                    // Never reinterpret the SQL line-comment introducer
+                    // as adjacent arithmetic/unary minus operators.
+                    valid <- false
+                elif ch = '(' || ch = ')' || ch = '+' || ch = '-'
+                     || ch = '*' || ch = ';' then
+                    tokens.Add(PunctuationToken ch)
+                    cursor <- cursor + 1
+                else valid <- false
+            if not valid || not hasOrdinal || cursor <> body.Length
+               || tokens.Count > MaxPositionalTokens then None
+            else Some (tokens.ToArray())
+
+    let private positionalExpr (symbols: SqlFunctionParameterSymbol list) body =
+        positionalTokens body
+        |> Option.bind (fun tokens ->
+            let mutable index = 0
+            let current () =
+                if index < tokens.Length then Some tokens[index] else None
+            let accept token =
+                if current () = Some token then
+                    index <- index + 1
+                    true
+                else false
+            let knownName name =
+                symbols |> List.exists (fun symbol ->
+                    symbol.Name = name.ToLowerInvariant())
+            let operatorAt () =
+                match current () with
+                | Some (WordToken "OR") -> Some (BinaryOperator.Or, 1)
+                | Some (WordToken "AND") -> Some (BinaryOperator.And, 2)
+                | Some (PunctuationToken '+') -> Some (BinaryOperator.Add, 3)
+                | Some (PunctuationToken '-') -> Some (BinaryOperator.Subtract, 3)
+                | Some (PunctuationToken '*') -> Some (BinaryOperator.Multiply, 4)
+                | _ -> None
+            let rec parseExpr minimum depth =
+                if depth > MaxPositionalDepth then None
                 else
-                    let op =
-                        match binary.Groups["op"].Value.ToUpperInvariant() with
-                        | "+" -> Some BinaryOperator.Add
-                        | "-" -> Some BinaryOperator.Subtract
-                        | "*" -> Some BinaryOperator.Multiply
-                        | "AND" -> Some BinaryOperator.And
-                        | "OR" -> Some BinaryOperator.Or
+                    match parseUnary (depth+1) with
+                    | None -> None
+                    | Some first ->
+                        let mutable left = first
+                        let mutable valid = true
+                        let mutable going = true
+                        while going && valid do
+                            RewriteResourceBudget.checkpoint ()
+                            match operatorAt () with
+                            | Some (op, precedence) when precedence >= minimum ->
+                                index <- index + 1
+                                match parseExpr (precedence+1) (depth+1) with
+                                | Some right -> left <- BinaryValue(op,left,right)
+                                | None -> valid <- false
+                            | _ -> going <- false
+                        if valid then Some left else None
+            and parseUnary depth =
+                if depth > MaxPositionalDepth then None
+                else
+                    match current () with
+                    | Some (WordToken "NOT") ->
+                        index <- index+1
+                        parseUnary (depth+1)
+                        |> Option.map (fun inner -> UnaryValue(UnaryOperator.Not,inner))
+                    | Some (PunctuationToken '-') ->
+                        index <- index+1
+                        parseUnary (depth+1)
+                        |> Option.map (fun inner -> UnaryValue(UnaryOperator.Negate,inner))
+                    | Some (PunctuationToken '+') ->
+                        index <- index+1
+                        parseUnary (depth+1)
+                        |> Option.map (fun inner -> UnaryValue(UnaryOperator.Positive,inner))
+                    | _ -> parseAtom (depth+1)
+            and parseAtom depth =
+                if depth > MaxPositionalDepth then None
+                else
+                    match current () with
+                    | Some (OrdinalToken ordinal) ->
+                        index <- index+1
+                        Some (OrdinalRef ordinal)
+                    | Some (IntegerToken value) ->
+                        index <- index+1
+                        Some (IntegerValue value)
+                    | Some (WordToken "TRUE") ->
+                        index <- index+1
+                        Some (BooleanValue true)
+                    | Some (WordToken "FALSE") ->
+                        index <- index+1
+                        Some (BooleanValue false)
+                    | Some (PunctuationToken '(') ->
+                        index <- index+1
+                        match parseExpr 1 (depth+1) with
+                        | Some inner when accept (PunctuationToken ')') -> Some inner
                         | _ -> None
-                    match boundedOrdinal binary.Groups["one"],
-                          op, boundedOrdinal binary.Groups["two"] with
-                    | Some left, Some operation, Some right ->
-                        Some(BinaryOrdinals(left, operation, right))
+                    | Some (WordToken "CAST") ->
+                        index <- index+1
+                        if not (accept (PunctuationToken '(')) then None
+                        else
+                            match parseExpr 1 (depth+1) with
+                            | None -> None
+                            | Some value when accept (WordToken "AS") ->
+                                let castType =
+                                    match current () with
+                                    | Some (WordToken ("INT" | "INT4" | "INTEGER")) ->
+                                        Some SqlFunctionReturnType.Integer
+                                    | Some (WordToken ("INT8" | "BIGINT")) ->
+                                        Some SqlFunctionReturnType.BigInteger
+                                    | Some (WordToken ("BOOLEAN" | "BOOL")) ->
+                                        Some SqlFunctionReturnType.Boolean
+                                    | Some (WordToken "TEXT") ->
+                                        Some SqlFunctionReturnType.Text
+                                    | _ -> None
+                                match castType with
+                                | Some target ->
+                                    index <- index+1
+                                    if accept (PunctuationToken ')') then
+                                        // Only a single declared argument can
+                                        // be cast: no unproven expression casts.
+                                        match value with
+                                        | OrdinalRef _ | NamedRef _ -> Some(CastValue(value,target))
+                                        | _ -> None
+                                    else None
+                                | None -> None
+                            | _ -> None
+                    | Some (WordToken name) when knownName name ->
+                        index <- index+1
+                        Some (NamedRef(name.ToLowerInvariant()))
                     | _ -> None
+            if not (accept (WordToken "SELECT")) then None
+            else
+                match parseExpr 1 0 with
+                | Some expression ->
+                    accept (PunctuationToken ';') |> ignore
+                    if index = tokens.Length then Some expression else None
+                | None -> None)
 
     let private positionalReturn (symbols: SqlFunctionParameterSymbol list)
                                  (expression: PositionalExpr) =
-        let ordinalType ordinal =
-            symbols |> List.tryPick (fun symbol ->
-                if symbol.Ordinal = ordinal then Some symbol.DeclaredType else None)
         let numeric = function
             | SqlFunctionReturnType.Integer
             | SqlFunctionReturnType.BigInteger -> true
             | _ -> false
-        match expression with
-        | OrdinalRef i ->
-            ordinalType i
-            |> Option.map (fun actual ->
-                actual, SqlFunctionReturnEvidence.PositionalParameterMatch)
-        | NotOrdinal i ->
-            match ordinalType i with
-            | Some SqlFunctionReturnType.Boolean ->
-                Some (SqlFunctionReturnType.Boolean,
-                      SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
-            | _ -> None
-        | BinaryOrdinals(left,op,right) ->
-            match ordinalType left, ordinalType right with
-            | Some a, Some b when
-                op = BinaryOperator.And || op = BinaryOperator.Or ->
-                if a = SqlFunctionReturnType.Boolean && b = SqlFunctionReturnType.Boolean then
-                    Some (SqlFunctionReturnType.Boolean,
-                          SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
-                else None
-            | Some a, Some b when
-                op = BinaryOperator.Add || op = BinaryOperator.Subtract
-                || op = BinaryOperator.Multiply ->
-                if numeric a && numeric b then
-                    let result =
-                        if a = SqlFunctionReturnType.BigInteger
-                           || b = SqlFunctionReturnType.BigInteger then
-                            SqlFunctionReturnType.BigInteger
-                        else SqlFunctionReturnType.Integer
-                    Some (result, SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
-                else None
-            | _ -> None
+        let mutable remaining = MaxPositionalTokens
+        let rec infer expr =
+            RewriteResourceBudget.checkpoint ()
+            remaining <- remaining - 1
+            if remaining < 0 then None
+            else
+                match expr with
+                | OrdinalRef ordinal ->
+                    symbols |> List.tryPick (fun symbol ->
+                        if symbol.Ordinal = ordinal then
+                            Some(symbol.DeclaredType, SqlFunctionReturnEvidence.PositionalParameterMatch)
+                        else None)
+                | NamedRef name ->
+                    symbols |> List.tryPick (fun symbol ->
+                        if symbol.Name = name then
+                            Some(symbol.DeclaredType, SqlFunctionReturnEvidence.ParameterSymbolMatch)
+                        else None)
+                | IntegerValue number ->
+                    let t =
+                        if number <= int64 Int32.MaxValue then SqlFunctionReturnType.Integer
+                        else SqlFunctionReturnType.BigInteger
+                    Some(t,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                | BooleanValue _ ->
+                    Some(SqlFunctionReturnType.Boolean,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                | UnaryValue(op,inner) ->
+                    match infer inner with
+                    | Some (t,_) when op = UnaryOperator.Not
+                                      && t = SqlFunctionReturnType.Boolean ->
+                        Some(t,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                    | Some (t,_) when (op = UnaryOperator.Positive || op = UnaryOperator.Negate)
+                                      && numeric t ->
+                        Some(t,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                    | _ -> None
+                | BinaryValue(op,left,right) ->
+                    match infer left, infer right with
+                    | Some(a,_), Some(b,_) when op = BinaryOperator.And
+                                               || op = BinaryOperator.Or ->
+                        if a = SqlFunctionReturnType.Boolean && b = SqlFunctionReturnType.Boolean then
+                            Some(SqlFunctionReturnType.Boolean,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                        else None
+                    | Some(a,_), Some(b,_) when op = BinaryOperator.Add
+                                               || op = BinaryOperator.Subtract
+                                               || op = BinaryOperator.Multiply ->
+                        if numeric a && numeric b then
+                            let result =
+                                if a = SqlFunctionReturnType.BigInteger
+                                   || b = SqlFunctionReturnType.BigInteger then
+                                    SqlFunctionReturnType.BigInteger
+                                else SqlFunctionReturnType.Integer
+                            Some(result,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                        else None
+                    | _ -> None
+                | CastValue(value,target) ->
+                    match infer value with
+                    | Some(source,_) when source = target
+                                          || (source = SqlFunctionReturnType.Integer
+                                              && target = SqlFunctionReturnType.BigInteger) ->
+                        Some(target,SqlFunctionReturnEvidence.ExplicitCastMatch)
+                    | _ -> None
+        infer expression
 
-    /// One FROM-free SELECT, one typed positional expression, no SQL execution.
-    /// The body source span remains the original absolute string-literal span.
+    /// One FROM-free SELECT and one expression, with no execution or
+    /// server-side type/authorization proof. The original absolute span
+    /// and conservative potential effects remain unchanged.
     let private positionalBody (body: string) bodyStart
                                (symbols: SqlFunctionParameterSymbol list) declared =
         RewriteResourceBudget.checkpoint ()
         if body.Length = 0 || body.Length > MaxCharacters || symbols.IsEmpty then None
         else
-            positionalExpr body
+            positionalExpr symbols body
             |> Option.bind (positionalReturn symbols)
             |> Option.bind (fun (inferred,evidence) ->
                 if inferred <> declared then None
