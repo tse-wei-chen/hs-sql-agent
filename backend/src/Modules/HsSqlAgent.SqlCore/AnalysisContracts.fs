@@ -46,6 +46,10 @@ type SqlStatementEffectOperation =
     | DenyPrivilege = 18
     | GrantRoleMembership = 19
     | RevokeRoleMembership = 20
+    | ExplainPlan = 21
+    | ExplainExecute = 22
+    | AnalyzeStatistics = 23
+    | VacuumMaintenance = 24
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.
@@ -171,6 +175,37 @@ type SqlSecurityIntent internal (
     member _.Certainty = SqlCatalogKnowledge.Unknown
     member _.Span = span
 
+/// Provider-specific static utility operation. Not an executable SQL plan.
+type SqlUtilityOperation =
+    | ExplainPlan = 0
+    | ExplainExecute = 1
+    | AnalyzeStatistics = 2
+    | VacuumMaintenance = 3
+
+type SqlUtilityExecutionMode =
+    | PlanningOnly = 0
+    | ExecutesStatement = 1
+    | Maintenance = 2
+
+/// What the *SQL text could do* on its named provider. No statement has
+/// actually run, and unmodeled functions, triggers or metadata remain unknown.
+[<Sealed>]
+type SqlUtilityIntent internal (
+    operation: SqlUtilityOperation,
+    executionMode: SqlUtilityExecutionMode,
+    innerStatementKind: SqlScriptStatementKind,
+    targetName: string | null,
+    potentialEffects: SqlEffectKind,
+    span: SqlDiagnosticSpan) =
+    member _.Operation = operation
+    member _.ExecutionMode = executionMode
+    member _.InnerStatementKind = innerStatementKind
+    member _.TargetName = targetName
+    member _.PotentialEffects = potentialEffects
+    member _.MayExecuteStatement = executionMode = SqlUtilityExecutionMode.ExecutesStatement
+    member _.Certainty = SqlCatalogKnowledge.Unknown
+    member _.Span = span
+
 /// Static transaction state, not evidence of server execution.
 /// Unknown means no schema proof can survive unmodeled transaction effects.
 type SqlTransactionState =
@@ -207,6 +242,7 @@ type SqlStatementAnalysis internal (
     effectCoverage: SqlEffectCoverage,
     securityIntents: IReadOnlyList<SqlSecurityIntent>,
     securityDependencies: IReadOnlyList<SqlSecurityDependency>,
+    utilityIntents: IReadOnlyList<SqlUtilityIntent>,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -229,6 +265,7 @@ type SqlStatementAnalysis internal (
     member _.EffectCoverage = effectCoverage
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies
+    member _.UtilityIntents = utilityIntents
     member _.Diagnostics = diagnostics
 
 [<Sealed>]
@@ -253,7 +290,13 @@ type SqlScriptAnalysisResult internal (
          |> Seq.collect (fun item -> item.SecurityDependencies)
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlSecurityDependency>
+    let utilityIntents : IReadOnlyList<SqlUtilityIntent> =
+        (statements
+         |> Seq.collect (fun item -> item.UtilityIntents)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlUtilityIntent>
     member _.DetailedEffects = detailedEffects
+    member _.UtilityIntents = utilityIntents
     member _.SecurityIntents = securityIntents
     member _.SecurityDependencies = securityDependencies
     member _.Statements = statements
