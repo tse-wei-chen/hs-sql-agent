@@ -38,7 +38,6 @@ public sealed class SqlCoreUtilityAnalyzerTests
     [Theory]
     [InlineData(SqlAgentToolType.Postgres, "EXPLAIN ANALYZE SELECT 1")]
     [InlineData(SqlAgentToolType.Postgres, "EXPLAIN (ANALYZE TRUE) SELECT 1")]
-    [InlineData(SqlAgentToolType.MySQL, "EXPLAIN ANALYZE SELECT 1")]
     public void ExplainAnalyzeMustAdvertiseRealExecution(SqlAgentToolType provider, string sql)
     {
         var result = Analyze(sql, provider);
@@ -139,6 +138,7 @@ public sealed class SqlCoreUtilityAnalyzerTests
     [InlineData(SqlAgentToolType.Oracle, "EXPLAIN SELECT 1")]
     [InlineData(SqlAgentToolType.Firebird, "EXPLAIN SELECT 1")]
     [InlineData(SqlAgentToolType.Sqlite, "EXPLAIN ANALYZE SELECT 1")]
+    [InlineData(SqlAgentToolType.MySQL, "EXPLAIN ANALYZE SELECT 1")]
     [InlineData(SqlAgentToolType.MySQL, "VACUUM app.orders")]
     [InlineData(SqlAgentToolType.MySQL, "ANALYZE app.orders")]
     [InlineData(SqlAgentToolType.MsSqlServer, "ANALYZE app.orders")]
