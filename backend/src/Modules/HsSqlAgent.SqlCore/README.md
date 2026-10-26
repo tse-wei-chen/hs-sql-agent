@@ -274,6 +274,335 @@ foreach (var evidence in report.TransactionProvenance)
                       $"{evidence.RollbackScope}; server proof={evidence.IsServerRollbackProven}");
 ```
 
+## PostgreSQL SQL Function return contracts (static only)
+
+`SqlCoreFacade.AnalyzeScript` now recognizes a deliberately strict,
+schema-qualified `CREATE [OR REPLACE] FUNCTION schema.name() RETURNS type`
+with `LANGUAGE SQL AS $tag$...$tag# HsSqlAgent.SqlCore
+
+Provider-driver-free SQL parsing, validation and compilation for HsSqlAgent.
+
+It contains the structured SQL parser, AST, binding, normalization, semantic/capability validation,
+provider-specific SQL lowering and query/DML compilation pipeline. It intentionally does not carry
+ADO.NET database drivers, Dapper, MCP, ASP.NET Core, authentication or administration services.
+
+## Install
+
+```bash
+dotnet add package HsSqlAgent.SqlCore
+```
+
+## Compile SQL
+
+```csharp
+using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.SqlParsing;
+
+var parsed = CoreSqlTextParser.ParseQuery(
+    "SELECT id, name FROM users WHERE active = true",
+    SqlAgentToolType.Postgres);
+
+var command = CoreSqlCompiler.CreateDefault().Compile(
+    parsed,
+    SqlAgentToolType.Postgres,
+    new SqlPlanValidationContext("app-policy-v1"),
+    new SqlExecutionPlanPolicy(QueryMaxRows: 100));
+
+Console.WriteLine(command.Sql);
+foreach (var parameter in command.Parameters)
+    Console.WriteLine($"{parameter.Name} = {parameter.Value}");
+```
+
+For mutations, use `CoreSqlTextParser.ParseDml` with `CoreDmlCompiler`. Compilation produces an
+immutable `CompiledSqlCommand`; this package does not open database connections or execute SQL.
+
+## Static script DCL analysis (no authorization)
+
+`SqlCoreFacade.AnalyzeScript` can report potential, strongly typed permission
+changes without connecting to a database or executing SQL. A `SecurityIntent`
+identifies an action (`Grant`, `Revoke`, or SQL Server `Deny`), table-level
+privilege, structured source object name, and recipient. It is **not** an
+effective ACL, access-check result, grantor proof, or executable SQL plan.
+All `SqlSecurityIntent.Certainty` values remain `Unknown`.
+
+```csharp
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Enums;
+
+var report = SqlCoreFacade.AnalyzeScript(
+    "GRANT SELECT ON app.orders TO 'alice'@'localhost';",
+    SqlAgentToolType.MySQL,
+    SqlCatalogState.KnownEmpty());
+
+foreach (var intent in report.SecurityIntents)
+    Console.WriteLine($"{intent.Action}: {intent.Privilege} on {intent.Target.DisplayName} " +
+                      $"for {intent.Principal}@{intent.PrincipalHost}; {intent.Certainty}");
+```
+
+The MySQL grammar currently requires **explicit, exact** `'user'@'host'`
+accounts and `ON database.table`. Wildcard hosts, omitted hosts, role
+membership, `db.*` / `*.*`, account options, and privilege delegation are
+not yet modeled and remain fail-closed. The MySQL `@` account separator is
+recognized only by script analysis; raw query/mutation compilation still
+rejects unbound `@parameters`.
+
+SQL Server's modeled subset accepts `GRANT`, `REVOKE`, and `DENY` for
+`ON OBJECT::schema.table`. `DENY` is **not** equivalent to `REVOKE` or a
+negative effective-permission proof; inheritance, ownership, principal
+membership, grant options and explicit DENY precedence are outside the model.
+PostgreSQL, Firebird and Oracle retain their provider-specific proven table
+privilege subsets. SQLite does not claim SQL GRANT/REVOKE support.
+
+Neither these intents nor `DetailedEffects` authorize DML or change the
+virtual Catalog. Database permission enforcement remains the host's duty.
+
+### PostgreSQL role and delegation dependency analysis
+
+`AnalyzeScript` additionally exposes read-only `SecurityDependencies` on
+both each statement and the complete script. Edges have a typed kind:
+`RoleMembership` (role → recipient), or `TableDelegation` (table privilege
+and potential delegation option → recipient). A dependency is **only a
+syntactically observed possible edge**. It is not a persisted role graph,
+server ACL snapshot, proof of inheritance, delegated authority, or permission
+check. `Certainty` is always `Unknown`.
+
+The modeled PostgreSQL subset includes `GRANT reporting TO analyst`,
+`GRANT reporting TO analyst WITH ADMIN OPTION`,
+`REVOKE ADMIN OPTION FOR reporting FROM analyst RESTRICT`,
+`GRANT SELECT ON TABLE sales.orders TO analyst WITH GRANT OPTION`, and
+`REVOKE GRANT OPTION FOR SELECT ON TABLE sales.orders FROM analyst CASCADE`.
+Ordinary `REVOKE` also reports potential delegation impact. `CascadeMode`
+records the author's `CASCADE` / `RESTRICT` choice, **not** that any
+recursive revoke succeeded or which principals actually lost access.
+
+The graph is not used by the executable SQL compiler. Dependencies are bounded
+to 128 syntactic edges per DCL statement. Unmodeled role options (`SET`,
+`INHERIT`, grantor attribution, version-specific semantics), `PUBLIC` role
+membership, and delegation syntax for other database providers remain
+fail-closed until modeled separately.
+
+## Utility statement analysis (potential effects only)
+
+`SqlCoreFacade.AnalyzeScript` now reports `UtilityIntents` per statement and
+per script, alongside typed `DetailedEffects`. Utilities are never executable
+plans or permissions.
+
+- `EXPLAIN SELECT/UPDATE/DELETE` is distinguished from
+  `EXPLAIN ANALYZE SELECT/UPDATE/DELETE` by
+  `SqlUtilityExecutionMode.PlanningOnly` versus `ExecutesStatement`.
+  A plain explain does **not** claim the underlying mutation ran.
+- PostgreSQL admits a bounded `EXPLAIN` / `EXPLAIN ANALYZE` subset;
+  MySQL admits simple `EXPLAIN` on queries/mutations, while
+  `EXPLAIN ANALYZE` remains unsupported without proven server version and
+  `explain_format` session capabilities; SQLite supports `EXPLAIN QUERY PLAN SELECT`.
+  All nested query/DML SQL must first pass the strict source parser and
+  agree with its closed F# AST statement kind.
+- PostgreSQL `ANALYZE schema.table` and `VACUUM schema.table` are typed
+  potential maintenance operations. The whole-database and option-rich forms
+  stay fail-closed. On other providers, `ANALYZE` / `VACUUM` are not
+  interpreted with PostgreSQL syntax.
+- `SqlUtilityIntent.Certainty` is always `Unknown`. Actually executing or
+  maintenance-related shapes carry `UnknownEffects` and invalidate Virtual
+  Catalog completeness, since triggers, functions and system state are not
+  proven. `EXPLAIN ANALYZE` can actually execute writes on a real server;
+  it is **not read-only**. Inside an active transaction, utility statements
+  also invalidate unsupported rollback proofs.
+- SQL Server `SET SHOWPLAN_*`, Oracle `EXPLAIN PLAN FOR`, Firebird's
+  provider-native planning commands, and SQLite `PRAGMA` have distinct
+  semantics and remain unmodeled. Unknown syntax never gets an incomplete
+  typed intent.
+
+The analyzer only *describes* possible execution; it never opens a connection
+or issues `EXPLAIN`, `ANALYZE`, `VACUUM`, or any inner query/DML.
+
+## Cross-provider static Session capabilities
+
+`SqlCoreFacade.AnalyzeScript` exposes immutable `SessionBefore`,
+`SessionAfter` and `FinalSession` snapshots. A recorded setting is a
+**script or caller-declared premise only**: the analyzer does not connect
+to a database, check whether a database exists or authorize access.
+
+- **PostgreSQL** retains the restricted single ordinary `SET search_path
+  TO schema` / `SET search_path = schema` model, including previously
+  proven transaction rollback snapshots.
+- **MySQL** recognizes `USE database` with a plain ASCII identifier.
+  `CurrentDatabase` preserves this requested context. Only an explicit
+  caller `SqlProviderCapabilityProfile` with
+  `SessionSettings["LOWER_CASE_TABLE_NAMES"]="1"`, and a safe fully
+  qualified virtual Catalog, can establish `IsDatabaseScopeProven` and
+  safely resolve subsequent unqualified table names. Otherwise switching
+  databases is `PartiallyAnalyzed`, invalidates old Catalog proofs, and
+  subsequent name binding remains unverified.
+- **SQL Server** recognizes `USE database` but never confuses database
+  context with a default schema. The old Virtual Catalog is invalidated
+  because unqualified and two-part table names may refer to a different
+  database. It recognizes `SET NOCOUNT ON|OFF` as a separate
+  `Nullable<bool>` `NoCount` snapshot without treating output-message
+  settings as authorization or schema changes.
+- Oracle, Firebird, SQLite, and unmodeled provider-specific session
+  statements are fail-closed. Unknown or syntactically unsupported
+  settings discard previous scope/option and Catalog proofs. Quoted,
+  multipart, wildcard, conditional or other complex `USE` statements
+  are not admitted by this restricted grammar.
+
+`DetailedEffects` distinguishes `SetSearchPath`, `UseDatabase`, and
+`SetNoCount`. A successful static `USE` never certifies that it ran
+on the server. MySQL and SQL Server do not borrow PostgreSQL's
+transactional `search_path` rollback behavior.
+
+References: [MySQL USE](https://dev.mysql.com/doc/refman/8.4/en/use.html),
+[SQL Server USE](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/use-transact-sql),
+[SQL Server SET NOCOUNT](https://learn.microsoft.com/en-us/sql/t-sql/statements/set-nocount-transact-sql).
+
+## Transactional catalog snapshots and provider-specific TCL
+
+`SqlCoreFacade.AnalyzeScript` uses a closed, immutable `TransactionContext`
+to track a **static Virtual Catalog**, not to execute SQL or guarantee any
+server transaction completed. DQL, DML, triggers and external grants remain
+outside effective transaction execution/authorization proof.
+
+- **PostgreSQL:** `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK`,
+  `SAVEPOINT name`, `ROLLBACK TO [SAVEPOINT] name`, and
+  `RELEASE [SAVEPOINT] name` retain transactional DDL catalog snapshots.
+  Most-recent matching duplicate names win; `ROLLBACK TO` keeps the targeted
+  mark, whereas `RELEASE` removes it and newer marks. Plain
+  `SET search_path TO schema` / `= schema` is now snapshotted atomically
+  with the Virtual Catalog on every savepoint: `ROLLBACK TO` restores both
+  without ending the transaction; `RELEASE` preserves the current Session
+  scope, and full `ROLLBACK` restores the state before `BEGIN`.
+  Conditional settings, `SET LOCAL` and unknown Session commands remain
+  fail-closed.
+- **SQLite:** Basic `BEGIN`/`COMMIT`/`ROLLBACK`, nested savepoints, and
+  standalone outermost `SAVEPOINT` are supported. Releasing that outermost
+  savepoint ends the transaction; `ROLLBACK TO` leaves it active. The
+  existing SQLite dynamic-affinity type-boundary remains unverified.
+- **SQL Server:** A deliberately bounded `BEGIN TRAN[SACTION]`,
+  `COMMIT TRAN[SACTION]`, `ROLLBACK TRAN[SACTION]`,
+  `SAVE TRAN[SACTION] name`, and `ROLLBACK TRAN[SACTION] name` subset is
+  analyzed. Nested `BEGIN TRAN` is **not** modeled as an independently
+  committable nested transaction (`@@TRANCOUNT` and potential distributed
+  promotion matter); instead it invalidates prior Catalog rollback proofs.
+  Savepoint names are case-sensitive and capped to 32 ASCII identifier
+  characters, as required by SQL Server.
+- **MySQL:** Basic explicit `START TRANSACTION` / `BEGIN` and boundaries
+  can be recognized, but `CREATE`/`ALTER`/`DROP` during an active
+  transaction fail closed with `SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN`,
+  because DDL can implicitly commit and not be reversed by `ROLLBACK`.
+  DML in an active transaction similarly loses rollback proof unless the
+  storage-engine transaction contract is established separately.
+- **Oracle / Firebird** remain explicitly unmodeled for these TCL forms.
+  Unsupported names, subcommands, runtime conditions, distributed options,
+  nested transactions and unknown savepoints invalidate the prior transaction
+  and Virtual Catalog proofs, rather than creating rollback deltas.
+
+Savepoints are bounded to 32 active marks per transaction. All syntax is
+analyzed using the source dialect's strict lexer and typed F# commands. The
+returned `SqlCatalogChange` on a rollback describes a simulated catalog
+snapshot transition only, never a database write or execution guarantee.
+
+Vendor documentation:
+[MySQL implicit commits](https://dev.mysql.com/doc/refman/8.4/en/implicit-commit.html),
+[SQL Server SAVE TRANSACTION](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/save-transaction-transact-sql),
+[PostgreSQL ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/current/sql-rollback-to.html),
+[PostgreSQL SET](https://www.postgresql.org/docs/current/sql-set.html),
+[SQLite Savepoints](https://www.sqlite.org/lang_savepoint.html).
+
+## Transaction effect provenance (static evidence, not execution)
+
+`SqlCoreFacade.AnalyzeScript` exposes
+`SqlStatementAnalysis.TransactionProvenance` and the
+`SqlScriptAnalysisResult.TransactionProvenance` read-only statement-order
+collection. Each typed `SqlTransactionEffectProvenance` includes:
+
+- `Origin`: `OutsideTransaction`, `TransactionControl`,
+  `CatalogMutation`, `SessionMutation`, `PossibleImplicitCommit`,
+  `UnprovenRuntimeEffects` or `UnknownTransactionState`.
+- `ControlOperation`: a closed grammar classification of
+  `Begin`, `Commit`, `Rollback`, `Savepoint`,
+  `RollbackToSavepoint`, `ReleaseSavepoint`, or `Unknown`. The
+  classification comes from the **same F# transaction parser**, not a
+  string-prefix test or an execution signal.
+- `RollbackScope`: `NotApplicable`, `StaticCatalog`,
+  `StaticCatalogAndSession`, or `Unproven`. This is a proof solely
+  about the in-memory Virtual Catalog/Session snapshot, not the server.
+- `TransactionBefore`, `TransactionAfter`, `PotentialEffects`
+  and `Span` for deterministic script diagnostics.
+
+**`RuntimeCertainty` is always `Unknown` and
+`IsServerRollbackProven` is always `false`**. Neither parsed DML nor
+a static `ROLLBACK TO` proves an effective permission, that SQL actually
+ran, or that the storage engine committed/rolled back. PostgreSQL
+modeled search-path changes can carry `StaticCatalogAndSession` evidence;
+a modeled DDL Catalog snapshot carries `StaticCatalog` evidence.
+Provider-specific MySQL DDL implicit-commit warnings are preserved and
+surfaced as `PossibleImplicitCommit`; unproven runtime mutation,
+functions, settings and transaction states explicitly retain `Unproven`.
+The model does not invent a transitive, effective transaction-effect graph.
+
+Example usage:
+
+```csharp
+var report = SqlCoreFacade.AnalyzeScript(
+    "BEGIN; SET search_path TO app; SAVEPOINT s; ROLLBACK TO s; COMMIT;",
+    SqlAgentToolType.Postgres,
+    SqlCatalogState.KnownEmpty());
+
+foreach (var evidence in report.TransactionProvenance)
+    Console.WriteLine($"{evidence.ControlOperation}: {evidence.Origin}, " +
+                      $"{evidence.RollbackScope}; server proof={evidence.IsServerRollbackProven}");
+```
+
+ **or**
+`AS $tag$...$tag$ LANGUAGE SQL`. Its bounded body still uses the
+existing closed F# AST and inherits the 16-statement/16-Ki-character budget.
+
+A `SqlProceduralDefinition` with `Kind = Function` exposes
+`FunctionReturn : SqlFunctionReturnContract`, including:
+`DeclaredType` (`Integer`, `BigInteger`, `Boolean`, `Text`, `Void`),
+`Evidence` (`LiteralMatch`, `ExplicitCastMatch` or
+`VoidNoValueRequired`), and an absolute `ResultSpan`.
+`IsRuntimeReturnProven = false` and `RuntimeCertainty = Unknown` are
+unconditional, even with a matching literal.
+
+For non-void scalar functions, the **final body statement** must be a
+single-projection `SELECT` with no FROM, joins, CTE, WHERE, GROUP,
+HAVING, set operation, ORDER, LIMIT or OFFSET. Only a direct literal
+whose closed value shape matches the declared type, or an explicit
+`CAST` of a compatible literal to the exact modeled type is accepted.
+For `integer`, the literal must also fit Int32. `bigint` requires an
+explicit compatible `CAST(... AS BIGINT)` rather than assuming an
+implicit PostgreSQL assignment cast. `RETURNS void` does not demand
+a result-producing final statement; the entire body must still belong
+to the bounded DQL/DML syntax subset.
+
+```sql
+CREATE FUNCTION app.answer()
+RETURNS bigint LANGUAGE SQL
+AS $body$ SELECT CAST(42 AS BIGINT); $body$;
+```
+
+Function definitions report the new `DefineFunction` DetailedEffect
+(`ChangeSchema | UnknownEffects`). Earlier DML statements in the
+function body contribute only **potential body effects** and are
+not reported as SQL already executed by `CREATE FUNCTION`.
+Function definitions do not populate trusted Virtual Catalog routine
+metadata or establish that a later invocation will execute that body.
+
+Functions with arguments, `SETOF`, `RETURNS TABLE`, composite or
+provider-native result types, PL/pgSQL, dynamic SQL, `BEGIN ATOMIC`,
+runtime expressions, columns, implicit coercions, triggers, volatility
+contracts, SECURITY DEFINER and other unproven semantics fail closed.
+A return mismatch yields `SQL_PROCEDURAL_RETURN_UNPROVEN` and **no
+partially trusted function definition**. Other five provider grammars
+remain distinct. This is a *static SQL shape proof*, not a PostgreSQL
+server validity, runtime result, ACL or successful conversion proof.
+
+PostgreSQL references:
+[SQL Functions](https://www.postgresql.org/docs/current/xfunc-sql.html),
+[CREATE FUNCTION](https://www.postgresql.org/docs/current/sql-createfunction.html).
+
 ## Bounded PostgreSQL SQL procedure body AST
 
 The `ProceduralDefinitions` read-only collections on individual statements
