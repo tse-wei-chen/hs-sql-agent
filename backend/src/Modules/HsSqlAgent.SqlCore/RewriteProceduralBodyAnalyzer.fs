@@ -167,18 +167,6 @@ module internal RewriteProceduralBodyAnalyzer =
             | _ -> None
         | _ -> None
 
-    /// No server type inference, implicit casts, column lookups, subqueries
-    /// or expression evaluation. Only a single direct closed AST literal
-    /// or an explicit primitive CAST of a compatible literal is accepted.
-    let private literalCompatible declared (value: ScalarValue) =
-        match declared, value with
-        | SqlFunctionReturnType.Integer, ScalarValue.Integer n ->
-            n >= int64 Int32.MinValue && n <= int64 Int32.MaxValue
-        | SqlFunctionReturnType.BigInteger, ScalarValue.Integer _ -> true
-        | SqlFunctionReturnType.Boolean, ScalarValue.Boolean _ -> true
-        | SqlFunctionReturnType.Text, ScalarValue.Text _ -> true
-        | _ -> false
-
     /// Unqualified, unquoted names are admitted only in the FROM-free,
     /// single-expression SELECT shape checked below. No Catalog lookup is
     /// silently replaced by an in-memory function parameter.
@@ -207,64 +195,29 @@ module internal RewriteProceduralBodyAnalyzer =
             if remaining < 0 then None
             else
                 match Expr.unspan expression with
-                | Expr.Literal (ScalarValue.Integer number) ->
-                    if number >= int64 Int32.MinValue
-                       && number <= int64 Int32.MaxValue then
-                        Some SqlFunctionReturnType.Integer
-                    else Some SqlFunctionReturnType.BigInteger
-                | Expr.Literal (ScalarValue.Boolean _) ->
-                    Some SqlFunctionReturnType.Boolean
-                | Expr.Literal (ScalarValue.Text _) ->
-                    Some SqlFunctionReturnType.Text
+                | Expr.Literal literal -> RewritePrimitiveTypeEvidence.literalType literal
                 | Expr.Column identifier -> parameterType symbols identifier
-                | Expr.Unary (UnaryOperator.Not, value) ->
-                    match infer value with
-                    | Some SqlFunctionReturnType.Boolean ->
-                        Some SqlFunctionReturnType.Boolean
-                    | _ -> None
-                | Expr.Unary ((UnaryOperator.Positive | UnaryOperator.Negate), value) ->
-                    match infer value with
-                    | Some SqlFunctionReturnType.Integer -> Some SqlFunctionReturnType.Integer
-                    | Some SqlFunctionReturnType.BigInteger -> Some SqlFunctionReturnType.BigInteger
-                    | _ -> None
-                | Expr.Binary ((BinaryOperator.And | BinaryOperator.Or), left, right) ->
+                | Expr.Unary(op,operand) ->
+                    infer operand |> Option.bind (RewritePrimitiveTypeEvidence.unaryType op)
+                | Expr.Binary(op,left,right) ->
                     match infer left, infer right with
-                    | Some SqlFunctionReturnType.Boolean, Some SqlFunctionReturnType.Boolean ->
-                        Some SqlFunctionReturnType.Boolean
-                    | _ -> None
-                | Expr.Binary (op, left, right) when
-                    op = BinaryOperator.Add || op = BinaryOperator.Subtract
-                    || op = BinaryOperator.Multiply ->
-                    match infer left, infer right with
-                    | Some SqlFunctionReturnType.Integer, Some SqlFunctionReturnType.Integer ->
-                        Some SqlFunctionReturnType.Integer
-                    | Some SqlFunctionReturnType.BigInteger, Some SqlFunctionReturnType.Integer
-                    | Some SqlFunctionReturnType.Integer, Some SqlFunctionReturnType.BigInteger
-                    | Some SqlFunctionReturnType.BigInteger, Some SqlFunctionReturnType.BigInteger ->
-                        Some SqlFunctionReturnType.BigInteger
+                    | Some a, Some b -> RewritePrimitiveTypeEvidence.binaryType op a b
                     | _ -> None
                 | _ -> None
         infer expression
 
-    /// No arbitrary SQL CAST or implicit cast proof: a typed named symbol may
-    /// only preserve its declared primitive type, or widen int4 to int8.
+    /// No arbitrary CAST or implicit cast proof. Typed parameters use the
+    /// same exact/widening rule as the private positional parser.
     let private castCompatible declared symbols (target: CastType) (value: Expr) =
-        let castMatches =
-            match declared, CastType.semantic target with
-            | SqlFunctionReturnType.Integer, Some SqlType.SqlInteger
-            | SqlFunctionReturnType.BigInteger, Some SqlType.SqlBigInteger
-            | SqlFunctionReturnType.Boolean, Some SqlType.SqlBoolean
-            | SqlFunctionReturnType.Text, Some SqlType.SqlText -> true
-            | _ -> false
-        castMatches
+        RewritePrimitiveTypeEvidence.castTargetType target = Some declared
         && (match Expr.unspan value with
-            | Expr.Literal literal -> literalCompatible declared literal
+            | Expr.Literal literal ->
+                RewritePrimitiveTypeEvidence.literalCompatible declared literal
             | Expr.Column identifier ->
                 match parameterType symbols identifier with
                 | Some source ->
-                    source = declared
-                    || (source = SqlFunctionReturnType.Integer
-                        && declared = SqlFunctionReturnType.BigInteger)
+                    RewritePrimitiveTypeEvidence.parameterCastType source declared
+                    = Some declared
                 | None -> false
             | _ -> false)
 
@@ -289,7 +242,7 @@ module internal RewriteProceduralBodyAnalyzer =
                 match Expr.unspan query.Head.Projection.Head.Expression with
                 | Expr.Literal literal when
                     declared <> SqlFunctionReturnType.BigInteger
-                    && literalCompatible declared literal ->
+                    && RewritePrimitiveTypeEvidence.literalCompatible declared literal ->
                     Some SqlFunctionReturnEvidence.LiteralMatch
                 | Expr.Cast(value,target) when castCompatible declared symbols target value ->
                     Some SqlFunctionReturnEvidence.ExplicitCastMatch
@@ -576,10 +529,6 @@ module internal RewriteProceduralBodyAnalyzer =
 
     let private positionalReturn (symbols: SqlFunctionParameterSymbol list)
                                  (expression: PositionalExpr) =
-        let numeric = function
-            | SqlFunctionReturnType.Integer
-            | SqlFunctionReturnType.BigInteger -> true
-            | _ -> false
         let mutable remaining = MaxPositionalTokens
         let rec infer expr =
             RewriteResourceBudget.checkpoint ()
@@ -598,46 +547,31 @@ module internal RewriteProceduralBodyAnalyzer =
                             Some(symbol.DeclaredType, SqlFunctionReturnEvidence.ParameterSymbolMatch)
                         else None)
                 | IntegerValue number ->
-                    let t =
-                        if number <= int64 Int32.MaxValue then SqlFunctionReturnType.Integer
-                        else SqlFunctionReturnType.BigInteger
-                    Some(t,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                    Some(RewritePrimitiveTypeEvidence.integerType number,
+                         SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
                 | BooleanValue _ ->
-                    Some(SqlFunctionReturnType.Boolean,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                    Some(SqlFunctionReturnType.Boolean,
+                         SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
                 | UnaryValue(op,inner) ->
                     match infer inner with
-                    | Some (t,_) when op = UnaryOperator.Not
-                                      && t = SqlFunctionReturnType.Boolean ->
-                        Some(t,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
-                    | Some (t,_) when (op = UnaryOperator.Positive || op = UnaryOperator.Negate)
-                                      && numeric t ->
-                        Some(t,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                    | Some(source,_) ->
+                        RewritePrimitiveTypeEvidence.unaryType op source
+                        |> Option.map (fun t ->
+                            t, SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
                     | _ -> None
                 | BinaryValue(op,left,right) ->
                     match infer left, infer right with
-                    | Some(a,_), Some(b,_) when op = BinaryOperator.And
-                                               || op = BinaryOperator.Or ->
-                        if a = SqlFunctionReturnType.Boolean && b = SqlFunctionReturnType.Boolean then
-                            Some(SqlFunctionReturnType.Boolean,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
-                        else None
-                    | Some(a,_), Some(b,_) when op = BinaryOperator.Add
-                                               || op = BinaryOperator.Subtract
-                                               || op = BinaryOperator.Multiply ->
-                        if numeric a && numeric b then
-                            let result =
-                                if a = SqlFunctionReturnType.BigInteger
-                                   || b = SqlFunctionReturnType.BigInteger then
-                                    SqlFunctionReturnType.BigInteger
-                                else SqlFunctionReturnType.Integer
-                            Some(result,SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
-                        else None
+                    | Some(a,_), Some(b,_) ->
+                        RewritePrimitiveTypeEvidence.binaryType op a b
+                        |> Option.map (fun t ->
+                            t, SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
                     | _ -> None
                 | CastValue(value,target) ->
                     match infer value with
-                    | Some(source,_) when source = target
-                                          || (source = SqlFunctionReturnType.Integer
-                                              && target = SqlFunctionReturnType.BigInteger) ->
-                        Some(target,SqlFunctionReturnEvidence.ExplicitCastMatch)
+                    | Some(source,_) ->
+                        RewritePrimitiveTypeEvidence.parameterCastType source target
+                        |> Option.map (fun t ->
+                            t, SqlFunctionReturnEvidence.ExplicitCastMatch)
                     | _ -> None
         infer expression
 
