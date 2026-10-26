@@ -229,6 +229,51 @@ Vendor documentation:
 [PostgreSQL SET](https://www.postgresql.org/docs/current/sql-set.html),
 [SQLite Savepoints](https://www.sqlite.org/lang_savepoint.html).
 
+## Transaction effect provenance (static evidence, not execution)
+
+`SqlCoreFacade.AnalyzeScript` exposes
+`SqlStatementAnalysis.TransactionProvenance` and the
+`SqlScriptAnalysisResult.TransactionProvenance` read-only statement-order
+collection. Each typed `SqlTransactionEffectProvenance` includes:
+
+- `Origin`: `OutsideTransaction`, `TransactionControl`,
+  `CatalogMutation`, `SessionMutation`, `PossibleImplicitCommit`,
+  `UnprovenRuntimeEffects` or `UnknownTransactionState`.
+- `ControlOperation`: a closed grammar classification of
+  `Begin`, `Commit`, `Rollback`, `Savepoint`,
+  `RollbackToSavepoint`, `ReleaseSavepoint`, or `Unknown`. The
+  classification comes from the **same F# transaction parser**, not a
+  string-prefix test or an execution signal.
+- `RollbackScope`: `NotApplicable`, `StaticCatalog`,
+  `StaticCatalogAndSession`, or `Unproven`. This is a proof solely
+  about the in-memory Virtual Catalog/Session snapshot, not the server.
+- `TransactionBefore`, `TransactionAfter`, `PotentialEffects`
+  and `Span` for deterministic script diagnostics.
+
+**`RuntimeCertainty` is always `Unknown` and
+`IsServerRollbackProven` is always `false`**. Neither parsed DML nor
+a static `ROLLBACK TO` proves an effective permission, that SQL actually
+ran, or that the storage engine committed/rolled back. PostgreSQL
+modeled search-path changes can carry `StaticCatalogAndSession` evidence;
+a modeled DDL Catalog snapshot carries `StaticCatalog` evidence.
+Provider-specific MySQL DDL implicit-commit warnings are preserved and
+surfaced as `PossibleImplicitCommit`; unproven runtime mutation,
+functions, settings and transaction states explicitly retain `Unproven`.
+The model does not invent a transitive, effective transaction-effect graph.
+
+Example usage:
+
+```csharp
+var report = SqlCoreFacade.AnalyzeScript(
+    "BEGIN; SET search_path TO app; SAVEPOINT s; ROLLBACK TO s; COMMIT;",
+    SqlAgentToolType.Postgres,
+    SqlCatalogState.KnownEmpty());
+
+foreach (var evidence in report.TransactionProvenance)
+    Console.WriteLine($"{evidence.ControlOperation}: {evidence.Origin}, " +
+                      $"{evidence.RollbackScope}; server proof={evidence.IsServerRollbackProven}");
+```
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:
