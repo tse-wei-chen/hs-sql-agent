@@ -132,14 +132,17 @@ public sealed class SqlCoreSessionStatePropagationTests
     }
 
     [Fact]
-    public void UnknownTransactionCannotRestoreAnEarlierSearchPathProof()
+    public void ProvenSavepointBeforeFullRollbackRestoresOriginalSearchPath()
     {
         var result = Analyze(
             "SET search_path TO app; BEGIN; SET search_path TO sales;" +
             "SAVEPOINT s; ROLLBACK; SELECT id FROM users;");
-        Assert.Equal(SqlTransactionState.Unknown, result.FinalTransaction);
-        Assert.False(result.FinalSession.IsSearchPathProven);
-        Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[5].CatalogBinding);
+        // A known savepoint does not invalidate the outer transaction.
+        // Full ROLLBACK restores the context captured by BEGIN.
+        Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
+        Assert.Equal("app", result.FinalSession.SearchPath);
+        Assert.Equal(SqlCatalogBindingStatus.Rejected, result.Statements[5].CatalogBinding);
+        Assert.True(result.FinalCatalog.IsClosedWorld);
     }
 
     [Fact]
