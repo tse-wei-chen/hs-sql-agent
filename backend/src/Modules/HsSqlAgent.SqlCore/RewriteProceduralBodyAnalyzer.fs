@@ -464,7 +464,7 @@ module internal RewriteProceduralBodyAnalyzer =
                     index <- index + 1
                     true
                 else false
-            let knownName name =
+            let knownName (name: string) =
                 symbols |> List.exists (fun symbol ->
                     symbol.Name = name.ToLowerInvariant())
             let operatorAt () =
