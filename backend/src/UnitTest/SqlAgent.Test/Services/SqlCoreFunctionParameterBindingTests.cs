@@ -105,15 +105,6 @@ public sealed class SqlCoreFunctionParameterBindingTests
     }
 
     [Fact]
-    public void PositionalParametersNeverBypassStrictSourceLexer()
-    {
-        var report = Analyze("CREATE FUNCTION app.pos(arg integer) RETURNS integer LANGUAGE SQL AS $b$SELECT $1;$b$;");
-        Assert.Empty(report.ProceduralDefinitions);
-        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(report.Statements).Status);
-        Assert.Contains(report.Diagnostics, d => d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
-    }
-
-    [Fact]
     public void SymbolsAreIsolatedBetweenDefinitions()
     {
         var report = Analyze(

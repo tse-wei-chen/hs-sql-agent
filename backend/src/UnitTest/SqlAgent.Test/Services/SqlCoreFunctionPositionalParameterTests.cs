@@ -96,7 +96,8 @@ public sealed class SqlCoreFunctionPositionalParameterTests
         Assert.Empty(result.ProceduralDefinitions);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(result.Statements).Status);
         Assert.True(Assert.Single(result.Statements).Effects.HasFlag(SqlEffectKind.UnknownEffects));
-        Assert.Contains(result.Diagnostics, d => d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED");
+        Assert.Contains(result.Diagnostics, d =>
+            d.Code == "SQL_PROCEDURAL_BODY_UNSUPPORTED" || d.Code == "SQL_PROCEDURAL_RETURN_UNPROVEN");
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 

@@ -362,6 +362,130 @@ module internal RewriteProceduralBodyAnalyzer =
                     reraise()
                 None
 
+    // This local, non-executable grammar is intentionally NOT a mode on the
+    // general SQL lexer/parser. PostgreSQL positional $n parameter syntax
+    // belongs only to a single bounded SQL-language FUNCTION body; raw SQL,
+    // procedure bodies and other providers retain their strict lexical rules.
+    // Each admitted expression becomes a private typed syntax node; the text
+    // is never rewritten, interpolated, bound as an ordinary SQL identifier,
+    // or forwarded to executable rendering.
+    type private PositionalExpr =
+        | OrdinalRef of int
+        | NotOrdinal of int
+        | BinaryOrdinals of int * BinaryOperator * int
+
+    let private positionalRegex (pattern: string) =
+        System.Text.RegularExpressions.Regex(
+            pattern,
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant
+            ||| System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromMilliseconds 100.)
+
+    // Deliberately refuse comments, aliases, functions, literals, joins,
+    // nested SELECT, quoted identifiers, arbitrary casts or more statements.
+    // ASCII whitespace is explicit, avoiding dialect-dependent token gaps.
+    let private positionalDirect = positionalRegex
+        @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+    let private positionalNot = positionalRegex
+        @"\A[ \t\r\n]*SELECT[ \t\r\n]+NOT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+    let private positionalBinary = positionalRegex
+        @"\A[ \t\r\n]*SELECT[ \t\r\n]+\$(?<one>[1-9][0-9]*)[ \t\r\n]+(?<op>AND|OR|\+|-|\*)[ \t\r\n]+\$(?<two>[1-9][0-9]*)[ \t\r\n]*;?[ \t\r\n]*\z"
+
+    let private boundedOrdinal (group: System.Text.RegularExpressions.Group) =
+        let mutable result = 0
+        if group.Success
+           && Int32.TryParse(group.Value, &result)
+           && result >= 1 && result <= MaxParameters then Some result
+        else None
+
+    let private positionalExpr (body: string) =
+        let direct = positionalDirect.Match(body)
+        if direct.Success then
+            boundedOrdinal direct.Groups["one"] |> Option.map OrdinalRef
+        else
+            let negated = positionalNot.Match(body)
+            if negated.Success then
+                boundedOrdinal negated.Groups["one"] |> Option.map NotOrdinal
+            else
+                let binary = positionalBinary.Match(body)
+                if not binary.Success then None
+                else
+                    let op =
+                        match binary.Groups["op"].Value.ToUpperInvariant() with
+                        | "+" -> Some BinaryOperator.Add
+                        | "-" -> Some BinaryOperator.Subtract
+                        | "*" -> Some BinaryOperator.Multiply
+                        | "AND" -> Some BinaryOperator.And
+                        | "OR" -> Some BinaryOperator.Or
+                        | _ -> None
+                    match boundedOrdinal binary.Groups["one"],
+                          op, boundedOrdinal binary.Groups["two"] with
+                    | Some left, Some operation, Some right ->
+                        Some(BinaryOrdinals(left, operation, right))
+                    | _ -> None
+
+    let private positionalReturn (symbols: SqlFunctionParameterSymbol list)
+                                 (expression: PositionalExpr) =
+        let ordinalType ordinal =
+            symbols |> List.tryPick (fun symbol ->
+                if symbol.Ordinal = ordinal then Some symbol.DeclaredType else None)
+        let numeric = function
+            | SqlFunctionReturnType.Integer
+            | SqlFunctionReturnType.BigInteger -> true
+            | _ -> false
+        match expression with
+        | OrdinalRef i ->
+            ordinalType i
+            |> Option.map (fun actual ->
+                actual, SqlFunctionReturnEvidence.PositionalParameterMatch)
+        | NotOrdinal i ->
+            match ordinalType i with
+            | Some SqlFunctionReturnType.Boolean ->
+                Some (SqlFunctionReturnType.Boolean,
+                      SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+            | _ -> None
+        | BinaryOrdinals(left,op,right) ->
+            match ordinalType left, ordinalType right with
+            | Some a, Some b when
+                op = BinaryOperator.And || op = BinaryOperator.Or ->
+                if a = SqlFunctionReturnType.Boolean && b = SqlFunctionReturnType.Boolean then
+                    Some (SqlFunctionReturnType.Boolean,
+                          SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                else None
+            | Some a, Some b when
+                op = BinaryOperator.Add || op = BinaryOperator.Subtract
+                || op = BinaryOperator.Multiply ->
+                if numeric a && numeric b then
+                    let result =
+                        if a = SqlFunctionReturnType.BigInteger
+                           || b = SqlFunctionReturnType.BigInteger then
+                            SqlFunctionReturnType.BigInteger
+                        else SqlFunctionReturnType.Integer
+                    Some (result, SqlFunctionReturnEvidence.PrimitiveExpressionMatch)
+                else None
+            | _ -> None
+
+    /// One FROM-free SELECT, one typed positional expression, no SQL execution.
+    /// The body source span remains the original absolute string-literal span.
+    let private positionalBody (body: string) bodyStart
+                               (symbols: SqlFunctionParameterSymbol list) declared =
+        RewriteResourceBudget.checkpoint ()
+        if body.Length = 0 || body.Length > MaxCharacters || symbols.IsEmpty then None
+        else
+            positionalExpr body
+            |> Option.bind (positionalReturn symbols)
+            |> Option.bind (fun (inferred,evidence) ->
+                if inferred <> declared then None
+                else
+                    let statement =
+                        SqlProceduralBodyStatement(
+                            SqlScriptStatementKind.Query,
+                            SqlStatementEffectOperation.ReadTable,
+                            SqlEffectKind.ReadData ||| SqlEffectKind.UnknownEffects,
+                            readOnly Seq.empty<string>,
+                            SqlDiagnosticSpan(bodyStart, body.Length))
+                    Some (readOnly [statement], evidence))
+
     let private error (syntax: SqlScriptStatementSyntax) code message =
         SqlDiagnostic(
             code, SqlDiagnosticStage.SemanticValidation,
@@ -380,40 +504,56 @@ module internal RewriteProceduralBodyAnalyzer =
                 | ProcedureHeader(name,sql,start) -> name,sql,start,None,[]
                 | FunctionHeader(name,sql,start,returnType,parameters) ->
                     name,sql,start,Some returnType,parameters
-            match bodyStatements profile body bodyStart with
-            | None ->
+            let candidate =
+                match bodyStatements profile body bodyStart with
+                | Some (statements, last) ->
+                    // The ordinary closed SQL AST remains authoritative for
+                    // existing body shapes. Do not reinterpret it as $n syntax.
+                    let parametersSafe =
+                        symbols.IsEmpty || (statements.Count = 1
+                                            && statements[0].Kind = SqlScriptStatementKind.Query)
+                    let contract =
+                        match declared with
+                        | None -> Some null
+                        | Some returnType ->
+                            if not parametersSafe then None
+                            else returnEvidence returnType symbols last
+                            |> Option.map (fun evidence ->
+                                let span = (statements |> Seq.last).Span
+                                SqlFunctionReturnContract(returnType,evidence,span))
+                    match contract with
+                    | Some result -> Ok (statements,result)
+                    | None -> Error "SQL_PROCEDURAL_RETURN_UNPROVEN"
+                | None ->
+                    // Only a PostgreSQL FUNCTION with declared IN parameters
+                    // can enter this private positional syntax-only path.
+                    match declared with
+                    | Some returnType when not symbols.IsEmpty ->
+                        match positionalBody body bodyStart symbols returnType with
+                        | Some (statements,evidence) ->
+                            let span = (statements |> Seq.last).Span
+                            Ok (statements,SqlFunctionReturnContract(returnType,evidence,span))
+                        | None -> Error "SQL_PROCEDURAL_BODY_UNSUPPORTED"
+                    | _ -> Error "SQL_PROCEDURAL_BODY_UNSUPPORTED"
+
+            match candidate with
+            | Error "SQL_PROCEDURAL_RETURN_UNPROVEN" ->
+                SqlStatementAnalysisStatus.Unsupported, [],
+                [error syntax "SQL_PROCEDURAL_RETURN_UNPROVEN"
+                    "Function return type is unproven by the bounded literal, typed parameter, primitive expression or explicit-cast AST rules."]
+            | Error _ ->
                 SqlStatementAnalysisStatus.Unsupported, [],
                 [error syntax "SQL_PROCEDURAL_BODY_UNSUPPORTED"
                     "SQL-language routine body exceeds budget or contains invalid/unmodeled SQL."]
-            | Some (statements, last) ->
-                // Until every expression in a multi-statement parameterized
-                // body is name-bound, admit only a standalone SELECT result.
-                let parametersSafe =
-                    symbols.IsEmpty || (statements.Count = 1
-                                        && statements[0].Kind = SqlScriptStatementKind.Query)
-                let returnContract =
-                    match declared with
-                    | None -> Some null
-                    | Some returnType ->
-                        if not parametersSafe then None
-                        else returnEvidence returnType symbols last
-                        |> Option.map (fun evidence ->
-                            let span = (statements |> Seq.last).Span
-                            SqlFunctionReturnContract(returnType,evidence,span))
-                match returnContract with
-                | None ->
-                    SqlStatementAnalysisStatus.Unsupported, [],
-                    [error syntax "SQL_PROCEDURAL_RETURN_UNPROVEN"
-                        "Function return type is unproven by the bounded literal, typed parameter, primitive expression or explicit-cast AST rules."]
-                | Some contract ->
-                    let effects =
-                        statements |> Seq.fold (fun all item -> all ||| item.PotentialEffects)
-                            SqlEffectKind.UnknownEffects
-                    let kind =
-                        if declared.IsSome then SqlProceduralDefinitionKind.Function
-                        else SqlProceduralDefinitionKind.Procedure
-                    let definition =
-                        SqlProceduralDefinition(
-                            kind,routine,statements,effects,syntax.Span,contract,
-                            readOnly symbols)
-                    SqlStatementAnalysisStatus.PartiallyAnalyzed, [definition], []
+            | Ok (statements, contract) ->
+                let effects =
+                    statements |> Seq.fold (fun all item -> all ||| item.PotentialEffects)
+                        SqlEffectKind.UnknownEffects
+                let kind =
+                    if declared.IsSome then SqlProceduralDefinitionKind.Function
+                    else SqlProceduralDefinitionKind.Procedure
+                let definition =
+                    SqlProceduralDefinition(
+                        kind,routine,statements,effects,syntax.Span,contract,
+                        readOnly symbols)
+                SqlStatementAnalysisStatus.PartiallyAnalyzed, [definition], []
