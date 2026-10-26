@@ -76,6 +76,29 @@ type SqlStatementEffect internal (
     member _.Span = span
     member _.Dependencies = dependencies
 
+/// Potential object reference derived only from a previously classified static
+/// statement effect; never a proof of physical existence or server privileges.
+type SqlScriptDependencyKind =
+    | ReadTable = 0
+    | MutationTarget = 1
+    | PermissionTarget = 2
+    | RoutineInvocation = 3
+
+[<Sealed>]
+type SqlScriptDependencyReference internal (
+    statementIndex: int,
+    kind: SqlScriptDependencyKind,
+    objectName: string,
+    span: SqlDiagnosticSpan) =
+    member _.StatementIndex = statementIndex
+    member _.Kind = kind
+    /// An untrusted diagnostic display name, not a proven Catalog identity.
+    member _.ObjectName = objectName
+    /// At best a whole-statement span, not necessarily an exact identifier span.
+    member _.Span = span
+    /// Syntactic dependencies never prove the server object exists.
+    member _.Certainty = SqlCatalogKnowledge.Unknown
+
 type SqlStatementAnalysisStatus =
     | Analyzed = 0
     | PartiallyAnalyzed = 1
@@ -496,6 +519,48 @@ type SqlScriptAnalysisResult internal (
          |> Seq.toArray
          |> Array.AsReadOnly) :> IReadOnlyList<SqlCatalogChange>
 
+    // Project only typed object references already present in the analyzed
+    // effect model. In particular, a CREATE/DROP declaration is a Catalog
+    // change, not a read/write dependency, and Unknown operations invent none.
+    // Do not promote these display names to resolved physical Catalog identities.
+    let dependencies : IReadOnlyList<SqlScriptDependencyReference> =
+        (statements
+         |> Seq.mapi (fun index statement ->
+             if statement.Status = SqlStatementAnalysisStatus.Invalid
+                || statement.Status = SqlStatementAnalysisStatus.Unsupported then
+                 Seq.empty
+             else
+                 statement.DetailedEffects
+                 |> Seq.choose (fun effect ->
+                     if String.IsNullOrWhiteSpace(effect.ObjectName) then None
+                     else
+                         let kind =
+                             match effect.Operation with
+                             | SqlStatementEffectOperation.ReadTable ->
+                                 Some SqlScriptDependencyKind.ReadTable
+                             | SqlStatementEffectOperation.Insert
+                             | SqlStatementEffectOperation.Update
+                             | SqlStatementEffectOperation.Delete
+                             | SqlStatementEffectOperation.Merge ->
+                                 Some SqlScriptDependencyKind.MutationTarget
+                             | SqlStatementEffectOperation.GrantPrivilege
+                             | SqlStatementEffectOperation.RevokePrivilege
+                             | SqlStatementEffectOperation.DenyPrivilege ->
+                                 Some SqlScriptDependencyKind.PermissionTarget
+                             | SqlStatementEffectOperation.InvokeProcedure ->
+                                 Some SqlScriptDependencyKind.RoutineInvocation
+                             | _ -> None
+                         kind |> Option.map (fun value ->
+                             SqlScriptDependencyReference(
+                                 index, value, effect.ObjectName, effect.Span))))
+         |> Seq.collect id
+         // Deduplicate only within the same statement, kind and exact source
+         // name; case folding would conflate quoted identifiers on some DBs.
+         |> Seq.distinctBy (fun item ->
+             item.StatementIndex, item.Kind, item.ObjectName)
+         |> Seq.toArray
+         |> Array.AsReadOnly) :> IReadOnlyList<SqlScriptDependencyReference>
+
     let securityIntents : IReadOnlyList<SqlSecurityIntent> =
         (statements
          |> Seq.collect (fun item -> item.SecurityIntents)
@@ -531,6 +596,9 @@ type SqlScriptAnalysisResult internal (
     member _.EffectCoverage = effectCoverage
     /// All per-statement static Catalog deltas in source order, as an immutable snapshot.
     member _.CatalogChanges = catalogChanges
+    /// Unverified object references from typed effects, never effective permissions
+    /// or physical-object identity proofs. Does not include DDL declarations.
+    member _.Dependencies = dependencies
     member _.ProceduralDefinitions = proceduralDefinitions
     member _.ProceduralIntents = proceduralIntents
     member _.TransactionProvenance = transactionProvenance
