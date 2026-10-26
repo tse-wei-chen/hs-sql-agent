@@ -28,7 +28,7 @@ public sealed class SqlCoreFunctionReturnContractTests
     public void ScalarReturnRequiresLiteralOrExplicitCompatibleCast(
         string returnType, string body, SqlFunctionReturnType expected, SqlFunctionReturnEvidence evidence)
     {
-        var sql = $"CREATE FUNCTION app.answer() RETURNS {returnType} LANGUAGE SQL AS $fn$${body}$fn$;";
+        var sql = $"CREATE FUNCTION app.answer() RETURNS {returnType} LANGUAGE SQL AS $fn${body}$fn$;";
         var analysis = Analyze(sql);
         var statement = Assert.Single(analysis.Statements);
         var definition = Assert.Single(analysis.ProceduralDefinitions);
@@ -154,7 +154,19 @@ public sealed class SqlCoreFunctionReturnContractTests
         Assert.Equal(SqlStatementEffectOperation.DefineProcedure, report.Statements[0].DetailedEffects[0].Operation);
         Assert.Equal(SqlStatementEffectOperation.DefineFunction, report.Statements[1].DetailedEffects[0].Operation);
         Assert.False(Assert.Single(report.ProceduralIntents).BodyAnalyzed);
-        Assert.Equal(SqlCatalogKnowledge.Unknown, report.FinalCatalog.Knowledge);
+        Assert.False(report.FinalCatalog.IsClosedWorld);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void OtherDialectsNeverInheritPostgreSqlSqlFunctionGrammar(SqlAgentToolType provider)
+    {
+        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            Analyze("CREATE FUNCTION app.answer() RETURNS integer LANGUAGE SQL AS $b$SELECT 1;$b$;", provider));
     }
 
     [Fact]
