@@ -2273,13 +2273,11 @@ module internal RewriteParser =
                               Span = head.Span }
                         let intersects = ResizeArray<SetBranch>()
                         let lowerBranches = ResizeArray<SetBranch>()
-                        let mutable sawUnparenthesizedIntersect = false
 
                         let rec scanInitialIntersects () =
                             if isKeyword "INTERSECT" cursor.Current then
                                 match parseSetOperator cursor with
                                 | Some operator ->
-                                    sawUnparenthesizedIntersect <- true
                                     scheduleOperand (fun branch ->
                                         intersects.Add { Operator = operator; Query = branch }
                                         push scanInitialIntersects)
@@ -2290,17 +2288,16 @@ module internal RewriteParser =
                             if isKeyword "UNION" cursor.Current
                                || isKeyword "EXCEPT" cursor.Current
                                || isOracleMinusSet cursor then
-                                if cursor.Dialect = SourceDialect.Oracle
-                                   && sawUnparenthesizedIntersect then
-                                    fail cursor.Current "Oracle mixed INTERSECT and MINUS/UNION/EXCEPT precedence is not modeled; refuse source semantics change"
+                                // Oracle's left-to-right grammar and Core's
+                                // higher-INTERSECT-precedence grammar agree
+                                // when the INTERSECT chain appears on the
+                                // *left* of the lower-precedence operator.
+                                // A following unparenthesized INTERSECT on
+                                // the right must not be absorbed into an AST
+                                // subtree with different source semantics.
                                 match parseSetOperator cursor with
                                 | Some operator ->
                                     scheduleOperandWithIntersects (fun branch ->
-                                        if cursor.Dialect = SourceDialect.Oracle
-                                           && (branch.SetOperations |> List.exists (fun item ->
-                                               item.Operator = SetOperator.Intersect
-                                               || item.Operator = SetOperator.IntersectAll)) then
-                                            fail cursor.Current "Oracle mixed INTERSECT and MINUS/UNION/EXCEPT precedence is not modeled; refuse source semantics change"
                                         lowerBranches.Add { Operator = operator; Query = branch }
                                         push scanLowerBranches)
                                 | None -> push finish
@@ -2495,23 +2492,32 @@ module internal RewriteParser =
 
         and scheduleOperandWithIntersects (complete: Query -> unit) =
             scheduleOperand (fun baseQuery ->
-                let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
-                let rec scanIntersects () =
-                    if isKeyword "INTERSECT" cursor.Current then
-                        match parseSetOperator cursor with
-                        | Some(SetOperator.Intersect as operator)
-                        | Some(SetOperator.IntersectAll as operator) ->
-                            if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
-                                fail cursor.Current
-                                    "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
-                            scheduleOperand (fun branch ->
-                                branches.Add { Operator = operator; Query = branch }
-                                push scanIntersects)
-                        | _ ->
+                if cursor.Dialect = SourceDialect.Oracle then
+                    // Oracle's native set operators associate from left to
+                    // right. Only parentheses consumed *inside* scheduleOperand
+                    // can create a nested right operand; do not absorb any
+                    // unparenthesized trailing INTERSECT into the right arm.
+                    // Leave that token for the outer parser to reject until
+                    // explicit left-grouping can be represented canonically.
+                    complete baseQuery
+                else
+                    let branches = ResizeArray<SetBranch>(baseQuery.SetOperations)
+                    let rec scanIntersects () =
+                        if isKeyword "INTERSECT" cursor.Current then
+                            match parseSetOperator cursor with
+                            | Some(SetOperator.Intersect as operator)
+                            | Some(SetOperator.IntersectAll as operator) ->
+                                if not baseQuery.OrderBy.IsEmpty || baseQuery.Offset.IsSome then
+                                    fail cursor.Current
+                                        "A parenthesized set operand with a local ORDER BY/OFFSET cannot be followed by INTERSECT without an explicit set-term wrapper"
+                                scheduleOperand (fun branch ->
+                                    branches.Add { Operator = operator; Query = branch }
+                                    push scanIntersects)
+                            | _ ->
+                                complete { baseQuery with SetOperations = branches |> Seq.toList }
+                        else
                             complete { baseQuery with SetOperations = branches |> Seq.toList }
-                    else
-                        complete { baseQuery with SetOperations = branches |> Seq.toList }
-                push scanIntersects)
+                    push scanIntersects)
 
         scheduleQuery (fun query -> parsed <- query)
         while pending.Count > 0 do

@@ -1699,13 +1699,13 @@ module internal RewriteRenderer =
                         FetchPercent = None
                         FetchWithTies = false }
                 sql.Append(" ").Append(setText ctx.Provider branch.Operator).Append(" ") |> ignore
-                if ctx.Provider = PostgreSql
+                if (ctx.Provider = PostgreSql || ctx.Provider = Oracle)
                    && not branchNoTail.SetOperations.IsEmpty
                    && branchNoTail.Head.Ctes.IsEmpty then
                     sql.Append('(') |> ignore
                     pending.Add(CloseNestedSet)
                     pending.Add(EnterSetBody branchNoTail)
-                elif ctx.Provider = PostgreSql
+                elif (ctx.Provider = PostgreSql || ctx.Provider = Oracle)
                      && not branchNoTail.SetOperations.IsEmpty then
                     // Preserve the full WITH/SET contract for the uncommon
                     // CTE-bearing branch; do not lower away capability proof.
