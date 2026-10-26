@@ -52,7 +52,14 @@ public sealed class SqlCoreMultiDialectTransactionTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
         Assert.Equal(SqlTransactionState.Active, result.Statements[4].TransactionAfter);
         Assert.Equal(1, Assert.Single(result.Statements[4].CatalogAfter.Tables).Columns.Count);
-        Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[5].CatalogBinding);
+        if (dialect == SqlAgentToolType.Sqlite)
+        {
+            // SQLite names may be proven while dynamic type affinity is not.
+            Assert.Equal(SqlCatalogBindingStatus.Unverified, result.Statements[5].CatalogBinding);
+            Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[5].NameBinding);
+        }
+        else
+            Assert.Equal(SqlCatalogBindingStatus.Verified, result.Statements[5].CatalogBinding);
         Assert.Equal(SqlTransactionState.Outside, result.FinalTransaction);
         Assert.True(result.FinalCatalog.IsClosedWorld);
         Assert.Equal(1, Assert.Single(result.FinalCatalog.Tables).Columns.Count);
