@@ -5,6 +5,7 @@ open System.Threading
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 
 /// Immutable, CLR-friendly inputs for static SQL script parsing.
 /// SourceProfile is declared source capability evidence, not execution authority.
