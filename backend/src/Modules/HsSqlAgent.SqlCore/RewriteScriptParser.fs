@@ -51,6 +51,8 @@ module internal RewriteScriptParser =
                        && second <> "TRAN" && second <> "TRANSACTION"
                        && second <> "DISTRIBUTED" -> Procedural
         | "BEGIN" | "START" | "COMMIT" | "ROLLBACK" | "SAVEPOINT" | "RELEASE" -> Transaction
+        | "SAVE" when sourceDialect = SqlAgentToolType.MsSqlServer
+                      && (second = "TRAN" || second = "TRANSACTION") -> Transaction
         | "SET" | "RESET" | "USE" | "SHOW" -> Session
         | "EXPLAIN" | "VACUUM" | "ANALYZE" | "DESCRIBE" | "DESC" | "PRAGMA" -> Utility
         | "CALL" | "EXEC" | "EXECUTE" | "DO" | "DECLARE" -> Procedural
