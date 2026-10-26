@@ -36,6 +36,7 @@ module internal RewriteParser =
           LateralDerivedTable: CapabilityProof
           RecursiveCte: CapabilityProof
           SetAll: CapabilityProof
+          OracleExceptSyntax: CapabilityProof
           Lexical: RewriteLexer.LexicalSemantics }
 
     module SourceSemantics =
@@ -96,6 +97,7 @@ module internal RewriteParser =
                 RejectedCapability(CapabilityRejection.create
                     CapabilitySide.SourceCapability
                     "Duplicate-preserving set syntax requires explicit source capability proof")
+              OracleExceptSyntax = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.standard }
 
         let mysqlPipesAsConcat =
@@ -119,6 +121,7 @@ module internal RewriteParser =
                 RejectedCapability(CapabilityRejection.create
                     CapabilitySide.SourceCapability
                     "Duplicate-preserving set syntax requires explicit source capability proof")
+              OracleExceptSyntax = ProvenCapability
               Lexical = RewriteLexer.LexicalSemantics.mysql false false }
 
     [<Struct>]
@@ -340,6 +343,7 @@ module internal RewriteParser =
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
         member _.SourceRecursiveCte = semantics.RecursiveCte
         member _.SourceSetAll = semantics.SetAll
+        member _.SourceOracleExceptSyntax = semantics.OracleExceptSyntax
 
     let private parsedSpan start (cursor: Cursor) =
         { Start = start
@@ -2101,6 +2105,8 @@ module internal RewriteParser =
                 acceptKeyword "DISTINCT" cursor |> ignore
                 Some SetOperator.Intersect
         elif acceptKeyword "EXCEPT" cursor then
+            if cursor.Dialect = SourceDialect.Oracle then
+                requireSourceParseCapability operatorToken cursor.SourceOracleExceptSyntax
             if acceptKeyword "ALL" cursor then
                 requireSetAll ()
                 Some SetOperator.ExceptAll

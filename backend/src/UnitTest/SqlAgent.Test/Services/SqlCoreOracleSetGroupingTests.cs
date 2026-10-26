@@ -19,7 +19,8 @@ public sealed class SqlCoreOracleSetGroupingTests
 {
     private static CompiledSqlCommand Compile(string sql, SqlAgentToolType target) =>
         CoreSqlCompiler.CreateDefault().Compile(
-            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Oracle),
+            CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.Oracle,
+                new SqlProviderCapabilityProfile(SqlAgentToolType.Oracle, new Version(21, 0))),
             target,
             new SqlPlanValidationContext("oracle-set-grouping-v1"),
             new SqlExecutionPlanPolicy());

@@ -784,6 +784,27 @@ module internal SqlUsingJoinCapabilityRules =
         else
             "SQL capability 'join.using' is not supported by provider MsSqlServer because Transact-SQL has no native JOIN ... USING form and Core does not lower named-column join semantics to ON without a proven merged-column equivalence."
 
+/// Plain Oracle EXCEPT (distinct) is a 21c SQL grammar feature, unlike
+/// pre-21c MINUS. Source grammar proof does not imply a matching target
+/// version, and ordinary DISTINCT semantics do not need the stricter
+/// NLS_SORT=BINARY premise required by duplicate-preserving Set ALL.
+module internal SqlOracleExceptSourceCapabilityRules =
+    let MinimumVersion = Version(21, 0)
+
+    let SourceValidationError(
+        provider: SqlAgentToolType,
+        profile: SqlProviderCapabilityProfile | null) : string | null =
+        if provider <> SqlAgentToolType.Oracle then null
+        else
+            match profile with
+            | null -> "SQL capability 'set.except_source' requires explicit Oracle source ServerVersion 21.0+; use MINUS with older Oracle versions."
+            | value when value.Provider <> SqlAgentToolType.Oracle ->
+                "SQL capability 'set.except_source' requires Oracle source ServerVersion 21.0+ and a matching Oracle capability profile."
+            | value when isNull value.ServerVersion
+                         || value.ServerVersion.CompareTo(MinimumVersion) < 0 ->
+                "SQL capability 'set.except_source' requires Oracle source ServerVersion 21.0+; use MINUS for Oracle 19c and earlier."
+            | _ -> null
+
 module internal SqlSetAllCapabilityRules =
     let OracleMinimumVersion = Version(21, 0)
 
