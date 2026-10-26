@@ -259,7 +259,7 @@ module internal RewriteSchemaTypeValidation =
 
     let private expressionOrigin catalog scope expression =
         match Expr.unspan expression with
-        | Column identifier | BoundColumn(identifier, ColumnBinding.RowSource) ->
+        | Column identifier | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
             columnOrigin catalog scope identifier
         | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
             match scope.Parent with
