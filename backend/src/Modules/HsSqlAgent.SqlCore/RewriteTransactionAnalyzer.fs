@@ -95,6 +95,15 @@ module internal RewriteTransactionAnalyzer =
                 match idAt index with Some name -> Release name | _ -> Unsupported
             | _ -> Unsupported
 
+    let private controlOperation = function
+        | Begin -> SqlTransactionControlOperation.Begin
+        | Commit -> SqlTransactionControlOperation.Commit
+        | Rollback -> SqlTransactionControlOperation.Rollback
+        | Savepoint _ -> SqlTransactionControlOperation.Savepoint
+        | RollbackTo _ -> SqlTransactionControlOperation.RollbackToSavepoint
+        | Release _ -> SqlTransactionControlOperation.ReleaseSavepoint
+        | Unsupported -> SqlTransactionControlOperation.Unknown
+
     let private identical (left: SqlCatalogState) (right: SqlCatalogState) =
         let sameColumn (a: SqlCatalogColumn) (b: SqlCatalogColumn) =
             String.Equals(a.Name, b.Name, StringComparison.Ordinal)
@@ -166,84 +175,88 @@ module internal RewriteTransactionAnalyzer =
         let rollbackEffects target =
             if identical current target then [] else [delta syntax SqlCatalogKnowledge.Known]
         let maxSavepoints = 32
-        match operation, context with
-        | Begin, Outside ->
-            success current currentSession (Active(current, currentSession, [], None)) []
-        | Commit, Active _ ->
-            // PostgreSQL SET without LOCAL survives COMMIT; all other session
-            // operations remain independent of the Catalog rollback model.
-            success current currentSession Outside []
-        | Rollback, Active(original, originalSession, _, _) ->
-            // PostgreSQL SET (SESSION) is transaction-scoped until COMMIT.
-            // MySQL USE and SQL Server NOCOUNT are NOT proven rollbackable.
-            let restoredSession =
-                if sourceDialect = SqlAgentToolType.Postgres then originalSession
-                else currentSession
-            success original restoredSession Outside (rollbackEffects original)
-        | Savepoint name, Outside when sourceDialect = SqlAgentToolType.Sqlite ->
-            success current currentSession
-                (Active(current, currentSession,
-                        [{Name=name; Catalog=current; Session=currentSession}], Some name)) []
-        | Savepoint name, Active(original, originalSession, marks, outer) ->
-            if List.length marks >= maxSavepoints then
-                uncertain "SQL_TRANSACTION_SAVEPOINT_BUDGET"
-                    "Savepoint nesting exceeds the static analysis budget."
-            else
-                let mark = {Name=name; Catalog=current; Session=currentSession}
-                success current currentSession
-                    (Active(original, originalSession, mark::marks, outer)) []
-        | RollbackTo name, Active(original, originalSession, marks, outer) ->
-            // Most recent matching savepoint wins. The mark itself remains
-            // active, while newer marks are discarded. The PostgreSQL
-            // session snapshot is restored atomically with the Catalog.
-            match marks |> List.tryFindIndex (fun mark -> mark.Name = name) with
-            | Some index ->
-                let remaining = marks |> List.skip index
-                let target = remaining.Head
+        let result =
+            match operation, context with
+            | Begin, Outside ->
+                success current currentSession (Active(current, currentSession, [], None)) []
+            | Commit, Active _ ->
+                // PostgreSQL SET without LOCAL survives COMMIT; all other session
+                // operations remain independent of the Catalog rollback model.
+                success current currentSession Outside []
+            | Rollback, Active(original, originalSession, _, _) ->
+                // PostgreSQL SET (SESSION) is transaction-scoped until COMMIT.
+                // MySQL USE and SQL Server NOCOUNT are NOT proven rollbackable.
                 let restoredSession =
-                    if sourceDialect = SqlAgentToolType.Postgres then target.Session
+                    if sourceDialect = SqlAgentToolType.Postgres then originalSession
                     else currentSession
-                success target.Catalog restoredSession
-                    (Active(original, originalSession, remaining, outer))
-                    (rollbackEffects target.Catalog)
-            | None ->
-                uncertain "SQL_TRANSACTION_SAVEPOINT_UNKNOWN"
-                    "ROLLBACK target is not a modeled active savepoint."
-        | Release name, Active(original, originalSession, marks, outer) ->
-            if sourceDialect = SqlAgentToolType.MsSqlServer then
-                uncertain "SQL_TRANSACTION_RELEASE_UNSUPPORTED"
-                    "SQL Server SAVE TRAN has no RELEASE; only COMMIT or rollback is modeled."
-            else
+                success original restoredSession Outside (rollbackEffects original)
+            | Savepoint name, Outside when sourceDialect = SqlAgentToolType.Sqlite ->
+                success current currentSession
+                    (Active(current, currentSession,
+                            [{Name=name; Catalog=current; Session=currentSession}], Some name)) []
+            | Savepoint name, Active(original, originalSession, marks, outer) ->
+                if List.length marks >= maxSavepoints then
+                    uncertain "SQL_TRANSACTION_SAVEPOINT_BUDGET"
+                        "Savepoint nesting exceeds the static analysis budget."
+                else
+                    let mark = {Name=name; Catalog=current; Session=currentSession}
+                    success current currentSession
+                        (Active(original, originalSession, mark::marks, outer)) []
+            | RollbackTo name, Active(original, originalSession, marks, outer) ->
+                // Most recent matching savepoint wins. The mark itself remains
+                // active, while newer marks are discarded. The PostgreSQL
+                // session snapshot is restored atomically with the Catalog.
                 match marks |> List.tryFindIndex (fun mark -> mark.Name = name) with
                 | Some index ->
-                    let remaining = marks |> List.skip (index + 1)
-                    if outer.IsSome && remaining.IsEmpty then
-                        // SQLite outermost RELEASE commits the transaction.
-                        success current currentSession Outside []
-                    else success current currentSession
-                            (Active(original, originalSession, remaining, outer)) []
+                    let remaining = marks |> List.skip index
+                    let target = remaining.Head
+                    let restoredSession =
+                        if sourceDialect = SqlAgentToolType.Postgres then target.Session
+                        else currentSession
+                    success target.Catalog restoredSession
+                        (Active(original, originalSession, remaining, outer))
+                        (rollbackEffects target.Catalog)
                 | None ->
                     uncertain "SQL_TRANSACTION_SAVEPOINT_UNKNOWN"
-                        "RELEASE target is not a modeled active savepoint."
-        | Unsupported, _ ->
-            uncertain "SQL_TRANSACTION_UNSUPPORTED"
-                "Transaction grammar or source-dialect semantics are outside the proven subset."
-        | _, Unknown ->
-            uncertain "SQL_TRANSACTION_STATE_UNKNOWN"
-                "Transaction state is unknown; this command cannot re-establish schema certainty."
-        | Begin, Active _ ->
-            uncertain "SQL_TRANSACTION_NESTED_UNPROVEN"
-                "A nested BEGIN has provider-specific implicit COMMIT or transaction-count behavior."
-        | (Commit | Rollback), Outside ->
-            uncertain "SQL_TRANSACTION_WITHOUT_BEGIN"
-                "COMMIT or ROLLBACK has no proven preceding transaction."
-        | (RollbackTo _ | Release _), Outside ->
-            uncertain "SQL_TRANSACTION_SAVEPOINT_WITHOUT_BEGIN"
-                "Savepoint control has no proven active transaction."
-        | Savepoint _, Outside ->
-            uncertain "SQL_TRANSACTION_SAVEPOINT_WITHOUT_BEGIN"
-                "SAVEPOINT requires an active transaction for this provider."
+                        "ROLLBACK target is not a modeled active savepoint."
+            | Release name, Active(original, originalSession, marks, outer) ->
+                if sourceDialect = SqlAgentToolType.MsSqlServer then
+                    uncertain "SQL_TRANSACTION_RELEASE_UNSUPPORTED"
+                        "SQL Server SAVE TRAN has no RELEASE; only COMMIT or rollback is modeled."
+                else
+                    match marks |> List.tryFindIndex (fun mark -> mark.Name = name) with
+                    | Some index ->
+                        let remaining = marks |> List.skip (index + 1)
+                        if outer.IsSome && remaining.IsEmpty then
+                            // SQLite outermost RELEASE commits the transaction.
+                            success current currentSession Outside []
+                        else success current currentSession
+                                (Active(original, originalSession, remaining, outer)) []
+                    | None ->
+                        uncertain "SQL_TRANSACTION_SAVEPOINT_UNKNOWN"
+                            "RELEASE target is not a modeled active savepoint."
+            | Unsupported, _ ->
+                uncertain "SQL_TRANSACTION_UNSUPPORTED"
+                    "Transaction grammar or source-dialect semantics are outside the proven subset."
+            | _, Unknown ->
+                uncertain "SQL_TRANSACTION_STATE_UNKNOWN"
+                    "Transaction state is unknown; this command cannot re-establish schema certainty."
+            | Begin, Active _ ->
+                uncertain "SQL_TRANSACTION_NESTED_UNPROVEN"
+                    "A nested BEGIN has provider-specific implicit COMMIT or transaction-count behavior."
+            | (Commit | Rollback), Outside ->
+                uncertain "SQL_TRANSACTION_WITHOUT_BEGIN"
+                    "COMMIT or ROLLBACK has no proven preceding transaction."
+            | (RollbackTo _ | Release _), Outside ->
+                uncertain "SQL_TRANSACTION_SAVEPOINT_WITHOUT_BEGIN"
+                    "Savepoint control has no proven active transaction."
+            | Savepoint _, Outside ->
+                uncertain "SQL_TRANSACTION_SAVEPOINT_WITHOUT_BEGIN"
+                    "SAVEPOINT requires an active transaction for this provider."
 
+        let status, certainty, catalog, session, nextContext, changes, diagnostics = result
+        status, certainty, catalog, session, nextContext, changes, diagnostics,
+        controlOperation operation
     /// SQL Server's DML may promote an explicit transaction; MySQL's storage
     /// engine might be nontransactional. A modeled virtual-Catalog ROLLBACK
     /// cannot prove the server data effects of either.
