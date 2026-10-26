@@ -103,6 +103,40 @@ to 128 syntactic edges per DCL statement. Unmodeled role options (`SET`,
 membership, and delegation syntax for other database providers remain
 fail-closed until modeled separately.
 
+## Utility statement analysis (potential effects only)
+
+`SqlCoreFacade.AnalyzeScript` now reports `UtilityIntents` per statement and
+per script, alongside typed `DetailedEffects`. Utilities are never executable
+plans or permissions.
+
+- `EXPLAIN SELECT/UPDATE/DELETE` is distinguished from
+  `EXPLAIN ANALYZE SELECT/UPDATE/DELETE` by
+  `SqlUtilityExecutionMode.PlanningOnly` versus `ExecutesStatement`.
+  A plain explain does **not** claim the underlying mutation ran.
+- PostgreSQL admits a bounded `EXPLAIN` / `EXPLAIN ANALYZE` subset;
+  MySQL admits simple `EXPLAIN` on queries/mutations, while
+  `EXPLAIN ANALYZE` remains unsupported without proven server version and
+  `explain_format` session capabilities; SQLite supports `EXPLAIN QUERY PLAN SELECT`.
+  All nested query/DML SQL must first pass the strict source parser and
+  agree with its closed F# AST statement kind.
+- PostgreSQL `ANALYZE schema.table` and `VACUUM schema.table` are typed
+  potential maintenance operations. The whole-database and option-rich forms
+  stay fail-closed. On other providers, `ANALYZE` / `VACUUM` are not
+  interpreted with PostgreSQL syntax.
+- `SqlUtilityIntent.Certainty` is always `Unknown`. Actually executing or
+  maintenance-related shapes carry `UnknownEffects` and invalidate Virtual
+  Catalog completeness, since triggers, functions and system state are not
+  proven. `EXPLAIN ANALYZE` can actually execute writes on a real server;
+  it is **not read-only**. Inside an active transaction, utility statements
+  also invalidate unsupported rollback proofs.
+- SQL Server `SET SHOWPLAN_*`, Oracle `EXPLAIN PLAN FOR`, Firebird's
+  provider-native planning commands, and SQLite `PRAGMA` have distinct
+  semantics and remain unmodeled. Unknown syntax never gets an incomplete
+  typed intent.
+
+The analyzer only *describes* possible execution; it never opens a connection
+or issues `EXPLAIN`, `ANALYZE`, `VACUUM`, or any inner query/DML.
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:

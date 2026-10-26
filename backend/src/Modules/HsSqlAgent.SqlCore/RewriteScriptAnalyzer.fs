@@ -367,6 +367,7 @@ module internal RewriteScriptAnalyzer =
                     let sessionBefore = RewriteSessionAnalyzer.snapshot session
                     let mutable securityIntents : SqlSecurityIntent list = []
                     let mutable securityDependencies : SqlSecurityDependency list = []
+                    let mutable utilityIntents : SqlUtilityIntent list = []
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
@@ -408,6 +409,23 @@ module internal RewriteScriptAnalyzer =
                             SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable,
                             current, ([]: SqlCatalogChange list), diagnostics
+                        elif syntax.Kind = SqlScriptStatementKind.Utility then
+                            let status, intents, next, diagnostics =
+                                RewriteUtilityAnalyzer.analyze sourceDialect sourceProfile current syntax
+                            utilityIntents <- intents
+                            let flags =
+                                intents |> List.fold (fun all item -> all ||| item.PotentialEffects)
+                                    SqlEffectKind.Administrative
+                            let flags =
+                                if status = SqlStatementAnalysisStatus.Unsupported
+                                   || status = SqlStatementAnalysisStatus.Invalid then
+                                    flags ||| SqlEffectKind.UnknownEffects
+                                else flags
+                            status, flags, SqlCatalogKnowledge.Unknown,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            SqlCatalogBindingStatus.NotApplicable,
+                            next, ([]: SqlCatalogChange list), diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Session then
                             let status, certainty, nextSession, nextCatalog, diagnostics =
                                 RewriteSessionAnalyzer.analyze sourceDialect sourceProfile session current syntax
@@ -480,7 +498,8 @@ module internal RewriteScriptAnalyzer =
                         RewriteResourceBudget.withStage "ScriptEffects" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteStatementEffects.describe sourceDialect sourceProfile syntax
                                 status certainty effects (readOnly changes)
-                                (readOnly securityIntents) (readOnly securityDependencies))
+                                (readOnly securityIntents) (readOnly securityDependencies)
+                                (readOnly utilityIntents))
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
@@ -490,7 +509,7 @@ module internal RewriteScriptAnalyzer =
                             sessionBefore, RewriteSessionAnalyzer.snapshot session,
                             readOnly changes, detailedEffects, effectCoverage,
                             readOnly securityIntents, readOnly securityDependencies,
-                            readOnly allDiagnostics)))
+                            readOnly utilityIntents, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,

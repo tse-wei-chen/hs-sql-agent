@@ -108,13 +108,16 @@ module internal RewriteStatementEffects =
                  (legacyEffects: SqlEffectKind)
                  (changes: IReadOnlyList<SqlCatalogChange>)
                  (securityIntents: IReadOnlyList<SqlSecurityIntent>)
-                 (securityDependencies: IReadOnlyList<SqlSecurityDependency>) =
+                 (securityDependencies: IReadOnlyList<SqlSecurityDependency>)
+                 (utilityIntents: IReadOnlyList<SqlUtilityIntent>) =
         let coverage =
             match syntax.Kind, status, certainty with
             | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
             | SqlScriptStatementKind.Security, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
                 when securityIntents.Count > 0 || securityDependencies.Count > 0 -> SqlEffectCoverage.Partial
+            | SqlScriptStatementKind.Utility, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
+                when utilityIntents.Count > 0 -> SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Schema, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
             | (SqlScriptStatementKind.Query | SqlScriptStatementKind.Mutation),
@@ -158,6 +161,19 @@ module internal RewriteStatementEffects =
                         effect SqlEffectKind.ChangePermissions operation
                             dependency.Role null SqlCatalogKnowledge.Unknown
                             dependency.Span noDependencies)
+                    |> Seq.toList
+                | SqlScriptStatementKind.Utility when utilityIntents.Count > 0 ->
+                    utilityIntents
+                    |> Seq.map (fun intent ->
+                        let operation =
+                            match intent.Operation with
+                            | SqlUtilityOperation.ExplainPlan -> SqlStatementEffectOperation.ExplainPlan
+                            | SqlUtilityOperation.ExplainExecute -> SqlStatementEffectOperation.ExplainExecute
+                            | SqlUtilityOperation.AnalyzeStatistics -> SqlStatementEffectOperation.AnalyzeStatistics
+                            | SqlUtilityOperation.VacuumMaintenance -> SqlStatementEffectOperation.VacuumMaintenance
+                            | _ -> SqlStatementEffectOperation.Unknown
+                        effect intent.PotentialEffects operation intent.TargetName null
+                            SqlCatalogKnowledge.Unknown intent.Span noDependencies)
                     |> Seq.toList
                 | SqlScriptStatementKind.Session when status = SqlStatementAnalysisStatus.Analyzed ->
                     [effect SqlEffectKind.ChangeSession SqlStatementEffectOperation.SetSearchPath

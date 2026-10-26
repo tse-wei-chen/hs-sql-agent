@@ -85,6 +85,7 @@
     <Compile Include="RewriteStatementEffects.fs" />
     <Compile Include="RewriteSessionAnalyzer.fs" />
     <Compile Include="RewriteSecurityAnalyzer.fs" />
+    <Compile Include="RewriteUtilityAnalyzer.fs" />
     <Compile Include="RewriteScriptAnalyzer.fs" />
     <Compile Include="InspectionFacade.fs" />
     <Compile Include="CompatibilityParserFacade.fs" />
