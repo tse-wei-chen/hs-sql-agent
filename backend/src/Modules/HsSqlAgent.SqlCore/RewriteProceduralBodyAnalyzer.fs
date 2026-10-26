@@ -179,7 +179,76 @@ module internal RewriteProceduralBodyAnalyzer =
         | SqlFunctionReturnType.Text, ScalarValue.Text _ -> true
         | _ -> false
 
-    let private castCompatible declared (target: CastType) (value: Expr) =
+    /// Unqualified, unquoted names are admitted only in the FROM-free,
+    /// single-expression SELECT shape checked below. No Catalog lookup is
+    /// silently replaced by an in-memory function parameter.
+    let private parameterType (symbols: SqlFunctionParameterSymbol list) identifier =
+        match Identifier.parts identifier with
+        | [part] when not part.WasQuoted ->
+            symbols
+            |> List.tryPick (fun symbol ->
+                if symbol.Name = part.Value then Some symbol.DeclaredType else None)
+        | _ -> None
+
+    /// Bounded, PostgreSQL-specific primitive result-type evidence.
+    /// Only closed AST nodes with known built-in integer/boolean operator
+    /// result types are traversed; functions, division, comparisons, NULLs,
+    /// arbitrary CASTs and identifiers lacking typed local symbols fail closed.
+    /// This is a nominal type shape, not proof of execution or that a runtime
+    /// operation is error-free.
+    [<Literal>]
+    let private MaxReturnExpressionNodes = 64
+
+    let private primitiveExpressionType (symbols: SqlFunctionParameterSymbol list) expression =
+        let mutable remaining = MaxReturnExpressionNodes
+        let rec infer expression =
+            RewriteResourceBudget.checkpoint ()
+            remaining <- remaining - 1
+            if remaining < 0 then None
+            else
+                match Expr.unspan expression with
+                | Expr.Literal (ScalarValue.Integer number) ->
+                    if number >= int64 Int32.MinValue
+                       && number <= int64 Int32.MaxValue then
+                        Some SqlFunctionReturnType.Integer
+                    else Some SqlFunctionReturnType.BigInteger
+                | Expr.Literal (ScalarValue.Boolean _) ->
+                    Some SqlFunctionReturnType.Boolean
+                | Expr.Literal (ScalarValue.Text _) ->
+                    Some SqlFunctionReturnType.Text
+                | Expr.Column identifier -> parameterType symbols identifier
+                | Expr.Unary (UnaryOperator.Not, value) ->
+                    match infer value with
+                    | Some SqlFunctionReturnType.Boolean ->
+                        Some SqlFunctionReturnType.Boolean
+                    | _ -> None
+                | Expr.Unary ((UnaryOperator.Positive | UnaryOperator.Negate), value) ->
+                    match infer value with
+                    | Some SqlFunctionReturnType.Integer -> Some SqlFunctionReturnType.Integer
+                    | Some SqlFunctionReturnType.BigInteger -> Some SqlFunctionReturnType.BigInteger
+                    | _ -> None
+                | Expr.Binary ((BinaryOperator.And | BinaryOperator.Or), left, right) ->
+                    match infer left, infer right with
+                    | Some SqlFunctionReturnType.Boolean, Some SqlFunctionReturnType.Boolean ->
+                        Some SqlFunctionReturnType.Boolean
+                    | _ -> None
+                | Expr.Binary (op, left, right) when
+                    op = BinaryOperator.Add || op = BinaryOperator.Subtract
+                    || op = BinaryOperator.Multiply ->
+                    match infer left, infer right with
+                    | Some SqlFunctionReturnType.Integer, Some SqlFunctionReturnType.Integer ->
+                        Some SqlFunctionReturnType.Integer
+                    | Some SqlFunctionReturnType.BigInteger, Some SqlFunctionReturnType.Integer
+                    | Some SqlFunctionReturnType.Integer, Some SqlFunctionReturnType.BigInteger
+                    | Some SqlFunctionReturnType.BigInteger, Some SqlFunctionReturnType.BigInteger ->
+                        Some SqlFunctionReturnType.BigInteger
+                    | _ -> None
+                | _ -> None
+        infer expression
+
+    /// No arbitrary SQL CAST or implicit cast proof: a typed named symbol may
+    /// only preserve its declared primitive type, or widen int4 to int8.
+    let private castCompatible declared symbols (target: CastType) (value: Expr) =
         let castMatches =
             match declared, CastType.semantic target with
             | SqlFunctionReturnType.Integer, Some SqlType.SqlInteger
@@ -190,6 +259,13 @@ module internal RewriteProceduralBodyAnalyzer =
         castMatches
         && (match Expr.unspan value with
             | Expr.Literal literal -> literalCompatible declared literal
+            | Expr.Column identifier ->
+                match parameterType symbols identifier with
+                | Some source ->
+                    source = declared
+                    || (source = SqlFunctionReturnType.Integer
+                        && declared = SqlFunctionReturnType.BigInteger)
+                | None -> false
             | _ -> false)
 
     let private returnEvidence declared (symbols: SqlFunctionParameterSymbol list) (last: Document) =
@@ -215,19 +291,17 @@ module internal RewriteProceduralBodyAnalyzer =
                     declared <> SqlFunctionReturnType.BigInteger
                     && literalCompatible declared literal ->
                     Some SqlFunctionReturnEvidence.LiteralMatch
-                | Expr.Cast(value,target) when castCompatible declared target value ->
+                | Expr.Cast(value,target) when castCompatible declared symbols target value ->
                     Some SqlFunctionReturnEvidence.ExplicitCastMatch
                 | Expr.Column identifier ->
-                    // PostgreSQL resolves column names before parameter names.
-                    // This proof requires a FROM-free query (checked above)
-                    // and a single explicit, unquoted local parameter name.
-                    match Identifier.parts identifier with
-                    | [part] when not part.WasQuoted ->
-                        match symbols |> List.tryFind (fun symbol -> symbol.Name = part.Value) with
-                        | Some symbol when symbol.DeclaredType = declared ->
-                            Some SqlFunctionReturnEvidence.ParameterSymbolMatch
-                        | _ -> None
-                    | _ -> None
+                    if parameterType symbols identifier = Some declared then
+                        Some SqlFunctionReturnEvidence.ParameterSymbolMatch
+                    else None
+                | Expr.Unary _ | Expr.Binary _ ->
+                    if primitiveExpressionType symbols query.Head.Projection.Head.Expression
+                       = Some declared then
+                        Some SqlFunctionReturnEvidence.PrimitiveExpressionMatch
+                    else None
                 | _ -> None
             | _ -> None
 
@@ -330,7 +404,7 @@ module internal RewriteProceduralBodyAnalyzer =
                 | None ->
                     SqlStatementAnalysisStatus.Unsupported, [],
                     [error syntax "SQL_PROCEDURAL_RETURN_UNPROVEN"
-                        "Function return expression/type cannot be proven using the strict literal or explicit-cast AST subset."]
+                        "Function return type is unproven by the bounded literal, typed parameter, primitive expression or explicit-cast AST rules."]
                 | Some contract ->
                     let effects =
                         statements |> Seq.fold (fun all item -> all ||| item.PotentialEffects)
