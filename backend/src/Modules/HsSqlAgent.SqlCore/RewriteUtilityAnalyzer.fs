@@ -8,6 +8,8 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
+open HsSqlAgent.SqlCore.Rewrite.CoreModel
+open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 /// Bounded, provider-specific *static* utility analysis only. A recognized
 /// syntax neither executes SQL nor establishes effective permissions. For
@@ -107,21 +109,34 @@ module internal RewriteUtilityAnalyzer =
                 | Some innerKind ->
                     let sql = syntax.Text.Substring(tokens[index].Start)
                     try
-                        RewriteResourceBudget.withStage "UtilityInnerParse" SqlDiagnosticStage.Parse (fun () ->
-                            RewriteFacadeAdapter.parseSourceValidated sql sourceDialect sourceProfile
-                            |> ignore)
-                        let flags =
-                            if execute then
-                                SqlEffectKind.Administrative
-                                ||| SqlEffectKind.UnknownEffects
-                                ||| (if innerKind = SqlScriptStatementKind.Mutation then
-                                        SqlEffectKind.WriteData else SqlEffectKind.ReadData)
-                            else SqlEffectKind.Administrative
-                        potential
-                            (if execute then SqlUtilityOperation.ExplainExecute else SqlUtilityOperation.ExplainPlan)
-                            (if execute then SqlUtilityExecutionMode.ExecutesStatement
-                             else SqlUtilityExecutionMode.PlanningOnly)
-                            innerKind null flags syntax
+                        let parsed =
+                            RewriteResourceBudget.withStage "UtilityInnerParse" SqlDiagnosticStage.Parse (fun () ->
+                                RewriteFacadeAdapter.parseSourceValidated sql sourceDialect sourceProfile)
+                        let document = Typestate.Parsed.value parsed
+                        let actualKind =
+                            match document.Statement with
+                            | Statement.QueryStatement _ -> SqlScriptStatementKind.Query
+                            | Statement.InsertStatement _
+                            | Statement.UpdateStatement _
+                            | Statement.DeleteStatement _
+                            | Statement.MergeStatement _ -> SqlScriptStatementKind.Mutation
+                        if innerKind <> actualKind then
+                            // WITH can prefix mutations. The leading keyword
+                            // cannot be used to hide an actual DML AST.
+                            unsupported "EXPLAIN statement family is not proven consistent with the parsed AST."
+                        else
+                            let flags =
+                                if execute then
+                                    SqlEffectKind.Administrative
+                                    ||| SqlEffectKind.UnknownEffects
+                                    ||| (if actualKind = SqlScriptStatementKind.Mutation then
+                                            SqlEffectKind.WriteData else SqlEffectKind.ReadData)
+                                else SqlEffectKind.Administrative
+                            potential
+                                (if execute then SqlUtilityOperation.ExplainExecute else SqlUtilityOperation.ExplainPlan)
+                                (if execute then SqlUtilityExecutionMode.ExecutesStatement
+                                 else SqlUtilityExecutionMode.PlanningOnly)
+                                actualKind null flags syntax
                     with
                     | :? SqlParseException as ex ->
                         // Preserve resource errors at their original stage.
