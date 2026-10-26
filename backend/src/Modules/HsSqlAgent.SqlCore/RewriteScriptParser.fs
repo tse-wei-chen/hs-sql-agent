@@ -83,10 +83,26 @@ module internal RewriteScriptParser =
         match classify tokens start dialect with
         | Procedural ->
             let first = word tokens start
-            first = "CREATE" || first = "ALTER"
-            || first = "DO" || first = "DECLARE" || first = "BEGIN"
-            || (dialect = SqlAgentToolType.Firebird
-                && first = "EXECUTE" && word tokens (start + 1) = "BLOCK")
+            // PostgreSQL's SQL-language string/dollar-quoted definitions
+            // have their internal semicolons in a single lexical literal.
+            // A normal terminating semicolon can therefore safely split
+            // them from following statements. Bare BEGIN ATOMIC and other
+            // unquoted procedural bodies stay opaque.
+            let quotedDefinition =
+                dialect = SqlAgentToolType.Postgres && first = "CREATE"
+                && (tokens
+                    |> Seq.skip start
+                    |> Seq.takeWhile (fun token ->
+                        token.Kind <> Symbol ';' && token.Kind <> End)
+                    |> Seq.exists (fun token ->
+                        match token.Kind with
+                        | StringLiteral _ -> true
+                        | _ -> false))
+            ((first = "CREATE" && not quotedDefinition)
+             || first = "ALTER"
+             || first = "DO" || first = "DECLARE" || first = "BEGIN"
+             || (dialect = SqlAgentToolType.Firebird
+                 && first = "EXECUTE" && word tokens (start + 1) = "BLOCK"))
         | _ -> false
 
     /// GO is a SQL Server client-side batch separator ONLY on a line by itself.
