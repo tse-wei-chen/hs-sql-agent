@@ -176,6 +176,54 @@ References: [MySQL USE](https://dev.mysql.com/doc/refman/8.4/en/use.html),
 [SQL Server USE](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/use-transact-sql),
 [SQL Server SET NOCOUNT](https://learn.microsoft.com/en-us/sql/t-sql/statements/set-nocount-transact-sql).
 
+## Transactional catalog snapshots and provider-specific TCL
+
+`SqlCoreFacade.AnalyzeScript` uses a closed, immutable `TransactionContext`
+to track a **static Virtual Catalog**, not to execute SQL or guarantee any
+server transaction completed. DQL, DML, triggers and external grants remain
+outside effective transaction execution/authorization proof.
+
+- **PostgreSQL:** `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK`,
+  `SAVEPOINT name`, `ROLLBACK TO [SAVEPOINT] name`, and
+  `RELEASE [SAVEPOINT] name` retain transactional DDL catalog snapshots.
+  Most-recent matching duplicate names win; `ROLLBACK TO` keeps the targeted
+  mark, whereas `RELEASE` removes it and newer marks. Session mutations
+  while a savepoint is active invalidate the static transaction proof until
+  independent savepoint session snapshots are modeled.
+- **SQLite:** Basic `BEGIN`/`COMMIT`/`ROLLBACK`, nested savepoints, and
+  standalone outermost `SAVEPOINT` are supported. Releasing that outermost
+  savepoint ends the transaction; `ROLLBACK TO` leaves it active. The
+  existing SQLite dynamic-affinity type-boundary remains unverified.
+- **SQL Server:** A deliberately bounded `BEGIN TRAN[SACTION]`,
+  `COMMIT TRAN[SACTION]`, `ROLLBACK TRAN[SACTION]`,
+  `SAVE TRAN[SACTION] name`, and `ROLLBACK TRAN[SACTION] name` subset is
+  analyzed. Nested `BEGIN TRAN` is **not** modeled as an independently
+  committable nested transaction (`@@TRANCOUNT` and potential distributed
+  promotion matter); instead it invalidates prior Catalog rollback proofs.
+  Savepoint names are case-sensitive and capped to 32 ASCII identifier
+  characters, as required by SQL Server.
+- **MySQL:** Basic explicit `START TRANSACTION` / `BEGIN` and boundaries
+  can be recognized, but `CREATE`/`ALTER`/`DROP` during an active
+  transaction fail closed with `SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN`,
+  because DDL can implicitly commit and not be reversed by `ROLLBACK`.
+  DML in an active transaction similarly loses rollback proof unless the
+  storage-engine transaction contract is established separately.
+- **Oracle / Firebird** remain explicitly unmodeled for these TCL forms.
+  Unsupported names, subcommands, runtime conditions, distributed options,
+  nested transactions and unknown savepoints invalidate the prior transaction
+  and Virtual Catalog proofs, rather than creating rollback deltas.
+
+Savepoints are bounded to 32 active marks per transaction. All syntax is
+analyzed using the source dialect's strict lexer and typed F# commands. The
+returned `SqlCatalogChange` on a rollback describes a simulated catalog
+snapshot transition only, never a database write or execution guarantee.
+
+Vendor documentation:
+[MySQL implicit commits](https://dev.mysql.com/doc/refman/8.4/en/implicit-commit.html),
+[SQL Server SAVE TRANSACTION](https://learn.microsoft.com/en-us/sql/t-sql/language-elements/save-transaction-transact-sql),
+[PostgreSQL ROLLBACK TO SAVEPOINT](https://www.postgresql.org/docs/current/sql-rollback-to.html),
+[SQLite Savepoints](https://www.sqlite.org/lang_savepoint.html).
+
 ## Architecture invariants
 
 The public CLR compatibility surface and the compiler core are intentionally separate:
