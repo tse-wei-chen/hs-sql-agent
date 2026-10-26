@@ -69,6 +69,11 @@ module internal RewriteUtilityAnalyzer =
             elif name index = "ANALYZE" then
                 execute <- true
                 index <- index + 1
+                // MySQL EXPLAIN ANALYZE requires version >= 8.0.18 and
+                // may depend on explain_format. Until those profile proofs
+                // are modeled, never borrow PostgreSQL's execution grammar.
+                if sourceDialect <> SqlAgentToolType.Postgres then
+                    validOptions <- false
             elif sourceDialect = SqlAgentToolType.Postgres && symbol index '(' then
                 // Only one explicitly proven boolean option. All other
                 // options and mixed option lists remain fail-closed.
