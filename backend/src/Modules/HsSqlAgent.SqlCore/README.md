@@ -37,6 +37,39 @@ foreach (var parameter in command.Parameters)
 For mutations, use `CoreSqlTextParser.ParseDml` with `CoreDmlCompiler`. Compilation produces an
 immutable `CompiledSqlCommand`; this package does not open database connections or execute SQL.
 
+## Typed Script parsing and analysis options
+
+The CLR-friendly `SqlScriptParseOptions` and `SqlScriptAnalysisOptions`
+collect source dialect, optional source capability profile, and cooperative
+cancellation into immutable inputs. Analysis additionally accepts an explicit
+starting `SqlCatalogState`. A missing Catalog defaults to **Unknown**
+(open world), **not** `KnownEmpty()`; only the caller can claim a known empty
+starting Catalog. Existing positional overloads still work unchanged, using
+the same source-profile checks, grammar, resource limits and diagnostics.
+
+```csharp
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Script;
+
+using var cts = new CancellationTokenSource();
+var parseOptions = new SqlScriptParseOptions(
+    SqlAgentToolType.Postgres, cts.Token);
+var syntax = SqlCoreFacade.ParseScript(
+    "CREATE TABLE demo (id INT); SELECT id FROM demo;", parseOptions);
+
+var analysisOptions = new SqlScriptAnalysisOptions(
+    SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty(), cts.Token);
+var result = SqlCoreFacade.AnalyzeScript(
+    "CREATE TABLE demo (id INT); SELECT id FROM demo;", analysisOptions);
+Console.WriteLine(result.EffectCoverage);
+```
+
+A source capability profile may also be supplied to both options types,
+e.g. for version-gated Oracle grammar. Provider/profile mismatches still fail;
+option objects never imply successful binding, authorization or SQL execution.
+
 ## Cooperative cancellation for static SQL scripts
 
 `ParseScript` and `AnalyzeScript` have `CancellationToken` overloads so an
