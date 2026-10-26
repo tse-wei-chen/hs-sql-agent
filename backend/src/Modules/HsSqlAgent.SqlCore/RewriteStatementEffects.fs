@@ -110,6 +110,7 @@ module internal RewriteStatementEffects =
                  (securityIntents: IReadOnlyList<SqlSecurityIntent>)
                  (securityDependencies: IReadOnlyList<SqlSecurityDependency>)
                  (utilityIntents: IReadOnlyList<SqlUtilityIntent>)
+                 (proceduralIntents: IReadOnlyList<SqlProceduralIntent>)
                  (sessionOperation: SqlStatementEffectOperation) =
         let coverage =
             match syntax.Kind, status, certainty with
@@ -122,6 +123,8 @@ module internal RewriteStatementEffects =
                 when securityIntents.Count > 0 || securityDependencies.Count > 0 -> SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Utility, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
                 when utilityIntents.Count > 0 -> SqlEffectCoverage.Partial
+            | SqlScriptStatementKind.Procedural, SqlStatementAnalysisStatus.PartiallyAnalyzed, _
+                when proceduralIntents.Count > 0 -> SqlEffectCoverage.Partial
             | SqlScriptStatementKind.Schema, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
                 SqlEffectCoverage.Complete
             | (SqlScriptStatementKind.Query | SqlScriptStatementKind.Mutation),
@@ -178,6 +181,14 @@ module internal RewriteStatementEffects =
                             | _ -> SqlStatementEffectOperation.Unknown
                         effect intent.PotentialEffects operation intent.TargetName null
                             SqlCatalogKnowledge.Unknown intent.Span noDependencies)
+                    |> Seq.toList
+                | SqlScriptStatementKind.Procedural when proceduralIntents.Count > 0 ->
+                    proceduralIntents
+                    |> Seq.map (fun intent ->
+                        effect intent.PotentialEffects
+                            SqlStatementEffectOperation.InvokeProcedure
+                            intent.Routine.DisplayName null SqlCatalogKnowledge.Unknown
+                            intent.Span noDependencies)
                     |> Seq.toList
                 | SqlScriptStatementKind.Session when
                     sessionOperation <> SqlStatementEffectOperation.Unknown ->
