@@ -143,6 +143,25 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL unqualified DROP INDEX IF EXISTS and explicit RESTRICT
+
+The closed `DropIndex` DDL operation now carries a typed `ifExists`
+flag for PostgreSQL unqualified index names. `DROP INDEX IF EXISTS name`
+requires a proven **single schema** `search_path` and a fully known
+closed-world Virtual Catalog; only then may a matching standalone index
+be removed, or a proven-absent name become an exact no-op. A table
+relation of the same name is a semantic rejection, while implicit
+constraint-backed index names and caller-supplied unqualified Catalog
+owners remain unproven and fail-closed.
+
+PostgreSQL also accepts optional `RESTRICT` on both unqualified and
+schema-qualified `DROP INDEX`. Because RESTRICT is already PostgreSQL's
+default dependency policy, this is a syntax capability expansion only:
+it adds no cascade, deletion authority, runtime attestation, or bypass
+of the existing constraint/dependency proof. Other five providers
+retain their dialect-specific drop syntax. `CASCADE`, `CONCURRENTLY`,
+and multi-index drops remain unsupported.
+
 ## PostgreSQL schema-qualified DROP INDEX
 
 The closed DDL parser now recognizes `DROP INDEX schema.index` and
