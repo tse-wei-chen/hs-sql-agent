@@ -56,6 +56,8 @@ type SqlStatementEffectOperation =
     | DefineProcedure = 28
     | DefineFunction = 29
     | PossibleImplicitCommit = 30
+    | CreateView = 31
+    | DropView = 32
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.

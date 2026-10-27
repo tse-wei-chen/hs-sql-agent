@@ -143,6 +143,36 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL typed View dependencies and transitive CASCADE
+
+A distinct immutable `SqlCatalogView` holds structured View relation
+identity, directly proven source dependencies, and source-derived output
+columns. PostgreSQL `CREATE VIEW name AS SELECT * FROM source` and
+direct named-column single-source SELECT forms are proven against a
+closed-world Catalog only. Joins, WHERE, functions, aliases, aggregates,
+materialized views and replacement semantics remain unsupported, and
+must not mint known dependencies.
+
+`DROP VIEW [IF EXISTS] name [RESTRICT|CASCADE]` and PostgreSQL
+`DROP TABLE ... CASCADE` compute a cycle-safe transitive View dependency
+closure from the original Catalog before publishing any changes.
+RESTRICT fails on dependent Views. CASCADE removes their **entire View
+relations**, unlike an external Foreign Key where only the named
+constraint is removed. Typed CreateView/DropView changes are kept
+separate from base-table changes and do not assert that a View is an
+ordinary table or that SELECT through Views has been type-verified.
+Table/View names share a PostgreSQL relation namespace; wrong-kind
+DROP TABLE and CREATE TABLE collisions cannot silently succeed.
+Named PK/UNIQUE backing indexes also block colliding View relation names.
+If an implicit key index's physical name is not established, a missing
+`DROP VIEW IF EXISTS` target is unproven rather than a false no-op.
+Dropping a source column used in a proven View remains blocked.
+
+This is static Virtual Catalog modeling, not an attestation of
+PostgreSQL server dependencies, execution, ownership or transaction
+rollback. Unsupported View definitions taint the Catalog rather than
+publishing incomplete Known graph facts.
+
 ## PostgreSQL FK-aware DROP TABLE CASCADE
 
 The PostgreSQL `DropTableBatch` closed F# DU carries typed

@@ -108,6 +108,10 @@ module internal RewriteScriptAnalyzer =
         let resolvedOperation = function
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
+            | CreateView(view, source, projection) ->
+                CreateView(resolve view, resolve source, projection)
+            | DropView(view, conditional, mode) ->
+                DropView(resolve view, conditional, mode)
             | Drop(name, conditional) -> Drop(resolve name, conditional)
             | DropTableBatch(names, conditional, mode) ->
                 DropTableBatch(List.map resolve names, conditional, mode)
@@ -132,6 +136,8 @@ module internal RewriteScriptAnalyzer =
                     name :: (constraints |> List.choose (fun c ->
                         if isNull c.ReferencedIdentity then None
                         else Some c.ReferencedIdentity))
+                | CreateView(view, source, _) -> [view; source]
+                | DropView(view, _, _) -> [view]
                 | AddConstraint(name, constraintInfo) ->
                     [name] @
                     (if isNull constraintInfo.ReferencedIdentity then []
@@ -158,6 +164,8 @@ module internal RewriteScriptAnalyzer =
 
         let referencedTableName = function
             | Create(name, _, _, _)
+            | CreateView(name, _, _)
+            | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
             | CreateIndex(name, _, _)
@@ -231,6 +239,12 @@ module internal RewriteScriptAnalyzer =
                     "Source dialect DDL is outside the statically proven TABLE subset; catalog facts are invalidated."
             SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
             unknown, [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown], [error]
+        | Recognized (Create(name, _, _, ifNotExists)) when
+            RewriteCatalogModel.lookupView state name |> Option.isSome ->
+            // PostgreSQL Views and tables are relation-kind siblings.
+            if ifNotExists then noChange
+            else fail ("CREATE TABLE " + name.DisplayName +
+                       " conflicts with a known View relation.")
         | Recognized (Create(name, columns, constraints, ifNotExists)) ->
             // PostgreSQL tables and indexes share the schema-local
             // relation namespace. A virtual Catalog that knows an index
@@ -268,6 +282,114 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
+        | Recognized (CreateView(view, source, projection)) ->
+            // Narrow, single-source SELECT grammar is fully consumed by the
+            // DDL parser. The source must already have a proven structural
+            // column set; this never authorizes view SQL execution.
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || state.Knowledge <> SqlCatalogKnowledge.Known then
+                dependencyUnproven "CREATE VIEW requires a complete PostgreSQL Catalog."
+            elif view.Parts.Count <> 2 || source.Parts.Count <> 2 then
+                dependencyUnproven "CREATE VIEW identities require proven physical schemas."
+            elif RewriteCatalogModel.lookup state view |> Option.isSome
+                 || RewriteCatalogModel.lookupView state view |> Option.isSome then
+                fail ("CREATE VIEW " + view.DisplayName + " conflicts with an existing relation.")
+            elif state.Tables |> Seq.exists (fun table ->
+                possiblySameIndexSchema view table.QualifiedName
+                && ((table.Indexes |> Seq.exists (fun idx ->
+                    String.Equals(idx.Name, relationName view, StringComparison.Ordinal)))
+                    || (table.Constraints |> Seq.exists (fun constraintInfo ->
+                        (constraintInfo.Kind = SqlCatalogConstraintKind.PrimaryKey
+                         || constraintInfo.Kind = SqlCatalogConstraintKind.Unique)
+                        && not (String.IsNullOrWhiteSpace constraintInfo.Name)
+                        && String.Equals(constraintInfo.Name, relationName view,
+                                         StringComparison.Ordinal))))) then
+                // Named PK/UNIQUE constraints own backing index relations in
+                // PostgreSQL. Never mint a View with the same proven name.
+                fail ("CREATE VIEW " + view.DisplayName +
+                      " conflicts with a known index or key-backed index.")
+            else
+                let sourceColumns =
+                    match RewriteCatalogModel.lookup state source with
+                    | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
+                        Some(table.Columns |> Seq.toList)
+                    | _ ->
+                        match RewriteCatalogModel.lookupView state source with
+                        | Some existing -> Some(existing.Columns |> Seq.toList)
+                        | None -> None
+                match sourceColumns with
+                | None ->
+                    fail ("CREATE VIEW references missing or unproven relation '" +
+                          source.DisplayName + "'.")
+                | Some columns ->
+                    let selected =
+                        match projection with
+                        | None -> Some columns
+                        | Some names when List.distinct names <> names -> None
+                        | Some names ->
+                            let matching =
+                                names |> List.choose (fun name ->
+                                    columns |> List.tryFind (fun col ->
+                                        String.Equals(col.Name, name, StringComparison.Ordinal)))
+                            if matching.Length <> names.Length then None else Some matching
+                    match selected with
+                    | None -> fail "CREATE VIEW projection has duplicate or unknown columns."
+                    | Some shape when shape.IsEmpty ->
+                        fail "CREATE VIEW projection cannot have zero columns."
+                    | Some shape ->
+                        RewriteCatalogModel.withView state view shape [source]
+                        |> exact view SqlCatalogOperation.CreateView
+        | Recognized (DropView(view, conditional, mode)) ->
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || state.Knowledge <> SqlCatalogKnowledge.Known then
+                dependencyUnproven "DROP VIEW requires a complete PostgreSQL Catalog."
+            elif view.Parts.Count <> 2 then
+                dependencyUnproven "DROP VIEW requires a proven physical schema."
+            elif RewriteCatalogModel.lookup state view |> Option.isSome then
+                fail ("DROP VIEW " + view.DisplayName + " refers to a known table.")
+            elif state.Tables |> Seq.exists (fun owner ->
+                possiblySameIndexSchema view owner.QualifiedName
+                && ((owner.Indexes |> Seq.exists (fun index ->
+                    String.Equals(index.Name, relationName view, StringComparison.Ordinal)))
+                    || (owner.Constraints |> Seq.exists (fun constraintInfo ->
+                        (constraintInfo.Kind = SqlCatalogConstraintKind.PrimaryKey
+                         || constraintInfo.Kind = SqlCatalogConstraintKind.Unique)
+                        && not (String.IsNullOrWhiteSpace constraintInfo.Name)
+                        && String.Equals(constraintInfo.Name, relationName view,
+                                         StringComparison.Ordinal))))) then
+                fail ("DROP VIEW " + view.DisplayName + " refers to a known index.")
+            elif (RewriteCatalogModel.lookupView state view |> Option.isNone)
+                 && (state.Tables |> Seq.exists (fun owner ->
+                     possiblySameIndexSchema view owner.QualifiedName
+                     && (owner.Constraints |> Seq.exists (fun c ->
+                         c.Kind = SqlCatalogConstraintKind.PrimaryKey
+                         || c.Kind = SqlCatalogConstraintKind.Unique)))) then
+                // Unknown names of implicit key-backed indexes may identify
+                // a relation of the wrong kind. IF EXISTS cannot prove the
+                // physical absence of this View name in that situation.
+                dependencyUnproven "Implicit constraint-backed index names prevent a proven DROP VIEW absence."
+            else
+                match RewriteCatalogModel.lookupView state view with
+                | None when conditional -> noChange
+                | None -> fail ("DROP VIEW " + view.DisplayName + " does not exist.")
+                | Some _ ->
+                    let dependencies =
+                        RewriteCatalogModel.dependentViews state (Set.singleton view.Key)
+                    if mode = Restrict && not dependencies.IsEmpty then
+                        fail ("DROP VIEW " + view.DisplayName +
+                              " has dependent views under RESTRICT.")
+                    else
+                        let dropped =
+                            view :: (dependencies |> List.map (fun d -> d.QualifiedName))
+                        let next =
+                            dropped |> List.fold (fun catalog name ->
+                                RewriteCatalogModel.dropView catalog name) state
+                        let changes =
+                            dropped |> List.map (fun name ->
+                                changedExact syntax name SqlCatalogOperation.DropView
+                                    SqlCatalogKnowledge.Known)
+                        SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                        next, changes, ([]: SqlDiagnostic list)
         | Recognized (DropTableBatch(names, conditional, mode)) ->
             // Batch names are fully parsed and scope-resolved before this
             // branch. Examine every target against the same ORIGINAL
@@ -277,13 +399,18 @@ module internal RewriteScriptAnalyzer =
                 names |> List.distinctBy (fun name -> name.Key)
             let duplicate = distinctNames.Length <> names.Length
             let ambiguousOwner =
-                state.Tables |> Seq.exists (fun owner ->
+                (state.Tables |> Seq.exists (fun owner ->
                     owner.QualifiedName.Parts.Count = 1
                     && (names |> List.exists (fun name ->
                         String.Equals(
                             relationName name,
                             relationName owner.QualifiedName,
-                            StringComparison.Ordinal))))
+                            StringComparison.Ordinal)))))
+                || (state.Views |> Seq.exists (fun view ->
+                    view.QualifiedName.Parts.Count = 1
+                    && (names |> List.exists (fun name ->
+                        String.Equals(relationName name,
+                                      relationName view.QualifiedName, StringComparison.Ordinal)))))
             if sourceDialect <> SqlAgentToolType.Postgres
                || not state.IsClosedWorld
                || (state.Tables |> Seq.exists (fun table ->
@@ -310,11 +437,12 @@ module internal RewriteScriptAnalyzer =
                 let wrongKind =
                     names |> List.tryFind (fun name ->
                         (RewriteCatalogModel.lookup state name).IsNone
-                        && (state.Tables |> Seq.exists (fun owner ->
+                        && (RewriteCatalogModel.lookupView state name |> Option.isSome
+                            || (state.Tables |> Seq.exists (fun owner ->
                             sameSchema name owner.QualifiedName
                             && (owner.Indexes |> Seq.exists (fun index ->
                                 String.Equals(index.Name, relationName name,
-                                              StringComparison.Ordinal))))))
+                                              StringComparison.Ordinal)))))))
                 // Build the entire inbound FK dependency graph from the
                 // original immutable Catalog. Nothing is changed until all
                 // table identities and external constraints are proven.
@@ -330,6 +458,8 @@ module internal RewriteScriptAnalyzer =
                     externalForeignKeys
                     |> List.tryFind (fun (_, fk) ->
                         String.IsNullOrWhiteSpace fk.Name)
+                let dependentViews =
+                    RewriteCatalogModel.dependentViews state targets
                 match wrongKind, missing, externalForeignKeys, unnamed with
                 | Some name, _, _, _ ->
                     fail ("DROP TABLE " + name.DisplayName +
@@ -337,6 +467,8 @@ module internal RewriteScriptAnalyzer =
                 | None, Some name, _, _ when not conditional ->
                     fail ("DROP TABLE " + name.DisplayName +
                           " does not exist in the known Catalog.")
+                | None, _, _, _ when mode = Restrict && not dependentViews.IsEmpty ->
+                    fail "DROP TABLE batch is blocked by dependent Views under RESTRICT."
                 | None, _, (dependent, _)::_, _ when mode = Restrict ->
                     fail ("DROP TABLE batch is blocked by a FOREIGN KEY in non-batch table '" +
                           dependent.Name + "'.")
@@ -363,6 +495,9 @@ module internal RewriteScriptAnalyzer =
                                                           StringComparison.Ordinal)))
                             RewriteCatalogModel.withConstraints catalog owner.QualifiedName retained
                         ) afterDrop
+                    let nextWithViews =
+                        dependentViews |> List.fold (fun catalog view ->
+                            RewriteCatalogModel.dropView catalog view.QualifiedName) next
                     let tableDeltas =
                         existing |> List.map (fun name ->
                             changedExact syntax name SqlCatalogOperation.DropTable
@@ -370,17 +505,31 @@ module internal RewriteScriptAnalyzer =
                     let constraintDeltas =
                         externalForeignKeys |> List.map (fun (owner, fk) ->
                             changedConstraintExact syntax owner.QualifiedName fk.Name)
+                    let viewDeltas =
+                        dependentViews |> List.map (fun view ->
+                            changedExact syntax view.QualifiedName SqlCatalogOperation.DropView
+                                SqlCatalogKnowledge.Known)
                     SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
-                    next, tableDeltas @ constraintDeltas, ([]: SqlDiagnostic list)
+                    nextWithViews, tableDeltas @ constraintDeltas @ viewDeltas,
+                    ([]: SqlDiagnostic list)
+        | Recognized (Drop(name, _)) when
+            RewriteCatalogModel.lookupView state name |> Option.isSome ->
+            fail ("DROP TABLE " + name.DisplayName + " names a known View, not a table.")
         | Recognized (Drop(name, ifExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
-                match RewriteSchemaDependencies.canDropTable state name with
-                | RewriteSchemaDependencies.Proven ->
-                    RewriteCatalogModel.dropKnown state name
-                    |> exact name SqlCatalogOperation.DropTable
-                | RewriteSchemaDependencies.Invalid message -> fail message
-                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+                let dependents =
+                    RewriteCatalogModel.dependentViews state (Set.singleton name.Key)
+                if not dependents.IsEmpty then
+                    fail ("DROP TABLE " + name.DisplayName +
+                          " is blocked by dependent Views under RESTRICT.")
+                else
+                    match RewriteSchemaDependencies.canDropTable state name with
+                    | RewriteSchemaDependencies.Proven ->
+                        RewriteCatalogModel.dropKnown state name
+                        |> exact name SqlCatalogOperation.DropTable
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ when RewriteCatalogModel.isKnownAbsent state name && ifExists ->
                 noChange
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
@@ -420,18 +569,29 @@ module internal RewriteScriptAnalyzer =
                             String.Equals(relationName owner.QualifiedName, indexName,
                                           StringComparison.Ordinal))
                     else None
-                match indexOwner, relationOwner with
-                | Some owner, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
+                let viewOwner =
+                    if sourceDialect = SqlAgentToolType.Postgres then
+                        state.Views |> Seq.tryFind (fun view ->
+                            possiblySameIndexSchema tableName view.QualifiedName
+                            && String.Equals(relationName view.QualifiedName, indexName,
+                                             StringComparison.Ordinal))
+                    else None
+                match indexOwner, relationOwner, viewOwner with
+                | Some owner, _, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
                     dependencyUnproven "Index owner has no proven schema; index name collision cannot be resolved."
-                | Some _, _ ->
+                | Some _, _, _ ->
                     fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
-                | None, Some owner when ambiguousIndexSchema tableName owner.QualifiedName ->
+                | None, Some owner, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
                     dependencyUnproven "Relation has no proven schema; index name may collide with an existing table."
-                | None, Some _ ->
+                | None, Some _, _ ->
                     fail ("CREATE INDEX '" + indexName + "' conflicts with a known table relation in its schema.")
-                | None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
+                | None, None, Some owner when ambiguousIndexSchema tableName owner.QualifiedName ->
+                    dependencyUnproven "View schema is unproven; index name collision is possible."
+                | None, None, Some _ ->
+                    fail ("CREATE INDEX '" + indexName + "' conflicts with a known View relation.")
+                | None, None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
                     dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
-                | None, None ->
+                | None, None, None ->
                     if members.IsEmpty || List.distinct members <> members then
                         fail "CREATE INDEX has duplicate or empty column members."
                     elif members |> List.exists (fun memberName ->
@@ -494,10 +654,16 @@ module internal RewriteScriptAnalyzer =
                             state.Tables |> Seq.exists (fun owner ->
                                 inSchema owner && owner.Constraints.Count > 0)
                         let namedTable =
-                            state.Tables |> Seq.exists (fun owner ->
+                            (state.Tables |> Seq.exists (fun owner ->
                                 inSchema owner
                                 && String.Equals(relationName owner.QualifiedName,
-                                                 indexName, StringComparison.Ordinal))
+                                                 indexName, StringComparison.Ordinal)))
+                            || (state.Views |> Seq.exists (fun view ->
+                                view.QualifiedName.Parts.Count = 2
+                                && String.Equals(view.QualifiedName.Parts[0], schema,
+                                                 StringComparison.Ordinal)
+                                && String.Equals(relationName view.QualifiedName, indexName,
+                                                 StringComparison.Ordinal)))
                         let matchingOwners =
                             state.Tables |> Seq.filter (fun owner ->
                                 inSchema owner && (owner.Indexes |> Seq.exists sameIndex))
@@ -590,11 +756,16 @@ module internal RewriteScriptAnalyzer =
                         inSchema t && (t.Indexes |> Seq.exists sameIndex))
                     |> Seq.toList
                 let namedTable =
-                    state.Tables
-                    |> Seq.exists (fun t ->
+                    (state.Tables |> Seq.exists (fun t ->
                         inSchema t
                         && String.Equals(relationName t.QualifiedName, indexName,
-                                         StringComparison.Ordinal))
+                                         StringComparison.Ordinal)))
+                    || (state.Views |> Seq.exists (fun view ->
+                        view.QualifiedName.Parts.Count = 2
+                        && String.Equals(view.QualifiedName.Parts[0], schema,
+                                         StringComparison.Ordinal)
+                        && String.Equals(relationName view.QualifiedName, indexName,
+                                         StringComparison.Ordinal)))
                 let possibleImplicitIndex =
                     state.Tables
                     |> Seq.exists (fun t -> inSchema t && t.Constraints.Count > 0)
@@ -645,10 +816,16 @@ module internal RewriteScriptAnalyzer =
                         state.Tables |> Seq.exists (fun owner ->
                             inScope owner && owner.Constraints.Count > 0)
                     let namedTable =
-                        state.Tables |> Seq.exists (fun owner ->
+                        (state.Tables |> Seq.exists (fun owner ->
                             inScope owner
                             && String.Equals(relationName owner.QualifiedName,
-                                             indexName, StringComparison.Ordinal))
+                                             indexName, StringComparison.Ordinal)))
+                        || (state.Views |> Seq.exists (fun view ->
+                            view.QualifiedName.Parts.Count = 2
+                            && String.Equals(view.QualifiedName.Parts[0], schema,
+                                             StringComparison.Ordinal)
+                            && String.Equals(relationName view.QualifiedName, indexName,
+                                             StringComparison.Ordinal)))
                     let matchingOwners =
                         state.Tables |> Seq.filter (fun owner ->
                             inScope owner && (owner.Indexes |> Seq.exists matchesIndex))
