@@ -31,13 +31,13 @@ public sealed class SqlCoreImplicitCommitStructuredEffectsTests
             ddl.TransactionProvenance.Origin);
         Assert.True(ddl.Effects.HasFlag(SqlEffectKind.ChangeTransaction));
 
-        var schema = Assert.Single(ddl.DetailedEffects.Where(e =>
-            e.Kind == SqlEffectKind.ChangeSchema));
+        var schema = Assert.Single(ddl.DetailedEffects, e =>
+            e.Kind == SqlEffectKind.ChangeSchema);
         Assert.Equal(SqlStatementEffectOperation.CreateTable, schema.Operation);
         Assert.Equal(SqlCatalogKnowledge.Known, schema.Certainty);
 
-        var possibleCommit = Assert.Single(ddl.DetailedEffects.Where(e =>
-            e.Kind == SqlEffectKind.ChangeTransaction));
+        var possibleCommit = Assert.Single(ddl.DetailedEffects, e =>
+            e.Kind == SqlEffectKind.ChangeTransaction);
         Assert.Equal(SqlCatalogKnowledge.Unknown, possibleCommit.Certainty);
         Assert.Equal(SqlStatementEffectOperation.PossibleImplicitCommit, possibleCommit.Operation);
         Assert.Null(possibleCommit.ObjectName);
@@ -64,8 +64,8 @@ public sealed class SqlCoreImplicitCommitStructuredEffectsTests
             d => d.Code == "SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN");
         Assert.Empty(ddl.Changes);
 
-        var possibleCommit = Assert.Single(ddl.DetailedEffects.Where(e =>
-            e.Kind == SqlEffectKind.ChangeTransaction));
+        var possibleCommit = Assert.Single(ddl.DetailedEffects, e =>
+            e.Kind == SqlEffectKind.ChangeTransaction);
         Assert.Equal(SqlCatalogKnowledge.Unknown, possibleCommit.Certainty);
         Assert.Equal(SqlStatementEffectOperation.PossibleImplicitCommit, possibleCommit.Operation);
         Assert.DoesNotContain(ddl.DetailedEffects, e =>
@@ -80,7 +80,10 @@ public sealed class SqlCoreImplicitCommitStructuredEffectsTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void OtherProviderDdlDoesNotInventImplicitCommitDetails(SqlAgentToolType dialect)
     {
-        var ddl = Assert.Single(Analyze("CREATE TABLE users(id INTEGER);", dialect).Statements);
+        var createSql = dialect == SqlAgentToolType.MsSqlServer
+            ? "CREATE TABLE users(id INT);"
+            : "CREATE TABLE users(id INTEGER);";
+        var ddl = Assert.Single(Analyze(createSql, dialect).Statements);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, ddl.Status);
         Assert.False(ddl.Effects.HasFlag(SqlEffectKind.ChangeTransaction));
         Assert.DoesNotContain(ddl.DetailedEffects,
