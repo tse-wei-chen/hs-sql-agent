@@ -114,7 +114,11 @@ public sealed class SqlCoreOracleTransactionBoundaryTests
         var report = Analyze(
             "CREATE TABLE orders(ID NUMBER); UNRECOGNIZED WORDS; COMMIT;");
         Assert.False(report.FinalCatalog.IsClosedWorld);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, report.Statements[2].Status);
+        // Recognition of COMMIT does not manufacture missing schema knowledge.
+        // The control itself is recognized even when the catalog is unknown.
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, report.Statements[2].Status);
+        Assert.False(report.Statements[2].CatalogAfter.IsClosedWorld);
+        Assert.False(report.HasCompleteSymbolCatalog);
     }
 
     [Fact]
