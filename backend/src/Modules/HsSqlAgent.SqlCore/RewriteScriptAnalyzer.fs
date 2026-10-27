@@ -100,6 +100,8 @@ module internal RewriteScriptAnalyzer =
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
             | CreateIndex(name, indexName, cols) -> CreateIndex(resolve name, indexName, cols)
             | DropIndex(indexName, target) -> DropIndex(indexName, Option.map resolve target)
+            | DropQualifiedIndex(indexIdentity, conditional) ->
+                DropQualifiedIndex(indexIdentity, conditional)
             | AddConstraint(name, constraintInfo) ->
                 AddConstraint(resolve name, resolveConstraint constraintInfo)
             | DropConstraint(name, constraintName) -> DropConstraint(resolve name, constraintName)
@@ -122,6 +124,7 @@ module internal RewriteScriptAnalyzer =
                 | CreateIndex(name, _, _)
                 | DropConstraint(name, _) -> [name]
                 | DropIndex(_, target) -> Option.toList target
+                | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
             | _ -> []
         let rawUnqualified =
             rawNames |> List.exists (fun n -> n.Parts.Count = 1)
@@ -142,6 +145,7 @@ module internal RewriteScriptAnalyzer =
             | AddConstraint(name, _)
             | DropConstraint(name, _) -> Some name
             | DropIndex(_, target) -> target
+            | DropQualifiedIndex _ -> None
         // Indexes in PostgreSQL belong to their parent table's schema.
         // A caller-supplied one-part Catalog identity has no proven
         // physical schema: it can therefore collide with *any* explicit
@@ -309,6 +313,56 @@ module internal RewriteScriptAnalyzer =
                                 (seq { yield! table.Indexes; yield idx })
                         exact tableName SqlCatalogOperation.CreateIndex updated
             | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
+        | Recognized (DropQualifiedIndex(indexIdentity, conditional)) ->
+            // Index identity and table identity are separate structured
+            // names. A qualified index cannot inherit current search_path
+            // or be projected into a synthetic table name.
+            let schema = indexIdentity.Parts[0]
+            let indexName = indexIdentity.Parts[1]
+            let inSchema (table: SqlCatalogTable) =
+                table.QualifiedName.Parts.Count = 2
+                && String.Equals(table.QualifiedName.Parts[0], schema, StringComparison.Ordinal)
+            let sameIndex (index: SqlCatalogIndex) =
+                String.Equals(index.Name, indexName, StringComparison.Ordinal)
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Qualified index requires a complete PostgreSQL Catalog."
+            elif state.Tables |> Seq.exists (fun t ->
+                t.QualifiedName.Parts.Count = 1
+                && ((t.Indexes |> Seq.exists sameIndex) || t.Constraints.Count > 0)) then
+                dependencyUnproven "An unqualified Catalog owner may carry the specified schema's index or implicit index."
+            else
+                let matchingOwners =
+                    state.Tables
+                    |> Seq.filter (fun t ->
+                        inSchema t && (t.Indexes |> Seq.exists sameIndex))
+                    |> Seq.toList
+                let namedTable =
+                    state.Tables
+                    |> Seq.exists (fun t ->
+                        inSchema t
+                        && String.Equals(relationName t.QualifiedName, indexName,
+                                         StringComparison.Ordinal))
+                let possibleImplicitIndex =
+                    state.Tables
+                    |> Seq.exists (fun t -> inSchema t && t.Constraints.Count > 0)
+                match matchingOwners with
+                | [owner] when not namedTable && not possibleImplicitIndex ->
+                    let remaining = owner.Indexes |> Seq.filter (sameIndex >> not)
+                    RewriteCatalogModel.withIndexes state owner.QualifiedName remaining
+                    |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
+                | [] when namedTable ->
+                    // IF EXISTS does not license a wrong-kind relation.
+                    fail ("DROP INDEX " + indexIdentity.DisplayName +
+                          " names a known table relation, not an index.")
+                | [] when conditional && not possibleImplicitIndex ->
+                    noChange
+                | [] ->
+                    dependencyUnproven "Qualified index owner or absence cannot be proven against implicit indexes."
+                | _ ->
+                    dependencyUnproven "Qualified index identity has conflicting or unproven Catalog owners."
         | Recognized (DropIndex(indexName, target)) ->
             if not state.IsClosedWorld ||
                (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
