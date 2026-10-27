@@ -274,8 +274,12 @@ module internal RewriteTransactionAnalyzer =
     /// engine might be nontransactional. A modeled virtual-Catalog ROLLBACK
     /// cannot prove the server data effects of either.
     let invalidateIfUnproven sourceDialect context (kind: SqlScriptStatementKind)
-                (status: SqlStatementAnalysisStatus) =
+                (status: SqlStatementAnalysisStatus) outsideBoundaryUnproven =
         match context with
+        // Outside means no tracked BEGIN in this static script, not a live
+        // connection-state attestation. Opaque SQL can change the effective
+        // transaction boundary even when no explicit BEGIN was analyzed.
+        | Outside when outsideBoundaryUnproven -> Unknown
         | Active(_, _, marks, _) when status = SqlStatementAnalysisStatus.Invalid
                                   || status = SqlStatementAnalysisStatus.Unsupported
                                   || kind = SqlScriptStatementKind.Utility

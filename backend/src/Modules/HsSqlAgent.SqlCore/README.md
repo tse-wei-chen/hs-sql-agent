@@ -143,6 +143,24 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Outside transaction provenance after opaque Script effects
+
+The static `Outside` state means no earlier modeled transaction command
+has opened a transaction in the analyzed Script. It **does not** attest to
+the real connection's transaction state. Unsupported Session/DDL/DCL or
+unclassified SQL, procedure invocations and executing Utility commands can
+invalidate the prior boundary even without a preceding modeled `BEGIN`.
+The coordinator moves `Outside -> Unknown`, invalidates stale Catalog and
+Session proofs, and reports `UnprovenRuntimeEffects` / `Unproven` in
+`TransactionProvenance`, not `OutsideTransaction`.
+
+Supported SELECT, modeled Session settings/DDL and planning-only
+`EXPLAIN` retain their static `Outside` state. Invalid syntax is not
+treated as an executed transaction mutation. The existing transaction
+analyzer handles unsupported explicit transaction commands without adding
+duplicate context diagnostics. Once `Unknown`, later transaction text is
+not proof of restoration. None of these results are execution evidence.
+
 ## Fail-closed Session proof after opaque Script effects
 
 The static Script coordinator now clears prior Session facts after
