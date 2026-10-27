@@ -248,8 +248,15 @@ module internal RewriteSchemaAnalyzer =
                 // direct physical column names or a wildcard. No arbitrary
                 // expression, join, predicate, alias, function or view option
                 // may mint a known View relation.
+                let wildcard =
+                    // RewriteLexer represents multiplication/wildcard as
+                    // Operator "*", not Symbol '*'. Never treat another
+                    // operator as a SELECT projection wildcard.
+                    match (current ()).Kind with
+                    | Operator "*" -> index <- index + 1; true
+                    | _ -> false
                 let projection =
-                    if symbol '*' then None
+                    if wildcard then None
                     else
                         let columns = ResizeArray<string>()
                         columns.Add(namePart ())
