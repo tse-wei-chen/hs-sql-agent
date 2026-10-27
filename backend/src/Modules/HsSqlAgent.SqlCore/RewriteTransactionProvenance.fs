@@ -23,7 +23,8 @@ module internal RewriteTransactionProvenance =
         let active = before = SqlTransactionState.Active
         let supported = status = SqlStatementAnalysisStatus.Analyzed
         let implicitCommit =
-            (sourceDialect = SqlAgentToolType.Oracle
+            ((sourceDialect = SqlAgentToolType.Oracle
+              || sourceDialect = SqlAgentToolType.MySQL)
              && syntax.Kind = SqlScriptStatementKind.Schema
              && supported)
             || (diagnostics |> Seq.exists (fun d ->
