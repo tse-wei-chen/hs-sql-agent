@@ -143,6 +143,33 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL schema-local index and relation namespace
+
+For a fully schema-qualified PostgreSQL target table, `CREATE INDEX`
+checks the standalone indexes and possible implicit constraint indexes
+of tables in the **same proven schema**. Known tables in a different
+explicit schema no longer cause false duplicate-name rejection or
+unrelated implicit-index uncertainty. The model also rejects a new
+index whose name matches a tracked table in that schema, and rejects
+`CREATE TABLE` when its proposed relation name matches a tracked
+index in the same schema. Index names are not independently qualified:
+they inherit the indexed table's schema.
+
+Unqualified Catalog identities may resolve into any schema; they are
+retained as potential collisions, never discarded by a target schema
+filter. An unqualified `DROP INDEX` referring to a qualified index owner
+requires a proven single `search_path`, even if the Virtual Catalog
+happens to contain only one matching qualified index.
+
+PostgreSQL `CREATE TABLE IF NOT EXISTS` is a static no-op when an index
+relation with the same name already exists in the proven target schema;
+it must not publish an invented table. The same name without
+`IF NOT EXISTS` is rejected. Fully schema-qualified `DROP INDEX` SQL
+is not yet supported by the current narrow DDL grammar and remains
+fail-closed.
+Only closed-world, fully known virtual Catalogs can mint exact index
+changes. This is static SQL analysis, not server-side schema attestation.
+
 ## Table-local index namespace proof
 
 `CREATE INDEX` compares existing standalone indexes and the possible

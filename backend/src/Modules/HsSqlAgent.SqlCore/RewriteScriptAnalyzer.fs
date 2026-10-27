@@ -142,6 +142,25 @@ module internal RewriteScriptAnalyzer =
             | AddConstraint(name, _)
             | DropConstraint(name, _) -> Some name
             | DropIndex(_, target) -> target
+        // Indexes in PostgreSQL belong to their parent table's schema.
+        // A caller-supplied one-part Catalog identity has no proven
+        // physical schema: it can therefore collide with *any* explicit
+        // schema and must never be filtered out by a qualified target.
+        let possiblySameIndexSchema (left: SqlCatalogQualifiedName)
+                                    (right: SqlCatalogQualifiedName) =
+            sourceDialect <> SqlAgentToolType.Postgres
+            || left.Parts.Count <> 2
+            || right.Parts.Count <> 2
+            || String.Equals(left.Parts[0], right.Parts[0], StringComparison.Ordinal)
+        let ambiguousIndexSchema (left: SqlCatalogQualifiedName)
+                                 (right: SqlCatalogQualifiedName) =
+            // Keep existing conservative equality among two unqualified
+            // Catalog owners; mixing an explicit and an unqualified
+            // owner cannot establish a definite physical schema match.
+            sourceDialect = SqlAgentToolType.Postgres
+            && ((left.Parts.Count = 2) <> (right.Parts.Count = 2))
+        let relationName (name: SqlCatalogQualifiedName) =
+            name.Parts[name.Parts.Count - 1]
         match parsed with
         | Recognized operation when
             unsupportedDeclaredScope && rawUnqualified ->
@@ -181,19 +200,42 @@ module internal RewriteScriptAnalyzer =
             SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
             unknown, [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown], [error]
         | Recognized (Create(name, columns, constraints, ifNotExists)) ->
-            match RewriteCatalogModel.lookup state name with
-            | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known && ifNotExists ->
+            // PostgreSQL tables and indexes share the schema-local
+            // relation namespace. A virtual Catalog that knows an index
+            // with this name cannot simultaneously prove a new table.
+            // Unknown owner schema requires an Unproven result, not a
+            // confident declaration of a conflicting physical relation.
+            let existingIndexOwner =
+                if sourceDialect = SqlAgentToolType.Postgres then
+                    state.Tables
+                    |> Seq.tryFind (fun owner ->
+                        possiblySameIndexSchema name owner.QualifiedName
+                        && (owner.Indexes |> Seq.exists (fun idx ->
+                            String.Equals(idx.Name, relationName name, StringComparison.Ordinal))))
+                else None
+            match existingIndexOwner with
+            | Some owner when ambiguousIndexSchema name owner.QualifiedName ->
+                dependencyUnproven "Index owner schema is not proven; CREATE TABLE may collide with an existing index relation."
+            | Some _ when ifNotExists ->
+                // PostgreSQL IF NOT EXISTS skips creation if *any*
+                // relation (not only a table) has the requested name.
                 noChange
-            | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
-                fail ("CREATE TABLE " + name.DisplayName + " already exists in the known catalog.")
-            | _ when RewriteCatalogModel.isKnownAbsent state name ->
-                match RewriteSchemaDependencies.validateCreate sourceDialect sourceProfile state name columns constraints with
-                | RewriteSchemaDependencies.Proven ->
-                    RewriteCatalogModel.knownTableWithConstraints state name columns constraints
-                    |> exact name SqlCatalogOperation.CreateTable
-                | RewriteSchemaDependencies.Invalid message -> fail message
-                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
-            | _ -> partial name SqlCatalogOperation.CreateTable
+            | Some _ ->
+                fail ("CREATE TABLE " + name.DisplayName + " conflicts with a known index relation in its schema.")
+            | None ->
+                match RewriteCatalogModel.lookup state name with
+                | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known && ifNotExists ->
+                    noChange
+                | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
+                    fail ("CREATE TABLE " + name.DisplayName + " already exists in the known catalog.")
+                | _ when RewriteCatalogModel.isKnownAbsent state name ->
+                    match RewriteSchemaDependencies.validateCreate sourceDialect sourceProfile state name columns constraints with
+                    | RewriteSchemaDependencies.Proven ->
+                        RewriteCatalogModel.knownTableWithConstraints state name columns constraints
+                        |> exact name SqlCatalogOperation.CreateTable
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+                | _ -> partial name SqlCatalogOperation.CreateTable
         | Recognized (Drop(name, ifExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
@@ -212,39 +254,60 @@ module internal RewriteScriptAnalyzer =
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known
                               && state.IsClosedWorld ->
-                // MySQL and SQL Server index identifiers are scoped to the
-                // owning table, whereas the other four providers retain
-                // the existing conservative Catalog-wide namespace proof.
-                // The same namespace bounds unknown constraint-backed
-                // index names: a PK on another table cannot collide with
-                // a new index on the target in these two dialects.
+                // MySQL / SQL Server: owning table namespace.
+                // PostgreSQL: parent table's schema-local relation namespace.
+                // Unqualified PostgreSQL identities remain potentially in
+                // every schema, so only two explicit *different* schemas may
+                // be excluded from collision and implicit-index checks.
+                // SQLite / Oracle / Firebird keep the original conservative
+                // Catalog-wide namespace.
                 let tableLocalNamespace =
                     sourceDialect = SqlAgentToolType.MySQL
                     || sourceDialect = SqlAgentToolType.MsSqlServer
                 let indexNamespace : seq<SqlCatalogTable> =
                     if tableLocalNamespace then Seq.singleton table
+                    elif sourceDialect = SqlAgentToolType.Postgres then
+                        state.Tables
+                        |> Seq.filter (fun owner ->
+                            possiblySameIndexSchema tableName owner.QualifiedName)
                     else state.Tables :> seq<SqlCatalogTable>
-                let indexExists =
+                let indexOwner =
                     indexNamespace
-                    |> Seq.collect (fun t -> t.Indexes)
-                    |> Seq.exists (fun idx ->
-                        String.Equals(idx.Name, indexName, StringComparison.Ordinal))
-                if indexExists then
+                    |> Seq.tryFind (fun owner ->
+                        owner.Indexes |> Seq.exists (fun idx ->
+                            String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
+                // PostgreSQL indexes also conflict with ordinary tables
+                // named the same within the target schema.
+                let relationOwner =
+                    if sourceDialect = SqlAgentToolType.Postgres then
+                        indexNamespace |> Seq.tryFind (fun owner ->
+                            String.Equals(relationName owner.QualifiedName, indexName,
+                                          StringComparison.Ordinal))
+                    else None
+                match indexOwner, relationOwner with
+                | Some owner, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
+                    dependencyUnproven "Index owner has no proven schema; index name collision cannot be resolved."
+                | Some _, _ ->
                     fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
-                elif indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) then
+                | None, Some owner when ambiguousIndexSchema tableName owner.QualifiedName ->
+                    dependencyUnproven "Relation has no proven schema; index name may collide with an existing table."
+                | None, Some _ ->
+                    fail ("CREATE INDEX '" + indexName + "' conflicts with a known table relation in its schema.")
+                | None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
                     dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
-                elif members.IsEmpty || List.distinct members <> members then
-                    fail "CREATE INDEX has duplicate or empty column members."
-                elif members |> List.exists (fun memberName ->
-                    not (table.Columns |> Seq.exists (fun col ->
-                        String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
-                    fail "CREATE INDEX references an absent column."
-                else
-                    let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
-                    let updated =
-                        RewriteCatalogModel.withIndexes state tableName
-                            (seq { yield! table.Indexes; yield idx })
-                    exact tableName SqlCatalogOperation.CreateIndex updated
+                | None, None ->
+                    if members.IsEmpty || List.distinct members <> members then
+                        fail "CREATE INDEX has duplicate or empty column members."
+                    elif members |> List.exists (fun memberName ->
+                        not (table.Columns |> Seq.exists (fun col ->
+                            String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
+                        fail "CREATE INDEX references an absent column."
+                    else
+                        let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
+                        let updated =
+                            RewriteCatalogModel.withIndexes state tableName
+                                (seq { yield! table.Indexes; yield idx })
+                        exact tableName SqlCatalogOperation.CreateIndex updated
             | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
         | Recognized (DropIndex(indexName, target)) ->
             if not state.IsClosedWorld ||
@@ -269,6 +332,16 @@ module internal RewriteScriptAnalyzer =
                             String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
                     |> Seq.toList
                 match owners with
+                | [owner] when sourceDialect = SqlAgentToolType.Postgres
+                               && Option.isNone target
+                               && owner.QualifiedName.IsQualified
+                               && (match scope with
+                                   | RewriteCatalogSchemaResolution.Unproven -> true
+                                   | _ -> false) ->
+                    // A sole known qualified Catalog owner does not
+                    // prove that unqualified DROP INDEX resolves there:
+                    // actual search_path could point elsewhere.
+                    dependencyUnproven "Unqualified DROP INDEX requires a proven search_path for its qualified Catalog owner."
                 | [owner] ->
                     let remaining =
                         owner.Indexes |> Seq.filter (fun idx ->

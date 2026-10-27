@@ -74,22 +74,33 @@ public sealed class SqlCoreStructuredQualifiedNameTests
     [Fact]
     public void QualifiedIndexesCannotBeConfusedWithQuotedDottedOwners()
     {
-        var result = Analyze(
+        var original = Analyze(
             "CREATE TABLE app.users(id INTEGER, note TEXT);" +
             "CREATE TABLE \"app.users\"(id INTEGER, note TEXT);" +
             "CREATE INDEX idx_real ON app.users(id);" +
             "ALTER TABLE \"app.users\" DROP COLUMN id;" +
-            "ALTER TABLE app.users DROP COLUMN id;" +
-            "DROP INDEX idx_real;" +
             "ALTER TABLE app.users DROP COLUMN id;");
 
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[4].Status);
-        Assert.Empty(result.Statements[4].Changes);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[5].Status);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[6].Status);
-        Assert.All(result.FinalCatalog.Tables, t => Assert.Single(t.Columns));
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, original.Statements[2].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, original.Statements[3].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, original.Statements[4].Status);
+        Assert.Empty(original.Statements[4].Changes);
+        // DROP INDEX without a known schema cannot assert the physical owner
+        // of app.idx_real. Use the modeled SET search_path for that operation,
+        // then analyze the final independent qualified ALTER from its snapshot.
+        var removed = SqlCoreFacade.AnalyzeScript(
+            "SET search_path TO app; DROP INDEX idx_real;",
+            SqlAgentToolType.Postgres, original.FinalCatalog);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, removed.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, removed.Statements[1].Status);
+        Assert.Equal(SqlCatalogOperation.DropIndex,
+            Assert.Single(removed.Statements[1].Changes).Operation);
+        var final = SqlCoreFacade.AnalyzeScript(
+            "ALTER TABLE app.users DROP COLUMN id;",
+            SqlAgentToolType.Postgres, removed.FinalCatalog);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed,
+            Assert.Single(final.Statements).Status);
+        Assert.All(final.FinalCatalog.Tables, t => Assert.Single(t.Columns));
     }
 
     [Fact]
