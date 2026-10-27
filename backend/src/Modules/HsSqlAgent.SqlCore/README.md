@@ -143,6 +143,29 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL atomic multi-view DROP and graph-aware RESTRICT
+
+A dedicated closed F# `DropViewBatch` models
+`DROP VIEW [IF EXISTS] view_a, view_b [RESTRICT|CASCADE]`.
+Every requested physical View identity and relation kind is validated
+against the **original** closed-world Virtual Catalog before a single
+`DropView` change is published. Duplicate identities, missing
+non-conditional names, wrong-kind Table/Index relations, ambiguous
+schema resolution and potentially implicit key-backed indexes remain
+invalid or unproven rather than partially succeeding.
+
+Under `RESTRICT`, a dependent View is permitted when that dependent
+View is **also** in the batch; any dependent outside the batch blocks
+the whole statement. Under `CASCADE`, a cycle-safe transitive closure
+is computed once and de-duplicated against explicitly named Views.
+The final immutable Catalog and one exact Typed Effect per removed View
+are published only after the complete proof succeeds. `IF EXISTS`
+skips only demonstrated absence. Normal single-view behavior and the
+other five provider grammars are unchanged.
+
+Static Catalog atomicity does not prove SQL execution, ownership
+authorization, database rollback or unmodeled physical dependencies.
+
 ## PostgreSQL typed View dependencies and transitive CASCADE
 
 A distinct immutable `SqlCatalogView` holds structured View relation

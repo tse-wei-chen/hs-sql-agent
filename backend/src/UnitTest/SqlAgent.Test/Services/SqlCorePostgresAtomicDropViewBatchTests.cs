@@ -223,10 +223,10 @@ public sealed class SqlCorePostgresAtomicDropViewBatchTests
     public void QuotedDottedNameDoesNotEqualSchemaQualifiedName()
     {
         var r = Analyze(
+            "SET search_path TO app;" +
             "CREATE TABLE app.parent(id INTEGER);" +
             "CREATE VIEW app.v AS SELECT id FROM app.parent;" +
             "CREATE VIEW \"app.v\" AS SELECT id FROM app.parent;" +
-            "SET search_path TO app;" +
             "DROP VIEW app.v, \"app.v\" RESTRICT;");
         Assert.Empty(r.Diagnostics);
         var drop = r.Statements[4];
