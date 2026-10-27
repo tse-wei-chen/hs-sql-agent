@@ -289,18 +289,18 @@ module internal RewriteScriptAnalyzer =
                 | None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
                     dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
                 | None, None ->
-                elif members.IsEmpty || List.distinct members <> members then
-                    fail "CREATE INDEX has duplicate or empty column members."
-                elif members |> List.exists (fun memberName ->
-                    not (table.Columns |> Seq.exists (fun col ->
-                        String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
-                    fail "CREATE INDEX references an absent column."
-                else
-                    let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
-                    let updated =
-                        RewriteCatalogModel.withIndexes state tableName
-                            (seq { yield! table.Indexes; yield idx })
-                    exact tableName SqlCatalogOperation.CreateIndex updated
+                    if members.IsEmpty || List.distinct members <> members then
+                        fail "CREATE INDEX has duplicate or empty column members."
+                    elif members |> List.exists (fun memberName ->
+                        not (table.Columns |> Seq.exists (fun col ->
+                            String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
+                        fail "CREATE INDEX references an absent column."
+                    else
+                        let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
+                        let updated =
+                            RewriteCatalogModel.withIndexes state tableName
+                                (seq { yield! table.Indexes; yield idx })
+                        exact tableName SqlCatalogOperation.CreateIndex updated
             | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
         | Recognized (DropIndex(indexName, target)) ->
             if not state.IsClosedWorld ||
