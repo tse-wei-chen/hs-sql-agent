@@ -50,8 +50,9 @@ module internal RewriteStatementEffects =
             if unknown && change.Certainty <> SqlCatalogKnowledge.Known then
                 SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects
             else SqlEffectKind.ChangeSchema
-        effect kind (catalogOperation change.Operation)
-            objectName identity certainty change.Span noDependencies
+        SqlStatementEffect(kind, catalogOperation change.Operation,
+            objectName, identity, certainty, change.Span,
+            noDependencies, change.ConstraintName)
 
     let private physicalReferences document =
         let facts = RewriteInspection.inspectDocument document

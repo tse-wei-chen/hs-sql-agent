@@ -16,12 +16,17 @@ module internal RewriteSchemaAnalyzer =
         | Add of SqlCatalogColumn
         | Remove of column: string * ifExists: bool
 
+    type DropDependencyMode =
+        | Restrict
+        | Cascade
+
     type DdlOperation =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         | Drop of table: SqlCatalogQualifiedName * ifExists: bool
         /// One PostgreSQL statement; validate the whole target set before mutation.
-        | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool
+        | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
+                            dependencyMode: DropDependencyMode
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
@@ -396,15 +401,22 @@ module internal RewriteSchemaAnalyzer =
                         raise OutsideSubset
                     RewriteResourceBudget.checkpoint ()
                     names.Add(qualifiedName ())
-                // RESTRICT is PostgreSQL's default dependency policy; this
-                // does not authorize CASCADE or bypass modeled foreign keys.
-                if sourceDialect = SqlAgentToolType.Postgres then
-                    accept "RESTRICT" |> ignore
+                // All PostgreSQL CASCADE spellings use the graph-aware
+                // batch analyzer, including the single-table form.
+                let mode =
+                    if sourceDialect = SqlAgentToolType.Postgres then
+                        if accept "CASCADE" then Cascade
+                        else
+                            accept "RESTRICT" |> ignore
+                            Restrict
+                    else Restrict
                 endOfStatement ()
-                match sourceDialect, names.Count with
-                | SqlAgentToolType.Postgres, n when n > 1 ->
-                    Recognized(DropTableBatch(names |> Seq.toList, conditional))
-                | _, 1 -> Recognized(Drop(table, conditional))
+                match sourceDialect, names.Count, mode with
+                | SqlAgentToolType.Postgres, _, Cascade ->
+                    Recognized(DropTableBatch(names |> Seq.toList, conditional, Cascade))
+                | SqlAgentToolType.Postgres, n, Restrict when n > 1 ->
+                    Recognized(DropTableBatch(names |> Seq.toList, conditional, Restrict))
+                | _, 1, Restrict -> Recognized(Drop(table, conditional))
                 | _ -> raise OutsideSubset
         let parseAlter () =
             expect "ALTER"
