@@ -181,12 +181,13 @@ public sealed class SqlCorePostgresAtomicDropTableBatchTests
     public void QuotedDotIsNotStructuralSchemaSeparator()
     {
         var r = Analyze(
+            "SET search_path TO app;" +
             "CREATE TABLE \"app.child\"(id INTEGER);" +
             "CREATE TABLE app.child(id INTEGER);" +
             "DROP TABLE app.child, \"app.child\" RESTRICT;");
         Assert.Empty(r.Diagnostics);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[2].Status);
-        Assert.Equal(2, r.Statements[2].Changes.Count);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
+        Assert.Equal(2, r.Statements[3].Changes.Count);
         Assert.Empty(r.FinalCatalog.Tables);
         Assert.True(r.FinalCatalog.IsClosedWorld);
     }

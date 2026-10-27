@@ -143,6 +143,30 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL multi-table DROP and intra-batch foreign keys
+
+PostgreSQL `DROP TABLE table_a, table_b [RESTRICT]` (and
+`IF EXISTS`) now uses a dedicated closed `DropTableBatch` F# union
+case. The coordinator validates every table identity and all inbound
+foreign keys against the same original immutable Virtual Catalog
+before publishing any changes. Foreign keys from tables **inside**
+the proven drop set are removed with those tables, regardless of
+their ordering; a known referencing table **outside** the set blocks
+the entire batch under PostgreSQL's default RESTRICT behavior.
+
+The whole batch must have a closed-world known Catalog and unambiguous
+qualified identities (unqualified members require a proven single
+ordinary `search_path`). Duplicates, missing non-conditional names,
+index-versus-table name collisions and unresolved catalog ownership
+cannot become partial Known changes. Only after the full proof
+succeeds does one local immutable fold remove the proven tables,
+emitting one exact `DropTable` Catalog change and typed effect per
+removed table. `IF EXISTS` skips only demonstrably absent members.
+Other five dialects' existing grammar is unchanged; `CASCADE`
+remains unsupported because external dependent-object rewrites are
+not modeled. This is static Catalog-change publication atomicity,
+not runtime SQL transaction, DDL execution or authorization.
+
 ## PostgreSQL atomic multi-index DROP Catalog validation
 
 PostgreSQL `DROP INDEX name, name [RESTRICT]` and its `IF EXISTS`
