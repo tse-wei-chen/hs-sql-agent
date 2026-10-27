@@ -143,6 +143,22 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Open-world Catalog and rejected DDL semantic certainty
+
+A rejected DDL statement (`Status = Invalid`) never mutates the Virtual
+Catalog or emits a proven delta. Duplicate column names and other modeled
+local semantic errors can be rejected independently of whether the database
+is fully known, but this does **not** prove the surrounding Catalog is
+complete. Accordingly, the DDL rejection branch emits
+`Statement.Certainty = Unknown` whenever the input Catalog is open-world
+or partially known; only a complete `SqlCatalogKnowledge.Known` input
+retains `Known` on an invalid statement. Six-provider tests contrast
+`SqlCatalogState.Unknown()` with caller-supplied `KnownEmpty()`,
+including partial and unsupported DDL followed by additional statements.
+
+DDL parsing, semantic invalidation, source diagnostics, dependency checks
+and fully proven closed-world Catalog deltas are unchanged.
+
 ## Unknown transaction cannot mint Known Catalog or typed-effect certainty
 
 The Script coordinator uses its final, fail-closed `runtimeCertainty`

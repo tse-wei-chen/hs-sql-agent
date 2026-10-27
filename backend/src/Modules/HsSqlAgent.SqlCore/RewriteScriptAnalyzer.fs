@@ -48,7 +48,15 @@ module internal RewriteScriptAnalyzer =
                 RewriteSchemaAnalyzer.parseForWith sourceDialect sourceProfile tokens)
         let fail message =
             let error = diagnostic syntax "SQL_SCHEMA_SEMANTIC_INVALID" SqlDiagnosticCategory.Semantic message
-            SqlStatementAnalysisStatus.Invalid, SqlCatalogKnowledge.Known,
+            // A locally invalid DDL is rejected regardless of prior schema
+            // state, but rejection must never promote an incomplete Catalog
+            // into a known, closed-world proof. Keep a known rejection only
+            // when the caller's current Catalog itself is completely known.
+            let certainty =
+                if state.Knowledge = SqlCatalogKnowledge.Known then
+                    SqlCatalogKnowledge.Known
+                else SqlCatalogKnowledge.Unknown
+            SqlStatementAnalysisStatus.Invalid, certainty,
             state, ([]: SqlCatalogChange list), [error]
         let partial (name: SqlCatalogQualifiedName) operation =
             let next = RewriteCatalogModel.unknownTable state name
