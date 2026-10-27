@@ -43,7 +43,14 @@ module internal RewriteStatementEffects =
             if unknown || change.TableName = "*" then null else change.TableName
         let identity =
             if certainty <> SqlCatalogKnowledge.Known then null else change.TableIdentity
-        effect SqlEffectKind.ChangeSchema (catalogOperation change.Operation)
+        // An indeterminate Catalog delta already represents the opaque
+        // schema effect. Preserve its single structured entry while marking
+        // that other potential effects remain unknown.
+        let kind =
+            if unknown && change.Certainty <> SqlCatalogKnowledge.Known then
+                SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects
+            else SqlEffectKind.ChangeSchema
+        effect kind (catalogOperation change.Operation)
             objectName identity certainty change.Span noDependencies
 
     let private physicalReferences document =
@@ -236,4 +243,18 @@ module internal RewriteStatementEffects =
                     [effect (legacyEffects ||| SqlEffectKind.UnknownEffects)
                         SqlStatementEffectOperation.Unknown null null
                         SqlCatalogKnowledge.Unknown syntax.Span noDependencies]
+        // Known Catalog operations and explicit TCL controls must not hide
+        // possible unmodeled side effects when their enclosing statement is
+        // Unsupported. Keep the original typed entries and append one opaque
+        // unknown entry only if the projection did not already carry one.
+        // Invalid SQL deliberately has no detailed objects/effects: the
+        // Unknown Effects flag and Unknown coverage carry its uncertainty.
+        let all =
+            if status = SqlStatementAnalysisStatus.Unsupported
+               && not (all |> List.exists (fun item ->
+                   (item.Kind &&& SqlEffectKind.UnknownEffects) <> SqlEffectKind.None)) then
+                all @ [effect SqlEffectKind.UnknownEffects
+                    SqlStatementEffectOperation.Unknown
+                    null null SqlCatalogKnowledge.Unknown syntax.Span noDependencies]
+            else all
         readOnly all, coverage

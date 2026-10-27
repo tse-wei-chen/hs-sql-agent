@@ -533,6 +533,15 @@ module internal RewriteScriptAnalyzer =
                                     else [syntax.Diagnostic]
                                 parserDiagnostics @ catalogErrors
                             status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, [], diagnostics
+                    // Unrecognized or invalid SQL has no exhaustive effect proof.
+                    // Apply the same conservative flag to every family before
+                    // transaction provenance and structured details are derived.
+                    // This never promotes a statement to Analyzed or authorizes SQL.
+                    let effects =
+                        if status = SqlStatementAnalysisStatus.Unsupported
+                           || status = SqlStatementAnalysisStatus.Invalid then
+                            effects ||| SqlEffectKind.UnknownEffects
+                        else effects
                     let nextTransaction =
                         RewriteTransactionAnalyzer.invalidateIfUnproven sourceDialect transaction syntax.Kind status
                     let stateBecameUnknown =

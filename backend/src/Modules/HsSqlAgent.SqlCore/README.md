@@ -143,6 +143,24 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Unknown effect propagation for unproven Script statements
+
+`SqlStatementAnalysis.Status = Unsupported` or `Invalid` now always
+includes `SqlEffectKind.UnknownEffects` in its public `Effects`, and in
+`TransactionProvenance.PotentialEffects`. This includes unsupported
+Session, DDL, DCL and TCL, unclassified SQL and rejected syntax. A statement
+family label alone cannot prove the absence of other side effects.
+
+For Unsupported statements, `DetailedEffects` preserves any already-known
+typed *potential* effects and includes an opaque `UnknownEffects` entry
+if necessary, without duplicating existing unknown entries. Invalid syntax
+continues to expose no detailed object effects; its status, `Effects` and
+`EffectCoverage = Unknown` preserve uncertainty instead.
+
+Fully modeled statements and deliberately partial query/security analysis
+retain their existing flags. No catalog state, session state, transaction
+boundary, authorization, runtime DML, or server execution proof is minted.
+
 ## Structured effect parity for implicit DDL commits
 
 For supported Oracle/MySQL DDL, `Statements[*].DetailedEffects` and the
