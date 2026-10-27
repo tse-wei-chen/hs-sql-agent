@@ -76,9 +76,22 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
 
         var database = "sqlcore_p6_" + Guid.NewGuid().ToString("N");
         await using var admin = new SqlConnection(root);
-        await admin.OpenAsync(TestContext.Current.CancellationToken);
-        await Run(admin, "CREATE DATABASE [" + database + "]",
-            TestContext.Current.CancellationToken);
+        // The dedicated SQL Server Actions service may take a few seconds to
+        // accept logins; fail in CI if unavailable rather than skipping tests.
+        var token = TestContext.Current.CancellationToken;
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                await admin.OpenAsync(token);
+                break;
+            }
+            catch (SqlException) when (attempt < 24 && !token.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3), token);
+            }
+        }
+        await Run(admin, "CREATE DATABASE [" + database + "]", token);
         try
         {
             var isolated = new SqlConnectionStringBuilder(root)
