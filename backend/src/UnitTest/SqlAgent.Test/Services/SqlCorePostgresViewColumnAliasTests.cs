@@ -37,7 +37,7 @@ public sealed class SqlCorePostgresViewColumnAliasTests
         Assert.Equal(table.Columns[0].TypeName, view.Columns[0].TypeName);
         Assert.Equal(table.Columns[0].Nullable, view.Columns[0].Nullable);
         Assert.Equal(table.Columns[1].TypeName, view.Columns[1].TypeName);
-        Assert.Equal("app.orders", Assert.Single(view.Dependencies).DisplayName);
+        Assert.Equal("app.orders", Assert.Single(view.Dependencies)!.DisplayName);
         Assert.True(result.FinalCatalog.IsClosedWorld);
     }
 
@@ -103,8 +103,8 @@ public sealed class SqlCorePostgresViewColumnAliasTests
         var result = Analyze(Base + "CREATE VIEW app.v_orders AS " + query + ";");
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
         Assert.Empty(result.FinalCatalog.Views);
-        Assert.Empty(result.Statements[1].Changes.Where(
-            change => change.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(result.Statements[1].Changes,
+            change => change.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Theory]

@@ -281,6 +281,14 @@ module internal RewriteSchemaAnalyzer =
                             RewriteResourceBudget.checkpoint ()
                             columns.Add(column ())
                         Some(columns |> Seq.toList)
+                // A syntactically present SELECT expression or implicit
+                // alias is outside this narrow proven View subset. It is
+                // unsupported, not a malformed SQL statement. A missing
+                // FROM at end-of-statement remains an Invalid syntax error.
+                if word () <> "FROM" then
+                    match (current ()).Kind with
+                    | End -> raise (Malformed "CREATE VIEW SELECT requires FROM.")
+                    | _ -> raise OutsideSubset
                 expect "FROM"
                 let source = qualifiedName ()
                 endOfStatement ()
