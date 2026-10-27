@@ -229,10 +229,10 @@ module internal RewriteStatementEffects =
                                        SqlCatalogKnowledge.Known else SqlCatalogKnowledge.Unknown)
                         syntax.Span noDependencies]
                 | SqlScriptStatementKind.Transaction ->
-                    let certainty =
-                        if status = SqlStatementAnalysisStatus.Analyzed then
-                            SqlCatalogKnowledge.Known
-                        else SqlCatalogKnowledge.Unknown
+                    // Typed transaction effects inherit the Script-level
+                    // certainty fence. Recognized Oracle COMMIT / ROLLBACK
+                    // after an opaque statement is not proven to have
+                    // modified the live connection or restored its Catalog.
                     let control =
                         effect SqlEffectKind.ChangeTransaction
                             SqlStatementEffectOperation.TransactionControl

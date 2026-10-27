@@ -615,8 +615,15 @@ module internal RewriteScriptAnalyzer =
                                 "An unproven statement or failure has invalidated the transaction-state and Catalog proofs."]
                         else []
                     let allDiagnostics = diagnostics @ additionalErrors
+                    // Semantic grammar/analysis may be recognized even while
+                    // the input transaction state is unproven (notably Oracle
+                    // COMMIT/ROLLBACK). Recognition does not re-establish
+                    // certainty for the enclosing statement or its effects.
                     let runtimeCertainty =
-                        if transactionProofLost then SqlCatalogKnowledge.Unknown else certainty
+                        if transactionProofLost
+                           || transactionBefore = SqlTransactionState.Unknown then
+                            SqlCatalogKnowledge.Unknown
+                        else certainty
                     let provenance =
                         RewriteResourceBudget.withStage "TransactionProvenance" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteTransactionProvenance.describe
@@ -628,7 +635,7 @@ module internal RewriteScriptAnalyzer =
                     let detailedEffects, effectCoverage =
                         RewriteResourceBudget.withStage "ScriptEffects" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteStatementEffects.describe sourceDialect sourceProfile syntax
-                                status certainty effects (readOnly changes)
+                                status runtimeCertainty effects (readOnly changes)
                                 (readOnly securityIntents) (readOnly securityDependencies)
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
                                 (readOnly proceduralDefinitions) sessionOperation provenance)

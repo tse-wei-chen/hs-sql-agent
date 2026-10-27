@@ -143,6 +143,21 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Unknown transaction cannot mint Known Catalog or typed-effect certainty
+
+The Script coordinator uses its final, fail-closed `runtimeCertainty`
+when creating `Statement.Certainty` and structured `DetailedEffects`.
+A statement starting with `TransactionBefore = Unknown` cannot regain
+`SqlCatalogKnowledge.Known` solely because its syntax is recognized,
+including Oracle `COMMIT / ROLLBACK` and semantically invalid DDL.
+Transaction-control detailed effects now inherit the coordinator's
+certainty, rather than inferring Known from `Status = Analyzed`.
+
+The operation, syntax status, original diagnostics and typed control
+provenance remain unchanged. This fence does not assert execution,
+change the six-dialect SQL grammar, or invalidate independently proven
+static rollback snapshots in a modeled transaction.
+
 ## Unknown transaction cannot re-establish proven Session state
 
 A later recognized Session statement does not repair a lost transaction
