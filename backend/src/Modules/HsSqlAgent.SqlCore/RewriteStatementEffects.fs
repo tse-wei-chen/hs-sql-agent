@@ -43,7 +43,13 @@ module internal RewriteStatementEffects =
             if unknown || change.TableName = "*" then null else change.TableName
         let identity =
             if certainty <> SqlCatalogKnowledge.Known then null else change.TableIdentity
-        effect SqlEffectKind.ChangeSchema (catalogOperation change.Operation)
+        // An indeterminate Catalog delta already represents the opaque
+        // schema effect. Preserve its single structured entry while marking
+        // that other potential effects remain unknown.
+        let kind =
+            if unknown then SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects
+            else SqlEffectKind.ChangeSchema
+        effect kind (catalogOperation change.Operation)
             objectName identity certainty change.Span noDependencies
 
     let private physicalReferences document =
