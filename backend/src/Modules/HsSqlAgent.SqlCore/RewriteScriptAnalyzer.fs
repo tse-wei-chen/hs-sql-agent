@@ -108,6 +108,10 @@ module internal RewriteScriptAnalyzer =
         let resolvedOperation = function
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
+            | CreateView(view, source, projection) ->
+                CreateView(resolve view, resolve source, projection)
+            | DropView(view, conditional, mode) ->
+                DropView(resolve view, conditional, mode)
             | Drop(name, conditional) -> Drop(resolve name, conditional)
             | DropTableBatch(names, conditional, mode) ->
                 DropTableBatch(List.map resolve names, conditional, mode)
@@ -132,6 +136,8 @@ module internal RewriteScriptAnalyzer =
                     name :: (constraints |> List.choose (fun c ->
                         if isNull c.ReferencedIdentity then None
                         else Some c.ReferencedIdentity))
+                | CreateView(view, source, _) -> [view; source]
+                | DropView(view, _, _) -> [view]
                 | AddConstraint(name, constraintInfo) ->
                     [name] @
                     (if isNull constraintInfo.ReferencedIdentity then []
@@ -158,6 +164,8 @@ module internal RewriteScriptAnalyzer =
 
         let referencedTableName = function
             | Create(name, _, _, _)
+            | CreateView(name, _, _)
+            | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
             | CreateIndex(name, _, _)
@@ -268,6 +276,84 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
+        | Recognized (CreateView(view, source, projection)) ->
+            // Narrow, single-source SELECT grammar is fully consumed by the
+            // DDL parser. The source must already have a proven structural
+            // column set; this never authorizes view SQL execution.
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || state.Knowledge <> SqlCatalogKnowledge.Known then
+                dependencyUnproven "CREATE VIEW requires a complete PostgreSQL Catalog."
+            elif view.Parts.Count <> 2 || source.Parts.Count <> 2 then
+                dependencyUnproven "CREATE VIEW identities require proven physical schemas."
+            elif RewriteCatalogModel.lookup state view |> Option.isSome
+                 || RewriteCatalogModel.lookupView state view |> Option.isSome then
+                fail ("CREATE VIEW " + view.DisplayName + " conflicts with an existing relation.")
+            elif state.Tables |> Seq.exists (fun table ->
+                possiblySameIndexSchema view table.QualifiedName
+                && (table.Indexes |> Seq.exists (fun idx ->
+                    String.Equals(idx.Name, relationName view, StringComparison.Ordinal)))) then
+                fail ("CREATE VIEW " + view.DisplayName + " conflicts with a known index.")
+            else
+                let sourceColumns =
+                    match RewriteCatalogModel.lookup state source with
+                    | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
+                        Some(table.Columns |> Seq.toList)
+                    | _ ->
+                        match RewriteCatalogModel.lookupView state source with
+                        | Some existing -> Some(existing.Columns |> Seq.toList)
+                        | None -> None
+                match sourceColumns with
+                | None ->
+                    fail ("CREATE VIEW references missing or unproven relation '" +
+                          source.DisplayName + "'.")
+                | Some columns ->
+                    let selected =
+                        match projection with
+                        | None -> Some columns
+                        | Some names when List.distinct names <> names -> None
+                        | Some names ->
+                            let matching =
+                                names |> List.choose (fun name ->
+                                    columns |> List.tryFind (fun col ->
+                                        String.Equals(col.Name, name, StringComparison.Ordinal)))
+                            if matching.Length <> names.Length then None else Some matching
+                    match selected with
+                    | None -> fail "CREATE VIEW projection has duplicate or unknown columns."
+                    | Some shape when shape.IsEmpty ->
+                        fail "CREATE VIEW projection cannot have zero columns."
+                    | Some shape ->
+                        RewriteCatalogModel.withView state view shape [source]
+                        |> exact view SqlCatalogOperation.CreateView
+        | Recognized (DropView(view, conditional, mode)) ->
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || state.Knowledge <> SqlCatalogKnowledge.Known then
+                dependencyUnproven "DROP VIEW requires a complete PostgreSQL Catalog."
+            elif view.Parts.Count <> 2 then
+                dependencyUnproven "DROP VIEW requires a proven physical schema."
+            elif RewriteCatalogModel.lookup state view |> Option.isSome then
+                fail ("DROP VIEW " + view.DisplayName + " refers to a known table.")
+            else
+                match RewriteCatalogModel.lookupView state view with
+                | None when conditional -> noChange
+                | None -> fail ("DROP VIEW " + view.DisplayName + " does not exist.")
+                | Some _ ->
+                    let dependencies =
+                        RewriteCatalogModel.dependentViews state (Set.singleton view.Key)
+                    if mode = Restrict && not dependencies.IsEmpty then
+                        fail ("DROP VIEW " + view.DisplayName +
+                              " has dependent views under RESTRICT.")
+                    else
+                        let dropped =
+                            view :: (dependencies |> List.map (fun d -> d.QualifiedName))
+                        let next =
+                            dropped |> List.fold (fun catalog name ->
+                                RewriteCatalogModel.dropView catalog name) state
+                        let changes =
+                            dropped |> List.map (fun name ->
+                                changedExact syntax name SqlCatalogOperation.DropView
+                                    SqlCatalogKnowledge.Known)
+                        SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                        next, changes, ([]: SqlDiagnostic list)
         | Recognized (DropTableBatch(names, conditional, mode)) ->
             // Batch names are fully parsed and scope-resolved before this
             // branch. Examine every target against the same ORIGINAL
