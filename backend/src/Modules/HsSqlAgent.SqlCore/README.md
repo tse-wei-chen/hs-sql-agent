@@ -143,6 +143,21 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Unknown transaction cannot re-establish proven Session state
+
+A later recognized Session statement does not repair a lost transaction
+premise. If `TransactionBefore = Unknown`, supported `SET search_path`,
+SQL Server `SET NOCOUNT`, and MySQL/SQL Server `USE` retain their
+typed `SessionOperation` in `DetailedEffects`, but the Script analysis
+reports `PartiallyAnalyzed`, `Certainty = Unknown` and partial effect
+coverage. The next Session state remains unproven (no known search path,
+database context or NOCOUNT), and the Catalog stays tainted.
+
+The ordinary `Outside` and modeled `Active` Session paths are unchanged.
+This does not claim the command failed or executed, and does not invent
+another diagnostic; it prevents syntax acceptance from manufacturing
+runtime Session or rollback evidence.
+
 ## Outside transaction provenance after opaque Script effects
 
 The static `Outside` state means no earlier modeled transaction command
