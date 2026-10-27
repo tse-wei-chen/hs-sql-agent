@@ -212,14 +212,26 @@ module internal RewriteScriptAnalyzer =
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known
                               && state.IsClosedWorld ->
-                let globalIndex =
-                    state.Tables
+                // MySQL and SQL Server index identifiers are scoped to the
+                // owning table, whereas the other four providers retain
+                // the existing conservative Catalog-wide namespace proof.
+                // The same namespace bounds unknown constraint-backed
+                // index names: a PK on another table cannot collide with
+                // a new index on the target in these two dialects.
+                let tableLocalNamespace =
+                    sourceDialect = SqlAgentToolType.MySQL
+                    || sourceDialect = SqlAgentToolType.MsSqlServer
+                let indexNamespace : seq<SqlCatalogTable> =
+                    if tableLocalNamespace then Seq.singleton table
+                    else state.Tables :> seq<SqlCatalogTable>
+                let indexExists =
+                    indexNamespace
                     |> Seq.collect (fun t -> t.Indexes)
                     |> Seq.exists (fun idx ->
                         String.Equals(idx.Name, indexName, StringComparison.Ordinal))
-                if globalIndex then
+                if indexExists then
                     fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
-                elif state.Tables |> Seq.exists (fun t -> t.Constraints.Count > 0) then
+                elif indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) then
                     dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
                 elif members.IsEmpty || List.distinct members <> members then
                     fail "CREATE INDEX has duplicate or empty column members."
