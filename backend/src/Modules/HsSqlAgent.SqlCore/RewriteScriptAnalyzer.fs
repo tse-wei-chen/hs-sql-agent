@@ -565,7 +565,7 @@ module internal RewriteScriptAnalyzer =
                                 status certainty effects (readOnly changes)
                                 (readOnly securityIntents) (readOnly securityDependencies)
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
-                                (readOnly proceduralDefinitions) sessionOperation)
+                                (readOnly proceduralDefinitions) sessionOperation provenance)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,

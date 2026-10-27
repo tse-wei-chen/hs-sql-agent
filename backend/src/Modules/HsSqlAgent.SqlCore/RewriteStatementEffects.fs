@@ -112,7 +112,8 @@ module internal RewriteStatementEffects =
                  (utilityIntents: IReadOnlyList<SqlUtilityIntent>)
                  (proceduralIntents: IReadOnlyList<SqlProceduralIntent>)
                  (proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>)
-                 (sessionOperation: SqlStatementEffectOperation) =
+                 (sessionOperation: SqlStatementEffectOperation)
+                 (provenance: SqlTransactionEffectProvenance) =
         let coverage =
             match syntax.Kind, status, certainty with
             | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
@@ -135,6 +136,16 @@ module internal RewriteStatementEffects =
             | _ -> SqlEffectCoverage.Unknown
 
         let catalog = changes |> Seq.map catalogEffect |> Seq.toList
+        // DDL can implicitly COMMIT even when no virtual Catalog delta exists
+        // (for example, MySQL CREATE TABLE IF NOT EXISTS on a known table).
+        // Reuse the single provider-aware provenance classification rather than
+        // guessing from SQL text or claiming that a server COMMIT occurred.
+        let schema =
+            if provenance.Origin = SqlTransactionEffectOrigin.PossibleImplicitCommit then
+                catalog @ [effect SqlEffectKind.ChangeTransaction
+                    SqlStatementEffectOperation.PossibleImplicitCommit
+                    null null SqlCatalogKnowledge.Unknown syntax.Span noDependencies]
+            else catalog
         let all =
             if syntax.Status = SqlScriptParseStatus.Invalid
                || status = SqlStatementAnalysisStatus.Invalid then
@@ -145,7 +156,7 @@ module internal RewriteStatementEffects =
                 | SqlScriptStatementKind.Query
                 | SqlScriptStatementKind.Mutation when syntax.Status = SqlScriptParseStatus.Parsed ->
                     astEffects sourceDialect sourceProfile syntax
-                | SqlScriptStatementKind.Schema -> catalog
+                | SqlScriptStatementKind.Schema -> schema
                 | SqlScriptStatementKind.Security when securityIntents.Count > 0 ->
                     securityIntents
                     |> Seq.map (fun intent ->
