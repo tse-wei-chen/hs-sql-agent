@@ -143,6 +143,23 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Table-local index namespace proof
+
+`CREATE INDEX` compares existing standalone indexes and the possible
+names of constraint-backed implicit indexes within the **owning table**
+for MySQL and SQL Server. Therefore two different known tables can have
+the same standalone index name; `DROP INDEX name ON table` still removes
+only the specified owner's index. A PRIMARY KEY on an unrelated table
+cannot block an index on the target table.
+
+PostgreSQL, SQLite, Oracle, and Firebird keep their conservative
+Catalog-wide collision and implicit-index-name checks; narrower
+schema-specific namespaces have not been established by this change.
+Every dialect still requires a closed-world known Catalog and proven
+target-table shape before an index creates an exact `Known` Catalog
+delta. Open-world states, unmodeled implicit indexes on the target and
+unsupported index grammar remain fail-closed.
+
 ## Open-world Catalog and rejected DDL semantic certainty
 
 A rejected DDL statement (`Status = Invalid`) never mutates the Virtual
