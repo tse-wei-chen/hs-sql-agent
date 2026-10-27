@@ -163,6 +163,9 @@ separate from base-table changes and do not assert that a View is an
 ordinary table or that SELECT through Views has been type-verified.
 Table/View names share a PostgreSQL relation namespace; wrong-kind
 DROP TABLE and CREATE TABLE collisions cannot silently succeed.
+Named PK/UNIQUE backing indexes also block colliding View relation names.
+If an implicit key index's physical name is not established, a missing
+`DROP VIEW IF EXISTS` target is unproven rather than a false no-op.
 Dropping a source column used in a proven View remains blocked.
 
 This is static Virtual Catalog modeling, not an attestation of

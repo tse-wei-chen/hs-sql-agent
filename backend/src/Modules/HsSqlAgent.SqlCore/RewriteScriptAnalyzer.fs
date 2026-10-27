@@ -296,9 +296,18 @@ module internal RewriteScriptAnalyzer =
                 fail ("CREATE VIEW " + view.DisplayName + " conflicts with an existing relation.")
             elif state.Tables |> Seq.exists (fun table ->
                 possiblySameIndexSchema view table.QualifiedName
-                && (table.Indexes |> Seq.exists (fun idx ->
-                    String.Equals(idx.Name, relationName view, StringComparison.Ordinal)))) then
-                fail ("CREATE VIEW " + view.DisplayName + " conflicts with a known index.")
+                && ((table.Indexes |> Seq.exists (fun idx ->
+                    String.Equals(idx.Name, relationName view, StringComparison.Ordinal)))
+                    || (table.Constraints |> Seq.exists (fun constraintInfo ->
+                        (constraintInfo.Kind = SqlCatalogConstraintKind.PrimaryKey
+                         || constraintInfo.Kind = SqlCatalogConstraintKind.Unique)
+                        && not (String.IsNullOrWhiteSpace constraintInfo.Name)
+                        && String.Equals(constraintInfo.Name, relationName view,
+                                         StringComparison.Ordinal))))) then
+                // Named PK/UNIQUE constraints own backing index relations in
+                // PostgreSQL. Never mint a View with the same proven name.
+                fail ("CREATE VIEW " + view.DisplayName +
+                      " conflicts with a known index or key-backed index.")
             else
                 let sourceColumns =
                     match RewriteCatalogModel.lookup state source with
@@ -340,9 +349,25 @@ module internal RewriteScriptAnalyzer =
                 fail ("DROP VIEW " + view.DisplayName + " refers to a known table.")
             elif state.Tables |> Seq.exists (fun owner ->
                 possiblySameIndexSchema view owner.QualifiedName
-                && (owner.Indexes |> Seq.exists (fun index ->
-                    String.Equals(index.Name, relationName view, StringComparison.Ordinal)))) then
+                && ((owner.Indexes |> Seq.exists (fun index ->
+                    String.Equals(index.Name, relationName view, StringComparison.Ordinal)))
+                    || (owner.Constraints |> Seq.exists (fun constraintInfo ->
+                        (constraintInfo.Kind = SqlCatalogConstraintKind.PrimaryKey
+                         || constraintInfo.Kind = SqlCatalogConstraintKind.Unique)
+                        && not (String.IsNullOrWhiteSpace constraintInfo.Name)
+                        && String.Equals(constraintInfo.Name, relationName view,
+                                         StringComparison.Ordinal))))) then
                 fail ("DROP VIEW " + view.DisplayName + " refers to a known index.")
+            elif (RewriteCatalogModel.lookupView state view |> Option.isNone)
+                 && (state.Tables |> Seq.exists (fun owner ->
+                     possiblySameIndexSchema view owner.QualifiedName
+                     && (owner.Constraints |> Seq.exists (fun c ->
+                         c.Kind = SqlCatalogConstraintKind.PrimaryKey
+                         || c.Kind = SqlCatalogConstraintKind.Unique)))) then
+                // Unknown names of implicit key-backed indexes may identify
+                // a relation of the wrong kind. IF EXISTS cannot prove the
+                // physical absence of this View name in that situation.
+                dependencyUnproven "Implicit constraint-backed index names prevent a proven DROP VIEW absence."
             else
                 match RewriteCatalogModel.lookupView state view with
                 | None when conditional -> noChange

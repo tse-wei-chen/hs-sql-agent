@@ -218,6 +218,34 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
     }
 
     [Fact]
+    public void NamedKeyBackedIndexCollidingWithViewNameIsNotCreated()
+    {
+        var r = Analyze(
+            "CREATE TABLE app.parent(id INTEGER NOT NULL, " +
+            "CONSTRAINT ix_view PRIMARY KEY(id));" +
+            "CREATE VIEW app.ix_view AS SELECT * FROM app.parent;");
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, r.Statements[1].Status);
+        Assert.Empty(r.Statements[1].Changes);
+        Assert.Empty(r.FinalCatalog.Views);
+        Assert.True(r.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void ConditionalDropViewWithPotentialImplicitIndexMustRemainUnknown()
+    {
+        var r = Analyze(
+            "CREATE TABLE app.parent(id INTEGER NOT NULL PRIMARY KEY);" +
+            "DROP VIEW IF EXISTS app.unknown_name;");
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, r.Statements[1].Status);
+        Assert.Equal(SqlCatalogKnowledge.Unknown, r.Statements[1].Certainty);
+        Assert.Empty(r.Statements[1].Changes.Where(x =>
+            x.Certainty == SqlCatalogKnowledge.Known));
+        Assert.False(r.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
     public void UnsupportedViewSelectDoesNotMintKnownDependencies()
     {
         var r = Analyze(
