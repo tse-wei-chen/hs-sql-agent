@@ -548,7 +548,20 @@ module internal RewriteScriptAnalyzer =
                         transactionBefore = SqlTransactionState.Active
                         && RewriteTransactionAnalyzer.status nextTransaction = SqlTransactionState.Unknown
                     transaction <- nextTransaction
-                    if stateBecameUnknown then
+                    // An Unsupported statement can change Session state even
+                    // if its surface family is not Session (e.g. DISCARD ALL
+                    // or ALTER SESSION). A procedure invocation and an
+                    // executing utility also have opaque Session side effects.
+                    // Pure EXPLAIN planning and parsed-but-invalid syntax do
+                    // not invent a session transition.
+                    let sessionUnproven =
+                        status = SqlStatementAnalysisStatus.Unsupported
+                        || (syntax.Kind = SqlScriptStatementKind.Procedural
+                            && not proceduralIntents.IsEmpty)
+                        || (syntax.Kind = SqlScriptStatementKind.Utility
+                            && (utilityIntents |> List.exists (fun intent ->
+                                intent.ExecutionMode <> SqlUtilityExecutionMode.PlanningOnly)))
+                    if stateBecameUnknown || sessionUnproven then
                         session <- RewriteSessionAnalyzer.unknown
                     let after =
                         if stateBecameUnknown then RewriteCatalogModel.taintAll next else next
