@@ -486,7 +486,14 @@ module internal RewriteScriptAnalyzer =
                         elif syntax.Kind = SqlScriptStatementKind.Schema then
                             let status, certainty, next, changes, diagnostics =
                                 analyzeDdl sourceDialect sourceProfile (RewriteSessionAnalyzer.scope session) current syntax
-                            status, SqlEffectKind.ChangeSchema, certainty, SqlCatalogBindingStatus.NotApplicable,
+                            let effects =
+                                if sourceDialect = SqlAgentToolType.Oracle then
+                                    // Oracle DDL implicitly commits before/after
+                                    // the statement. Even a known DDL shape must
+                                    // carry this transaction-risk evidence.
+                                    SqlEffectKind.ChangeSchema ||| SqlEffectKind.ChangeTransaction
+                                else SqlEffectKind.ChangeSchema
+                            status, effects, certainty, SqlCatalogBindingStatus.NotApplicable,
                             SqlCatalogBindingStatus.NotApplicable, SqlCatalogBindingStatus.NotApplicable,
                             next, changes, diagnostics
                         else

@@ -23,8 +23,11 @@ module internal RewriteTransactionProvenance =
         let active = before = SqlTransactionState.Active
         let supported = status = SqlStatementAnalysisStatus.Analyzed
         let implicitCommit =
-            diagnostics |> Seq.exists (fun d ->
-                d.Code = "SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN")
+            (sourceDialect = SqlAgentToolType.Oracle
+             && syntax.Kind = SqlScriptStatementKind.Schema
+             && supported)
+            || (diagnostics |> Seq.exists (fun d ->
+                d.Code = "SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN"))
         let staticScope =
             if sourceDialect = SqlAgentToolType.Postgres then
                 SqlTransactionRollbackScope.StaticCatalogAndSession
@@ -47,7 +50,10 @@ module internal RewriteTransactionProvenance =
                         | SqlTransactionControlOperation.Rollback
                         | SqlTransactionControlOperation.RollbackToSavepoint
                         | SqlTransactionControlOperation.Savepoint ->
-                            staticScope
+                            if sourceDialect = SqlAgentToolType.Oracle
+                               && before = SqlTransactionState.Outside then
+                                SqlTransactionRollbackScope.NotApplicable
+                            else staticScope
                         | _ -> SqlTransactionRollbackScope.NotApplicable
                     SqlTransactionEffectOrigin.TransactionControl, rollbackScope
             elif not active then

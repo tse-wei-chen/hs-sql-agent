@@ -71,9 +71,17 @@ module internal RewriteTransactionAnalyzer =
                         || sourceDialect = SqlAgentToolType.MySQL
                         || sourceDialect = SqlAgentToolType.Sqlite
                         || sourceDialect = SqlAgentToolType.MsSqlServer
+                        || sourceDialect = SqlAgentToolType.Oracle
         if not supported then Unsupported
         else
             match sourceDialect, words with
+            // Oracle starts DML transactions implicitly. BEGIN TRANSACTION is
+            // not Oracle SQL and there is no tracked transactional DDL
+            // snapshot: successful DDL commits before and after execution.
+            // COMMIT / ROLLBACK therefore cannot undo proven Catalog DDL.
+            | SqlAgentToolType.Oracle, (["COMMIT"] | ["COMMIT"; "WORK"]) -> Commit
+            | SqlAgentToolType.Oracle, (["ROLLBACK"] | ["ROLLBACK"; "WORK"]) -> Rollback
+            | SqlAgentToolType.Oracle, _ -> Unsupported
             | SqlAgentToolType.MsSqlServer, (["BEGIN"; "TRAN"] | ["BEGIN"; "TRANSACTION"]) -> Begin
             | SqlAgentToolType.MsSqlServer, (["COMMIT"; "TRAN"] | ["COMMIT"; "TRANSACTION"] | ["COMMIT"]) -> Commit
             | SqlAgentToolType.MsSqlServer, (["ROLLBACK"; "TRAN"] | ["ROLLBACK"; "TRANSACTION"] | ["ROLLBACK"]) -> Rollback
@@ -177,6 +185,11 @@ module internal RewriteTransactionAnalyzer =
         let maxSavepoints = 32
         let result =
             match operation, context with
+            | (Commit | Rollback), Outside when sourceDialect = SqlAgentToolType.Oracle ->
+                // No Oracle explicit BEGIN or DDL rollback snapshot is modeled.
+                // The current virtual Catalog describes committed DDL, not
+                // rows changed by triggers or DML; leave schema facts intact.
+                success current currentSession Outside []
             | Begin, Outside ->
                 success current currentSession (Active(current, currentSession, [], None)) []
             | Commit, Active _ ->
