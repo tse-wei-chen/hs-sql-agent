@@ -157,6 +157,34 @@ public sealed class SqlCorePostgresQualifiedDropIndexTests
     }
 
     [Fact]
+    public void QualifiedIndexNameCannotBeReinterpretedAsATableEvenWithIfExists()
+    {
+        var r = Analyze(
+            "CREATE TABLE app.ix_users(id INTEGER);" +
+            "DROP INDEX IF EXISTS app.ix_users;");
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, r.Statements[1].Status);
+        Assert.Contains(r.Statements[1].Diagnostics,
+            x => x.Code == "SQL_SCHEMA_SEMANTIC_INVALID");
+        Assert.Empty(r.Statements[1].Changes);
+        Assert.True(r.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void UnqualifiedOwnerWithSameIndexNameCannotBeAssignedToQualifiedSchema()
+    {
+        var r = Analyze(
+            "CREATE TABLE users(id INTEGER);" +
+            "CREATE INDEX ix_users ON users(id);" +
+            "DROP INDEX app.ix_users;");
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, r.Statements[2].Status);
+        Assert.Contains(r.Statements[2].Diagnostics,
+            x => x.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
+        Assert.DoesNotContain(r.Statements[2].Changes,
+            x => x.Certainty == SqlCatalogKnowledge.Known);
+        Assert.False(r.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
     public void OpenWorldCannotProveQualifiedDropOrConditionalAbsence()
     {
         foreach (var sql in new[]

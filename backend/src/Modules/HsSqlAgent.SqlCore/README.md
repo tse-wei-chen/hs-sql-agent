@@ -143,6 +143,27 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL schema-qualified DROP INDEX
+
+The closed DDL parser now recognizes `DROP INDEX schema.index` and
+`DROP INDEX IF EXISTS schema.index` for PostgreSQL, including separately
+quoted schema and index identifier parts. It resolves the **index relation
+identity** against the known owner tables in exactly that schema, without
+consulting or changing the connection's current `search_path`. Two
+different schemas may contain the same standalone index name; a qualified
+drop removes the requested owner's index only. The existing unqualified
+`DROP INDEX index` rules and other five SQL provider grammars remain
+unchanged.
+
+An exact index removal requires a closed-world Catalog, unambiguous
+qualified owner and no unproven implicit constraint-index collision.
+`IF EXISTS` is a no-op only when absence is proven and the requested
+name does not identify a tracked table or potentially implicit index.
+Unknown/open-world Catalogs, unqualified owners with ambiguous schemas,
+unknown backing index names, `CONCURRENTLY`, `CASCADE`, multi-index
+drops and other unsupported modifiers remain fail-closed. This is
+static Virtual Catalog analysis, not proof of execution or ownership.
+
 ## PostgreSQL schema-local index and relation namespace
 
 For a fully schema-qualified PostgreSQL target table, `CREATE INDEX`

@@ -23,6 +23,8 @@ module internal RewriteSchemaAnalyzer =
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list
         | DropIndex of name: string * table: SqlCatalogQualifiedName option
+        /// Exact PostgreSQL index relation identity, never the owning table.
+        | DropQualifiedIndex of identity: SqlCatalogQualifiedName * ifExists: bool
         | AddConstraint of table: SqlCatalogQualifiedName * constraintInfo: SqlCatalogConstraint
         | DropConstraint of table: SqlCatalogQualifiedName * name: string
 
@@ -339,7 +341,15 @@ module internal RewriteSchemaAnalyzer =
         let parseDrop () =
             expect "DROP"
             if accept "INDEX" then
-                let indexName = namePart ()
+                // Keep the legacy single-name and provider ON-table forms.
+                // Only PostgreSQL may supply an explicit index schema or
+                // the qualified IF EXISTS form in this proven DDL subset.
+                let conditional =
+                    if sourceDialect = SqlAgentToolType.Postgres && accept "IF" then
+                        expect "EXISTS"
+                        true
+                    else false
+                let indexIdentity = qualifiedName ()
                 let target =
                     if accept "ON" then
                         match sourceDialect with
@@ -352,7 +362,12 @@ module internal RewriteSchemaAnalyzer =
                             raise OutsideSubset
                         | _ -> None
                 endOfStatement ()
-                Recognized(DropIndex(indexName, target))
+                match sourceDialect, indexIdentity.Parts.Count, conditional with
+                | SqlAgentToolType.Postgres, 2, _ ->
+                    Recognized(DropQualifiedIndex(indexIdentity, conditional))
+                | _, 1, false ->
+                    Recognized(DropIndex(indexIdentity.Parts[0], target))
+                | _ -> raise OutsideSubset
             else
                 if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifExists ()
