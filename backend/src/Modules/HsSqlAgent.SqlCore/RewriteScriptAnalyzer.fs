@@ -308,7 +308,7 @@ module internal RewriteScriptAnalyzer =
                             sameSchema name owner.QualifiedName
                             && (owner.Indexes |> Seq.exists (fun index ->
                                 String.Equals(index.Name, relationName name,
-                                              StringComparison.Ordinal)))))
+                                              StringComparison.Ordinal))))))
                 // All inbound FKs whose referencing table is also being
                 // dropped disappear in the same PostgreSQL DDL statement.
                 // A dependency originating outside this set blocks the
