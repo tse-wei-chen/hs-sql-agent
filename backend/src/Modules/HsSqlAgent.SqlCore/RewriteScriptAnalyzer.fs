@@ -338,6 +338,11 @@ module internal RewriteScriptAnalyzer =
                 dependencyUnproven "DROP VIEW requires a proven physical schema."
             elif RewriteCatalogModel.lookup state view |> Option.isSome then
                 fail ("DROP VIEW " + view.DisplayName + " refers to a known table.")
+            elif state.Tables |> Seq.exists (fun owner ->
+                possiblySameIndexSchema view owner.QualifiedName
+                && (owner.Indexes |> Seq.exists (fun index ->
+                    String.Equals(index.Name, relationName view, StringComparison.Ordinal)))) then
+                fail ("DROP VIEW " + view.DisplayName + " refers to a known index.")
             else
                 match RewriteCatalogModel.lookupView state view with
                 | None when conditional -> noChange
@@ -539,18 +544,29 @@ module internal RewriteScriptAnalyzer =
                             String.Equals(relationName owner.QualifiedName, indexName,
                                           StringComparison.Ordinal))
                     else None
-                match indexOwner, relationOwner with
-                | Some owner, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
+                let viewOwner =
+                    if sourceDialect = SqlAgentToolType.Postgres then
+                        state.Views |> Seq.tryFind (fun view ->
+                            possiblySameIndexSchema tableName view.QualifiedName
+                            && String.Equals(relationName view.QualifiedName, indexName,
+                                             StringComparison.Ordinal))
+                    else None
+                match indexOwner, relationOwner, viewOwner with
+                | Some owner, _, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
                     dependencyUnproven "Index owner has no proven schema; index name collision cannot be resolved."
-                | Some _, _ ->
+                | Some _, _, _ ->
                     fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
-                | None, Some owner when ambiguousIndexSchema tableName owner.QualifiedName ->
+                | None, Some owner, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
                     dependencyUnproven "Relation has no proven schema; index name may collide with an existing table."
-                | None, Some _ ->
+                | None, Some _, _ ->
                     fail ("CREATE INDEX '" + indexName + "' conflicts with a known table relation in its schema.")
-                | None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
+                | None, None, Some owner when ambiguousIndexSchema tableName owner.QualifiedName ->
+                    dependencyUnproven "View schema is unproven; index name collision is possible."
+                | None, None, Some _ ->
+                    fail ("CREATE INDEX '" + indexName + "' conflicts with a known View relation.")
+                | None, None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
                     dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
-                | None, None ->
+                | None, None, None ->
                     if members.IsEmpty || List.distinct members <> members then
                         fail "CREATE INDEX has duplicate or empty column members."
                     elif members |> List.exists (fun memberName ->
@@ -613,10 +629,16 @@ module internal RewriteScriptAnalyzer =
                             state.Tables |> Seq.exists (fun owner ->
                                 inSchema owner && owner.Constraints.Count > 0)
                         let namedTable =
-                            state.Tables |> Seq.exists (fun owner ->
+                            (state.Tables |> Seq.exists (fun owner ->
                                 inSchema owner
                                 && String.Equals(relationName owner.QualifiedName,
-                                                 indexName, StringComparison.Ordinal))
+                                                 indexName, StringComparison.Ordinal)))
+                            || (state.Views |> Seq.exists (fun view ->
+                                view.QualifiedName.Parts.Count = 2
+                                && String.Equals(view.QualifiedName.Parts[0], schema,
+                                                 StringComparison.Ordinal)
+                                && String.Equals(relationName view.QualifiedName, indexName,
+                                                 StringComparison.Ordinal)))
                         let matchingOwners =
                             state.Tables |> Seq.filter (fun owner ->
                                 inSchema owner && (owner.Indexes |> Seq.exists sameIndex))
@@ -709,11 +731,16 @@ module internal RewriteScriptAnalyzer =
                         inSchema t && (t.Indexes |> Seq.exists sameIndex))
                     |> Seq.toList
                 let namedTable =
-                    state.Tables
-                    |> Seq.exists (fun t ->
+                    (state.Tables |> Seq.exists (fun t ->
                         inSchema t
                         && String.Equals(relationName t.QualifiedName, indexName,
-                                         StringComparison.Ordinal))
+                                         StringComparison.Ordinal)))
+                    || (state.Views |> Seq.exists (fun view ->
+                        view.QualifiedName.Parts.Count = 2
+                        && String.Equals(view.QualifiedName.Parts[0], schema,
+                                         StringComparison.Ordinal)
+                        && String.Equals(relationName view.QualifiedName, indexName,
+                                         StringComparison.Ordinal)))
                 let possibleImplicitIndex =
                     state.Tables
                     |> Seq.exists (fun t -> inSchema t && t.Constraints.Count > 0)
@@ -764,10 +791,16 @@ module internal RewriteScriptAnalyzer =
                         state.Tables |> Seq.exists (fun owner ->
                             inScope owner && owner.Constraints.Count > 0)
                     let namedTable =
-                        state.Tables |> Seq.exists (fun owner ->
+                        (state.Tables |> Seq.exists (fun owner ->
                             inScope owner
                             && String.Equals(relationName owner.QualifiedName,
-                                             indexName, StringComparison.Ordinal))
+                                             indexName, StringComparison.Ordinal)))
+                        || (state.Views |> Seq.exists (fun view ->
+                            view.QualifiedName.Parts.Count = 2
+                            && String.Equals(view.QualifiedName.Parts[0], schema,
+                                             StringComparison.Ordinal)
+                            && String.Equals(relationName view.QualifiedName, indexName,
+                                             StringComparison.Ordinal)))
                     let matchingOwners =
                         state.Tables |> Seq.filter (fun owner ->
                             inScope owner && (owner.Indexes |> Seq.exists matchesIndex))

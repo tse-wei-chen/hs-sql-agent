@@ -197,6 +197,27 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
     }
 
     [Fact]
+    public void IndexCannotBorrowViewRelationNameAndIfExistsCannotDropViewAsIndex()
+    {
+        var creation = Analyze(
+            "CREATE TABLE app.parent(id INTEGER);" +
+            "CREATE VIEW app.v AS SELECT * FROM app.parent;" +
+            "CREATE INDEX v ON app.parent(id);");
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, creation.Statements[2].Status);
+        Assert.True(creation.FinalCatalog.IsClosedWorld);
+        Assert.Single(creation.FinalCatalog.Views);
+        Assert.Empty(Assert.Single(creation.FinalCatalog.Tables).Indexes);
+
+        var deletion = Analyze(
+            "CREATE TABLE app.parent(id INTEGER);" +
+            "CREATE VIEW app.v AS SELECT * FROM app.parent;" +
+            "DROP INDEX IF EXISTS app.v;");
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, deletion.Statements[2].Status);
+        Assert.Single(deletion.FinalCatalog.Views);
+        Assert.True(deletion.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
     public void UnsupportedViewSelectDoesNotMintKnownDependencies()
     {
         var r = Analyze(
