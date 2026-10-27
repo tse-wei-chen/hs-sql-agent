@@ -739,10 +739,13 @@ module internal RewriteScriptAnalyzer =
                 | Some target ->
                     match RewriteSchemaDependencies.canDropConstraint state tableName target with
                     | RewriteSchemaDependencies.Proven ->
-                        RewriteCatalogModel.withConstraints state tableName
-                            (table.Constraints |> Seq.filter (fun c ->
-                                not (String.Equals(c.Name, constraintName, StringComparison.Ordinal))))
-                        |> exact tableName SqlCatalogOperation.DropConstraint
+                        let updated =
+                            RewriteCatalogModel.withConstraints state tableName
+                                (table.Constraints |> Seq.filter (fun c ->
+                                    not (String.Equals(c.Name, constraintName, StringComparison.Ordinal))))
+                        SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                        updated, [changedConstraintExact syntax tableName constraintName],
+                        ([]: SqlDiagnostic list)
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ -> dependencyUnproven "Constraint owner is not a proven table."

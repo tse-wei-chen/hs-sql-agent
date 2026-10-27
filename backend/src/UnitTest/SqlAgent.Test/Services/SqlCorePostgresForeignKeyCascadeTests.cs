@@ -177,6 +177,21 @@ public sealed class SqlCorePostgresForeignKeyCascadeTests
     }
 
     [Fact]
+    public void ExplicitDropConstraintAlsoReturnsTheExactTypedConstraintName()
+    {
+        var r = Analyze(ParentAndChild +
+            "ALTER TABLE app.child DROP CONSTRAINT fk_parent;");
+        Assert.Empty(r.Diagnostics);
+        var ddl = r.Statements[2];
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, ddl.Status);
+        Assert.Equal(SqlCatalogOperation.DropConstraint, Assert.Single(ddl.Changes).Operation);
+        Assert.Equal("fk_parent", Assert.Single(ddl.Changes).ConstraintName);
+        Assert.Equal("fk_parent", Assert.Single(ddl.DetailedEffects).ConstraintName);
+        Assert.Empty(r.FinalCatalog.Tables.Single(t => t.Name == "app.child").Constraints);
+        Assert.True(r.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
     public void OpenWorldDoesNotProveCascadeDependenciesOrAbsence()
     {
         foreach (var sql in new[]
