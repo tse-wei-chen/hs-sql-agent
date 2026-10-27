@@ -112,6 +112,8 @@ module internal RewriteScriptAnalyzer =
                 CreateView(resolve view, resolve source, projection)
             | DropView(view, conditional, mode) ->
                 DropView(resolve view, conditional, mode)
+            | DropViewBatch(views, conditional, mode) ->
+                DropViewBatch(List.map resolve views, conditional, mode)
             | Drop(name, conditional) -> Drop(resolve name, conditional)
             | DropTableBatch(names, conditional, mode) ->
                 DropTableBatch(List.map resolve names, conditional, mode)
@@ -138,6 +140,7 @@ module internal RewriteScriptAnalyzer =
                         else Some c.ReferencedIdentity))
                 | CreateView(view, source, _) -> [view; source]
                 | DropView(view, _, _) -> [view]
+                | DropViewBatch(views, _, _) -> views
                 | AddConstraint(name, constraintInfo) ->
                     [name] @
                     (if isNull constraintInfo.ReferencedIdentity then []
@@ -174,6 +177,7 @@ module internal RewriteScriptAnalyzer =
             | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _
             | DropIndexBatch _
+            | DropViewBatch _
             | DropTableBatch _ -> None
         // Indexes in PostgreSQL belong to their parent table's schema.
         // A caller-supplied one-part Catalog identity has no proven
@@ -195,7 +199,7 @@ module internal RewriteScriptAnalyzer =
         let relationName (name: SqlCatalogQualifiedName) =
             name.Parts[name.Parts.Count - 1]
         match parsed with
-        | Recognized (DropTableBatch _) when
+        | Recognized (DropTableBatch _ | DropViewBatch _) when
             rawUnqualified &&
             not (match scope with
                  | RewriteCatalogSchemaResolution.SingleSchema _ ->
@@ -339,6 +343,98 @@ module internal RewriteScriptAnalyzer =
                     | Some shape ->
                         RewriteCatalogModel.withView state view shape [source]
                         |> exact view SqlCatalogOperation.CreateView
+        | Recognized (DropViewBatch(views, conditional, mode)) ->
+            // PostgreSQL multi-view DROP validates the complete set using
+            // the ORIGINAL immutable Catalog. Treat a batch-internal view
+            // dependency as satisfied under RESTRICT, but not an external one.
+            let duplicate =
+                (views |> List.distinctBy (fun name -> name.Key) |> List.length)
+                <> List.length views
+            let complete =
+                sourceDialect = SqlAgentToolType.Postgres
+                && state.Knowledge = SqlCatalogKnowledge.Known
+            let missing =
+                views |> List.filter (fun name ->
+                    (RewriteCatalogModel.lookupView state name).IsNone)
+            let wrongTable =
+                views |> List.tryFind (fun name ->
+                    RewriteCatalogModel.lookup state name |> Option.isSome)
+            let knownIndex =
+                missing |> List.tryFind (fun name ->
+                    state.Tables |> Seq.exists (fun owner ->
+                        possiblySameIndexSchema name owner.QualifiedName
+                        && owner.QualifiedName.Parts.Count = 2
+                        && (owner.Indexes |> Seq.exists (fun idx ->
+                            String.Equals(idx.Name, relationName name,
+                                          StringComparison.Ordinal))
+                            || (owner.Constraints |> Seq.exists (fun key ->
+                                (key.Kind = SqlCatalogConstraintKind.PrimaryKey
+                                 || key.Kind = SqlCatalogConstraintKind.Unique)
+                                && not (String.IsNullOrWhiteSpace key.Name)
+                                && String.Equals(key.Name, relationName name,
+                                                 StringComparison.Ordinal))))))
+            let potentialImplicit =
+                missing |> List.exists (fun name ->
+                    state.Tables |> Seq.exists (fun owner ->
+                        possiblySameIndexSchema name owner.QualifiedName
+                        && (owner.Constraints |> Seq.exists (fun key ->
+                            key.Kind = SqlCatalogConstraintKind.PrimaryKey
+                            || key.Kind = SqlCatalogConstraintKind.Unique))))
+            let unknownOwner =
+                views |> List.exists (fun name ->
+                    name.Parts.Count <> 2
+                    || (state.Views |> Seq.exists (fun owner ->
+                        owner.QualifiedName.Parts.Count = 1
+                        && String.Equals(relationName owner.QualifiedName,
+                                         relationName name, StringComparison.Ordinal)))
+                    || (state.Tables |> Seq.exists (fun owner ->
+                        owner.QualifiedName.Parts.Count = 1
+                        && (String.Equals(relationName owner.QualifiedName,
+                                          relationName name, StringComparison.Ordinal)
+                            || (owner.Indexes |> Seq.exists (fun idx ->
+                                String.Equals(idx.Name, relationName name,
+                                              StringComparison.Ordinal)))))))
+            if not complete then
+                dependencyUnproven "Multi-view DROP requires a complete known PostgreSQL Catalog."
+            elif duplicate then
+                fail "DROP VIEW batch contains duplicate physical view identities."
+            elif unknownOwner then
+                dependencyUnproven "Multi-view DROP requires proven schema ownership for all relation names."
+            elif wrongTable.IsSome then
+                fail ("DROP VIEW batch refers to a known table, not a View: " +
+                      (Option.get wrongTable).DisplayName)
+            elif knownIndex.IsSome then
+                fail ("DROP VIEW batch refers to a known index, not a View: " +
+                      (Option.get knownIndex).DisplayName)
+            elif potentialImplicit then
+                dependencyUnproven "Unmodeled implicit key indexes prevent a proven batch View absence."
+            elif not conditional && not missing.IsEmpty then
+                fail ("DROP VIEW " + missing.Head.DisplayName + " does not exist.")
+            else
+                let requested =
+                    views |> List.choose (fun name ->
+                        RewriteCatalogModel.lookupView state name)
+                let requestedKeys =
+                    requested |> List.map (fun view -> view.QualifiedName.Key)
+                    |> Set.ofList
+                let closure =
+                    RewriteCatalogModel.dependentViews state requestedKeys
+                    |> List.filter (fun dependent ->
+                        not (Set.contains dependent.QualifiedName.Key requestedKeys))
+                if mode = Restrict && not closure.IsEmpty then
+                    fail "DROP VIEW batch has external dependent Views under RESTRICT."
+                else
+                    let removal =
+                        requested @ (if mode = Cascade then closure else [])
+                    let next =
+                        removal |> List.fold (fun catalog view ->
+                            RewriteCatalogModel.dropView catalog view.QualifiedName) state
+                    let deltas =
+                        removal |> List.map (fun view ->
+                            changedExact syntax view.QualifiedName
+                                SqlCatalogOperation.DropView SqlCatalogKnowledge.Known)
+                    SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                    next, deltas, ([]: SqlDiagnostic list)
         | Recognized (DropView(view, conditional, mode)) ->
             if sourceDialect <> SqlAgentToolType.Postgres
                || state.Knowledge <> SqlCatalogKnowledge.Known then

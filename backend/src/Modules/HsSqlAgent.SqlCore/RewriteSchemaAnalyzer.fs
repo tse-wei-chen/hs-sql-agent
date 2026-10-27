@@ -28,6 +28,9 @@ module internal RewriteSchemaAnalyzer =
                         projection: string list option
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
                       dependencyMode: DropDependencyMode
+        /// One PostgreSQL statement; validates all views and their closure together.
+        | DropViewBatch of views: SqlCatalogQualifiedName list * ifExists: bool *
+                           dependencyMode: DropDependencyMode
         | Drop of table: SqlCatalogQualifiedName * ifExists: bool
         /// One PostgreSQL statement; validate the whole target set before mutation.
         | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
@@ -428,13 +431,20 @@ module internal RewriteSchemaAnalyzer =
                 if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
                 let conditional = ifExists ()
                 let view = qualifiedName ()
+                let names = ResizeArray<SqlCatalogQualifiedName>()
+                names.Add(view)
+                while symbol ',' do
+                    RewriteResourceBudget.checkpoint ()
+                    names.Add(qualifiedName ())
                 let mode =
                     if accept "CASCADE" then Cascade
                     else
                         accept "RESTRICT" |> ignore
                         Restrict
                 endOfStatement ()
-                Recognized(DropView(view, conditional, mode))
+                if names.Count > 1 then
+                    Recognized(DropViewBatch(names |> Seq.toList, conditional, mode))
+                else Recognized(DropView(view, conditional, mode))
             else
                 if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifExists ()
