@@ -103,6 +103,8 @@ module internal RewriteScriptAnalyzer =
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
             | Drop(name, conditional) -> Drop(resolve name, conditional)
+            | DropTableBatch(names, conditional) ->
+                DropTableBatch(List.map resolve names, conditional)
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
             | CreateIndex(name, indexName, cols) -> CreateIndex(resolve name, indexName, cols)
             | DropIndex(indexName, target, conditional) ->
@@ -135,6 +137,7 @@ module internal RewriteScriptAnalyzer =
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
                 | DropIndexBatch(identities, _) -> identities
+                | DropTableBatch(names, _) -> names
             | _ -> []
         let rawUnqualified =
             rawNames |> List.exists (fun n -> n.Parts.Count = 1)
@@ -156,7 +159,8 @@ module internal RewriteScriptAnalyzer =
             | DropConstraint(name, _) -> Some name
             | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _
-            | DropIndexBatch _ -> None
+            | DropIndexBatch _
+            | DropTableBatch _ -> None
         // Indexes in PostgreSQL belong to their parent table's schema.
         // A caller-supplied one-part Catalog identity has no proven
         // physical schema: it can therefore collide with *any* explicit
@@ -177,6 +181,13 @@ module internal RewriteScriptAnalyzer =
         let relationName (name: SqlCatalogQualifiedName) =
             name.Parts[name.Parts.Count - 1]
         match parsed with
+        | Recognized (DropTableBatch _) when
+            rawUnqualified &&
+            not (match scope with
+                 | RewriteCatalogSchemaResolution.SingleSchema _ ->
+                     RewriteCatalogSchemaResolution.canProject scope state
+                 | _ -> false) ->
+            dependencyUnproven "Batch DROP TABLE requires a proven single search_path for unqualified members."
         | Recognized operation when
             unsupportedDeclaredScope && rawUnqualified ->
             dependencyUnproven "Declared PostgreSQL SEARCH_PATH is outside the supported single ordinary ASCII schema proof."
@@ -251,6 +262,88 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
+        | Recognized (DropTableBatch(names, conditional)) ->
+            // Batch names are fully parsed and scope-resolved before this
+            // branch. Examine every target against the same ORIGINAL
+            // Catalog; independent single-table DROP validations would
+            // incorrectly block an FK between two tables dropped together.
+            let distinctNames =
+                names |> List.distinctBy (fun name -> name.Key)
+            let duplicate = distinctNames.Length <> names.Length
+            let ambiguousOwner =
+                state.Tables |> Seq.exists (fun owner ->
+                    owner.QualifiedName.Parts.Count = 1
+                    && (names |> List.exists (fun name ->
+                        String.Equals(
+                            relationName name,
+                            relationName owner.QualifiedName,
+                            StringComparison.Ordinal))))
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun table ->
+                   table.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Batch DROP TABLE requires a complete known PostgreSQL Catalog."
+            elif ambiguousOwner then
+                dependencyUnproven "Unqualified Catalog identities may shadow schema-qualified DROP TABLE targets."
+            elif duplicate then
+                fail "DROP TABLE batch contains duplicate physical table identities."
+            else
+                let existing =
+                    names |> List.choose (fun name ->
+                        match RewriteCatalogModel.lookup state name with
+                        | Some _ -> Some name
+                        | None -> None)
+                let missing =
+                    names |> List.tryFind (fun name ->
+                        (RewriteCatalogModel.lookup state name).IsNone)
+                let sameSchema (left: SqlCatalogQualifiedName)
+                               (right: SqlCatalogQualifiedName) =
+                    left.Parts.Count = 2
+                    && right.Parts.Count = 2
+                    && String.Equals(left.Parts[0], right.Parts[0], StringComparison.Ordinal)
+                let wrongKind =
+                    names |> List.tryFind (fun name ->
+                        (RewriteCatalogModel.lookup state name).IsNone
+                        && (state.Tables |> Seq.exists (fun owner ->
+                            sameSchema name owner.QualifiedName
+                            && (owner.Indexes |> Seq.exists (fun index ->
+                                String.Equals(index.Name, relationName name,
+                                              StringComparison.Ordinal))))))
+                // All inbound FKs whose referencing table is also being
+                // dropped disappear in the same PostgreSQL DDL statement.
+                // A dependency originating outside this set blocks the
+                // entire RESTRICT operation; do not remove any table first.
+                let targets =
+                    names |> List.map (fun name -> name.Key) |> Set.ofList
+                let externalForeignKey =
+                    existing |> List.tryPick (fun target ->
+                        RewriteCatalogModel.inboundForeignKeys state target
+                        |> Seq.tryFind (fun (owner, _) ->
+                            not (Set.contains owner.QualifiedName.Key targets))
+                        |> Option.map (fun (owner, _) -> target, owner))
+                match wrongKind, missing, externalForeignKey with
+                | Some name, _, _ ->
+                    fail ("DROP TABLE " + name.DisplayName +
+                          " names a tracked index relation, not a table.")
+                | None, Some name, _ when not conditional ->
+                    fail ("DROP TABLE " + name.DisplayName +
+                          " does not exist in the known Catalog.")
+                | None, _, Some(target, dependent) ->
+                    fail ("DROP TABLE " + target.DisplayName +
+                          " is blocked by a FOREIGN KEY in non-batch table '" +
+                          dependent.Name + "'.")
+                | _ ->
+                    // Only after the full proof succeeds do we mutate the
+                    // local persistent state and publish exact deltas.
+                    let next =
+                        existing |> List.fold (fun catalog name ->
+                            RewriteCatalogModel.dropKnown catalog name) state
+                    let deltas =
+                        existing |> List.map (fun name ->
+                            changedExact syntax name SqlCatalogOperation.DropTable
+                                SqlCatalogKnowledge.Known)
+                    SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                    next, deltas, ([]: SqlDiagnostic list)
         | Recognized (Drop(name, ifExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->

@@ -20,6 +20,8 @@ module internal RewriteSchemaAnalyzer =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         | Drop of table: SqlCatalogQualifiedName * ifExists: bool
+        /// One PostgreSQL statement; validate the whole target set before mutation.
+        | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
@@ -387,8 +389,23 @@ module internal RewriteSchemaAnalyzer =
                 if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifExists ()
                 let table = qualifiedName ()
+                let names = ResizeArray<SqlCatalogQualifiedName>()
+                names.Add(table)
+                while symbol ',' do
+                    if sourceDialect <> SqlAgentToolType.Postgres then
+                        raise OutsideSubset
+                    RewriteResourceBudget.checkpoint ()
+                    names.Add(qualifiedName ())
+                // RESTRICT is PostgreSQL's default dependency policy; this
+                // does not authorize CASCADE or bypass modeled foreign keys.
+                if sourceDialect = SqlAgentToolType.Postgres then
+                    accept "RESTRICT" |> ignore
                 endOfStatement ()
-                Recognized(Drop(table, conditional))
+                match sourceDialect, names.Count with
+                | SqlAgentToolType.Postgres, n when n > 1 ->
+                    Recognized(DropTableBatch(names |> Seq.toList, conditional))
+                | _, 1 -> Recognized(Drop(table, conditional))
+                | _ -> raise OutsideSubset
         let parseAlter () =
             expect "ALTER"
             if not (accept "TABLE") then raise OutsideSubset
