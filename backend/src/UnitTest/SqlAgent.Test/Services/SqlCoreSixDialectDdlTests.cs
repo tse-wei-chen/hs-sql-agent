@@ -63,7 +63,13 @@ public sealed class SqlCoreSixDialectDdlTests
         {
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status);
             Assert.Equal(SqlCatalogKnowledge.Known, statement.Certainty);
-            Assert.Equal(SqlEffectKind.ChangeSchema, statement.Effects);
+            // Oracle DDL commits before/after the statement. It must also
+            // report a potential transaction boundary; five other dialects
+            // retain their previously modeled ChangeSchema-only shape.
+            var expectedEffects = provider == SqlAgentToolType.Oracle
+                ? SqlEffectKind.ChangeSchema | SqlEffectKind.ChangeTransaction
+                : SqlEffectKind.ChangeSchema;
+            Assert.Equal(expectedEffects, statement.Effects);
             Assert.Single(statement.Changes);
         });
         Assert.Equal(SqlCatalogOperation.CreateTable, result.Statements[0].Changes[0].Operation);

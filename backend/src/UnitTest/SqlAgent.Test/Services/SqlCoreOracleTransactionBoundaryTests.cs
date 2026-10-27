@@ -32,8 +32,12 @@ public sealed class SqlCoreOracleTransactionBoundaryTests
             "SELECT ID FROM orders;");
         Assert.Equal(3, report.Statements.Count);
         Assert.Empty(report.Diagnostics);
-        Assert.All(report.Statements, statement =>
-            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, report.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, report.Statements[1].Status);
+        // Oracle's object/name binding can be verified without claiming every
+        // expression type was fully semantically analyzed.
+        Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed,
+            report.Statements[2].Status);
         var tcl = report.Statements[1];
         Assert.Equal(SqlTransactionState.Outside, tcl.TransactionBefore);
         Assert.Equal(SqlTransactionState.Outside, tcl.TransactionAfter);
@@ -96,7 +100,6 @@ public sealed class SqlCoreOracleTransactionBoundaryTests
     [InlineData("COMMIT FORCE 'unknown'")]
     [InlineData("ROLLBACK TO SAVEPOINT missing")]
     [InlineData("SAVEPOINT point1")]
-    [InlineData("BEGIN TRANSACTION")]
     public void OracleUnprovenTransactionGrammarNeverMintsRollbackProof(string command)
     {
         var result = Analyze(
@@ -106,6 +109,19 @@ public sealed class SqlCoreOracleTransactionBoundaryTests
         Assert.NotEqual(SqlCatalogBindingStatus.Verified,
             result.Statements[2].CatalogBinding);
         Assert.Equal(SqlTransactionState.Unknown, result.FinalTransaction);
+    }
+
+    [Fact]
+    public void OraclePostgresStyleBeginTransactionIsNotSupported()
+    {
+        // Oracle BEGIN is a PL/SQL block keyword, never an implicit DDL
+        // transaction boundary. Parsing may consume its incomplete block,
+        // so unlike a regular SQL statement it must not assume 3 statements.
+        var report = Analyze("BEGIN TRANSACTION;");
+        Assert.NotEmpty(report.Statements);
+        Assert.DoesNotContain(report.Statements,
+            x => x.Status == SqlStatementAnalysisStatus.Analyzed);
+        Assert.False(report.FinalCatalog.IsClosedWorld);
     }
 
     [Fact]
