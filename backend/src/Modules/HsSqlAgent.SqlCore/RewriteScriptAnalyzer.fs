@@ -542,11 +542,39 @@ module internal RewriteScriptAnalyzer =
                            || status = SqlStatementAnalysisStatus.Invalid then
                             effects ||| SqlEffectKind.UnknownEffects
                         else effects
+                    // Only opaque, potentially executing families lose the
+                    // static Outside premise. Unsupported DDL/DCL/Session and
+                    // unknown SQL have unmodeled transaction behavior; routine
+                    // calls and executing utilities may run transaction control
+                    // indirectly. A syntactically invalid statement has no
+                    // modeled execution, and planning-only EXPLAIN remains safe.
+                    let outsideBoundaryUnproven =
+                        if status = SqlStatementAnalysisStatus.Invalid then false
+                        else
+                            match syntax.Kind with
+                            | SqlScriptStatementKind.Unknown
+                            | SqlScriptStatementKind.Procedural -> true
+                            | SqlScriptStatementKind.Session
+                            | SqlScriptStatementKind.Schema
+                            | SqlScriptStatementKind.Security ->
+                                status = SqlStatementAnalysisStatus.Unsupported
+                            | SqlScriptStatementKind.Utility ->
+                                status = SqlStatementAnalysisStatus.Unsupported
+                                || (utilityIntents |> List.exists (fun intent ->
+                                    intent.ExecutionMode <> SqlUtilityExecutionMode.PlanningOnly))
+                            | _ -> false
                     let nextTransaction =
-                        RewriteTransactionAnalyzer.invalidateIfUnproven sourceDialect transaction syntax.Kind status
+                        RewriteTransactionAnalyzer.invalidateIfUnproven
+                            sourceDialect transaction syntax.Kind status outsideBoundaryUnproven
+                    let transactionAfter = RewriteTransactionAnalyzer.status nextTransaction
                     let stateBecameUnknown =
                         transactionBefore = SqlTransactionState.Active
-                        && RewriteTransactionAnalyzer.status nextTransaction = SqlTransactionState.Unknown
+                        && transactionAfter = SqlTransactionState.Unknown
+                    let outsideProofLost =
+                        transactionBefore = SqlTransactionState.Outside
+                        && transactionAfter = SqlTransactionState.Unknown
+                        && syntax.Kind <> SqlScriptStatementKind.Transaction
+                    let transactionProofLost = stateBecameUnknown || outsideProofLost
                     transaction <- nextTransaction
                     // An Unsupported statement can change Session state even
                     // if its surface family is not Session (e.g. DISCARD ALL
@@ -561,18 +589,18 @@ module internal RewriteScriptAnalyzer =
                         || (syntax.Kind = SqlScriptStatementKind.Utility
                             && (utilityIntents |> List.exists (fun intent ->
                                 intent.ExecutionMode <> SqlUtilityExecutionMode.PlanningOnly)))
-                    if stateBecameUnknown || sessionUnproven then
+                    if transactionProofLost || sessionUnproven then
                         session <- RewriteSessionAnalyzer.unknown
                     let after =
-                        if stateBecameUnknown then RewriteCatalogModel.taintAll next else next
+                        if transactionProofLost then RewriteCatalogModel.taintAll next else next
                     let additionalErrors =
                         if stateBecameUnknown then
                             [diagnostic syntax "SQL_TRANSACTION_CONTEXT_UNPROVEN" SqlDiagnosticCategory.Capability
-                                "An unproven statement or failure has invalidated the active transaction and Catalog proofs."]
+                                "An unproven statement or failure has invalidated the transaction-state and Catalog proofs."]
                         else []
                     let allDiagnostics = diagnostics @ additionalErrors
                     let runtimeCertainty =
-                        if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty
+                        if transactionProofLost then SqlCatalogKnowledge.Unknown else certainty
                     let provenance =
                         RewriteResourceBudget.withStage "TransactionProvenance" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteTransactionProvenance.describe

@@ -57,6 +57,11 @@ module internal RewriteTransactionProvenance =
                             else staticScope
                         | _ -> SqlTransactionRollbackScope.NotApplicable
                     SqlTransactionEffectOrigin.TransactionControl, rollbackScope
+            elif after = SqlTransactionState.Unknown then
+                // A statement that changed Outside -> Unknown cannot be
+                // described as OutsideTransaction in the same provenance.
+                SqlTransactionEffectOrigin.UnprovenRuntimeEffects,
+                SqlTransactionRollbackScope.Unproven
             elif not active then
                 SqlTransactionEffectOrigin.OutsideTransaction,
                 SqlTransactionRollbackScope.NotApplicable

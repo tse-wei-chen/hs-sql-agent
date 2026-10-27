@@ -104,7 +104,11 @@ public sealed class SqlCoreProceduralBodyAstTests
         Assert.False(call.BodyAnalyzed);
         Assert.Equal(SqlCatalogKnowledge.Unknown, call.RuntimeCertainty);
         Assert.True(result.Statements[1].Effects.HasFlag(SqlEffectKind.WriteData));
-        Assert.Equal(SqlTransactionRollbackScope.NotApplicable,
+        // A preceding procedure definition did not prove runtime transaction
+        // state. The subsequent call cannot claim that rollback is irrelevant.
+        Assert.Equal(SqlTransactionState.Unknown,
+            result.Statements[1].TransactionBefore);
+        Assert.Equal(SqlTransactionRollbackScope.Unproven,
             result.Statements[1].TransactionProvenance.RollbackScope);
         Assert.False(result.FinalCatalog.IsClosedWorld);
     }

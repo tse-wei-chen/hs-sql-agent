@@ -190,6 +190,12 @@ module internal RewriteTransactionAnalyzer =
                 // The current virtual Catalog describes committed DDL, not
                 // rows changed by triggers or DML; leave schema facts intact.
                 success current currentSession Outside []
+            | (Commit | Rollback), Unknown when sourceDialect = SqlAgentToolType.Oracle ->
+                // COMMIT/ROLLBACK have recognized Oracle syntax even after an
+                // opaque statement. Recognition alone cannot reconstruct a
+                // previously lost transaction, Catalog or Session proof.
+                // Keep the Unknown boundary and the tainted static Catalog.
+                success current currentSession Unknown []
             | Begin, Outside ->
                 success current currentSession (Active(current, currentSession, [], None)) []
             | Commit, Active _ ->
@@ -274,8 +280,12 @@ module internal RewriteTransactionAnalyzer =
     /// engine might be nontransactional. A modeled virtual-Catalog ROLLBACK
     /// cannot prove the server data effects of either.
     let invalidateIfUnproven sourceDialect context (kind: SqlScriptStatementKind)
-                (status: SqlStatementAnalysisStatus) =
+                (status: SqlStatementAnalysisStatus) outsideBoundaryUnproven =
         match context with
+        // Outside means no tracked BEGIN in this static script, not a live
+        // connection-state attestation. Opaque SQL can change the effective
+        // transaction boundary even when no explicit BEGIN was analyzed.
+        | Outside when outsideBoundaryUnproven -> Unknown
         | Active(_, _, marks, _) when status = SqlStatementAnalysisStatus.Invalid
                                   || status = SqlStatementAnalysisStatus.Unsupported
                                   || kind = SqlScriptStatementKind.Utility
