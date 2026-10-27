@@ -47,7 +47,8 @@ module internal RewriteStatementEffects =
         // schema effect. Preserve its single structured entry while marking
         // that other potential effects remain unknown.
         let kind =
-            if unknown then SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects
+            if unknown && change.Certainty <> SqlCatalogKnowledge.Known then
+                SqlEffectKind.ChangeSchema ||| SqlEffectKind.UnknownEffects
             else SqlEffectKind.ChangeSchema
         effect kind (catalogOperation change.Operation)
             objectName identity certainty change.Span noDependencies

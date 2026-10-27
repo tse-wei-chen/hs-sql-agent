@@ -120,6 +120,22 @@ public sealed class SqlCoreUnprovenEffectPropagationTests
     }
 
     [Fact]
+    public void ProvenCatalogRollbackRetainsExistingTypedTransactionEffects()
+    {
+        var report = Analyze("BEGIN; CREATE TABLE users(id INTEGER); ROLLBACK;");
+        var rollback = report.Statements[2];
+
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, rollback.Status);
+        Assert.True(rollback.Effects.HasFlag(SqlEffectKind.ChangeTransaction));
+        Assert.True(rollback.Effects.HasFlag(SqlEffectKind.ChangeSchema));
+        Assert.False(rollback.Effects.HasFlag(SqlEffectKind.UnknownEffects));
+        Assert.DoesNotContain(rollback.DetailedEffects,
+            effect => effect.Kind.HasFlag(SqlEffectKind.UnknownEffects));
+        Assert.True(report.FinalCatalog.IsClosedWorld);
+        Assert.Empty(report.FinalCatalog.Tables);
+    }
+
+    [Fact]
     public void ImplicitCommitRetainsTypedDetailWithoutDroppingUnknownEffect()
     {
         var report = Analyze("START TRANSACTION; CREATE TABLE users(id INT);",
