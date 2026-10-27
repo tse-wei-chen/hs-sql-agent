@@ -32,6 +32,8 @@ module internal RewriteStatementEffects =
         | SqlCatalogOperation.DropIndex -> SqlStatementEffectOperation.DropIndex
         | SqlCatalogOperation.AddConstraint -> SqlStatementEffectOperation.AddConstraint
         | SqlCatalogOperation.DropConstraint -> SqlStatementEffectOperation.DropConstraint
+        | SqlCatalogOperation.CreateView -> SqlStatementEffectOperation.CreateView
+        | SqlCatalogOperation.DropView -> SqlStatementEffectOperation.DropView
         | SqlCatalogOperation.Indeterminate -> SqlStatementEffectOperation.Unknown
         | _ -> SqlStatementEffectOperation.Unknown
 

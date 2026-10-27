@@ -21,6 +21,8 @@ type SqlCatalogOperation =
     | DropIndex = 6
     | AddConstraint = 7
     | DropConstraint = 8
+    | CreateView = 9
+    | DropView = 10
 
 /// Exact, normalized SQL identifier parts. A single quoted "a.b" is one
 /// part, while schema.table has two; neither can collide in Key.
@@ -116,13 +118,30 @@ type SqlCatalogTable internal (
     /// Only standalone simple non-unique indexes, never implicit key indexes.
     member _.Indexes = indexes
 
+/// A separately tracked PostgreSQL VIEW relation with proven direct source
+/// identities and output columns. Never treat a View as a base table.
+[<Sealed>]
+type SqlCatalogView internal (
+    name: string, identity: SqlCatalogQualifiedName,
+    columns: IReadOnlyList<SqlCatalogColumn>,
+    dependencies: IReadOnlyList<SqlCatalogQualifiedName>) =
+    member _.Name = name
+    member _.QualifiedName = identity
+    member _.Columns = columns
+    member _.Dependencies = dependencies
+
 /// Immutable snapshot detached from the legacy SqlSchemaSnapshot. The latter
 /// requires known schema and must never receive an unknown/partial Catalog.
 [<Sealed>]
 type SqlCatalogState internal (
-    isClosedWorld: bool, tables: IReadOnlyList<SqlCatalogTable>) =
+    isClosedWorld: bool, tables: IReadOnlyList<SqlCatalogTable>,
+    views: IReadOnlyList<SqlCatalogView>) =
+    new(isClosedWorld: bool, tables: IReadOnlyList<SqlCatalogTable>) =
+        SqlCatalogState(isClosedWorld, tables,
+                        Array.AsReadOnly(Array.empty<SqlCatalogView>))
     member _.IsClosedWorld = isClosedWorld
     member _.Tables = tables
+    member _.Views = views
     member _.Knowledge =
         if isClosedWorld && (tables |> Seq.forall (fun t -> t.Knowledge = SqlCatalogKnowledge.Known)) then
             SqlCatalogKnowledge.Known
@@ -130,10 +149,12 @@ type SqlCatalogState internal (
         else SqlCatalogKnowledge.Partial
 
     static member KnownEmpty() =
-        SqlCatalogState(true, Array.AsReadOnly(Array.empty<SqlCatalogTable>))
+        SqlCatalogState(true, Array.AsReadOnly(Array.empty<SqlCatalogTable>),
+                        Array.AsReadOnly(Array.empty<SqlCatalogView>))
 
     static member Unknown() =
-        SqlCatalogState(false, Array.AsReadOnly(Array.empty<SqlCatalogTable>))
+        SqlCatalogState(false, Array.AsReadOnly(Array.empty<SqlCatalogTable>),
+                         Array.AsReadOnly(Array.empty<SqlCatalogView>))
 
 [<Sealed>]
 type SqlCatalogChange internal (

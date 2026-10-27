@@ -62,7 +62,16 @@ module internal RewriteCatalogSchemaResolution =
         | Unproven -> false
         | SingleSchema schema
         | SingleDatabase schema ->
-            not (state.Tables |> Seq.exists (fun table ->
+            not (state.Views |> Seq.exists (fun view ->
+                let identity = view.QualifiedName
+                identity.Parts.Count = 1
+                || (identity.Parts.Count = 2
+                    && samePart identity.Parts[0] schema
+                    && (match scope with
+                        | SingleSchema _ ->
+                            identity.Parts[1].StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+                        | _ -> false))))
+            && not (state.Tables |> Seq.exists (fun table ->
                 let name = table.QualifiedName
                 (name.Parts.Count = 1)
                 || (name.Parts.Count = 2
@@ -91,4 +100,5 @@ module internal RewriteCatalogSchemaResolution =
                     else None)
             SqlCatalogState(
                 state.IsClosedWorld,
-                Seq.append state.Tables aliases |> Seq.toArray |> Array.AsReadOnly)
+                Seq.append state.Tables aliases |> Seq.toArray |> Array.AsReadOnly,
+                state.Views)

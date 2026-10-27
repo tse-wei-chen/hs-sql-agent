@@ -15,6 +15,31 @@ module internal RewriteCatalogModel =
     let lookup (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
         state.Tables |> Seq.tryFind (fun t -> sameIdentity t.QualifiedName name)
 
+    let lookupView (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
+        state.Views |> Seq.tryFind (fun view ->
+            sameIdentity view.QualifiedName name)
+
+    let dependentViews (state: SqlCatalogState) (targetKeys: Set<string>) =
+        // A least fixed-point closure over direct structured identities.
+        // Dependency cycles cannot be created through the supported
+        // CREATE VIEW grammar, but the closure remains cycle-safe.
+        let mutable known = targetKeys
+        let mutable discovered = Set.empty<string>
+        let mutable changed = true
+        while changed do
+            RewriteResourceBudget.checkpoint ()
+            changed <- false
+            for view in state.Views do
+                RewriteResourceBudget.checkpoint ()
+                if not (Set.contains view.QualifiedName.Key discovered)
+                   && (view.Dependencies |> Seq.exists (fun dependency ->
+                       Set.contains dependency.Key known)) then
+                    discovered <- Set.add view.QualifiedName.Key discovered
+                    known <- Set.add view.QualifiedName.Key known
+                    changed <- true
+        state.Views |> Seq.filter (fun view ->
+            Set.contains view.QualifiedName.Key discovered) |> Seq.toList
+
     /// An unqualified name may resolve into an explicitly qualified table
     /// through a session search_path/default schema not modeled by Catalog.
     /// Absence is not provable just by comparing the visible last component.
@@ -38,7 +63,29 @@ module internal RewriteCatalogModel =
             | None -> retained
         Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) ->
             StringComparer.Ordinal.Compare(left.QualifiedName.Key, right.QualifiedName.Key)) tables
-        SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables))
+        SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables), state.Views)
+
+    let withView state (identity: SqlCatalogQualifiedName)
+                 (columns: seq<SqlCatalogColumn>)
+                 (dependencies: seq<SqlCatalogQualifiedName>) =
+        let view =
+            SqlCatalogView(identity.DisplayName, identity,
+                           columns |> Seq.toArray |> Array.AsReadOnly,
+                           dependencies |> Seq.toArray |> Array.AsReadOnly)
+        let next =
+            state.Views |> Seq.filter (fun existing ->
+                not (sameIdentity existing.QualifiedName identity))
+            |> Seq.append [view]
+            |> Seq.sortBy (fun item -> item.QualifiedName.Key)
+            |> Seq.toArray |> Array.AsReadOnly
+        SqlCatalogState(state.IsClosedWorld, state.Tables, next)
+
+    let dropView state (identity: SqlCatalogQualifiedName) =
+        let next =
+            state.Views |> Seq.filter (fun existing ->
+                not (sameIdentity existing.QualifiedName identity))
+            |> Seq.toArray |> Array.AsReadOnly
+        SqlCatalogState(state.IsClosedWorld, state.Tables, next)
 
     let replaceTable state name columns constraints indexes =
         let cols = columns |> Seq.toArray |> Array.AsReadOnly
@@ -126,4 +173,7 @@ module internal RewriteCatalogModel =
                                 t.QualifiedName))
             |> Seq.toArray
             |> Array.AsReadOnly
-        SqlCatalogState(false, tables)
+        // Opaque schema changes also invalidate all previous View proofs:
+        // never leave known View dependencies alongside an unknown Catalog.
+        SqlCatalogState(false, tables,
+                        Array.AsReadOnly(Array.empty<SqlCatalogView>))
