@@ -124,11 +124,15 @@ type SqlCatalogTable internal (
 type SqlCatalogView internal (
     name: string, identity: SqlCatalogQualifiedName,
     columns: IReadOnlyList<SqlCatalogColumn>,
-    dependencies: IReadOnlyList<SqlCatalogQualifiedName>) =
+    dependencies: IReadOnlyList<SqlCatalogQualifiedName>,
+    sourceColumns: IReadOnlyList<string>) =
     member _.Name = name
     member _.QualifiedName = identity
     member _.Columns = columns
     member _.Dependencies = dependencies
+    /// Physical names read from the direct source relation, not exposed
+    /// SELECT aliases. Used by virtual-Catalog DROP COLUMN dependency checks.
+    member _.SourceColumns = sourceColumns
 
 /// Immutable snapshot detached from the legacy SqlSchemaSnapshot. The latter
 /// requires known schema and must never receive an unknown/partial Catalog.

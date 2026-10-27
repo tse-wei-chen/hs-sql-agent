@@ -326,22 +326,35 @@ module internal RewriteScriptAnalyzer =
                     fail ("CREATE VIEW references missing or unproven relation '" +
                           source.DisplayName + "'.")
                 | Some columns ->
+                    // The visible View shape is *not* the physical dependency
+                    // shape. Explicit AS aliases rename outputs only; source
+                    // column dependencies must remain stable for later DDL.
                     let selected =
                         match projection with
-                        | None -> Some columns
-                        | Some names when List.distinct names <> names -> None
-                        | Some names ->
+                        | None ->
+                            Some(columns, columns |> List.map (fun col -> col.Name))
+                        | Some items when
+                            (items |> List.distinctBy (fun item -> item.OutputColumn)
+                                   |> List.length) <> items.Length -> None
+                        | Some items ->
                             let matching =
-                                names |> List.choose (fun name ->
+                                items |> List.choose (fun item ->
                                     columns |> List.tryFind (fun col ->
-                                        String.Equals(col.Name, name, StringComparison.Ordinal)))
-                            if matching.Length <> names.Length then None else Some matching
+                                        String.Equals(col.Name, item.SourceColumn,
+                                                      StringComparison.Ordinal))
+                                    |> Option.map (fun col ->
+                                        SqlCatalogColumn(item.OutputColumn, col.TypeName,
+                                                         col.Nullable),
+                                        item.SourceColumn))
+                            if matching.Length <> items.Length then None
+                            else Some(matching |> List.map fst, matching |> List.map snd)
                     match selected with
-                    | None -> fail "CREATE VIEW projection has duplicate or unknown columns."
-                    | Some shape when shape.IsEmpty ->
+                    | None -> fail "CREATE VIEW projection has duplicate or unknown output columns."
+                    | Some (shape, _) when shape.IsEmpty ->
                         fail "CREATE VIEW projection cannot have zero columns."
-                    | Some shape ->
+                    | Some (shape, sourceColumnNames) ->
                         RewriteCatalogModel.withView state view shape [source]
+                            sourceColumnNames
                         |> exact view SqlCatalogOperation.CreateView
         | Recognized (DropViewBatch(views, conditional, mode)) ->
             // PostgreSQL multi-view DROP validates the complete set using
