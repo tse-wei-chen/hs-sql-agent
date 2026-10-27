@@ -221,6 +221,41 @@ public sealed class SqlCorePostgresSchemaIndexNamespaceTests
     }
 
     [Fact]
+    public void ConditionalCreateTableSkipsExistingIndexRelationInSameSchema()
+    {
+        var result = Analyze(
+            "CREATE TABLE app.users(id INTEGER);" +
+            "CREATE INDEX ix_shared ON app.users(id);" +
+            "CREATE TABLE IF NOT EXISTS app.ix_shared(id INTEGER);");
+
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.Equal(SqlCatalogKnowledge.Known, result.Statements[2].Certainty);
+        Assert.Empty(result.Statements[2].Changes);
+        Assert.Same(result.Statements[2].CatalogBefore,
+            result.Statements[2].CatalogAfter);
+        Assert.True(result.FinalCatalog.IsClosedWorld);
+        Assert.Single(result.FinalCatalog.Tables);
+        Assert.Single(Assert.Single(result.FinalCatalog.Tables).Indexes);
+        Assert.Empty(result.Diagnostics);
+    }
+
+    [Fact]
+    public void SoleQualifiedIndexDoesNotProveUnqualifiedDropWithoutSearchPath()
+    {
+        var result = Analyze(
+            "CREATE TABLE app.users(id INTEGER);" +
+            "CREATE INDEX ix_shared ON app.users(id);" +
+            "DROP INDEX ix_shared;");
+
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, result.Statements[2].Status);
+        Assert.Contains(result.Statements[2].Diagnostics,
+            x => x.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
+        Assert.DoesNotContain(result.Statements[2].Changes,
+            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.False(result.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
     public void UnknownCatalogStillCannotIssueKnownIndexChange()
     {
         var result = Analyze(

@@ -157,8 +157,16 @@ they inherit the indexed table's schema.
 
 Unqualified Catalog identities may resolve into any schema; they are
 retained as potential collisions, never discarded by a target schema
-filter. An unqualified `DROP INDEX` with multiple known same-name owners
-remains unproven unless a recognized single `search_path` resolves it.
+filter. An unqualified `DROP INDEX` referring to a qualified index owner
+requires a proven single `search_path`, even if the Virtual Catalog
+happens to contain only one matching qualified index.
+
+PostgreSQL `CREATE TABLE IF NOT EXISTS` is a static no-op when an index
+relation with the same name already exists in the proven target schema;
+it must not publish an invented table. The same name without
+`IF NOT EXISTS` is rejected. Fully schema-qualified `DROP INDEX` SQL
+is not yet supported by the current narrow DDL grammar and remains
+fail-closed.
 Only closed-world, fully known virtual Catalogs can mint exact index
 changes. This is static SQL analysis, not server-side schema attestation.
 

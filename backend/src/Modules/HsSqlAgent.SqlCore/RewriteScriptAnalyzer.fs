@@ -216,6 +216,10 @@ module internal RewriteScriptAnalyzer =
             match existingIndexOwner with
             | Some owner when ambiguousIndexSchema name owner.QualifiedName ->
                 dependencyUnproven "Index owner schema is not proven; CREATE TABLE may collide with an existing index relation."
+            | Some _ when ifNotExists ->
+                // PostgreSQL IF NOT EXISTS skips creation if *any*
+                // relation (not only a table) has the requested name.
+                noChange
             | Some _ ->
                 fail ("CREATE TABLE " + name.DisplayName + " conflicts with a known index relation in its schema.")
             | None ->
@@ -328,6 +332,16 @@ module internal RewriteScriptAnalyzer =
                             String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
                     |> Seq.toList
                 match owners with
+                | [owner] when sourceDialect = SqlAgentToolType.Postgres
+                               && Option.isNone target
+                               && owner.QualifiedName.IsQualified
+                               && (match scope with
+                                   | RewriteCatalogSchemaResolution.Unproven -> true
+                                   | _ -> false) ->
+                    // A sole known qualified Catalog owner does not
+                    // prove that unqualified DROP INDEX resolves there:
+                    // actual search_path could point elsewhere.
+                    dependencyUnproven "Unqualified DROP INDEX requires a proven search_path for its qualified Catalog owner."
                 | [owner] ->
                     let remaining =
                         owner.Indexes |> Seq.filter (fun idx ->
