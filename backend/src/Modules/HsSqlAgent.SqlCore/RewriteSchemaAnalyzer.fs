@@ -20,12 +20,18 @@ module internal RewriteSchemaAnalyzer =
         | Restrict
         | Cascade
 
+    /// Each projected output name is tracked separately from the physical
+    /// source column it reads. Never use display aliases as dependency proof.
+    type ViewColumnProjection =
+        { SourceColumn: string
+          OutputColumn: string }
+
     type DdlOperation =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
         | CreateView of view: SqlCatalogQualifiedName * source: SqlCatalogQualifiedName *
-                        projection: string list option
+                        projection: ViewColumnProjection list option
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
                       dependencyMode: DropDependencyMode
         /// One PostgreSQL statement; validates all views and their closure together.
@@ -248,8 +254,9 @@ module internal RewriteSchemaAnalyzer =
                 expect "AS"
                 expect "SELECT"
                 // Deliberately bounded query shape: exactly one relation,
-                // direct physical column names or a wildcard. No arbitrary
-                // expression, join, predicate, alias, function or view option
+                // direct physical column names with optional explicit AS
+                // output aliases, or a wildcard. No arbitrary expression,
+                // implicit alias, join, predicate, function or view option
                 // may mint a known View relation.
                 let wildcard =
                     // RewriteLexer represents multiplication/wildcard as
@@ -261,11 +268,18 @@ module internal RewriteSchemaAnalyzer =
                 let projection =
                     if wildcard then None
                     else
-                        let columns = ResizeArray<string>()
-                        columns.Add(namePart ())
+                        let column () =
+                            let sourceColumn = namePart ()
+                            let outputColumn =
+                                if accept "AS" then namePart ()
+                                else sourceColumn
+                            { SourceColumn = sourceColumn
+                              OutputColumn = outputColumn }
+                        let columns = ResizeArray<ViewColumnProjection>()
+                        columns.Add(column ())
                         while symbol ',' do
                             RewriteResourceBudget.checkpoint ()
-                            columns.Add(namePart ())
+                            columns.Add(column ())
                         Some(columns |> Seq.toList)
                 expect "FROM"
                 let source = qualifiedName ()

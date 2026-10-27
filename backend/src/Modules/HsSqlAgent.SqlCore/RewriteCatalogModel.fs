@@ -68,11 +68,13 @@ module internal RewriteCatalogModel =
 
     let withView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName)
                  (columns: seq<SqlCatalogColumn>)
-                 (dependencies: seq<SqlCatalogQualifiedName>) =
+                 (dependencies: seq<SqlCatalogQualifiedName>)
+                 (sourceColumns: seq<string>) =
         let view =
             SqlCatalogView(identity.DisplayName, identity,
                            columns |> Seq.toArray |> Array.AsReadOnly,
-                           dependencies |> Seq.toArray |> Array.AsReadOnly)
+                           dependencies |> Seq.toArray |> Array.AsReadOnly,
+                           sourceColumns |> Seq.toArray |> Array.AsReadOnly)
         let next =
             state.Views |> Seq.filter (fun existing ->
                 not (sameIdentity existing.QualifiedName identity))
@@ -152,8 +154,8 @@ module internal RewriteCatalogModel =
             |> Seq.filter (fun view ->
                 view.Dependencies |> Seq.exists (fun dependency ->
                     sameIdentity dependency tableName)
-                && view.Columns |> Seq.exists (fun column ->
-                    sameName column.Name columnName))
+                && view.SourceColumns |> Seq.exists (fun sourceColumn ->
+                    sameName sourceColumn columnName))
             |> Seq.map (fun view -> view.QualifiedName, "View")
         Seq.concat [
             indexed
