@@ -143,6 +143,22 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Fail-closed Session proof after opaque Script effects
+
+The static Script coordinator now clears prior Session facts after
+`Unsupported` statements (including unclassified commands), recognized
+procedure invocations and utilities that may execute SQL or perform
+maintenance. These commands may alter `search_path`, current database,
+`NOCOUNT` or other unmodeled session settings. Keeping the previous
+Session snapshot would incorrectly imply the same resolution premises
+still apply after such a statement.
+
+This invalidation is **not proof** that a database command executed or
+that a particular setting changed. Explicitly supported Session commands,
+planning-only `EXPLAIN`, and invalid syntax that was not recognized as
+a possible executed command retain their prior Session analysis behavior.
+The existing Transaction/Catalog fail-closed boundaries still apply.
+
 ## Unknown effect propagation for unproven Script statements
 
 `SqlStatementAnalysis.Status = Unsupported` or `Invalid` now always
