@@ -25,6 +25,7 @@ module internal RewriteCatalogModel =
         // CREATE VIEW grammar, but the closure remains cycle-safe.
         let mutable known = targetKeys
         let mutable discovered = Set.empty<string>
+        let discoveredInOrder = ResizeArray<SqlCatalogView>()
         let mutable changed = true
         while changed do
             RewriteResourceBudget.checkpoint ()
@@ -35,10 +36,10 @@ module internal RewriteCatalogModel =
                    && (view.Dependencies |> Seq.exists (fun dependency ->
                        Set.contains dependency.Key known)) then
                     discovered <- Set.add view.QualifiedName.Key discovered
+                    discoveredInOrder.Add(view)
                     known <- Set.add view.QualifiedName.Key known
                     changed <- true
-        state.Views |> Seq.filter (fun view ->
-            Set.contains view.QualifiedName.Key discovered) |> Seq.toList
+        discoveredInOrder |> Seq.toList
 
     /// An unqualified name may resolve into an explicitly qualified table
     /// through a session search_path/default schema not modeled by Catalog.
@@ -65,7 +66,7 @@ module internal RewriteCatalogModel =
             StringComparer.Ordinal.Compare(left.QualifiedName.Key, right.QualifiedName.Key)) tables
         SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables), state.Views)
 
-    let withView state (identity: SqlCatalogQualifiedName)
+    let withView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName)
                  (columns: seq<SqlCatalogColumn>)
                  (dependencies: seq<SqlCatalogQualifiedName>) =
         let view =
@@ -80,7 +81,7 @@ module internal RewriteCatalogModel =
             |> Seq.toArray |> Array.AsReadOnly
         SqlCatalogState(state.IsClosedWorld, state.Tables, next)
 
-    let dropView state (identity: SqlCatalogQualifiedName) =
+    let dropView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName) =
         let next =
             state.Views |> Seq.filter (fun existing ->
                 not (sameIdentity existing.QualifiedName identity))

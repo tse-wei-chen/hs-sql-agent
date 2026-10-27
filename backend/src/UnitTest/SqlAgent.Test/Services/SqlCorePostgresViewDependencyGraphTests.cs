@@ -32,10 +32,12 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
         Assert.True(r.FinalCatalog.IsClosedWorld);
         Assert.Single(r.FinalCatalog.Tables);
         Assert.Equal(2, r.FinalCatalog.Views.Count);
-        Assert.Equal("app.parent", r.FinalCatalog.Views[0].Dependencies.Single().DisplayName);
-        Assert.Equal("app.v_parent", r.FinalCatalog.Views[1].Dependencies.Single().DisplayName);
-        Assert.Equal(2, r.FinalCatalog.Views[0].Columns.Count);
-        Assert.Equal("id", Assert.Single(r.FinalCatalog.Views[1].Columns).Name);
+        var parentView = r.FinalCatalog.Views.Single(v => v.Name == "app.v_parent");
+        var childView = r.FinalCatalog.Views.Single(v => v.Name == "app.v_child");
+        Assert.Equal("app.parent", parentView.Dependencies.Single().DisplayName);
+        Assert.Equal("app.v_parent", childView.Dependencies.Single().DisplayName);
+        Assert.Equal(2, parentView.Columns.Count);
+        Assert.Equal("id", Assert.Single(childView.Columns).Name);
         Assert.Equal(SqlCatalogOperation.CreateView, Assert.Single(r.Statements[1].Changes).Operation);
         Assert.Equal(SqlStatementEffectOperation.CreateView,
             Assert.Single(r.Statements[1].DetailedEffects).Operation);
@@ -178,6 +180,20 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, s.Statements[2].Status);
         Assert.Single(s.FinalCatalog.Views);
         Assert.True(s.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void SourceColumnUsedInProvenViewCannotBeDropped()
+    {
+        var r = Analyze(
+            "CREATE TABLE app.parent(id INTEGER, age INTEGER);" +
+            "CREATE VIEW app.v_age AS SELECT age FROM app.parent;" +
+            "ALTER TABLE app.parent DROP COLUMN age;");
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, r.Statements[2].Status);
+        Assert.Empty(r.Statements[2].Changes);
+        Assert.Equal(2, Assert.Single(r.FinalCatalog.Tables).Columns.Count);
+        Assert.Single(r.FinalCatalog.Views);
+        Assert.True(r.FinalCatalog.IsClosedWorld);
     }
 
     [Fact]
