@@ -125,6 +125,24 @@ foreach (var delta in report.CatalogChanges)
     Console.WriteLine($"{delta.Operation}: {delta.TableName}");
 ```
 
+## MySQL implicit DDL COMMIT outside a modeled transaction
+
+MySQL ordinary non-temporary DDL can implicitly COMMIT a pending session
+transaction even if the Script does not contain `START TRANSACTION`
+(for example, if the session disabled autocommit beforehand).
+A static `Outside` transaction context is **not** evidence that
+autocommit is enabled. Supported MySQL DDL therefore emits
+`ChangeSchema | ChangeTransaction` and
+`TransactionProvenance.Origin = PossibleImplicitCommit`,
+`RollbackScope = Unproven`, with `RuntimeCertainty = Unknown`.
+This is a potential effect, **not proof of executed SQL or DML**.
+
+DDL inside an explicit modeled MySQL transaction stays
+`Unsupported` with `SQL_TRANSACTION_IMPLICIT_COMMIT_UNPROVEN`.
+Temporary table statements are not promoted to ordinary DDL proof,
+because the database's commit/rollback rules differ. Static inspection
+does not prove the session's autocommit mode or storage engine.
+
 ## Oracle DDL implicit COMMIT and independent TCL boundaries
 
 Oracle SQL DDL implicitly COMMITs **before and after** each DDL statement.

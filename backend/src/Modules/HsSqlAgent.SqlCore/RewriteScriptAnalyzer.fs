@@ -487,10 +487,13 @@ module internal RewriteScriptAnalyzer =
                             let status, certainty, next, changes, diagnostics =
                                 analyzeDdl sourceDialect sourceProfile (RewriteSessionAnalyzer.scope session) current syntax
                             let effects =
-                                if sourceDialect = SqlAgentToolType.Oracle then
-                                    // Oracle DDL implicitly commits before/after
-                                    // the statement. Even a known DDL shape must
-                                    // carry this transaction-risk evidence.
+                                if sourceDialect = SqlAgentToolType.Oracle
+                                   || sourceDialect = SqlAgentToolType.MySQL then
+                                    // Oracle and non-temporary MySQL DDL implicitly
+                                    // commit even outside an explicit BEGIN.
+                                    // The static Outside context cannot prove
+                                    // that a MySQL session has autocommit enabled.
+                                    // Runtime DML effects remain unproven.
                                     SqlEffectKind.ChangeSchema ||| SqlEffectKind.ChangeTransaction
                                 else SqlEffectKind.ChangeSchema
                             status, effects, certainty, SqlCatalogBindingStatus.NotApplicable,

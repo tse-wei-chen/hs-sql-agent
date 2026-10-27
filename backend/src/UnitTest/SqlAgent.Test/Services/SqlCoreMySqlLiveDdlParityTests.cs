@@ -100,6 +100,54 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
     }
 
     [Fact]
+    public async Task RealMySqlDdlImplicitlyCommitsPriorInnoDbInsert()
+    {
+        // SQL-level START TRANSACTION and a subsequent ordinary CREATE TABLE
+        // must not be modeled as a rollbackable Catalog. The MySQL server,
+        // independently of SqlCore, proves the actual implicit-commit fence.
+        var contract = SqlCoreFacade.AnalyzeScript(
+            "START TRANSACTION; CREATE TABLE marker(id INT); ROLLBACK;",
+            SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported,
+            contract.Statements[1].Status);
+        Assert.Equal(SqlTransactionEffectOrigin.PossibleImplicitCommit,
+            contract.Statements[1].TransactionProvenance.Origin);
+        Assert.False(contract.FinalCatalog.IsClosedWorld);
+
+        var root = ConnectionString();
+        var database = "sqlcore_p6_" + Guid.NewGuid().ToString("N");
+        await using var admin = new MySqlConnection(root);
+        await admin.OpenAsync(TestContext.Current.CancellationToken);
+        await Run(admin, "CREATE DATABASE `" + database + "`");
+        try
+        {
+            var cs = new MySqlConnectionStringBuilder(root)
+            {
+                Database = database,
+                Pooling = false
+            }.ConnectionString;
+            await using (var db = new MySqlConnection(cs))
+            {
+                await db.OpenAsync(TestContext.Current.CancellationToken);
+                await Run(db, "CREATE TABLE ledger(id INT) ENGINE=InnoDB");
+                await Run(db, "START TRANSACTION");
+                await Run(db, "INSERT INTO ledger(id) VALUES (7)");
+                await Run(db, "CREATE TABLE marker(id INT) ENGINE=InnoDB");
+                await Run(db, "ROLLBACK");
+
+                using var query = new MySqlCommand(
+                    "SELECT COUNT(*) FROM ledger WHERE id = 7", db);
+                Assert.Equal(1L, Convert.ToInt64(
+                    await query.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+            }
+        }
+        finally
+        {
+            await Run(admin, "DROP DATABASE IF EXISTS `" + database + "`");
+        }
+    }
+
+    [Fact]
     public void UnmodeledCheckIsNeverPromotedToProvenCatalogEvenWhenMySqlSupportsIt()
     {
         const string sql = "CREATE TABLE constrained(id INT, CHECK (id > 0));";
