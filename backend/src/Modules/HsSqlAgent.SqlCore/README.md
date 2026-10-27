@@ -143,6 +143,22 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## Structured effect parity for implicit DDL commits
+
+For supported Oracle/MySQL DDL, `Statements[*].DetailedEffects` and the
+script-wide `DetailedEffects` now include a typed
+`SqlStatementEffectOperation.PossibleImplicitCommit` with
+`SqlEffectKind.ChangeTransaction` whenever the transaction provenance
+identifies a possible implicit commit. This is distinct from an explicit
+`TransactionControl` statement. The effect has `Certainty = Unknown`,
+no object identity or dependencies, and the DDL statement's source span.
+
+A conditional DDL statement can have **no Catalog delta** and still
+possibly COMMIT a pending transaction. Unsupported MySQL DDL within a
+modeled transaction also retains the potential commit effect without
+inventing a proven Catalog change. No server execution, data mutation,
+authorization, or rollback proof is implied.
+
 ## Oracle DDL implicit COMMIT and independent TCL boundaries
 
 Oracle SQL DDL implicitly COMMITs **before and after** each DDL statement.

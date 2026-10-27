@@ -39,7 +39,7 @@ public sealed class SqlCoreImplicitCommitStructuredEffectsTests
         var possibleCommit = Assert.Single(ddl.DetailedEffects.Where(e =>
             e.Kind == SqlEffectKind.ChangeTransaction));
         Assert.Equal(SqlCatalogKnowledge.Unknown, possibleCommit.Certainty);
-        Assert.NotEqual(SqlStatementEffectOperation.TransactionControl, possibleCommit.Operation);
+        Assert.Equal(SqlStatementEffectOperation.PossibleImplicitCommit, possibleCommit.Operation);
         Assert.Null(possibleCommit.ObjectName);
         Assert.Null(possibleCommit.ObjectIdentity);
         Assert.Empty(possibleCommit.Dependencies);
@@ -67,7 +67,7 @@ public sealed class SqlCoreImplicitCommitStructuredEffectsTests
         var possibleCommit = Assert.Single(ddl.DetailedEffects.Where(e =>
             e.Kind == SqlEffectKind.ChangeTransaction));
         Assert.Equal(SqlCatalogKnowledge.Unknown, possibleCommit.Certainty);
-        Assert.NotEqual(SqlStatementEffectOperation.TransactionControl, possibleCommit.Operation);
+        Assert.Equal(SqlStatementEffectOperation.PossibleImplicitCommit, possibleCommit.Operation);
         Assert.DoesNotContain(ddl.DetailedEffects, e =>
             e.Kind == SqlEffectKind.ChangeSchema &&
             e.Certainty == SqlCatalogKnowledge.Known);
@@ -102,6 +102,7 @@ public sealed class SqlCoreImplicitCommitStructuredEffectsTests
             ddl.TransactionProvenance.Origin);
         var possibleCommit = Assert.Single(ddl.DetailedEffects);
         Assert.Equal(SqlEffectKind.ChangeTransaction, possibleCommit.Kind);
+        Assert.Equal(SqlStatementEffectOperation.PossibleImplicitCommit, possibleCommit.Operation);
         Assert.Equal(SqlCatalogKnowledge.Unknown, possibleCommit.Certainty);
     }
 }
