@@ -43,7 +43,19 @@ public sealed class SqlCoreTableLocalIndexNamespaceTests
         Assert.Equal(SqlCatalogOperation.CreateIndex,
             Assert.Single(result.Statements[3].Changes).Operation);
         Assert.Equal(SqlCatalogKnowledge.Known,
-            Assert.Single(result.Statements[3].DetailedEffects).Certainty);
+            result.Statements[3].DetailedEffects.Single(effect =>
+                effect.Operation == SqlStatementEffectOperation.CreateIndex).Certainty);
+        if (provider == SqlAgentToolType.MySQL)
+        {
+            // MySQL index DDL can implicitly commit. Preserve its separate,
+            // unproven transaction effect instead of treating the known
+            // virtual-Catalog index delta as a runtime commit guarantee.
+            var implicitCommit = result.Statements[3].DetailedEffects.Single(effect =>
+                effect.Operation == SqlStatementEffectOperation.PossibleImplicitCommit);
+            Assert.Equal(SqlCatalogKnowledge.Unknown, implicitCommit.Certainty);
+            Assert.Equal(SqlTransactionRollbackScope.Unproven,
+                result.Statements[3].TransactionProvenance.RollbackScope);
+        }
         Assert.True(result.FinalCatalog.IsClosedWorld);
         Assert.Equal(2, result.FinalCatalog.Tables.Count);
         Assert.All(result.FinalCatalog.Tables, table =>
