@@ -239,6 +239,12 @@ module internal RewriteScriptAnalyzer =
                     "Source dialect DDL is outside the statically proven TABLE subset; catalog facts are invalidated."
             SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
             unknown, [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown], [error]
+        | Recognized (Create(name, _, _, ifNotExists)) when
+            RewriteCatalogModel.lookupView state name |> Option.isSome ->
+            // PostgreSQL Views and tables are relation-kind siblings.
+            if ifNotExists then noChange
+            else fail ("CREATE TABLE " + name.DisplayName +
+                       " conflicts with a known View relation.")
         | Recognized (Create(name, columns, constraints, ifNotExists)) ->
             // PostgreSQL tables and indexes share the schema-local
             // relation namespace. A virtual Catalog that knows an index
@@ -363,13 +369,18 @@ module internal RewriteScriptAnalyzer =
                 names |> List.distinctBy (fun name -> name.Key)
             let duplicate = distinctNames.Length <> names.Length
             let ambiguousOwner =
-                state.Tables |> Seq.exists (fun owner ->
+                (state.Tables |> Seq.exists (fun owner ->
                     owner.QualifiedName.Parts.Count = 1
                     && (names |> List.exists (fun name ->
                         String.Equals(
                             relationName name,
                             relationName owner.QualifiedName,
-                            StringComparison.Ordinal))))
+                            StringComparison.Ordinal)))))
+                || (state.Views |> Seq.exists (fun view ->
+                    view.QualifiedName.Parts.Count = 1
+                    && (names |> List.exists (fun name ->
+                        String.Equals(relationName name,
+                                      relationName view.QualifiedName, StringComparison.Ordinal)))))
             if sourceDialect <> SqlAgentToolType.Postgres
                || not state.IsClosedWorld
                || (state.Tables |> Seq.exists (fun table ->
@@ -396,11 +407,12 @@ module internal RewriteScriptAnalyzer =
                 let wrongKind =
                     names |> List.tryFind (fun name ->
                         (RewriteCatalogModel.lookup state name).IsNone
-                        && (state.Tables |> Seq.exists (fun owner ->
+                        && (RewriteCatalogModel.lookupView state name |> Option.isSome
+                            || (state.Tables |> Seq.exists (fun owner ->
                             sameSchema name owner.QualifiedName
                             && (owner.Indexes |> Seq.exists (fun index ->
                                 String.Equals(index.Name, relationName name,
-                                              StringComparison.Ordinal))))))
+                                              StringComparison.Ordinal)))))))
                 // Build the entire inbound FK dependency graph from the
                 // original immutable Catalog. Nothing is changed until all
                 // table identities and external constraints are proven.
@@ -416,6 +428,8 @@ module internal RewriteScriptAnalyzer =
                     externalForeignKeys
                     |> List.tryFind (fun (_, fk) ->
                         String.IsNullOrWhiteSpace fk.Name)
+                let dependentViews =
+                    RewriteCatalogModel.dependentViews state targets
                 match wrongKind, missing, externalForeignKeys, unnamed with
                 | Some name, _, _, _ ->
                     fail ("DROP TABLE " + name.DisplayName +
@@ -423,6 +437,8 @@ module internal RewriteScriptAnalyzer =
                 | None, Some name, _, _ when not conditional ->
                     fail ("DROP TABLE " + name.DisplayName +
                           " does not exist in the known Catalog.")
+                | None, _, _, _ when mode = Restrict && not dependentViews.IsEmpty ->
+                    fail "DROP TABLE batch is blocked by dependent Views under RESTRICT."
                 | None, _, (dependent, _)::_, _ when mode = Restrict ->
                     fail ("DROP TABLE batch is blocked by a FOREIGN KEY in non-batch table '" +
                           dependent.Name + "'.")
@@ -449,6 +465,9 @@ module internal RewriteScriptAnalyzer =
                                                           StringComparison.Ordinal)))
                             RewriteCatalogModel.withConstraints catalog owner.QualifiedName retained
                         ) afterDrop
+                    let nextWithViews =
+                        dependentViews |> List.fold (fun catalog view ->
+                            RewriteCatalogModel.dropView catalog view.QualifiedName) next
                     let tableDeltas =
                         existing |> List.map (fun name ->
                             changedExact syntax name SqlCatalogOperation.DropTable
@@ -456,17 +475,31 @@ module internal RewriteScriptAnalyzer =
                     let constraintDeltas =
                         externalForeignKeys |> List.map (fun (owner, fk) ->
                             changedConstraintExact syntax owner.QualifiedName fk.Name)
+                    let viewDeltas =
+                        dependentViews |> List.map (fun view ->
+                            changedExact syntax view.QualifiedName SqlCatalogOperation.DropView
+                                SqlCatalogKnowledge.Known)
                     SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
-                    next, tableDeltas @ constraintDeltas, ([]: SqlDiagnostic list)
+                    nextWithViews, tableDeltas @ constraintDeltas @ viewDeltas,
+                    ([]: SqlDiagnostic list)
+        | Recognized (Drop(name, _)) when
+            RewriteCatalogModel.lookupView state name |> Option.isSome ->
+            fail ("DROP TABLE " + name.DisplayName + " names a known View, not a table.")
         | Recognized (Drop(name, ifExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
-                match RewriteSchemaDependencies.canDropTable state name with
-                | RewriteSchemaDependencies.Proven ->
-                    RewriteCatalogModel.dropKnown state name
-                    |> exact name SqlCatalogOperation.DropTable
-                | RewriteSchemaDependencies.Invalid message -> fail message
-                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+                let dependents =
+                    RewriteCatalogModel.dependentViews state (Set.singleton name.Key)
+                if not dependents.IsEmpty then
+                    fail ("DROP TABLE " + name.DisplayName +
+                          " is blocked by dependent Views under RESTRICT.")
+                else
+                    match RewriteSchemaDependencies.canDropTable state name with
+                    | RewriteSchemaDependencies.Proven ->
+                        RewriteCatalogModel.dropKnown state name
+                        |> exact name SqlCatalogOperation.DropTable
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ when RewriteCatalogModel.isKnownAbsent state name && ifExists ->
                 noChange
             | _ when RewriteCatalogModel.isKnownAbsent state name ->

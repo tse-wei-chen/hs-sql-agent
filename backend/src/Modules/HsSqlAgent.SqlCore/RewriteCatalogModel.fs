@@ -146,9 +146,19 @@ module internal RewriteCatalogModel =
                     index.Columns |> Seq.exists (sameName columnName))
                 |> Seq.map (fun index -> table.QualifiedName, index.Name)
             | None -> Seq.empty
-        (Seq.append local incoming |> Seq.map (fun (owner, item) -> owner, string item.Kind))
-        |> Seq.append indexed
-        |> Seq.toList
+        let viewDependencies =
+            state.Views
+            |> Seq.filter (fun view ->
+                view.Dependencies |> Seq.exists (fun dependency ->
+                    sameIdentity dependency tableName)
+                && view.Columns |> Seq.exists (fun column ->
+                    sameName column.Name columnName))
+            |> Seq.map (fun view -> view.QualifiedName, "View")
+        Seq.concat [
+            indexed
+            (Seq.append local incoming |> Seq.map (fun (owner, item) -> owner, string item.Kind))
+            viewDependencies
+        ] |> Seq.toList
 
     let unknownTable state name =
         replace state name
