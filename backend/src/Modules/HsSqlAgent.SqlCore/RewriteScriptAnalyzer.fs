@@ -154,8 +154,11 @@ module internal RewriteScriptAnalyzer =
             || String.Equals(left.Parts[0], right.Parts[0], StringComparison.Ordinal)
         let ambiguousIndexSchema (left: SqlCatalogQualifiedName)
                                  (right: SqlCatalogQualifiedName) =
+            // Keep existing conservative equality among two unqualified
+            // Catalog owners; mixing an explicit and an unqualified
+            // owner cannot establish a definite physical schema match.
             sourceDialect = SqlAgentToolType.Postgres
-            && (left.Parts.Count <> 2 || right.Parts.Count <> 2)
+            && ((left.Parts.Count = 2) <> (right.Parts.Count = 2))
         let relationName (name: SqlCatalogQualifiedName) =
             name.Parts[name.Parts.Count - 1]
         match parsed with
