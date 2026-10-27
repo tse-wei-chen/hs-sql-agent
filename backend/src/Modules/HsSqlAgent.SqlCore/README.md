@@ -143,6 +143,29 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL atomic multi-index DROP Catalog validation
+
+PostgreSQL `DROP INDEX name, name [RESTRICT]` and its `IF EXISTS`
+variant now enter the closed `DropIndexBatch` F# union case with a
+non-executable list of structured index identities. The compiler
+checks all names against the **original immutable Virtual Catalog**,
+including schema resolution, duplicate physical identities,
+missing names, wrong-kind table relations, possible constraint-backed
+indexes and open-world uncertainty. A mixed qualified/unqualified list
+requires a proven single-schema `search_path` for its unqualified names.
+
+Only after all members are proven does a local fold produce the
+updated immutable Catalog and one exact `DropIndex` delta per removed
+standalone index. Multiple indexes on the same table are handled in
+one statement. `IF EXISTS` skips only demonstrably absent members.
+A failed or unproven member never publishes partial Known changes
+or structured Known effects, even when earlier members were valid.
+This is atomicity of **static analysis / Catalog delta publication**,
+not execution, database transaction rollback, index ownership
+authorization or a guarantee of actual server-side atomicity.
+`CONCURRENTLY`, `CASCADE`, `ON table` and other-provider
+multi-index grammar remain outside the proven capability subset.
+
 ## PostgreSQL unqualified DROP INDEX IF EXISTS and explicit RESTRICT
 
 The closed `DropIndex` DDL operation now carries a typed `ifExists`

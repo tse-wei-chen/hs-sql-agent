@@ -25,6 +25,8 @@ module internal RewriteSchemaAnalyzer =
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
         /// Exact PostgreSQL index relation identity, never the owning table.
         | DropQualifiedIndex of identity: SqlCatalogQualifiedName * ifExists: bool
+        /// One PostgreSQL statement, one atomic multi-index Catalog proof.
+        | DropIndexBatch of identities: SqlCatalogQualifiedName list * ifExists: bool
         | AddConstraint of table: SqlCatalogQualifiedName * constraintInfo: SqlCatalogConstraint
         | DropConstraint of table: SqlCatalogQualifiedName * name: string
 
@@ -350,6 +352,13 @@ module internal RewriteSchemaAnalyzer =
                         true
                     else false
                 let indexIdentity = qualifiedName ()
+                let indexIdentities = ResizeArray<SqlCatalogQualifiedName>()
+                indexIdentities.Add(indexIdentity)
+                while symbol ',' do
+                    if sourceDialect <> SqlAgentToolType.Postgres then
+                        raise OutsideSubset
+                    RewriteResourceBudget.checkpoint ()
+                    indexIdentities.Add(qualifiedName ())
                 let target =
                     if accept "ON" then
                         match sourceDialect with
@@ -366,10 +375,12 @@ module internal RewriteSchemaAnalyzer =
                 if sourceDialect = SqlAgentToolType.Postgres then
                     accept "RESTRICT" |> ignore
                 endOfStatement ()
-                match sourceDialect, indexIdentity.Parts.Count with
-                | SqlAgentToolType.Postgres, 2 ->
+                match sourceDialect, indexIdentities.Count, indexIdentity.Parts.Count with
+                | SqlAgentToolType.Postgres, count, _ when count > 1 ->
+                    Recognized(DropIndexBatch(indexIdentities |> Seq.toList, conditional))
+                | SqlAgentToolType.Postgres, 1, 2 ->
                     Recognized(DropQualifiedIndex(indexIdentity, conditional))
-                | _, 1 ->
+                | _, 1, 1 ->
                     Recognized(DropIndex(indexIdentity.Parts[0], target, conditional))
                 | _ -> raise OutsideSubset
             else

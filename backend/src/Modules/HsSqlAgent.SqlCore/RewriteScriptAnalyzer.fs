@@ -13,6 +13,12 @@ open HsSqlAgent.SqlCore.Rewrite.RewriteSchemaAnalyzer
 /// executed; neither successful analysis nor a known Catalog authorizes SQL.
 module internal RewriteScriptAnalyzer =
 
+    type private BatchIndexResolution =
+        | BatchIndexFound of SqlCatalogQualifiedName * string
+        | BatchIndexAbsent
+        | BatchIndexInvalid of string
+        | BatchIndexUnproven of string
+
     let private readOnly (items: seq<'T>) : IReadOnlyList<'T> =
         (items |> Seq.toArray |> Array.AsReadOnly) :> IReadOnlyList<'T>
 
@@ -103,6 +109,8 @@ module internal RewriteScriptAnalyzer =
                 DropIndex(indexName, Option.map resolve target, conditional)
             | DropQualifiedIndex(indexIdentity, conditional) ->
                 DropQualifiedIndex(indexIdentity, conditional)
+            | DropIndexBatch(identities, conditional) ->
+                DropIndexBatch(identities, conditional)
             | AddConstraint(name, constraintInfo) ->
                 AddConstraint(resolve name, resolveConstraint constraintInfo)
             | DropConstraint(name, constraintName) -> DropConstraint(resolve name, constraintName)
@@ -126,6 +134,7 @@ module internal RewriteScriptAnalyzer =
                 | DropConstraint(name, _) -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
+                | DropIndexBatch(identities, _) -> identities
             | _ -> []
         let rawUnqualified =
             rawNames |> List.exists (fun n -> n.Parts.Count = 1)
@@ -146,7 +155,8 @@ module internal RewriteScriptAnalyzer =
             | AddConstraint(name, _)
             | DropConstraint(name, _) -> Some name
             | DropIndex(_, target, _) -> target
-            | DropQualifiedIndex _ -> None
+            | DropQualifiedIndex _
+            | DropIndexBatch _ -> None
         // Indexes in PostgreSQL belong to their parent table's schema.
         // A caller-supplied one-part Catalog identity has no proven
         // physical schema: it can therefore collide with *any* explicit
@@ -314,6 +324,124 @@ module internal RewriteScriptAnalyzer =
                                 (seq { yield! table.Indexes; yield idx })
                         exact tableName SqlCatalogOperation.CreateIndex updated
             | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
+        | Recognized (DropIndexBatch(identities, conditional)) ->
+            // This statement must never commit a virtual Catalog delta
+            // before ALL requested index relations have been resolved.
+            // Resolve structured identities first; compare fully qualified
+            // physical keys, not dotted display-name strings.
+            let resolved = identities |> List.map (resolve)
+            let duplicate =
+                (resolved |> List.distinctBy (fun identity -> identity.Key) |> List.length)
+                <> List.length resolved
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun table ->
+                   table.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "A multi-index DROP requires a complete PostgreSQL Catalog."
+            elif duplicate then
+                fail "DROP INDEX batch contains duplicate index identities."
+            else
+                let prove (identity: SqlCatalogQualifiedName) =
+                    let schemaAndName =
+                        if identity.Parts.Count = 2 then
+                            Some(identity.Parts[0], identity.Parts[1])
+                        else
+                            match scope with
+                            | RewriteCatalogSchemaResolution.SingleSchema schema when
+                                RewriteCatalogSchemaResolution.canProject scope state ->
+                                Some(schema, identity.Parts[0])
+                            | _ -> None
+                    match schemaAndName with
+                    | None ->
+                        BatchIndexUnproven
+                            "Multi-index DROP unqualified names require a proven single search_path."
+                    | Some(schema, indexName) ->
+                        let sameIndex (index: SqlCatalogIndex) =
+                            String.Equals(index.Name, indexName, StringComparison.Ordinal)
+                        let inSchema (owner: SqlCatalogTable) =
+                            owner.QualifiedName.Parts.Count = 2
+                            && String.Equals(owner.QualifiedName.Parts[0], schema,
+                                             StringComparison.Ordinal)
+                        let ambiguousOwner =
+                            state.Tables |> Seq.exists (fun owner ->
+                                owner.QualifiedName.Parts.Count = 1
+                                && ((owner.Indexes |> Seq.exists sameIndex)
+                                    || owner.Constraints.Count > 0
+                                    || String.Equals(relationName owner.QualifiedName,
+                                                     indexName, StringComparison.Ordinal)))
+                        let possibleImplicit =
+                            state.Tables |> Seq.exists (fun owner ->
+                                inSchema owner && owner.Constraints.Count > 0)
+                        let namedTable =
+                            state.Tables |> Seq.exists (fun owner ->
+                                inSchema owner
+                                && String.Equals(relationName owner.QualifiedName,
+                                                 indexName, StringComparison.Ordinal))
+                        let matchingOwners =
+                            state.Tables |> Seq.filter (fun owner ->
+                                inSchema owner && (owner.Indexes |> Seq.exists sameIndex))
+                            |> Seq.toList
+                        if ambiguousOwner then
+                            BatchIndexUnproven
+                                ("Index '" + identity.DisplayName +
+                                 "' may belong to an unqualified Catalog owner.")
+                        elif possibleImplicit then
+                            BatchIndexUnproven
+                                ("Implicit constraint-backed index identity '" +
+                                 identity.DisplayName + "' cannot be proven.")
+                        elif namedTable then
+                            BatchIndexInvalid
+                                ("DROP INDEX '" + identity.DisplayName +
+                                 "' names a known table relation.")
+                        else
+                            match matchingOwners with
+                            | [owner] -> BatchIndexFound(owner.QualifiedName, indexName)
+                            | [] when conditional -> BatchIndexAbsent
+                            | [] ->
+                                BatchIndexUnproven
+                                    ("DROP INDEX '" + identity.DisplayName +
+                                     "' is not a proven standalone index.")
+                            | _ ->
+                                BatchIndexUnproven
+                                    ("DROP INDEX '" + identity.DisplayName +
+                                     "' resolves to multiple Catalog owners.")
+                // All proofs are evaluated over the ORIGINAL immutable
+                // Catalog, and no mutation occurs until all have succeeded.
+                let proofs = identities |> List.map prove
+                let invalid =
+                    proofs |> List.tryPick (function
+                        | BatchIndexInvalid message -> Some message
+                        | _ -> None)
+                let unproven =
+                    proofs |> List.tryPick (function
+                        | BatchIndexUnproven message -> Some message
+                        | _ -> None)
+                match invalid, unproven with
+                | Some message, _ -> fail message
+                | None, Some message -> dependencyUnproven message
+                | None, None ->
+                    let removals =
+                        proofs |> List.choose (function
+                            | BatchIndexFound(owner, indexName) -> Some(owner, indexName)
+                            | _ -> None)
+                    // A single statement publishes every exact delta or
+                    // none. Two indexes may belong to the same table: read
+                    // the updated table from the local fold state.
+                    let next =
+                        removals |> List.fold (fun catalog (owner, indexName) ->
+                            let current = RewriteCatalogModel.lookup catalog owner |> Option.get
+                            let remaining =
+                                current.Indexes |> Seq.filter (fun index ->
+                                    not (String.Equals(index.Name, indexName,
+                                                       StringComparison.Ordinal)))
+                            RewriteCatalogModel.withIndexes catalog owner remaining
+                        ) state
+                    let deltas =
+                        removals |> List.map (fun (owner, _) ->
+                            changedExact syntax owner SqlCatalogOperation.DropIndex
+                                SqlCatalogKnowledge.Known)
+                    SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                    next, deltas, ([]: SqlDiagnostic list)
         | Recognized (DropQualifiedIndex(indexIdentity, conditional)) ->
             // Index identity and table identity are separate structured
             // names. A qualified index cannot inherit current search_path
