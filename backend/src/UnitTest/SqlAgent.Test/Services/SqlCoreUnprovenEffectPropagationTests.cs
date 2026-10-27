@@ -59,7 +59,10 @@ public sealed class SqlCoreUnprovenEffectPropagationTests
         Assert.Equal(kind, statement.Kind);
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, statement.Status);
         Assert.True(statement.Effects.HasFlag(SqlEffectKind.UnknownEffects));
-        Assert.True(statement.Effects.HasFlag(expectedFamilyEffect));
+        if (expectedFamilyEffect == SqlEffectKind.None)
+            Assert.Equal(SqlEffectKind.UnknownEffects, statement.Effects);
+        else
+            Assert.True(statement.Effects.HasFlag(expectedFamilyEffect));
         Assert.Equal(statement.Effects, statement.TransactionProvenance.PotentialEffects);
         Assert.Contains(statement.DetailedEffects,
             effect => effect.Kind.HasFlag(SqlEffectKind.UnknownEffects));
