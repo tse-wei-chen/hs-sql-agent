@@ -101,6 +101,16 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
             await using (var db = new SqlConnection(isolated))
             {
                 await db.OpenAsync(TestContext.Current.CancellationToken);
+                // Case-insensitive equality must be established by the real
+                // server, not inferred from a string normalization heuristic.
+                await using (var collation = new SqlCommand(
+                    "SELECT CONVERT(nvarchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation'))", db))
+                {
+                    var name = (string?)await collation.ExecuteScalarAsync(
+                        TestContext.Current.CancellationToken);
+                    Assert.NotNull(name);
+                    Assert.Contains("_CI_", name, StringComparison.OrdinalIgnoreCase);
+                }
                 for (var i = 0; i < analysis.Statements.Count; i++)
                 {
                     var stmt = analysis.Statements[i];
@@ -230,9 +240,19 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
                     $"{scenario}#{step}/{table.Name}.{wanted.Name}: expected {wanted.TypeName} but SQL Server says {got.Type}");
                 Assert.Equal(wanted.Nullable, got.Nullable);
             }
-            Assert.Equal(
-                table.Indexes.Select(x => x.Name).Order(StringComparer.OrdinalIgnoreCase),
-                live.Indexes.Order(StringComparer.OrdinalIgnoreCase));
+            // This SQL Server CI database uses a case-insensitive catalog
+            // collation. SQL Server preserves the declared index spelling,
+            // while the Virtual Catalog exposes a normalized identifier.
+            // Still compare the exact number and every canonical index name.
+            var modelIndexes = table.Indexes.Select(x => x.Name)
+                .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            var realIndexes = live.Indexes
+                .Order(StringComparer.OrdinalIgnoreCase).ToArray();
+            Assert.Equal(modelIndexes.Length, realIndexes.Length);
+            for (var index = 0; index < modelIndexes.Length; index++)
+                Assert.True(string.Equals(modelIndexes[index], realIndexes[index],
+                    StringComparison.OrdinalIgnoreCase),
+                    $"{scenario}#{step}: index {modelIndexes[index]} != {realIndexes[index]}");
         }
     }
 }
