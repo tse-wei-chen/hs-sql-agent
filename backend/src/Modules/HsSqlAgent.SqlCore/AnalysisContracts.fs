@@ -68,7 +68,11 @@ type SqlStatementEffect internal (
     objectIdentity: SqlCatalogQualifiedName | null,
     certainty: SqlCatalogKnowledge,
     span: SqlDiagnosticSpan,
-    dependencies: IReadOnlyList<string>) =
+    dependencies: IReadOnlyList<string>,
+    constraintName: string) =
+    new(kind, operation, objectName, objectIdentity, certainty, span, dependencies) =
+        SqlStatementEffect(kind, operation, objectName, objectIdentity,
+                           certainty, span, dependencies, null)
     member _.Kind = kind
     member _.Operation = operation
     member _.ObjectName = objectName
@@ -76,6 +80,8 @@ type SqlStatementEffect internal (
     member _.Certainty = certainty
     member _.Span = span
     member _.Dependencies = dependencies
+    /// Proven constraint name from a Catalog delta; null on other effects.
+    member _.ConstraintName = constraintName
 
 /// Potential object reference derived only from a previously classified static
 /// statement effect; never a proof of physical existence or server privileges.

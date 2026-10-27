@@ -142,11 +142,15 @@ type SqlCatalogChange internal (
     certainty: SqlCatalogKnowledge,
     span: SqlDiagnosticSpan,
     columnName: string,
-    tableIdentity: SqlCatalogQualifiedName) =
+    tableIdentity: SqlCatalogQualifiedName,
+    constraintName: string) =
+    new(tableName, operation, certainty, span,
+        columnName: string, tableIdentity: SqlCatalogQualifiedName) =
+        SqlCatalogChange(tableName, operation, certainty, span, columnName, tableIdentity, null)
     new(tableName, operation, certainty, span) =
-        SqlCatalogChange(tableName, operation, certainty, span, null, null)
+        SqlCatalogChange(tableName, operation, certainty, span, null, null, null)
     new(tableName, operation, certainty, span, columnName: string) =
-        SqlCatalogChange(tableName, operation, certainty, span, columnName, null)
+        SqlCatalogChange(tableName, operation, certainty, span, columnName, null, null)
     member _.TableName = tableName
     /// Proven structured physical table identity, unlike the ambiguous
     /// human-readable TableName. Null for indeterminate/transaction effects.
@@ -157,3 +161,5 @@ type SqlCatalogChange internal (
     /// Populated for proven column-level changes; null for table-wide or
     /// indeterminate effects. This is not an executable schema-change plan.
     member _.ColumnName = columnName
+    /// Exact constraint identifier on a proven constraint delta; null otherwise.
+    member _.ConstraintName = constraintName

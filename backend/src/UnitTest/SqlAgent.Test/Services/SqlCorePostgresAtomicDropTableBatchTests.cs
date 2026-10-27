@@ -221,7 +221,7 @@ public sealed class SqlCorePostgresAtomicDropTableBatchTests
     }
 
     [Theory]
-    [InlineData("DROP TABLE app.parent, app.child CASCADE;")]
+    [InlineData("DROP TABLE app.parent, app.child CASCADE CASCADE;")]
     [InlineData("DROP TABLE app.parent, app.child RESTRICT CASCADE;")]
     [InlineData("DROP TABLE app.parent, app.child ON app.parent;")]
     public void UnsupportedModifiersStayFailClosed(string sql)

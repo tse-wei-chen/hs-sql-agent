@@ -143,6 +143,28 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL FK-aware DROP TABLE CASCADE
+
+The PostgreSQL `DropTableBatch` closed F# DU carries typed
+`DropDependencyMode` (`Restrict` or `Cascade`). Both single-table
+and multi-table `DROP TABLE ... CASCADE` validate against the same
+original immutable Virtual Catalog, before emitting any changes.
+
+Within a proven complete Catalog, CASCADE removes requested tables and
+**named inbound Foreign Key constraints on surviving tables**, while
+preserving the referencing tables, their columns, other constraints and
+unrelated dependencies. The typed `DropConstraint` Catalog Changes and
+Effects expose `ConstraintName` to identify the exact modeled FK;
+legacy constructors remain compatible. Unnamed FKs cannot be identified
+by their physical server name and must remain unproven. The RESTRICT
+mode still blocks external inbound FKs.
+
+This is static virtual-Catalog proof, not actual DDL execution,
+authorization or a guarantee of server transaction atomicity. The
+Virtual Catalog does not attest live views, triggers, routines, or
+unmodeled dependencies, and opaque DDL continues to invalidate proof.
+Open-world states and unsafe schema resolution remain fail-closed.
+
 ## PostgreSQL multi-table DROP and intra-batch foreign keys
 
 PostgreSQL `DROP TABLE table_a, table_b [RESTRICT]` (and
