@@ -449,8 +449,24 @@ module internal RewriteScriptAnalyzer =
                             SqlCatalogBindingStatus.NotApplicable,
                             next, ([]: SqlCatalogChange list), diagnostics
                         elif syntax.Kind = SqlScriptStatementKind.Session then
-                            let status, certainty, nextSession, nextCatalog, diagnostics, operation =
+                            let analyzedStatus, analyzedCertainty, analyzedSession, analyzedCatalog, diagnostics, operation =
                                 RewriteSessionAnalyzer.analyze sourceDialect sourceProfile session current syntax
+                            // A recognized SET/USE is syntax evidence, not proof
+                            // that it took effect in an unproven transaction
+                            // (for example, one that might already be aborted).
+                            // Keep the typed operation but never re-mint a
+                            // known Session/Catalog premise while Transaction
+                            // remains Unknown. Unsupported syntax already
+                            // invalidates these premises in the analyzer.
+                            let status, certainty, nextSession, nextCatalog =
+                                if transactionBefore = SqlTransactionState.Unknown
+                                   && analyzedStatus <> SqlStatementAnalysisStatus.Unsupported then
+                                    SqlStatementAnalysisStatus.PartiallyAnalyzed,
+                                    SqlCatalogKnowledge.Unknown,
+                                    RewriteSessionAnalyzer.unknown,
+                                    RewriteCatalogModel.taintAll analyzedCatalog
+                                else
+                                    analyzedStatus, analyzedCertainty, analyzedSession, analyzedCatalog
                             session <- nextSession
                             sessionOperation <- operation
                             let sessionEffects =
