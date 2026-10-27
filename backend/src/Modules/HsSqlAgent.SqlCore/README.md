@@ -125,6 +125,30 @@ foreach (var delta in report.CatalogChanges)
     Console.WriteLine($"{delta.Operation}: {delta.TableName}");
 ```
 
+## Oracle DDL implicit COMMIT and independent TCL boundaries
+
+Oracle SQL DDL implicitly COMMITs **before and after** each DDL statement.
+Analyzed Oracle DDL therefore carries both `ChangeSchema` and
+`ChangeTransaction`, with
+`TransactionProvenance.Origin = PossibleImplicitCommit` and
+`RollbackScope = Unproven`. This is a **possible runtime side effect**
+of the script, not evidence that any DML or COMMIT actually ran.
+
+Oracle's independent `COMMIT`, `COMMIT WORK`, `ROLLBACK` and
+`ROLLBACK WORK` are recognized, leave the already-modeled final
+Virtual Catalog unchanged, and preserve the `Outside` static schema
+transaction state. A later `ROLLBACK` does not undo an Oracle
+`CREATE TABLE`. The `RollbackScope` for this case is
+`NotApplicable`, not a claim of Catalog snapshot rollback.
+Unknown virtual Catalog state is **never** restored by a later COMMIT.
+Oracle `SAVEPOINT`, `ROLLBACK TO SAVEPOINT`, `SET TRANSACTION`
+and distributed/force variants remain unsupported without a proven
+transactional state machine.
+
+No Oracle DML execution, row-level rollback, trigger behavior,
+transaction isolation, or server-side authorization is inferred.
+Provider-specific capabilities must remain fail-closed.
+
 ## Final Virtual Catalog symbol projection
 
 `SqlScriptAnalysisResult.Symbols` is an immutable, static **final state**

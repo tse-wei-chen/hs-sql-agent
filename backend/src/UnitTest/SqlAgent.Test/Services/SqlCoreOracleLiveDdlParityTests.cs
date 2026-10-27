@@ -39,17 +39,19 @@ public sealed class SqlCoreOracleLiveDdlParityTests
         new("index_drop_then_column", "CREATE TABLE {T1}(ID NUMBER, LABEL VARCHAR2(32)); CREATE INDEX {I1} ON {T1}(LABEL); DROP INDEX {I1}; ALTER TABLE {T1} DROP COLUMN LABEL;"),
         new("create_drop_other", "CREATE TABLE {T1}(ID NUMBER); CREATE TABLE {T2}(ID NUMBER, CODE VARCHAR2(32)); ALTER TABLE {T2} ADD (QTY NUMBER); DROP TABLE {T1};"),
         new("nullable_columns", "CREATE TABLE {T1}(ID NUMBER NOT NULL, LABEL VARCHAR2(32)); ALTER TABLE {T1} ADD (QTY NUMBER);"),
-        new("quoted_simple", "CREATE TABLE \"{T1}\"(\"ID\" NUMBER NOT NULL, \"LABEL\" VARCHAR2(32)); ALTER TABLE \"{T1}\" ADD (\"QTY\" NUMBER);")
+        new("quoted_simple", "CREATE TABLE \"{T1}\"(\"ID\" NUMBER NOT NULL, \"LABEL\" VARCHAR2(32)); ALTER TABLE \"{T1}\" ADD (\"QTY\" NUMBER);"),
+        new("explicit_rollback_after_ddl", "CREATE TABLE {T1}(ID NUMBER); ROLLBACK;"),
+        new("explicit_commit_after_ddl", "CREATE TABLE {T1}(ID NUMBER); COMMIT;")
     ];
 
     public static IEnumerable<object[]> Cases => Scenarios.Select(x => new object[] { x.Name });
 
     [Fact]
-    public void CorpusContainsFifteenDistinctMultiStatementOracleWorkflows()
+    public void CorpusContainsSeventeenDistinctMultiStatementOracleWorkflows()
     {
-        Assert.Equal(15, Scenarios.Length);
-        Assert.Equal(15, Scenarios.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(15, Scenarios.Select(x => x.Template).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(17, Scenarios.Length);
+        Assert.Equal(17, Scenarios.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(17, Scenarios.Select(x => x.Template).Distinct(StringComparer.Ordinal).Count());
         Assert.All(Scenarios, s => Assert.True(s.Template.Count(x => x == ';') >= 2, s.Name));
     }
 
@@ -99,6 +101,49 @@ public sealed class SqlCoreOracleLiveDdlParityTests
                 await Execute(db, "DROP TABLE \"" +
                     table.Name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\" PURGE");
             Assert.Empty(ReadSchema(db, prefix));
+        }
+    }
+
+    [Fact]
+    public async Task RealOracleDdlImplicitlyCommitsPriorDmlDespiteSubsequentRollback()
+    {
+        var prefix = "HSA6_" + Guid.NewGuid().ToString("N")[..14].ToUpperInvariant();
+        var original = prefix + "_T1";
+        var second = prefix + "_T2";
+        var script = $"CREATE TABLE {original}(ID NUMBER);" +
+                     $"INSERT INTO {original}(ID) VALUES (7);" +
+                     $"CREATE TABLE {second}(ID NUMBER);" +
+                     "ROLLBACK;";
+        var modeled = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Oracle, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlTransactionEffectOrigin.PossibleImplicitCommit,
+            modeled.Statements[2].TransactionProvenance.Origin);
+        Assert.True(modeled.Statements[2].Effects.HasFlag(SqlEffectKind.ChangeTransaction));
+        Assert.False(modeled.Statements[2].TransactionProvenance.IsServerRollbackProven);
+        Assert.True(modeled.FinalCatalog.IsClosedWorld);
+        Assert.Equal(2, modeled.FinalCatalog.Tables.Count);
+
+        await using var db = new OracleConnection(ConnectionString());
+        await OpenWhenReady(db);
+        try
+        {
+            foreach (var item in modeled.Statements)
+                await Execute(db, item.Syntax.Text);
+            AssertEquivalent("implicit-commit", modeled.Statements.Count,
+                modeled.FinalCatalog, ReadSchema(db, prefix));
+            // DDL commits before its own execution. The preceding INSERT must
+            // survive a subsequent ROLLBACK in the actual Oracle engine.
+            using var cmd = new OracleCommand("SELECT COUNT(*) FROM " + original +
+                " WHERE ID = 7", db);
+            Assert.Equal(1, Convert.ToInt32(
+                await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+        }
+        finally
+        {
+            foreach (var table in ReadSchema(db, prefix)
+                         .OrderByDescending(x => x.Name, StringComparer.Ordinal))
+                await Execute(db, "DROP TABLE \"" +
+                    table.Name.Replace("\"", "\"\"", StringComparison.Ordinal) + "\" PURGE");
         }
     }
 
