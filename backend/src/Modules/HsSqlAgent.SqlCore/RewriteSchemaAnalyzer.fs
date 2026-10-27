@@ -23,6 +23,11 @@ module internal RewriteSchemaAnalyzer =
     type DdlOperation =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
+        /// A fully parsed direct-source SELECT projection (no opaque SQL string).
+        | CreateView of view: SqlCatalogQualifiedName * source: SqlCatalogQualifiedName *
+                        projection: string list option
+        | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
+                      dependencyMode: DropDependencyMode
         | Drop of table: SqlCatalogQualifiedName * ifExists: bool
         /// One PostgreSQL statement; validate the whole target set before mutation.
         | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
@@ -234,7 +239,29 @@ module internal RewriteSchemaAnalyzer =
             else false
         let parseCreate () =
             expect "CREATE"
-            if accept "INDEX" then
+            if accept "VIEW" then
+                if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
+                let view = qualifiedName ()
+                expect "AS"
+                expect "SELECT"
+                // Deliberately bounded query shape: exactly one relation,
+                // direct physical column names or a wildcard. No arbitrary
+                // expression, join, predicate, alias, function or view option
+                // may mint a known View relation.
+                let projection =
+                    if symbol '*' then None
+                    else
+                        let columns = ResizeArray<string>()
+                        columns.Add(namePart ())
+                        while symbol ',' do
+                            RewriteResourceBudget.checkpoint ()
+                            columns.Add(namePart ())
+                        Some(columns |> Seq.toList)
+                expect "FROM"
+                let source = qualifiedName ()
+                endOfStatement ()
+                Recognized(CreateView(view, source, projection))
+            elif accept "INDEX" then
                 let indexName = namePart ()
                 expect "ON"
                 let table = qualifiedName ()
@@ -390,6 +417,17 @@ module internal RewriteSchemaAnalyzer =
                 | _, 1, 1 ->
                     Recognized(DropIndex(indexIdentity.Parts[0], target, conditional))
                 | _ -> raise OutsideSubset
+            elif accept "VIEW" then
+                if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
+                let conditional = ifExists ()
+                let view = qualifiedName ()
+                let mode =
+                    if accept "CASCADE" then Cascade
+                    else
+                        accept "RESTRICT" |> ignore
+                        Restrict
+                endOfStatement ()
+                Recognized(DropView(view, conditional, mode))
             else
                 if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifExists ()
