@@ -568,10 +568,13 @@ module internal RewriteScriptAnalyzer =
                             sourceDialect transaction syntax.Kind status outsideBoundaryUnproven
                     let transactionAfter = RewriteTransactionAnalyzer.status nextTransaction
                     let stateBecameUnknown =
-                        transactionAfter = SqlTransactionState.Unknown
-                        && (transactionBefore = SqlTransactionState.Active
-                            || (transactionBefore = SqlTransactionState.Outside
-                                && syntax.Kind <> SqlScriptStatementKind.Transaction))
+                        transactionBefore = SqlTransactionState.Active
+                        && transactionAfter = SqlTransactionState.Unknown
+                    let outsideProofLost =
+                        transactionBefore = SqlTransactionState.Outside
+                        && transactionAfter = SqlTransactionState.Unknown
+                        && syntax.Kind <> SqlScriptStatementKind.Transaction
+                    let transactionProofLost = stateBecameUnknown || outsideProofLost
                     transaction <- nextTransaction
                     // An Unsupported statement can change Session state even
                     // if its surface family is not Session (e.g. DISCARD ALL
@@ -586,10 +589,10 @@ module internal RewriteScriptAnalyzer =
                         || (syntax.Kind = SqlScriptStatementKind.Utility
                             && (utilityIntents |> List.exists (fun intent ->
                                 intent.ExecutionMode <> SqlUtilityExecutionMode.PlanningOnly)))
-                    if stateBecameUnknown || sessionUnproven then
+                    if transactionProofLost || sessionUnproven then
                         session <- RewriteSessionAnalyzer.unknown
                     let after =
-                        if stateBecameUnknown then RewriteCatalogModel.taintAll next else next
+                        if transactionProofLost then RewriteCatalogModel.taintAll next else next
                     let additionalErrors =
                         if stateBecameUnknown then
                             [diagnostic syntax "SQL_TRANSACTION_CONTEXT_UNPROVEN" SqlDiagnosticCategory.Capability
@@ -597,7 +600,7 @@ module internal RewriteScriptAnalyzer =
                         else []
                     let allDiagnostics = diagnostics @ additionalErrors
                     let runtimeCertainty =
-                        if stateBecameUnknown then SqlCatalogKnowledge.Unknown else certainty
+                        if transactionProofLost then SqlCatalogKnowledge.Unknown else certainty
                     let provenance =
                         RewriteResourceBudget.withStage "TransactionProvenance" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteTransactionProvenance.describe

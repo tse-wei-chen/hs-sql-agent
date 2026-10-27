@@ -38,7 +38,7 @@ public sealed class SqlCoreOutsideOpaqueTransactionFenceTests
             statement.TransactionProvenance.Origin);
         Assert.Equal(SqlTransactionRollbackScope.Unproven,
             statement.TransactionProvenance.RollbackScope);
-        Assert.Contains(statement.Diagnostics,
+        Assert.DoesNotContain(statement.Diagnostics,
             d => d.Code == "SQL_TRANSACTION_CONTEXT_UNPROVEN");
         Assert.False(report.FinalCatalog.IsClosedWorld);
     }
@@ -67,7 +67,7 @@ public sealed class SqlCoreOutsideOpaqueTransactionFenceTests
             statement.TransactionProvenance.Origin);
         Assert.Equal(SqlTransactionRollbackScope.Unproven,
             statement.TransactionProvenance.RollbackScope);
-        Assert.Contains(statement.Diagnostics,
+        Assert.DoesNotContain(statement.Diagnostics,
             d => d.Code == "SQL_TRANSACTION_CONTEXT_UNPROVEN");
         Assert.False(statement.CatalogAfter.IsClosedWorld);
     }
@@ -119,6 +119,21 @@ public sealed class SqlCoreOutsideOpaqueTransactionFenceTests
         Assert.Equal(SqlTransactionEffectOrigin.OutsideTransaction,
             statement.TransactionProvenance.Origin);
         Assert.True(report.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void AcceptedSqlFunctionDefinitionKeepsItsDiagnosticContract()
+    {
+        var statement = Assert.Single(Analyze(
+            "CREATE FUNCTION app.positional(amount integer) RETURNS integer " +
+            "LANGUAGE SQL AS $body$SELECT $1;$body$;").Statements);
+
+        Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, statement.Status);
+        Assert.Equal(SqlScriptStatementKind.Procedural, statement.Kind);
+        Assert.Equal(SqlTransactionState.Unknown, statement.TransactionAfter);
+        Assert.Equal(SqlTransactionEffectOrigin.UnprovenRuntimeEffects,
+            statement.TransactionProvenance.Origin);
+        Assert.Empty(statement.Diagnostics);
     }
 
     [Fact]
