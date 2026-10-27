@@ -22,7 +22,7 @@ module internal RewriteSchemaAnalyzer =
         | Drop of table: SqlCatalogQualifiedName * ifExists: bool
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list
-        | DropIndex of name: string * table: SqlCatalogQualifiedName option
+        | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
         /// Exact PostgreSQL index relation identity, never the owning table.
         | DropQualifiedIndex of identity: SqlCatalogQualifiedName * ifExists: bool
         | AddConstraint of table: SqlCatalogQualifiedName * constraintInfo: SqlCatalogConstraint
@@ -361,12 +361,16 @@ module internal RewriteSchemaAnalyzer =
                         | SqlAgentToolType.MySQL | SqlAgentToolType.MsSqlServer ->
                             raise OutsideSubset
                         | _ -> None
+                // RESTRICT is PostgreSQL's default dependent-object
+                // policy; explicit spelling does not add CASCADE authority.
+                if sourceDialect = SqlAgentToolType.Postgres then
+                    accept "RESTRICT" |> ignore
                 endOfStatement ()
-                match sourceDialect, indexIdentity.Parts.Count, conditional with
-                | SqlAgentToolType.Postgres, 2, _ ->
+                match sourceDialect, indexIdentity.Parts.Count with
+                | SqlAgentToolType.Postgres, 2 ->
                     Recognized(DropQualifiedIndex(indexIdentity, conditional))
-                | _, 1, false ->
-                    Recognized(DropIndex(indexIdentity.Parts[0], target))
+                | _, 1 ->
+                    Recognized(DropIndex(indexIdentity.Parts[0], target, conditional))
                 | _ -> raise OutsideSubset
             else
                 if not (accept "TABLE") then raise OutsideSubset

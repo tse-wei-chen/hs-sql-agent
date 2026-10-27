@@ -99,7 +99,8 @@ module internal RewriteScriptAnalyzer =
             | Drop(name, conditional) -> Drop(resolve name, conditional)
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
             | CreateIndex(name, indexName, cols) -> CreateIndex(resolve name, indexName, cols)
-            | DropIndex(indexName, target) -> DropIndex(indexName, Option.map resolve target)
+            | DropIndex(indexName, target, conditional) ->
+                DropIndex(indexName, Option.map resolve target, conditional)
             | DropQualifiedIndex(indexIdentity, conditional) ->
                 DropQualifiedIndex(indexIdentity, conditional)
             | AddConstraint(name, constraintInfo) ->
@@ -123,7 +124,7 @@ module internal RewriteScriptAnalyzer =
                 | AlterColumns(name, _)
                 | CreateIndex(name, _, _)
                 | DropConstraint(name, _) -> [name]
-                | DropIndex(_, target) -> Option.toList target
+                | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
             | _ -> []
         let rawUnqualified =
@@ -144,7 +145,7 @@ module internal RewriteScriptAnalyzer =
             | CreateIndex(name, _, _)
             | AddConstraint(name, _)
             | DropConstraint(name, _) -> Some name
-            | DropIndex(_, target) -> target
+            | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _ -> None
         // Indexes in PostgreSQL belong to their parent table's schema.
         // A caller-supplied one-part Catalog identity has no proven
@@ -363,7 +364,66 @@ module internal RewriteScriptAnalyzer =
                     dependencyUnproven "Qualified index owner or absence cannot be proven against implicit indexes."
                 | _ ->
                     dependencyUnproven "Qualified index identity has conflicting or unproven Catalog owners."
-        | Recognized (DropIndex(indexName, target)) ->
+        | Recognized (DropIndex(indexName, None, true)) ->
+            // IF EXISTS must not promote absence from an arbitrary SQL
+            // search_path. The modeled single-schema session premise
+            // provides the only safe name-resolution scope for this
+            // unqualified conditional form. Caller-supplied unqualified
+            // Catalog owners defeat that projection.
+            let scopedSchema =
+                match scope with
+                | RewriteCatalogSchemaResolution.SingleSchema schema when
+                    RewriteCatalogSchemaResolution.canProject scope state ->
+                    Some schema
+                | _ -> None
+            if sourceDialect <> SqlAgentToolType.Postgres
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Unqualified IF EXISTS requires a fully known PostgreSQL Catalog."
+            else
+                match scopedSchema with
+                | None ->
+                    dependencyUnproven "Unqualified IF EXISTS requires a proven single PostgreSQL search_path schema."
+                | Some schema ->
+                    let inScope (owner: SqlCatalogTable) =
+                        owner.QualifiedName.Parts.Count = 2
+                        && String.Equals(owner.QualifiedName.Parts[0], schema,
+                                         StringComparison.Ordinal)
+                    let matchesIndex (idx: SqlCatalogIndex) =
+                        String.Equals(idx.Name, indexName, StringComparison.Ordinal)
+                    let possibleImplicit =
+                        state.Tables |> Seq.exists (fun owner ->
+                            inScope owner && owner.Constraints.Count > 0)
+                    let namedTable =
+                        state.Tables |> Seq.exists (fun owner ->
+                            inScope owner
+                            && String.Equals(relationName owner.QualifiedName,
+                                             indexName, StringComparison.Ordinal))
+                    let matchingOwners =
+                        state.Tables |> Seq.filter (fun owner ->
+                            inScope owner && (owner.Indexes |> Seq.exists matchesIndex))
+                        |> Seq.toList
+                    // A modeled non-unique standalone index cannot be
+                    // mistaken for an unmodeled PK / UNIQUE backing index.
+                    // Reject the whole proof when implicit names are
+                    // possible instead of guessing the collision behavior.
+                    if possibleImplicit then
+                        dependencyUnproven "Implicit constraint-backed index names in search_path are not proven."
+                    elif namedTable then
+                        fail ("DROP INDEX '" + indexName +
+                              "' names a known table relation, not an index.")
+                    else
+                        match matchingOwners with
+                        | [owner] ->
+                            let remaining =
+                                owner.Indexes |> Seq.filter (matchesIndex >> not)
+                            RewriteCatalogModel.withIndexes state owner.QualifiedName remaining
+                            |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
+                        | [] -> noChange
+                        | _ ->
+                            dependencyUnproven "Unqualified index identity has conflicting proven owners."
+        | Recognized (DropIndex(indexName, target, _)) ->
             if not state.IsClosedWorld ||
                (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
                 dependencyUnproven "Index owner and absence require a complete known Catalog."
