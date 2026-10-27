@@ -36,6 +36,12 @@ module internal RewriteScriptAnalyzer =
         SqlCatalogChange(
             name.DisplayName, operation, certainty, syntax.Span, null, name)
 
+    let private changedConstraintExact (syntax: SqlScriptStatementSyntax)
+                                       (name: SqlCatalogQualifiedName) constraintName =
+        SqlCatalogChange(
+            name.DisplayName, SqlCatalogOperation.DropConstraint,
+            SqlCatalogKnowledge.Known, syntax.Span, null, name, constraintName)
+
     let private changedColumnExact (syntax: SqlScriptStatementSyntax)
                                    (name: SqlCatalogQualifiedName) column operation =
         SqlCatalogChange(
@@ -103,8 +109,8 @@ module internal RewriteScriptAnalyzer =
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
             | Drop(name, conditional) -> Drop(resolve name, conditional)
-            | DropTableBatch(names, conditional) ->
-                DropTableBatch(List.map resolve names, conditional)
+            | DropTableBatch(names, conditional, mode) ->
+                DropTableBatch(List.map resolve names, conditional, mode)
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
             | CreateIndex(name, indexName, cols) -> CreateIndex(resolve name, indexName, cols)
             | DropIndex(indexName, target, conditional) ->
@@ -137,7 +143,7 @@ module internal RewriteScriptAnalyzer =
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
                 | DropIndexBatch(identities, _) -> identities
-                | DropTableBatch(names, _) -> names
+                | DropTableBatch(names, _, _) -> names
             | _ -> []
         let rawUnqualified =
             rawNames |> List.exists (fun n -> n.Parts.Count = 1)
@@ -262,7 +268,7 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
-        | Recognized (DropTableBatch(names, conditional)) ->
+        | Recognized (DropTableBatch(names, conditional, mode)) ->
             // Batch names are fully parsed and scope-resolved before this
             // branch. Examine every target against the same ORIGINAL
             // Catalog; independent single-table DROP validations would
@@ -309,41 +315,63 @@ module internal RewriteScriptAnalyzer =
                             && (owner.Indexes |> Seq.exists (fun index ->
                                 String.Equals(index.Name, relationName name,
                                               StringComparison.Ordinal))))))
-                // All inbound FKs whose referencing table is also being
-                // dropped disappear in the same PostgreSQL DDL statement.
-                // A dependency originating outside this set blocks the
-                // entire RESTRICT operation; do not remove any table first.
+                // Build the entire inbound FK dependency graph from the
+                // original immutable Catalog. Nothing is changed until all
+                // table identities and external constraints are proven.
                 let targets =
                     names |> List.map (fun name -> name.Key) |> Set.ofList
-                let externalForeignKey =
-                    existing |> List.tryPick (fun target ->
+                let externalForeignKeys =
+                    existing |> List.collect (fun target ->
                         RewriteCatalogModel.inboundForeignKeys state target
-                        |> Seq.tryFind (fun (owner, _) ->
+                        |> Seq.filter (fun (owner, _) ->
                             not (Set.contains owner.QualifiedName.Key targets))
-                        |> Option.map (fun (owner, _) -> target, owner))
-                match wrongKind, missing, externalForeignKey with
-                | Some name, _, _ ->
+                        |> Seq.toList)
+                let unnamed =
+                    externalForeignKeys
+                    |> List.tryFind (fun (_, fk) ->
+                        String.IsNullOrWhiteSpace fk.Name)
+                match wrongKind, missing, externalForeignKeys, unnamed with
+                | Some name, _, _, _ ->
                     fail ("DROP TABLE " + name.DisplayName +
                           " names a tracked index relation, not a table.")
-                | None, Some name, _ when not conditional ->
+                | None, Some name, _, _ when not conditional ->
                     fail ("DROP TABLE " + name.DisplayName +
                           " does not exist in the known Catalog.")
-                | None, _, Some(target, dependent) ->
-                    fail ("DROP TABLE " + target.DisplayName +
-                          " is blocked by a FOREIGN KEY in non-batch table '" +
+                | None, _, (dependent, _)::_, _ when mode = Restrict ->
+                    fail ("DROP TABLE batch is blocked by a FOREIGN KEY in non-batch table '" +
                           dependent.Name + "'.")
+                | None, _, _, Some(dependent, _) ->
+                    dependencyUnproven
+                        ("CASCADE cannot prove the physical name of an unnamed FOREIGN KEY on '" +
+                         dependent.Name + "'.")
                 | _ ->
-                    // Only after the full proof succeeds do we mutate the
-                    // local persistent state and publish exact deltas.
-                    let next =
+                    // CASCADE removes the specified tables and precisely
+                    // the named FKs referencing them on surviving tables.
+                    // Referencing tables and unrelated constraints survive.
+                    let afterDrop =
                         existing |> List.fold (fun catalog name ->
                             RewriteCatalogModel.dropKnown catalog name) state
-                    let deltas =
+                    let next =
+                        externalForeignKeys |> List.fold (fun catalog (owner, fk) ->
+                            let current =
+                                RewriteCatalogModel.lookup catalog owner.QualifiedName
+                                |> Option.get
+                            let retained =
+                                current.Constraints |> Seq.filter (fun item ->
+                                    not (item.Kind = SqlCatalogConstraintKind.ForeignKey
+                                         && String.Equals(item.Name, fk.Name,
+                                                          StringComparison.Ordinal)))
+                            RewriteCatalogModel.withConstraints catalog owner.QualifiedName retained
+                        ) afterDrop
+                    let tableDeltas =
                         existing |> List.map (fun name ->
                             changedExact syntax name SqlCatalogOperation.DropTable
                                 SqlCatalogKnowledge.Known)
+                    let constraintDeltas =
+                        externalForeignKeys |> List.map (fun (owner, fk) ->
+                            changedConstraintExact syntax owner.QualifiedName fk.Name)
                     SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
-                    next, deltas, ([]: SqlDiagnostic list)
+                    next, tableDeltas @ constraintDeltas, ([]: SqlDiagnostic list)
         | Recognized (Drop(name, ifExists)) ->
             match RewriteCatalogModel.lookup state name with
             | Some existing when existing.Knowledge = SqlCatalogKnowledge.Known ->
