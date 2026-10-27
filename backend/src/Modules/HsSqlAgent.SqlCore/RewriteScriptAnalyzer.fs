@@ -391,9 +391,9 @@ module internal RewriteScriptAnalyzer =
                         owner.QualifiedName.Parts.Count = 1
                         && (String.Equals(relationName owner.QualifiedName,
                                           relationName name, StringComparison.Ordinal)
-                            || owner.Indexes |> Seq.exists (fun idx ->
+                            || (owner.Indexes |> Seq.exists (fun idx ->
                                 String.Equals(idx.Name, relationName name,
-                                              StringComparison.Ordinal))))))
+                                              StringComparison.Ordinal)))))))
             if not complete then
                 dependencyUnproven "Multi-view DROP requires a complete known PostgreSQL Catalog."
             elif duplicate then
@@ -402,10 +402,10 @@ module internal RewriteScriptAnalyzer =
                 dependencyUnproven "Multi-view DROP requires proven schema ownership for all relation names."
             elif wrongTable.IsSome then
                 fail ("DROP VIEW batch refers to a known table, not a View: " +
-                      wrongTable.Value.DisplayName)
+                      (Option.get wrongTable).DisplayName)
             elif knownIndex.IsSome then
                 fail ("DROP VIEW batch refers to a known index, not a View: " +
-                      knownIndex.Value.DisplayName)
+                      (Option.get knownIndex).DisplayName)
             elif potentialImplicit then
                 dependencyUnproven "Unmodeled implicit key indexes prevent a proven batch View absence."
             elif not conditional && not missing.IsEmpty then
