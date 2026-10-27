@@ -989,12 +989,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify actual SQL Server admission, COMMIT witness and revocation races
+      - name: Verify real SQL Server DML fencing and DDL Catalog differential parity
         # Dedicated service job to keep the regular SQL test shards lightweight.
         # Missing/unready SQL Server is a hard failure in CI, never a skip.
+        # The same live SQL Server 2022 instance is used by both test classes.
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests'
+          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
