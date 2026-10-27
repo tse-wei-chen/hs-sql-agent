@@ -95,6 +95,25 @@ public sealed class SqlCoreUnknownTransactionSessionProofTests
     }
 
     [Fact]
+    public void SqlServerUseCannotRepairUnknownContextFromUnsupportedDdl()
+    {
+        var report = Analyze("CREATE TABLE dbo.users(id INTEGER); USE archive;",
+            SqlAgentToolType.MsSqlServer);
+
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, report.Statements[0].Status);
+        Assert.Equal(SqlTransactionState.Unknown, report.Statements[0].TransactionAfter);
+        var setting = report.Statements[1];
+        Assert.Equal(SqlTransactionState.Unknown, setting.TransactionBefore);
+        Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, setting.Status);
+        Assert.Equal(SqlStatementEffectOperation.UseDatabase,
+            Assert.Single(setting.DetailedEffects).Operation);
+        Assert.Null(setting.SessionAfter.CurrentDatabase);
+        Assert.False(setting.SessionAfter.IsDatabaseScopeProven);
+        Assert.Equal(SqlTransactionState.Unknown, report.FinalTransaction);
+        Assert.False(report.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
     public void KnownSessionProofMustNotReturnAfterSeveralValidCommands()
     {
         var report = Analyze(

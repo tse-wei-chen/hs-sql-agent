@@ -79,9 +79,12 @@ public sealed class SqlCoreCrossProviderSessionTests
     [Fact]
     public void SqlServerUseChangesDatabaseContextButMustNotPretendToProveDefaultSchema()
     {
-        var result = Analyze("CREATE TABLE dbo.users(id INTEGER);" +
+        // INT is the proven SQL Server DDL grammar; INTEGER would first
+        // make the transaction context Unknown and invalidate USE proof.
+        var result = Analyze("CREATE TABLE dbo.users(id INT);" +
             "USE archive; SELECT id FROM dbo.users;",
             SqlAgentToolType.MsSqlServer);
+        Assert.Equal(SqlTransactionState.Outside, result.Statements[1].TransactionBefore);
         Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, result.Statements[1].Status);
         Assert.Equal("ARCHIVE", result.Statements[1].SessionAfter.CurrentDatabase);
         Assert.False(result.Statements[1].SessionAfter.IsDatabaseScopeProven);
