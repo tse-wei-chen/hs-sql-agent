@@ -158,7 +158,9 @@ Supported SELECT, modeled Session settings/DDL and planning-only
 `EXPLAIN` retain their static `Outside` state. Invalid syntax is not
 treated as an executed transaction mutation. The existing transaction
 analyzer handles unsupported explicit transaction commands without adding
-duplicate context diagnostics. Once `Unknown`, later transaction text is
+duplicate context diagnostics. Oracle COMMIT/ROLLBACK grammar remains
+recognized even when the input state is Unknown, but does not reconstruct
+any lost static transaction or Catalog proof. Once `Unknown`, later transaction text is
 not proof of restoration. None of these results are execution evidence.
 
 ## Fail-closed Session proof after opaque Script effects

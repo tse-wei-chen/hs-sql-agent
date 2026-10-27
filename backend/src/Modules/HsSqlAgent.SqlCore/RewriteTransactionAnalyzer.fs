@@ -190,6 +190,12 @@ module internal RewriteTransactionAnalyzer =
                 // The current virtual Catalog describes committed DDL, not
                 // rows changed by triggers or DML; leave schema facts intact.
                 success current currentSession Outside []
+            | (Commit | Rollback), Unknown when sourceDialect = SqlAgentToolType.Oracle ->
+                // COMMIT/ROLLBACK have recognized Oracle syntax even after an
+                // opaque statement. Recognition alone cannot reconstruct a
+                // previously lost transaction, Catalog or Session proof.
+                // Keep the Unknown boundary and the tainted static Catalog.
+                success current currentSession Unknown []
             | Begin, Outside ->
                 success current currentSession (Active(current, currentSession, [], None)) []
             | Commit, Active _ ->

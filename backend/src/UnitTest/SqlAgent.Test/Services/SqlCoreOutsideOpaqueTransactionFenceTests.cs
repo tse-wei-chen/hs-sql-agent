@@ -160,6 +160,27 @@ public sealed class SqlCoreOutsideOpaqueTransactionFenceTests
     }
 
     [Fact]
+    public void OracleCommitRemainsRecognizedButCannotRecoverUnknownProof()
+    {
+        var report = Analyze(
+            "CREATE TABLE orders(ID NUMBER); UNRECOGNIZED WORDS; COMMIT;",
+            SqlAgentToolType.Oracle);
+        var commit = report.Statements[2];
+
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, commit.Status);
+        Assert.Equal(SqlTransactionControlOperation.Commit,
+            commit.TransactionProvenance.ControlOperation);
+        Assert.Equal(SqlTransactionState.Unknown, commit.TransactionBefore);
+        Assert.Equal(SqlTransactionState.Unknown, commit.TransactionAfter);
+        Assert.Equal(SqlTransactionEffectOrigin.UnknownTransactionState,
+            commit.TransactionProvenance.Origin);
+        Assert.Equal(SqlTransactionRollbackScope.Unproven,
+            commit.TransactionProvenance.RollbackScope);
+        Assert.False(report.FinalCatalog.IsClosedWorld);
+        Assert.Equal(SqlTransactionState.Unknown, report.FinalTransaction);
+    }
+
+    [Fact]
     public void TransactionControlOutsideAlreadyFailsClosedWithoutDuplicateFence()
     {
         var statement = Assert.Single(Analyze("ROLLBACK;").Statements);
