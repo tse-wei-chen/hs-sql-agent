@@ -930,7 +930,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       - name: Run remaining SQL service tests
-        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -963,7 +963,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests'
+      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -1027,6 +1027,36 @@ jobs:
           --filter 'FullyQualifiedName~SqlCoreFirebirdLiveDdlParityTests'
         env:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+
+  sqlagent-oracle-ddl-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    services:
+      oracle:
+        # Version-pinned Oracle Database Free. No implicit floating "latest".
+        # Engine setup can take longer than lightweight PostgreSQL/MySQL.
+        image: gvenzl/oracle-free:23.26.3-slim-faststart
+        env:
+          ORACLE_PASSWORD: "Strong_Password_123!"
+          APP_USER: sqlcore
+          APP_USER_PASSWORD: "Strong_Password_123!"
+        ports:
+          - 1521:1521
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Verify real Oracle Free Catalog against modeled DDL
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~SqlCoreOracleLiveDdlParityTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
 
   sqlagent-package-smoke:
     runs-on: ubuntu-latest
