@@ -243,6 +243,185 @@ module internal RewriteScriptAnalyzer =
             if provenGraph then Some(visible, required |> Seq.toList)
             else None
 
+
+    /// FROM instance and physical relation have different identities.
+    /// Only instance indices can determine JOIN sides / null extension.
+    /// Persistent Catalog dependencies still refer to the physical owner.
+    type private ViewInstanceField =
+        { Output: SqlCatalogColumn
+          SourceIndex: int
+          PhysicalName: string
+          Lineage: (SqlCatalogQualifiedName * string) list }
+
+    /// A bounded, alias-scoped self-JOIN proof. No synthetic relation ID
+    /// escapes into SqlCatalogViewSourceBinding or DROP dependency metadata.
+    let private proveInstanceJoinGraph
+            (proven: (SqlCatalogQualifiedName * string * SqlCatalogColumn list) list)
+            (joins: ViewJoinEdge list)
+            : (ViewInstanceField list *
+               (SqlCatalogQualifiedName * string) list * Set<int>) option =
+        let nodes = proven |> List.toArray
+        if nodes.Length < 2 || joins.Length <> nodes.Length - 1 then None
+        else
+            let idAt index =
+                let id, _, _ = nodes.[index]
+                id
+            let newField index (col: SqlCatalogColumn) =
+                { Output = col
+                  SourceIndex = index
+                  PhysicalName = col.Name
+                  Lineage = [idAt index, col.Name] }
+            let extend (field: ViewInstanceField) =
+                { field with
+                    Output = SqlCatalogColumn(
+                        field.Output.Name, field.Output.TypeName, true) }
+            let _, _, firstCols = nodes.[0]
+            let mutable visible = firstCols |> List.map (newField 0)
+            let mutable nullableIndices: Set<int> = Set.empty
+            let dependencies = ResizeArray<SqlCatalogQualifiedName * string>()
+            let mutable complete = true
+            for edgeIndex in 0 .. joins.Length - 1 do
+                RewriteResourceBudget.checkpoint ()
+                if complete then
+                    let rightIndex = edgeIndex + 1
+                    let _, _, rightCols = nodes.[rightIndex]
+                    let incoming = rightCols |> List.map (newField rightIndex)
+                    let edge = joins.[edgeIndex]
+                    let extendLeft =
+                        edge.Kind = RightOuterJoin || edge.Kind = FullOuterJoin
+                    let extendRight =
+                        edge.Kind = LeftOuterJoin || edge.Kind = FullOuterJoin
+                    let withNullable apply fields =
+                        if apply then fields |> List.map extend else fields
+                    let next:
+                        (ViewInstanceField list *
+                         (SqlCatalogQualifiedName * string) list) option =
+                        match edge.Condition with
+                        | UsingKeys keys ->
+                            if (keys |> List.distinct |> List.length) <> keys.Length
+                            then None
+                            else
+                                let keyProof key =
+                                    RewriteResourceBudget.checkpoint ()
+                                    let find fields =
+                                        fields |> List.filter (fun field ->
+                                            String.Equals(field.Output.Name, key,
+                                                          StringComparison.Ordinal))
+                                    match find visible, find incoming with
+                                    | [left], [right] when
+                                        String.Equals(left.Output.TypeName,
+                                                      right.Output.TypeName,
+                                                      StringComparison.Ordinal) ->
+                                        let selected, nullable =
+                                            match edge.Kind with
+                                            | InnerJoin | LeftOuterJoin ->
+                                                left, left.Output.Nullable
+                                            | RightOuterJoin ->
+                                                right, right.Output.Nullable
+                                            | FullOuterJoin ->
+                                                left,
+                                                (left.Output.Nullable
+                                                 || right.Output.Nullable)
+                                        Some {
+                                            Output = SqlCatalogColumn(
+                                                key, selected.Output.TypeName, nullable)
+                                            SourceIndex = selected.SourceIndex
+                                            PhysicalName = selected.PhysicalName
+                                            Lineage = left.Lineage @ right.Lineage }
+                                    | _ -> None
+                                let keysProven = keys |> List.map keyProof
+                                if keysProven |> List.exists Option.isNone then None
+                                else
+                                    let merged = keysProven |> List.choose id
+                                    let keyNames = keys |> Set.ofList
+                                    let nonKey (field: ViewInstanceField) =
+                                        not (Set.contains field.Output.Name keyNames)
+                                    Some(merged
+                                         @ (visible |> List.filter nonKey
+                                            |> withNullable extendLeft)
+                                         @ (incoming |> List.filter nonKey
+                                            |> withNullable extendRight),
+                                         merged |> List.collect (fun f -> f.Lineage))
+                        | OnEquality _ | OnBoolean _ ->
+                            let comparisons = viewOnCriteriaLeaves edge.Condition
+                            let bind (operand: ViewPredicateColumn) =
+                                match operand.Qualifier with
+                                | None ->
+                                    let hits =
+                                        (visible |> List.map (fun f -> PriorStage, f))
+                                        @ (incoming |> List.map (fun f ->
+                                            IntroducedSource, f))
+                                        |> List.filter (fun (_, f) ->
+                                            String.Equals(f.Output.Name,
+                                                          operand.SourceColumn,
+                                                          StringComparison.Ordinal))
+                                    match hits with
+                                    | [side, field] ->
+                                        Some {
+                                            Side = side
+                                            TypeName = field.Output.TypeName
+                                            Lineage = field.Lineage }
+                                    | _ -> None
+                                | Some alias ->
+                                    let matches =
+                                        nodes |> Array.mapi (fun index (_, nodeAlias, cols) ->
+                                            if index > rightIndex
+                                               || not (String.Equals(
+                                                   nodeAlias, alias,
+                                                   StringComparison.Ordinal))
+                                            then []
+                                            else
+                                                cols |> List.filter (fun col ->
+                                                    String.Equals(col.Name,
+                                                                  operand.SourceColumn,
+                                                                  StringComparison.Ordinal))
+                                                |> List.map (fun col -> index, col))
+                                        |> Array.toList |> List.concat
+                                    match matches with
+                                    | [index, col] ->
+                                        Some {
+                                            Side =
+                                                if index = rightIndex
+                                                then IntroducedSource
+                                                else PriorStage
+                                            TypeName = col.TypeName
+                                            Lineage = [idAt index, col.Name] }
+                                    | _ -> None
+                            let proofs =
+                                comparisons |> List.map (fun (left, op, right) ->
+                                    RewriteResourceBudget.checkpoint ()
+                                    match bind left, bind right with
+                                    | Some a, Some b
+                                        when a.Side <> b.Side
+                                             && String.Equals(a.TypeName, b.TypeName,
+                                                              StringComparison.Ordinal)
+                                             && provenOnComparison op a.TypeName ->
+                                        Some(a.Lineage @ b.Lineage)
+                                    | _ -> None)
+                            if proofs |> List.exists Option.isNone then None
+                            else
+                                Some((visible |> withNullable extendLeft)
+                                     @ (incoming |> withNullable extendRight),
+                                     proofs |> List.choose id |> List.concat)
+                    match next with
+                    | None -> complete <- false
+                    | Some(fields, refs) ->
+                        visible <- fields
+                        for reference in refs do dependencies.Add(reference)
+                        match edge.Kind with
+                        | InnerJoin -> ()
+                        | LeftOuterJoin ->
+                            nullableIndices <- Set.add rightIndex nullableIndices
+                        | RightOuterJoin ->
+                            for i in 0 .. edgeIndex do
+                                nullableIndices <- Set.add i nullableIndices
+                        | FullOuterJoin ->
+                            for i in 0 .. rightIndex do
+                                nullableIndices <- Set.add i nullableIndices
+            if complete then
+                Some(visible, dependencies |> Seq.toList, nullableIndices)
+            else None
+
     type private BatchIndexResolution =
         | BatchIndexFound of SqlCatalogQualifiedName * string
         | BatchIndexAbsent
@@ -556,11 +735,6 @@ module internal RewriteScriptAnalyzer =
                          comparisons.IsEmpty || comparisons.Length > 8
                      | UsingKeys keys -> keys.IsEmpty || keys.Length > 8)) then
                 dependencyUnproven "CREATE VIEW graph is outside bounded JOIN capabilities."
-            elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
-                  |> List.length) <> sources.Length then
-                // Self-join also requires instance-scoped provenance, not just
-                // relation-identity scoping; do not claim that proof yet.
-                dependencyUnproven "CREATE VIEW self-JOIN requires per-instance column provenance."
             else
                 let bindings =
                     sources |> List.map (fun s ->
@@ -674,6 +848,46 @@ module internal RewriteScriptAnalyzer =
                         extended
                     let nullExtended (identity: SqlCatalogQualifiedName) =
                         Set.contains identity.Key nullableSources
+                    let isSelfJoin =
+                        (proven |> List.map (fun (id, _, _) -> id.Key)
+                         |> List.distinct |> List.length) <> proven.Length
+                    let instanceGraph =
+                        if isSelfJoin then proveInstanceJoinGraph proven joins
+                        else None
+                    let bindInstance qualifier name =
+                        match instanceGraph with
+                        | None -> None
+                        | Some(fields, _, nullableIndices) ->
+                            match qualifier with
+                            | None ->
+                                match fields |> List.filter (fun f ->
+                                    String.Equals(f.Output.Name, name,
+                                                  StringComparison.Ordinal)) with
+                                | [f] ->
+                                    let identity, _, _ = proven.[f.SourceIndex]
+                                    Some(f.Output, (identity, f.PhysicalName))
+                                | _ -> None
+                            | Some alias ->
+                                let matches =
+                                    proven |> List.mapi (fun index (identity, nodeAlias, cols) ->
+                                        if not (String.Equals(alias, nodeAlias,
+                                                              StringComparison.Ordinal))
+                                        then []
+                                        else
+                                            cols |> List.filter (fun col ->
+                                                String.Equals(col.Name, name,
+                                                              StringComparison.Ordinal))
+                                            |> List.map (fun col ->
+                                                let nullable =
+                                                    col.Nullable
+                                                    || Set.contains index nullableIndices
+                                                SqlCatalogColumn(
+                                                    col.Name, col.TypeName, nullable),
+                                                (identity, col.Name)))
+                                    |> List.concat
+                                match matches with
+                                | [only] -> Some only
+                                | _ -> None
                     let hasMultiUsing =
                         joins.Length > 1
                         && (joins |> List.exists (fun edge ->
@@ -681,10 +895,46 @@ module internal RewriteScriptAnalyzer =
                             | UsingKeys _ -> true
                             | OnEquality _ | OnBoolean _ -> false))
                     let multiUsingGraph =
-                        if hasMultiUsing then proveMultiUsingGraph proven joins
+                        if hasMultiUsing && not isSelfJoin then
+                            proveMultiUsingGraph proven joins
                         else None
                     let projected =
                         match projection with
+                        | Wildcard None when isSelfJoin ->
+                            instanceGraph |> Option.map (fun (fields, _, _) ->
+                                fields |> List.map (fun f -> f.Output),
+                                fields |> List.map (fun f ->
+                                    let identity, _, _ = proven.[f.SourceIndex]
+                                    identity, f.PhysicalName))
+                        | Wildcard(Some alias) when isSelfJoin ->
+                            match instanceGraph with
+                            | None -> None
+                            | Some(_, _, nullableIndices) ->
+                                let matches =
+                                    proven |> List.mapi (fun index (identity, nodeAlias, cols) ->
+                                        if not (String.Equals(nodeAlias, alias,
+                                                              StringComparison.Ordinal))
+                                        then []
+                                        else
+                                            cols |> List.map (fun col ->
+                                                SqlCatalogColumn(
+                                                    col.Name, col.TypeName,
+                                                    col.Nullable
+                                                    || Set.contains index nullableIndices),
+                                                (identity, col.Name)))
+                                    |> List.concat
+                                if matches.IsEmpty then None
+                                else Some(matches |> List.map fst, matches |> List.map snd)
+                        | NamedColumns members when isSelfJoin ->
+                            let resolved =
+                                members |> List.choose (fun memberInfo ->
+                                    bindInstance memberInfo.Qualifier memberInfo.SourceColumn
+                                    |> Option.map (fun (col, owner) ->
+                                        SqlCatalogColumn(
+                                            memberInfo.OutputColumn, col.TypeName, col.Nullable),
+                                        owner))
+                            if resolved.Length <> members.Length then None
+                            else Some(resolved |> List.map fst, resolved |> List.map snd)
                         | Wildcard None when hasMultiUsing ->
                             multiUsingGraph |> Option.map (fun (fields, _) ->
                                 fields |> List.map (fun field -> field.Output),
@@ -823,11 +1073,16 @@ module internal RewriteScriptAnalyzer =
                         if proofs |> List.exists Option.isNone then None
                         else Some(proofs |> List.choose id |> List.concat)
                     let joinRefs =
-                        if hasMultiUsing then multiUsingGraph |> Option.map snd
+                        if isSelfJoin then
+                            instanceGraph |> Option.map (fun (_, refs, _) -> refs)
+                        elif hasMultiUsing then multiUsingGraph |> Option.map snd
                         else legacyJoinRefs
                     let rec provePredicate expression =
                         let bind col =
-                            if hasMultiUsing && col.Qualifier.IsNone then
+                            if isSelfJoin then
+                                bindInstance col.Qualifier col.SourceColumn
+                                |> Option.map (fun (info, (identity, _)) -> identity, info)
+                            elif hasMultiUsing && col.Qualifier.IsNone then
                                 match multiUsingGraph with
                                 | None -> None
                                 | Some(fields, _) ->
@@ -953,7 +1208,9 @@ module internal RewriteScriptAnalyzer =
                                 // only additional ON/WHERE dependency names.
                                 let exactRefs = projectedRefs @ onRefs @ whereRefs
                                 let owned =
-                                    proven |> List.map (fun (identity, _, _) ->
+                                    proven |> List.distinctBy (fun (identity, _, _) ->
+                                        identity.Key)
+                                    |> List.map (fun (identity, _, _) ->
                                         let names =
                                             exactRefs |> List.choose (fun (refId, name) ->
                                                 if String.Equals(identity.Key, refId.Key, StringComparison.Ordinal)
