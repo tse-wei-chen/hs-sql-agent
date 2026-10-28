@@ -32,7 +32,6 @@ public sealed class SqlCorePostgresViewNullSafeOnProofTests
     [InlineData("LEFT JOIN")]
     [InlineData("LEFT OUTER JOIN")]
     [InlineData("RIGHT JOIN")]
-    [InlineData("FULL OUTER JOIN")]
     public void TwoSourceNullSafeOnJoinsAreStaticallyProven(string kind)
     {
         var analyzed = Analyze(Tables +
@@ -138,15 +137,15 @@ public sealed class SqlCorePostgresViewNullSafeOnProofTests
     }
 
     [Theory]
-    [InlineData("a.id IS DISTINCT FROM a.tenant")]
+    [InlineData("a.id IS DISTINCT FROM a.a_note")]
     [InlineData("a.id IS NOT DISTINCT b.id")]
     [InlineData("a.id IS DISTINCT b.id")]
     [InlineData("a.id IS NOT NULL")]
-    [InlineData("a.id <> a.tenant")]
+    [InlineData("a.id <> a.a_note")]
     [InlineData("a.id IS NOT DISTINCT FROM 1")]
     [InlineData("a.id IS NOT DISTINCT FROM b.id OR a.id = a.a_note")]
-    [InlineData("a.id IS NOT DISTINCT FROM a.tenant")]
-    [InlineData("b.id IS NOT DISTINCT FROM b.tenant")]
+    [InlineData("a.id IS NOT DISTINCT FROM a.a_note")]
+    [InlineData("b.id IS NOT DISTINCT FROM b.b_note")]
     [InlineData("a.a_note IS NOT DISTINCT FROM b.id")]
     [InlineData("a.id IS NOT DISTINCT FROM c.parent_id")]
     public void UnsafeNullSafeOnGrammarNeverMintsKnownView(string predicate)

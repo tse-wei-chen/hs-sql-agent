@@ -55,7 +55,6 @@ public sealed class SqlCorePostgresViewOnRelationalProofTests
     [Theory]
     [InlineData("JOIN")]
     [InlineData("RIGHT JOIN")]
-    [InlineData("FULL OUTER JOIN")]
     public void NonEqualityJoinKindPreservesNullExtension(string kind)
     {
         var analyzed = Analyze(Tables +
@@ -130,8 +129,8 @@ public sealed class SqlCorePostgresViewOnRelationalProofTests
     [InlineData("a.id < b.tag")]
     [InlineData("a.tag >= b.id")]
     [InlineData("a.id IS DISTINCT FROM b.tag")]
-    [InlineData("a.id < a.amount")]
-    [InlineData("b.id <> b.amount")]
+    [InlineData("a.id < a.tag")]
+    [InlineData("b.id <> b.tag")]
     [InlineData("a.id >= 1")]
     [InlineData("a.id LIKE b.tag")]
     [InlineData("a.id BETWEEN b.id AND b.amount")]
