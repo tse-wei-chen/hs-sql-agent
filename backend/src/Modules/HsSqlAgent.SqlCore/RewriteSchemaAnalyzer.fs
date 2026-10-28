@@ -26,12 +26,17 @@ module internal RewriteSchemaAnalyzer =
         { SourceColumn: string
           OutputColumn: string }
 
+    /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
+    type ViewCreateMode =
+        | CreateOnly
+        | CreateOrReplace
+
     type DdlOperation =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
         | CreateView of view: SqlCatalogQualifiedName * source: SqlCatalogQualifiedName *
-                        projection: ViewColumnProjection list option
+                        projection: ViewColumnProjection list option * mode: ViewCreateMode
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
                       dependencyMode: DropDependencyMode
         /// One PostgreSQL statement; validates all views and their closure together.
@@ -248,6 +253,12 @@ module internal RewriteSchemaAnalyzer =
             else false
         let parseCreate () =
             expect "CREATE"
+            let viewMode =
+                if accept "OR" then
+                    // Do not generalize OR REPLACE to unrelated DDL families.
+                    if not (accept "REPLACE") then raise OutsideSubset
+                    CreateOrReplace
+                else CreateOnly
             if accept "VIEW" then
                 if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
                 let view = qualifiedName ()
@@ -292,7 +303,9 @@ module internal RewriteSchemaAnalyzer =
                 expect "FROM"
                 let source = qualifiedName ()
                 endOfStatement ()
-                Recognized(CreateView(view, source, projection))
+                Recognized(CreateView(view, source, projection, viewMode))
+            elif viewMode = CreateOrReplace then
+                raise OutsideSubset
             elif accept "INDEX" then
                 let indexName = namePart ()
                 expect "ON"

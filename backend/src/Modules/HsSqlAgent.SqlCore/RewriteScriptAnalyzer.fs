@@ -108,8 +108,8 @@ module internal RewriteScriptAnalyzer =
         let resolvedOperation = function
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
-            | CreateView(view, source, projection) ->
-                CreateView(resolve view, resolve source, projection)
+            | CreateView(view, source, projection, mode) ->
+                CreateView(resolve view, resolve source, projection, mode)
             | DropView(view, conditional, mode) ->
                 DropView(resolve view, conditional, mode)
             | DropViewBatch(views, conditional, mode) ->
@@ -138,7 +138,7 @@ module internal RewriteScriptAnalyzer =
                     name :: (constraints |> List.choose (fun c ->
                         if isNull c.ReferencedIdentity then None
                         else Some c.ReferencedIdentity))
-                | CreateView(view, source, _) -> [view; source]
+                | CreateView(view, source, _, _) -> [view; source]
                 | DropView(view, _, _) -> [view]
                 | DropViewBatch(views, _, _) -> views
                 | AddConstraint(name, constraintInfo) ->
@@ -167,7 +167,7 @@ module internal RewriteScriptAnalyzer =
 
         let referencedTableName = function
             | Create(name, _, _, _)
-            | CreateView(name, _, _)
+            | CreateView(name, _, _, _)
             | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
@@ -286,17 +286,18 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
-        | Recognized (CreateView(view, source, projection)) ->
+        | Recognized (CreateView(view, source, projection, mode)) ->
             // Narrow, single-source SELECT grammar is fully consumed by the
             // DDL parser. The source must already have a proven structural
             // column set; this never authorizes view SQL execution.
+            let existingView = RewriteCatalogModel.lookupView state view
             if sourceDialect <> SqlAgentToolType.Postgres
                || state.Knowledge <> SqlCatalogKnowledge.Known then
                 dependencyUnproven "CREATE VIEW requires a complete PostgreSQL Catalog."
             elif view.Parts.Count <> 2 || source.Parts.Count <> 2 then
                 dependencyUnproven "CREATE VIEW identities require proven physical schemas."
             elif RewriteCatalogModel.lookup state view |> Option.isSome
-                 || RewriteCatalogModel.lookupView state view |> Option.isSome then
+                 || (mode = CreateOnly && existingView.IsSome) then
                 fail ("CREATE VIEW " + view.DisplayName + " conflicts with an existing relation.")
             elif state.Tables |> Seq.exists (fun table ->
                 possiblySameIndexSchema view table.QualifiedName
@@ -353,9 +354,45 @@ module internal RewriteScriptAnalyzer =
                     | Some (shape, _) when shape.IsEmpty ->
                         fail "CREATE VIEW projection cannot have zero columns."
                     | Some (shape, sourceColumnNames) ->
-                        RewriteCatalogModel.withView state view shape [source]
-                            sourceColumnNames
-                        |> exact view SqlCatalogOperation.CreateView
+                        // PostgreSQL preserves the existing output prefix:
+                        // names, ordinal positions and types must be identical.
+                        // Conservatively preserve our modeled nullability too.
+                        // Additional trailing columns are permitted.
+                        let compatiblePrefix (prior: SqlCatalogView) =
+                            shape.Length >= prior.Columns.Count
+                            && (prior.Columns
+                                |> Seq.mapi (fun index existing ->
+                                    let replacement = shape.[index]
+                                    String.Equals(existing.Name, replacement.Name,
+                                                  StringComparison.Ordinal)
+                                    && String.Equals(existing.TypeName, replacement.TypeName,
+                                                     StringComparison.Ordinal)
+                                    && existing.Nullable = replacement.Nullable)
+                                |> Seq.forall id)
+                        // Changing a view's source to itself or a descendant
+                        // would introduce a cyclic dependency graph.
+                        let createsCycle =
+                            match existingView with
+                            | None -> false
+                            | Some _ ->
+                                String.Equals(source.Key, view.Key, StringComparison.Ordinal)
+                                || (RewriteCatalogModel.dependentViews state (Set.singleton view.Key)
+                                    |> List.exists (fun child ->
+                                        String.Equals(child.QualifiedName.Key, source.Key,
+                                                      StringComparison.Ordinal)))
+                        if createsCycle then
+                            fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
+                                  " would introduce a View dependency cycle.")
+                        elif existingView |> Option.exists (compatiblePrefix >> not) then
+                            fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
+                                  " must preserve existing output column names, order and types.")
+                        else
+                            let operation =
+                                if existingView.IsSome then SqlCatalogOperation.ReplaceView
+                                else SqlCatalogOperation.CreateView
+                            RewriteCatalogModel.withView state view shape [source]
+                                sourceColumnNames
+                            |> exact view operation
         | Recognized (DropViewBatch(views, conditional, mode)) ->
             // PostgreSQL multi-view DROP validates the complete set using
             // the ORIGINAL immutable Catalog. Treat a batch-internal view
