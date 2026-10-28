@@ -43,7 +43,7 @@ public sealed class SqlCorePostgresViewGroupedOnProofTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
         var view = Assert.Single(result.FinalCatalog.Views);
         Assert.Equal(new[] { "app.orders", "app.lines" },
-            view.Dependencies.Select(x => x.DisplayName));
+            view.Dependencies.Select(x => x!.DisplayName));
         Assert.Equal(new[] { "id" }.Concat(on.Contains("tenant", StringComparison.Ordinal)
                 ? new[] { "tenant" } : Array.Empty<string>()),
             view.SourceBindings[0]!.Columns);
