@@ -119,6 +119,16 @@ type SqlCatalogTable internal (
     /// Only standalone simple non-unique indexes, never implicit key indexes.
     member _.Indexes = indexes
 
+/// Immutable ownership of columns used by one direct View source. Unlike
+/// a flat list of names, this proves which physical relation each column
+/// belongs to, including JOIN keys and WHERE-only columns.
+[<Sealed>]
+type SqlCatalogViewSourceBinding internal (
+    relation: SqlCatalogQualifiedName,
+    columns: IReadOnlyList<string>) =
+    member _.Relation = relation
+    member _.Columns = columns
+
 /// A separately tracked PostgreSQL VIEW relation with proven direct source
 /// identities and output columns. Never treat a View as a base table.
 [<Sealed>]
@@ -126,14 +136,18 @@ type SqlCatalogView internal (
     name: string, identity: SqlCatalogQualifiedName,
     columns: IReadOnlyList<SqlCatalogColumn>,
     dependencies: IReadOnlyList<SqlCatalogQualifiedName>,
-    sourceColumns: IReadOnlyList<string>) =
+    sourceColumns: IReadOnlyList<string>,
+    sourceBindings: IReadOnlyList<SqlCatalogViewSourceBinding>) =
     member _.Name = name
     member _.QualifiedName = identity
     member _.Columns = columns
     member _.Dependencies = dependencies
-    /// Physical names read from the direct source relation, not exposed
-    /// SELECT aliases. Used by virtual-Catalog DROP COLUMN dependency checks.
+    /// Legacy flattened physical source names, retained for single-source
+    /// callers; for JOINs these names do not establish relation ownership.
     member _.SourceColumns = sourceColumns
+    /// Identity-qualified direct source-column dependency evidence.
+    /// This, never SourceColumns, gates DROP COLUMN proof.
+    member _.SourceBindings = sourceBindings
 
 /// Immutable snapshot detached from the legacy SqlSchemaSnapshot. The latter
 /// requires known schema and must never receive an unknown/partial Catalog.
