@@ -189,12 +189,20 @@ the first input's matching value, but **both** source-column identities
 remain dependencies for DROP COLUMN / DROP TABLE and View replacement.
 
 Explicit named columns and qualified `source.*` preserve physical
-ownership; unqualified non-USING duplicates remain ambiguous. Plain
-`SELECT *` is not yet supported for USING because PostgreSQL suppresses
-duplicate key columns and imposes merged-column ordering. OUTER USING,
-multiway USING, NATURAL joins, type coercion and non-proven expressions
-remain fail-closed. This is static Catalog analysis only, not SQL
-execution or permission authority.
+ownership; unqualified non-USING duplicates remain ambiguous. The
+unqualified `SELECT *` expansion follows PostgreSQL's merged projection:
+**USING keys in the exact order declared**, then remaining **left columns**
+in their physical order, then remaining **right columns** in their
+physical order. Each shared key is exposed only once using the proven
+left-source SQL type/nullability, but both physical key dependencies
+remain protected. Non-USING duplicate output names are rejected for
+`CREATE VIEW`; optional View output-header renaming and compatible
+`CREATE OR REPLACE VIEW` retain ordinal shape and owned source columns.
+
+OUTER USING, multiway USING, NATURAL joins, type coercion and non-proven
+expressions remain fail-closed. PostgreSQL live parity validates output
+column order/types, returned rows and key DROP guards. This is static
+Catalog analysis only, not SQL execution or permission authority.
 
 ### Bounded PostgreSQL View ON equality grouping
 

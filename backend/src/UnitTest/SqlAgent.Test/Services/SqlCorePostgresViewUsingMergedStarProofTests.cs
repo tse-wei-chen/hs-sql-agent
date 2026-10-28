@@ -43,7 +43,7 @@ public sealed class SqlCorePostgresViewUsingMergedStarProofTests
         Assert.Equal(new[] { false, false, true, true, true, true },
             view.Columns.Select(c => c.Nullable));
         Assert.Equal(new[] { "app.orders", "app.lines" },
-            view.Dependencies.Select(d => d.DisplayName));
+            view.Dependencies.Select(d => d!.DisplayName));
         Assert.Equal(new[] { "tenant", "id", "title", "region" },
             view.SourceBindings[0].Columns);
         Assert.Equal(new[] { "amount", "active", "tenant", "id" },
@@ -122,7 +122,7 @@ public sealed class SqlCorePostgresViewUsingMergedStarProofTests
             Assert.Single(result.Statements[5].Changes).Operation);
         var view = result.FinalCatalog.Views.Single(v => v.Name == "app.v");
         Assert.Equal(new[] { "app.backup", "app.lines" },
-            view.Dependencies.Select(d => d.DisplayName));
+            view.Dependencies.Select(d => d!.DisplayName));
         Assert.Equal(new[] { "tenant", "id", "title", "region", "amount", "active" },
             view.Columns.Select(c => c.Name));
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, Analyze(sql +
@@ -165,7 +165,10 @@ public sealed class SqlCorePostgresViewUsingMergedStarProofTests
             "CREATE TABLE app.other(id INTEGER NOT NULL);" +
             "CREATE VIEW app.v AS " + query + ";");
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.Empty(result.Statements[3].Changes);
+        // An unsupported statement can emit Unknown/Indeterminate evidence,
+        // but must never claim a proven Catalog mutation.
+        Assert.DoesNotContain(result.Statements[3].Changes,
+            c => c.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Views);
     }
 

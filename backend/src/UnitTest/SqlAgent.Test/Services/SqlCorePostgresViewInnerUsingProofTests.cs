@@ -65,7 +65,7 @@ public sealed class SqlCorePostgresViewInnerUsingProofTests
     }
 
     [Fact]
-    public void QualifiedWildcardRetainsItsOwnColumnsButPlainWildcardIsUnproven()
+    public void QualifiedWildcardRetainsColumnsButBareWildcardDuplicateNonkeysFail()
     {
         var qualified = Analyze(Tables +
             "CREATE VIEW app.v AS SELECT o.* FROM app.orders o JOIN app.lines l USING (id);");
@@ -77,7 +77,9 @@ public sealed class SqlCorePostgresViewInnerUsingProofTests
 
         var bare = Analyze(Tables +
             "CREATE VIEW app.v AS SELECT * FROM app.orders o JOIN app.lines l USING (id);");
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, bare.Statements[3].Status);
+        // Both relations also expose tenant, which is not part of USING(id).
+        // PostgreSQL refuses duplicate final View column names.
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, bare.Statements[3].Status);
         Assert.Empty(bare.FinalCatalog.Views);
     }
 

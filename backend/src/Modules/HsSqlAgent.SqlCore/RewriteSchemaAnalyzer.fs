@@ -501,8 +501,8 @@ module internal RewriteSchemaAnalyzer =
                         { Qualifier = None; SourceColumn = first }
                 // Bounded left-deep FROM graph: up to four distinct sources,
                 // each edge with 1..8 direct column equality conjuncts.
-                // Strictly no OR, USING, NATURAL, derived relations or
-                // unbounded ON expression grammar; AND grouping is bounded.
+                // Strictly no ON OR, NATURAL, derived relations or unbounded
+                // ON expression grammar; USING has separate closed criteria.
                 let joinKind () =
                     if accept "LEFT" then
                         accept "OUTER" |> ignore
