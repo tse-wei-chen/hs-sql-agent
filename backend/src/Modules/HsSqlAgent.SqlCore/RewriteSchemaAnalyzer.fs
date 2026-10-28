@@ -73,10 +73,19 @@ module internal RewriteSchemaAnalyzer =
         | OrdinaryEquality
         | NullSafeEquality
 
-    /// Closed JOIN criteria: ON binds typed column equality comparisons,
-    /// each preserving its operator; USING retains same-name merge keys.
+    /// Closed Boolean ON AST. Ordinary = keeps SQL's UNKNOWN NULL result,
+    /// while IS NOT DISTINCT FROM uses NULL-safe equality; AND and OR
+    /// retain PostgreSQL precedence and grouping rather than a flat list.
+    type ViewOnBoolean =
+        | OnCompare of ViewPredicateColumn * ViewOnEqualityOperator * ViewPredicateColumn
+        | OnAnd of ViewOnBoolean * ViewOnBoolean
+        | OnOr of ViewOnBoolean * ViewOnBoolean
+
+    /// Preserve the previous conjunction-only proof representation for
+    /// compatibility; any OR expression is stored as a closed Boolean tree.
     type ViewJoinCriteria =
         | OnEquality of (ViewPredicateColumn * ViewOnEqualityOperator * ViewPredicateColumn) list
+        | OnBoolean of ViewOnBoolean
         | UsingKeys of string list
 
     type ViewJoinEdge =
@@ -567,30 +576,57 @@ module internal RewriteSchemaAnalyzer =
                                     | _ -> raise OutsideSubset
                                 let second = whereColumn ()
                                 first, op, second
-                            let comparisons = ResizeArray<_>()
-                            // Only parentheses and AND are transparent to
-                            // typed equality proof; never OR or arbitrary SQL.
+                            // SQL AND binds tighter than OR. Keep the
+                            // Boolean structure rather than collecting every
+                            // leaf into a conjunction (which changes rows).
+                            // Every leaf remains a bounded typed comparison.
                             let mutable onNodes = 0
+                            let mutable leafCount = 0
                             let checkpointOn depth =
                                 RewriteResourceBudget.checkpoint ()
                                 onNodes <- onNodes + 1
                                 if depth > 16 || onNodes > 64 then raise OutsideSubset
-                            let rec onConjunction depth =
+                            let rec parseOnOr depth =
                                 checkpointOn depth
-                                onAtom depth
+                                let mutable left = parseOnAnd depth
+                                while accept "OR" do
+                                    checkpointOn depth
+                                    left <- OnOr(left, parseOnAnd depth)
+                                left
+                            and parseOnAnd depth =
+                                checkpointOn depth
+                                let mutable left = parseOnAtom depth
                                 while accept "AND" do
                                     checkpointOn depth
-                                    onAtom depth
-                            and onAtom depth =
+                                    left <- OnAnd(left, parseOnAtom depth)
+                                left
+                            and parseOnAtom depth =
                                 checkpointOn depth
                                 if symbol '(' then
-                                    onConjunction (depth + 1)
+                                    let group = parseOnOr (depth + 1)
                                     expectSymbol ')'
+                                    group
                                 else
-                                    if comparisons.Count >= 8 then raise OutsideSubset
-                                    comparisons.Add(pair ())
-                            onConjunction 0
-                            OnEquality(comparisons |> Seq.toList)
+                                    if leafCount >= 8 then raise OutsideSubset
+                                    leafCount <- leafCount + 1
+                                    let left, op, right = pair ()
+                                    OnCompare(left, op, right)
+                            let expression = parseOnOr 0
+                            // Pure conjunctions retain the existing closed
+                            // OnEquality path; only expressions containing
+                            // OR need the additional Boolean DU case.
+                            let rec asConjunction node =
+                                match node with
+                                | OnCompare(left, op, right) ->
+                                    Some [left, op, right]
+                                | OnAnd(left, right) ->
+                                    match asConjunction left, asConjunction right with
+                                    | Some a, Some b -> Some(a @ b)
+                                    | _ -> None
+                                | OnOr _ -> None
+                            match asConjunction expression with
+                            | Some comparisons -> OnEquality comparisons
+                            | None -> OnBoolean expression
                         else raise OutsideSubset
                     sources.Add(source)
                     joins.Add({ Kind = family; Condition = condition })
