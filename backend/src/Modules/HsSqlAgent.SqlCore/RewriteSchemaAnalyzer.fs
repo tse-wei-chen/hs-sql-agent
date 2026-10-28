@@ -65,12 +65,16 @@ module internal RewriteSchemaAnalyzer =
     type ViewJoinKind =
         | InnerJoin | LeftOuterJoin | RightOuterJoin | FullOuterJoin
 
-    /// Every ON predicate is a typed source-column equality. Each edge
-    /// connects the previously bound left-deep subgraph to exactly one new
-    /// relation, never an arbitrary free-form SQL expression.
+    /// Closed JOIN criteria: ON requires exact typed equality pairs;
+    /// USING retains names for independent same-name left/right binding.
+    /// Do not erase USING into a text-based or source-ambiguous ON condition.
+    type ViewJoinCriteria =
+        | OnEquality of (ViewPredicateColumn * ViewPredicateColumn) list
+        | UsingKeys of string list
+
     type ViewJoinEdge =
         { Kind: ViewJoinKind
-          Pairs: (ViewPredicateColumn * ViewPredicateColumn) list }
+          Condition: ViewJoinCriteria }
 
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
@@ -527,45 +531,50 @@ module internal RewriteSchemaAnalyzer =
                     let family = Option.get nextJoin
                     let relation = qualifiedName ()
                     let source = { Relation = relation; Alias = sourceAlias () }
-                    // Each edge consumes exactly a conjunction of typed
-                    // equalities; no opaque/predicate-text fallback.
-                    if not (accept "ON") then raise OutsideSubset
-                    let pair () =
-                        RewriteResourceBudget.checkpoint ()
-                        let first = whereColumn ()
-                        match (current ()).Kind with
-                        | Operator "=" -> index <- index + 1
-                        | _ -> raise OutsideSubset
-                        let second = whereColumn ()
-                        first, second
-                    let comparisons = ResizeArray<_>()
-                    // Only parentheses and AND are transparent to the typed
-                    // equality proof. Preserve left-to-right physical column
-                    // ownership, with no opaque OR/expression fallback.
-                    // Bound both depth and token-group work independently of
-                    // the existing maximum eight equality pairs per edge.
-                    let mutable onNodes = 0
-                    let checkpointOn depth =
-                        RewriteResourceBudget.checkpoint ()
-                        onNodes <- onNodes + 1
-                        if depth > 16 || onNodes > 64 then raise OutsideSubset
-                    let rec onConjunction depth =
-                        checkpointOn depth
-                        onAtom depth
-                        while accept "AND" do
-                            checkpointOn depth
-                            onAtom depth
-                    and onAtom depth =
-                        checkpointOn depth
-                        if symbol '(' then
-                            onConjunction (depth + 1)
-                            expectSymbol ')'
-                        else
-                            if comparisons.Count >= 8 then raise OutsideSubset
-                            comparisons.Add(pair ())
-                    onConjunction 0
+                    // Parse a closed criteria DU. USING names are resolved
+                    // against BOTH physical inputs by the semantic analyzer;
+                    // they are not qualified ON expressions or raw SQL.
+                    let condition =
+                        if accept "USING" then
+                            let keys = columnNames ()
+                            if keys.Length > 8 then raise OutsideSubset
+                            UsingKeys keys
+                        elif accept "ON" then
+                            let pair () =
+                                RewriteResourceBudget.checkpoint ()
+                                let first = whereColumn ()
+                                match (current ()).Kind with
+                                | Operator "=" -> index <- index + 1
+                                | _ -> raise OutsideSubset
+                                let second = whereColumn ()
+                                first, second
+                            let comparisons = ResizeArray<_>()
+                            // Only parentheses and AND are transparent to
+                            // typed equality proof; never OR or arbitrary SQL.
+                            let mutable onNodes = 0
+                            let checkpointOn depth =
+                                RewriteResourceBudget.checkpoint ()
+                                onNodes <- onNodes + 1
+                                if depth > 16 || onNodes > 64 then raise OutsideSubset
+                            let rec onConjunction depth =
+                                checkpointOn depth
+                                onAtom depth
+                                while accept "AND" do
+                                    checkpointOn depth
+                                    onAtom depth
+                            and onAtom depth =
+                                checkpointOn depth
+                                if symbol '(' then
+                                    onConjunction (depth + 1)
+                                    expectSymbol ')'
+                                else
+                                    if comparisons.Count >= 8 then raise OutsideSubset
+                                    comparisons.Add(pair ())
+                            onConjunction 0
+                            OnEquality(comparisons |> Seq.toList)
+                        else raise OutsideSubset
                     sources.Add(source)
-                    joins.Add({ Kind = family; Pairs = comparisons |> Seq.toList })
+                    joins.Add({ Kind = family; Condition = condition })
                     nextJoin <- joinKind ()
                 let sources = sources |> Seq.toList
                 let joins = joins |> Seq.toList

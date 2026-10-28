@@ -319,8 +319,20 @@ module internal RewriteScriptAnalyzer =
             elif sources.IsEmpty || sources.Length > 4
                  || joins.Length <> sources.Length - 1
                  || (joins |> List.exists (fun edge ->
-                     edge.Pairs.IsEmpty || edge.Pairs.Length > 8)) then
-                dependencyUnproven "CREATE VIEW graph is outside bounded source/ON capabilities."
+                     match edge.Condition with
+                     | OnEquality pairs -> pairs.IsEmpty || pairs.Length > 8
+                     | UsingKeys keys -> keys.IsEmpty || keys.Length > 8)) then
+                dependencyUnproven "CREATE VIEW graph is outside bounded JOIN capabilities."
+            elif joins |> List.exists (fun edge ->
+                match edge.Condition with
+                | UsingKeys _ ->
+                    sources.Length <> 2
+                    || edge.Kind <> InnerJoin
+                    || (match projection with Wildcard None -> true | _ -> false)
+                | OnEquality _ -> false) then
+                // Unqualified '*' needs PostgreSQL USING merged-column
+                // ordering; outer and multiway USING need their own proofs.
+                dependencyUnproven "CREATE VIEW USING currently proves two-source INNER JOIN with explicit or qualified projections only."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then
                 // Self-join also requires instance-scoped provenance, not just
@@ -349,6 +361,15 @@ module internal RewriteScriptAnalyzer =
                     let proven =
                         bindings |> List.choose (fun (id, alias, cols) ->
                             Option.map (fun x -> id, alias, x) cols)
+                    // In PostgreSQL INNER USING the unqualified key is
+                    // merged into one visible column. Qualified references
+                    // still bind their own physical source. ON joins never
+                    // receive this exception to ordinary ambiguity rules.
+                    let mergedUsingKeys =
+                        match joins with
+                        | [{ Kind = InnerJoin; Condition = UsingKeys keys }]
+                            when sources.Length = 2 -> Set.ofList keys
+                        | _ -> Set.empty
                     let resolveColumn qualifier name =
                         let matches =
                             proven |> List.collect (fun (identity, alias, columns) ->
@@ -361,6 +382,15 @@ module internal RewriteScriptAnalyzer =
                                     |> List.map (fun col -> identity, col))
                         match matches with
                         | [only] -> Some only
+                        | [(leftId, leftCol); (_, rightCol)]
+                            when qualifier.IsNone
+                                 && Set.contains name mergedUsingKeys
+                                 && String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                                  StringComparison.Ordinal) ->
+                            // The INNER USING key values are equivalent for
+                            // matched rows. Right-side dependency is still
+                            // mandatory and is supplied by joinRefs below.
+                            Some(leftId, leftCol)
                         | _ -> None
                     // Nullability is a fold over the left-deep JOIN
                     // graph. RIGHT null-extends *all* prior inputs; FULL
@@ -425,18 +455,37 @@ module internal RewriteScriptAnalyzer =
                                     sources |> List.take (index + 1)
                                     |> List.map (fun item -> item.Relation.Key)
                                     |> Set.ofList
-                                edge.Pairs |> List.map (fun (left, rightOperand) ->
-                                    match resolveColumn left.Qualifier left.SourceColumn,
-                                          resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
-                                    | Some(leftId, leftCol), Some(rightId, rightCol)
-                                        when String.Equals(leftCol.TypeName, rightCol.TypeName,
-                                                           StringComparison.Ordinal)
-                                             && ((String.Equals(leftId.Key, right, StringComparison.Ordinal)
-                                                  && Set.contains rightId.Key prior)
-                                                 || (String.Equals(rightId.Key, right, StringComparison.Ordinal)
-                                                     && Set.contains leftId.Key prior)) ->
-                                        Some [leftId, leftCol.Name; rightId, rightCol.Name]
-                                    | _ -> None))
+                                match edge.Condition with
+                                | OnEquality pairs ->
+                                    pairs |> List.map (fun (left, rightOperand) ->
+                                        match resolveColumn left.Qualifier left.SourceColumn,
+                                              resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
+                                        | Some(leftId, leftCol), Some(rightId, rightCol)
+                                            when String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                                               StringComparison.Ordinal)
+                                                 && ((String.Equals(leftId.Key, right, StringComparison.Ordinal)
+                                                      && Set.contains rightId.Key prior)
+                                                     || (String.Equals(rightId.Key, right, StringComparison.Ordinal)
+                                                         && Set.contains leftId.Key prior)) ->
+                                            Some [leftId, leftCol.Name; rightId, rightCol.Name]
+                                        | _ -> None)
+                                | UsingKeys keys ->
+                                    match proven with
+                                    | [(leftId, _, leftCols); (rightId, _, rightCols)]
+                                        when joins.Length = 1
+                                             && edge.Kind = InnerJoin
+                                             && (keys |> List.distinct |> List.length) = keys.Length ->
+                                        keys |> List.map (fun key ->
+                                            let lookup cols =
+                                                cols |> List.tryFind (fun col ->
+                                                    String.Equals(col.Name, key, StringComparison.Ordinal))
+                                            match lookup leftCols, lookup rightCols with
+                                            | Some leftCol, Some rightCol
+                                                when String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                                                   StringComparison.Ordinal) ->
+                                                Some [leftId, leftCol.Name; rightId, rightCol.Name]
+                                            | _ -> None)
+                                    | _ -> [None])
                             |> List.concat
                         if proofs |> List.exists Option.isNone then None
                         else Some(proofs |> List.choose id |> List.concat)
