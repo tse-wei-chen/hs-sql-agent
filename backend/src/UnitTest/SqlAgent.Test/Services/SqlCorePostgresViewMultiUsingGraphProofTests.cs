@@ -117,7 +117,7 @@ public sealed class SqlCorePostgresViewMultiUsingGraphProofTests
     public void ExistingOnEdgeCanFollowUsingWhenItsOperandsAreExplicitlyQualified()
     {
         var result = Analyze(Tables +
-            "CREATE VIEW app.v AS SELECT id AS merged_id, a.a_note, c.c_note " +
+            "CREATE VIEW app.v AS SELECT a.id AS merged_id, a.a_note, c.c_note " +
             "FROM app.a a JOIN app.b b USING (id) " +
             "LEFT JOIN app.c c ON b.id = c.id;");
         Assert.Empty(result.Diagnostics);
@@ -177,6 +177,7 @@ public sealed class SqlCorePostgresViewMultiUsingGraphProofTests
     [InlineData("SELECT * FROM app.a a JOIN app.b b USING (id) JOIN app.c c USING (id) JOIN app.d d USING (id) JOIN app.a x USING (id)")]
     [InlineData("SELECT * FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON a.id = d.id JOIN app.d d USING (id)")]
     [InlineData("SELECT * FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON id = c.id")]
+    [InlineData("SELECT id FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON b.id = c.id")]
     [InlineData("SELECT * FROM app.a a FULL JOIN app.b b USING (id) JOIN app.c c USING ()")]
     public void UnprovenMultiUsingNeverPublishesKnownView(string select)
     {

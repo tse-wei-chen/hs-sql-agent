@@ -473,11 +473,6 @@ module internal RewriteScriptAnalyzer =
                      | OnEquality pairs -> pairs.IsEmpty || pairs.Length > 8
                      | UsingKeys keys -> keys.IsEmpty || keys.Length > 8)) then
                 dependencyUnproven "CREATE VIEW graph is outside bounded JOIN capabilities."
-            elif joins |> List.exists (fun edge ->
-                match edge.Condition with
-                | UsingKeys _ -> false
-                | OnEquality _ -> false) then
-                dependencyUnproven "CREATE VIEW graph is outside proven JOIN capabilities."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then
                 // Self-join also requires instance-scoped provenance, not just
