@@ -33,6 +33,26 @@ module internal RewriteSchemaAnalyzer =
         | Wildcard of qualifier: string option
         | NamedColumns of columns: ViewColumnProjection list
 
+    /// The predicate references exactly one bound physical source. Literal
+    /// variants never admit expressions, functions, implicit casts, or SQL text.
+    type ViewPredicateColumn =
+        { Qualifier: string option
+          SourceColumn: string }
+
+    type ViewPredicateLiteral =
+        | IntegerValue of int64
+        | StringValue of string
+        | BooleanValue of bool
+
+    type ViewComparison =
+        | Equal | NotEqual | Less | LessOrEqual | Greater | GreaterOrEqual
+
+    type ViewWherePredicate =
+        | Compare of ViewPredicateColumn * ViewComparison * ViewPredicateLiteral
+        | NullTest of ViewPredicateColumn * isNotNull: bool
+        | Conjunction of ViewWherePredicate * ViewWherePredicate
+        | Disjunction of ViewWherePredicate * ViewWherePredicate
+
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
         | CreateOnly
@@ -50,6 +70,7 @@ module internal RewriteSchemaAnalyzer =
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
         | CreateView of view: SqlCatalogQualifiedName * source: SqlCatalogQualifiedName *
                         projection: ViewProjection * fromAlias: string option *
+                        predicate: ViewWherePredicate option *
                         mode: ViewCreateMode * outputHeader: ViewOutputHeader
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
                       dependencyMode: DropDependencyMode
@@ -448,9 +469,85 @@ module internal RewriteSchemaAnalyzer =
                             Some(namePart ())
                         | Identifier(_, true) -> Some(namePart ())
                         | _ -> None
+                // Proven WHERE subset: atomic direct column comparisons,
+                // IS [NOT] NULL, AND/OR with SQL precedence, grouped clauses.
+                // The bounded recursive grouping + node count prevents
+                // stack-amplification from adversarial View definitions.
+                let mutable predicateNodes = 0
+                let checkpointPredicate () =
+                    RewriteResourceBudget.checkpoint ()
+                    predicateNodes <- predicateNodes + 1
+                    if predicateNodes > 256 then raise OutsideSubset
+                let whereColumn () =
+                    let first = namePart ()
+                    if symbol '.' then
+                        { Qualifier = Some first; SourceColumn = namePart () }
+                    else
+                        { Qualifier = None; SourceColumn = first }
+                let whereLiteral () =
+                    match (current ()).Kind with
+                    | IntegerLiteral number ->
+                        index <- index + 1
+                        IntegerValue number
+                    | Operator "-" ->
+                        index <- index + 1
+                        match (current ()).Kind with
+                        | IntegerLiteral number when number <> Int64.MinValue ->
+                            index <- index + 1
+                            IntegerValue(-number)
+                        | _ -> raise OutsideSubset
+                    | StringLiteral value ->
+                        index <- index + 1
+                        StringValue value
+                    | _ when accept "TRUE" -> BooleanValue true
+                    | _ when accept "FALSE" -> BooleanValue false
+                    | _ -> raise OutsideSubset
+                let comparison () =
+                    match (current ()).Kind with
+                    | Operator "=" -> index <- index + 1; Equal
+                    | Operator "<>" | Operator "!=" ->
+                        index <- index + 1; NotEqual
+                    | Operator "<" -> index <- index + 1; Less
+                    | Operator "<=" -> index <- index + 1; LessOrEqual
+                    | Operator ">" -> index <- index + 1; Greater
+                    | Operator ">=" -> index <- index + 1; GreaterOrEqual
+                    | _ -> raise OutsideSubset
+                let rec parseOr depth =
+                    let mutable left = parseAnd depth
+                    while accept "OR" do
+                        checkpointPredicate ()
+                        let right = parseAnd depth
+                        left <- Disjunction(left, right)
+                    left
+                and parseAnd depth =
+                    let mutable left = parseAtom depth
+                    while accept "AND" do
+                        checkpointPredicate ()
+                        let right = parseAtom depth
+                        left <- Conjunction(left, right)
+                    left
+                and parseAtom depth =
+                    checkpointPredicate ()
+                    if depth > 32 then raise OutsideSubset
+                    if symbol '(' then
+                        let grouped = parseOr (depth + 1)
+                        expectSymbol ')'
+                        grouped
+                    else
+                        let column = whereColumn ()
+                        if accept "IS" then
+                            let isNotNull = accept "NOT"
+                            expect "NULL"
+                            NullTest(column, isNotNull)
+                        else
+                            let op = comparison ()
+                            let literal = whereLiteral ()
+                            Compare(column, op, literal)
+                let predicate =
+                    if accept "WHERE" then Some(parseOr 0) else None
                 endOfStatement ()
                 Recognized(CreateView(view, source, projection, fromAlias,
-                                      viewMode, outputHeader))
+                                      predicate, viewMode, outputHeader))
             elif viewMode = CreateOrReplace then
                 raise OutsideSubset
             elif accept "INDEX" then

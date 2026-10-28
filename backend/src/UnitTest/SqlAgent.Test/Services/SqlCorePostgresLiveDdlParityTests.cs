@@ -410,6 +410,87 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task ViewWhereFilterOnlyColumnDependenciesMatchLivePostgres()
+    {
+        var schema = "sqlcore_vw_" + Guid.NewGuid().ToString("N");
+        var statement =
+            $"CREATE TABLE {schema}.source(id INTEGER NOT NULL, status TEXT, qty INTEGER, deleted BOOLEAN);" +
+            $"CREATE TABLE {schema}.alternate(id INTEGER NOT NULL, status TEXT, qty INTEGER, deleted BOOLEAN);" +
+            $"CREATE VIEW {schema}.v (external_id) AS SELECT s.id FROM {schema}.source AS s " +
+            $"WHERE (s.qty >= 10 AND s.status = 'ready') OR s.deleted IS NULL;" +
+            $"CREATE VIEW {schema}.child AS SELECT external_id FROM {schema}.v;";
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            statement, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(analysis.Diagnostics);
+        Assert.All(analysis.Statements, s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        var view = analysis.FinalCatalog.Views.Single(v => v.Name == schema + ".v");
+        Assert.Equal("external_id", Assert.Single(view.Columns).Name);
+        Assert.Equal(new[] { "id", "qty", "status", "deleted" },
+            view.SourceColumns);
+
+        var block = SqlCoreFacade.AnalyzeScript(
+            statement + $"ALTER TABLE {schema}.source DROP COLUMN status;",
+            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, block.Statements[4].Status);
+        Assert.Empty(block.Statements[4].Changes);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var stmt in analysis.Statements)
+            await Execute(db, tx, stmt.Syntax.Text);
+
+        // A dependency not included in SELECT's output still blocks physical DROP.
+        await Execute(db, tx, "SAVEPOINT filter_guard");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.source DROP COLUMN status;"));
+        await Execute(db, tx, "ROLLBACK TO SAVEPOINT filter_guard");
+
+        var replace =
+            $"CREATE OR REPLACE VIEW {schema}.v (external_id) AS " +
+            $"SELECT a.id FROM {schema}.alternate AS a WHERE a.status IS NOT NULL;";
+        var replacementProof = SqlCoreFacade.AnalyzeScript(
+            statement + replace, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(replacementProof.Diagnostics);
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(replacementProof.Statements[4].Changes).Operation);
+        Assert.Equal(new[] { "id", "status" }, replacementProof.FinalCatalog.Views
+            .Single(v => v.Name == schema + ".v").SourceColumns);
+        Assert.Equal(schema + ".alternate", Assert.Single(replacementProof.FinalCatalog.Views
+            .Single(v => v.Name == schema + ".v").Dependencies)!.DisplayName);
+
+        await Execute(db, tx, replace);
+        await Execute(db, tx, $"ALTER TABLE {schema}.source DROP COLUMN status;");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.alternate DROP COLUMN status;"));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ViewWhereUnboundFilterIsRejectedByPostgresAndStaticCatalog()
+    {
+        var schema = "sqlcore_vw_" + Guid.NewGuid().ToString("N");
+        var create = $"CREATE TABLE {schema}.source(id INTEGER NOT NULL);";
+        var invalid =
+            $"CREATE VIEW {schema}.bad AS SELECT id FROM {schema}.source WHERE unknown > 0;";
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            create + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, analysis.Statements[1].Status);
+        Assert.Empty(analysis.Statements[1].Changes);
+        Assert.True(analysis.FinalCatalog.IsClosedWorld);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        await Execute(db, tx, create);
+        await Assert.ThrowsAsync<PostgresException>(() => Execute(db, tx, invalid));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");

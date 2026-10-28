@@ -243,7 +243,7 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
     }
 
     [Theory]
-    [InlineData("CREATE VIEW app.v (visible) AS SELECT id FROM app.src WHERE id > 1;")]
+    [InlineData("CREATE VIEW app.v (visible) AS SELECT id FROM app.src WHERE id IN (1, 2);")]
     [InlineData("CREATE VIEW app.v (visible) AS SELECT id+1 FROM app.src;")]
     [InlineData("CREATE VIEW app.v (visible) WITH (security_barrier=true) AS SELECT id FROM app.src;")]
     public void UnsupportedViewOptionsOrExpressionsDoNotMintProvenCatalog(string statement)
