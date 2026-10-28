@@ -225,16 +225,13 @@ module internal RewriteScriptAnalyzer =
                                         // Preserve each local/cross operand's
                                         // physical dependencies; do not move
                                         // local ON conditions to WHERE.
-                                        Some(leftBound.Lineage @ rightBound.Lineage,
-                                             leftBound.Side <> rightBound.Side)
+                                        Some(leftBound.Lineage @ rightBound.Lineage)
                                     | _ -> None)
-                            let proved = proofs |> List.choose id
-                            if proofs |> List.exists Option.isNone
-                               || not (proved |> List.exists snd) then None
+                            if proofs.IsEmpty || (proofs |> List.exists Option.isNone) then None
                             else
                                 Some(extend extendLeft visible @
                                      extend extendRight newlyBound,
-                                     proved |> List.collect fst)
+                                     proofs |> List.choose id |> List.concat)
                     match next with
                     | Some(fields, refs) ->
                         visible <- fields
@@ -396,15 +393,13 @@ module internal RewriteScriptAnalyzer =
                                         when String.Equals(a.TypeName, b.TypeName,
                                                            StringComparison.Ordinal)
                                              && provenOnComparison op a.TypeName ->
-                                        Some(a.Lineage @ b.Lineage, a.Side <> b.Side)
+                                        Some(a.Lineage @ b.Lineage)
                                     | _ -> None)
-                            let proved = proofs |> List.choose id
-                            if proofs |> List.exists Option.isNone
-                               || not (proved |> List.exists snd) then None
+                            if proofs.IsEmpty || (proofs |> List.exists Option.isNone) then None
                             else
                                 Some((visible |> withNullable extendLeft)
                                      @ (incoming |> withNullable extendRight),
-                                     proved |> List.collect fst)
+                                     proofs |> List.choose id |> List.concat)
                     match next with
                     | None -> complete <- false
                     | Some(fields, refs) ->
@@ -1028,8 +1023,10 @@ module internal RewriteScriptAnalyzer =
                             if found.Length <> members.Length then None
                             else Some(found |> List.map fst, found |> List.map snd)
                     // Every ON comparison must resolve inside this stage.
-                    // At least one comparison links the two JOIN sides;
-                    // local predicates retain exact physical dependencies.
+                    // Pure local ON predicates are valid PostgreSQL SQL;
+                    // unlike WHERE, they retain unmatched OUTER JOIN rows.
+                    // No arbitrary expression, unresolved alias, or
+                    // unproven type is allowed to mint Catalog evidence.
                     let legacyJoinRefs =
                         let proofs =
                             joins |> List.mapi (fun index edge ->
@@ -1056,21 +1053,14 @@ module internal RewriteScriptAnalyzer =
                                                         rightCol.TypeName,
                                                         StringComparison.Ordinal)
                                                      && provenOnComparison operator leftCol.TypeName ->
-                                                let cross =
-                                                    (String.Equals(leftId.Key, right,
-                                                                   StringComparison.Ordinal)
-                                                     && Set.contains rightId.Key prior)
-                                                    || (String.Equals(rightId.Key, right,
-                                                                      StringComparison.Ordinal)
-                                                        && Set.contains leftId.Key prior)
-                                                Some([leftId, leftCol.Name;
-                                                      rightId, rightCol.Name], cross)
+                                                Some [leftId, leftCol.Name;
+                                                      rightId, rightCol.Name]
                                             | _ -> None)
-                                    let proved = comparisons |> List.choose id
-                                    if comparisons |> List.exists Option.isNone
-                                       || not (proved |> List.exists snd)
+                                    if comparisons.IsEmpty
+                                       || (comparisons |> List.exists Option.isNone)
                                     then [None]
-                                    else [Some(proved |> List.collect fst)]
+                                    else
+                                        [Some(comparisons |> List.choose id |> List.concat)]
                                 | UsingKeys keys ->
                                     match proven with
                                     | [(leftId, _, leftCols); (rightId, _, rightCols)]
