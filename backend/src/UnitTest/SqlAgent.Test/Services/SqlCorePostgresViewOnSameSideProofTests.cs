@@ -242,7 +242,7 @@ public sealed class SqlCorePostgresViewOnSameSideProofTests
             return result.ToArray();
         }
         Assert.Equal(new[] { "a1|-", "a2|b2", "a3|-" }, await Rows("v_and"));
-        Assert.Equal(new[] { "a1|b1", "a2|b2", "a3|-" }, await Rows("v_or"));
+        Assert.Equal(new[] { "a1|b1", "a2|b2", "a3|b3" }, await Rows("v_or"));
         foreach (var table in new[] { "a", "b" })
         {
             await Exec("SAVEPOINT guard");

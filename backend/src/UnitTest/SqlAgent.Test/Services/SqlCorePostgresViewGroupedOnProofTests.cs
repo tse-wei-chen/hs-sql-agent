@@ -84,9 +84,9 @@ public sealed class SqlCorePostgresViewGroupedOnProofTests
     }
 
     [Theory]
-    [InlineData("(o.id = l.order_id OR o.id = o.tenant)")]
+    [InlineData("(o.id = l.order_id OR o.id = o.label)")]
     [InlineData("(o.id > o.tenant)")]
-    [InlineData("((o.id = l.order_id) OR (o.id = o.tenant))")]
+    [InlineData("((o.id = l.order_id) OR (o.id = o.label))")]
     [InlineData("(o.id = l.order_id AND)")]
     [InlineData("()")]
     [InlineData("(o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id)")]
