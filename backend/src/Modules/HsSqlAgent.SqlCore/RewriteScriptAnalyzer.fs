@@ -108,8 +108,9 @@ module internal RewriteScriptAnalyzer =
         let resolvedOperation = function
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
-            | CreateView(view, source, projection, sourceAlias, mode, header) ->
-                CreateView(resolve view, resolve source, projection, sourceAlias, mode, header)
+            | CreateView(view, source, projection, sourceAlias, predicate, mode, header) ->
+                CreateView(resolve view, resolve source, projection, sourceAlias,
+                           predicate, mode, header)
             | DropView(view, conditional, mode) ->
                 DropView(resolve view, conditional, mode)
             | DropViewBatch(views, conditional, mode) ->
@@ -138,7 +139,7 @@ module internal RewriteScriptAnalyzer =
                     name :: (constraints |> List.choose (fun c ->
                         if isNull c.ReferencedIdentity then None
                         else Some c.ReferencedIdentity))
-                | CreateView(view, source, _, _, _, _) -> [view; source]
+                | CreateView(view, source, _, _, _, _, _) -> [view; source]
                 | DropView(view, _, _) -> [view]
                 | DropViewBatch(views, _, _) -> views
                 | AddConstraint(name, constraintInfo) ->
@@ -167,7 +168,7 @@ module internal RewriteScriptAnalyzer =
 
         let referencedTableName = function
             | Create(name, _, _, _)
-            | CreateView(name, _, _, _, _, _)
+            | CreateView(name, _, _, _, _, _, _)
             | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
@@ -286,7 +287,8 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
-        | Recognized (CreateView(view, source, projection, sourceAlias, mode, outputHeader)) ->
+        | Recognized (CreateView(view, source, projection, sourceAlias, predicate,
+                                 mode, outputHeader)) ->
             // Narrow, single-source SELECT grammar is fully consumed by the
             // DDL parser. The source must already have a proven structural
             // column set; this never authorizes view SQL execution.
@@ -357,78 +359,138 @@ module internal RewriteScriptAnalyzer =
                             if matching.Length <> items.Length then None
                             else Some(matching |> List.map fst, matching |> List.map snd)
                         | _ -> None
-                    match selected with
-                    | None -> fail "CREATE VIEW projection contains an unbound source column or qualifier."
-                    | Some (shape, _) when shape.IsEmpty ->
-                        fail "CREATE VIEW projection cannot have zero columns."
-                    | Some (shape, sourceColumnNames) ->
-                        // The header renames visible output positions only.
-                        // SQL source identities/types and source dependencies
-                        // remain bound to the original physical projection.
-                        let visibleColumns =
-                            match outputHeader with
-                            | Inferred -> Some shape
-                            | Explicit names when names.Length <= shape.Length ->
-                                // PostgreSQL permits *fewer* header names than
-                                // the SELECT width. Override the supplied
-                                // prefix; retain SELECT-derived trailing names.
-                                let specified = names |> List.toArray
-                                Some(shape |> List.mapi (fun index col ->
-                                    if index < specified.Length then
-                                        SqlCatalogColumn(specified.[index], col.TypeName,
-                                                         col.Nullable)
-                                    else col))
-                            | Explicit _ -> None
-                        match visibleColumns with
-                        | None ->
-                            fail ("CREATE VIEW " + view.DisplayName +
-                                  " column-name list cannot exceed the SELECT projection.")
-                        | Some visibleShape when
-                            (visibleShape
-                             |> List.distinctBy (fun col -> col.Name)
-                             |> List.length) <> visibleShape.Length ->
-                            fail ("CREATE VIEW " + view.DisplayName +
-                                  " has duplicate output column names.")
-                        | Some visibleShape ->
-                            // PostgreSQL preserves the existing output prefix:
-                            // names, ordinal positions and types must be identical.
-                            // Conservatively preserve our modeled nullability too.
-                            // Additional trailing columns are permitted.
-                            let compatiblePrefix (prior: SqlCatalogView) =
-                                visibleShape.Length >= prior.Columns.Count
-                                && (prior.Columns
-                                    |> Seq.mapi (fun index existing ->
-                                        let replacement = visibleShape.[index]
-                                        String.Equals(existing.Name, replacement.Name,
-                                                      StringComparison.Ordinal)
-                                        && String.Equals(existing.TypeName, replacement.TypeName,
-                                                         StringComparison.Ordinal)
-                                        && existing.Nullable = replacement.Nullable)
-                                    |> Seq.forall id)
-                            // Changing a view's source to itself or a descendant
-                            // would introduce a cyclic dependency graph.
-                            let createsCycle =
-                                match existingView with
-                                | None -> false
-                                | Some _ ->
-                                    String.Equals(source.Key, view.Key, StringComparison.Ordinal)
-                                    || (RewriteCatalogModel.dependentViews state (Set.singleton view.Key)
-                                        |> List.exists (fun child ->
-                                            String.Equals(child.QualifiedName.Key, source.Key,
-                                                          StringComparison.Ordinal)))
-                            if createsCycle then
-                                fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
-                                      " would introduce a View dependency cycle.")
-                            elif existingView |> Option.exists (compatiblePrefix >> not) then
-                                fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
-                                      " must preserve existing output column names, order and types.")
-                            else
-                                let operation =
-                                    if existingView.IsSome then SqlCatalogOperation.ReplaceView
-                                    else SqlCatalogOperation.CreateView
-                                RewriteCatalogModel.withView state view visibleShape [source]
-                                    sourceColumnNames
-                                |> exact view operation
+                    // Validate predicate column bindings independently of
+                    // SELECT output. A WHERE-only physical column is still a
+                    // dependency that must block later DROP COLUMN.
+                    let resolvePredicateColumn column =
+                        if not (qualifierMatches column.Qualifier) then None
+                        else
+                            columns |> List.tryFind (fun item ->
+                                String.Equals(item.Name, column.SourceColumn,
+                                              StringComparison.Ordinal))
+                    let rec provePredicate expression =
+                        match expression with
+                        | NullTest(column, _) ->
+                            match resolvePredicateColumn column with
+                            | None -> Error "unbound"
+                            | Some _ -> Ok [column.SourceColumn]
+                        | Compare(column, op, literal) ->
+                            match resolvePredicateColumn column with
+                            | None -> Error "unbound"
+                            | Some sourceColumn ->
+                                let kind = sourceColumn.TypeName.ToUpperInvariant()
+                                let compatible =
+                                    match literal with
+                                    | IntegerValue _ ->
+                                        List.contains kind
+                                            ["SMALLINT"; "INTEGER"; "INT"; "BIGINT"]
+                                    | StringValue _ ->
+                                        kind = "TEXT"
+                                        || kind.StartsWith("VARCHAR(", StringComparison.Ordinal)
+                                        || kind.StartsWith("CHAR(", StringComparison.Ordinal)
+                                    | BooleanValue _ -> kind = "BOOLEAN"
+                                let comparisonSupported =
+                                    match literal, op with
+                                    | BooleanValue _, (Less | LessOrEqual | Greater | GreaterOrEqual) ->
+                                        false
+                                    | StringValue _, (Less | LessOrEqual | Greater | GreaterOrEqual) ->
+                                        false
+                                    | _ -> true
+                                if compatible && comparisonSupported then
+                                    Ok [column.SourceColumn]
+                                else Error "type"
+                        | Conjunction(left, right)
+                        | Disjunction(left, right) ->
+                            match provePredicate left, provePredicate right with
+                            | Ok a, Ok b -> Ok(a @ b)
+                            | Error "unbound", _
+                            | _, Error "unbound" -> Error "unbound"
+                            | _ -> Error "type"
+                    let predicateColumns =
+                        match predicate with
+                        | None -> Ok []
+                        | Some expression -> provePredicate expression
+                    match predicateColumns with
+                    | Error "unbound" ->
+                        fail "CREATE VIEW WHERE predicate refers to an unbound column or qualifier."
+                    | Error _ ->
+                        dependencyUnproven
+                            "CREATE VIEW WHERE literal/operator type compatibility is outside the proven subset."
+                    | Ok filterColumns ->
+                        match selected with
+                        | None -> fail "CREATE VIEW projection contains an unbound source column or qualifier."
+                        | Some (shape, _) when shape.IsEmpty ->
+                            fail "CREATE VIEW projection cannot have zero columns."
+                        | Some (shape, sourceColumnNames) ->
+                            // The header renames visible output positions only.
+                            // SQL source identities/types and source dependencies
+                            // remain bound to the original physical projection.
+                            let visibleColumns =
+                                match outputHeader with
+                                | Inferred -> Some shape
+                                | Explicit names when names.Length <= shape.Length ->
+                                    // PostgreSQL permits *fewer* header names than
+                                    // the SELECT width. Override the supplied
+                                    // prefix; retain SELECT-derived trailing names.
+                                    let specified = names |> List.toArray
+                                    Some(shape |> List.mapi (fun index col ->
+                                        if index < specified.Length then
+                                            SqlCatalogColumn(specified.[index], col.TypeName,
+                                                             col.Nullable)
+                                        else col))
+                                | Explicit _ -> None
+                            match visibleColumns with
+                            | None ->
+                                fail ("CREATE VIEW " + view.DisplayName +
+                                      " column-name list cannot exceed the SELECT projection.")
+                            | Some visibleShape when
+                                (visibleShape
+                                 |> List.distinctBy (fun col -> col.Name)
+                                 |> List.length) <> visibleShape.Length ->
+                                fail ("CREATE VIEW " + view.DisplayName +
+                                      " has duplicate output column names.")
+                            | Some visibleShape ->
+                                // PostgreSQL preserves the existing output prefix:
+                                // names, ordinal positions and types must be identical.
+                                // Conservatively preserve our modeled nullability too.
+                                // Additional trailing columns are permitted.
+                                let compatiblePrefix (prior: SqlCatalogView) =
+                                    visibleShape.Length >= prior.Columns.Count
+                                    && (prior.Columns
+                                        |> Seq.mapi (fun index existing ->
+                                            let replacement = visibleShape.[index]
+                                            String.Equals(existing.Name, replacement.Name,
+                                                          StringComparison.Ordinal)
+                                            && String.Equals(existing.TypeName, replacement.TypeName,
+                                                             StringComparison.Ordinal)
+                                            && existing.Nullable = replacement.Nullable)
+                                        |> Seq.forall id)
+                                // Changing a view's source to itself or a descendant
+                                // would introduce a cyclic dependency graph.
+                                let createsCycle =
+                                    match existingView with
+                                    | None -> false
+                                    | Some _ ->
+                                        String.Equals(source.Key, view.Key, StringComparison.Ordinal)
+                                        || (RewriteCatalogModel.dependentViews state (Set.singleton view.Key)
+                                            |> List.exists (fun child ->
+                                                String.Equals(child.QualifiedName.Key, source.Key,
+                                                              StringComparison.Ordinal)))
+                                if createsCycle then
+                                    fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
+                                          " would introduce a View dependency cycle.")
+                                elif existingView |> Option.exists (compatiblePrefix >> not) then
+                                    fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
+                                          " must preserve existing output column names, order and types.")
+                                else
+                                    let operation =
+                                        if existingView.IsSome then SqlCatalogOperation.ReplaceView
+                                        else SqlCatalogOperation.CreateView
+                                    RewriteCatalogModel.withView state view visibleShape [source]
+                                        (sourceColumnNames @
+                                         (filterColumns |> List.distinct |> List.filter (fun name ->
+                                             not (List.contains name sourceColumnNames))))
+                                    |> exact view operation
         | Recognized (DropViewBatch(views, conditional, mode)) ->
             // PostgreSQL multi-view DROP validates the complete set using
             // the ORIGINAL immutable Catalog. Treat a batch-internal view
