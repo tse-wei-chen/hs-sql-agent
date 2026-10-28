@@ -93,6 +93,22 @@ public sealed class SqlCorePostgresLeftJoinViewNullabilityProofTests
     }
 
     [Fact]
+    public void ViewOfLeftJoinCarriesNullableRightColumnsIntoNextView()
+    {
+        var result = Analyze(Tables +
+            "CREATE VIEW app.v (public_id, total) AS SELECT o.id, d.amount " +
+            "FROM app.orders o LEFT JOIN app.details d ON o.id = d.order_id;" +
+            "CREATE VIEW app.downstream AS SELECT total FROM app.v;");
+        Assert.Empty(result.Diagnostics);
+        var outer = result.FinalCatalog.Views.Single(v => v.Name == "app.v");
+        Assert.Equal(new[] { false, true }, outer.Columns.Select(c => c.Nullable));
+        var child = result.FinalCatalog.Views.Single(v => v.Name == "app.downstream");
+        Assert.True(Assert.Single(child.Columns).Nullable);
+        Assert.Equal("app.v", Assert.Single(child.SourceBindings).Relation.DisplayName);
+        Assert.Equal("total", Assert.Single(child.SourceColumns));
+    }
+
+    [Fact]
     public void BothSidesJoinAndWhereColumnsRemainDropProtected()
     {
         var script = Tables +
