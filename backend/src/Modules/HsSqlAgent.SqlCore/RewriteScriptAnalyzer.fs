@@ -216,24 +216,25 @@ module internal RewriteScriptAnalyzer =
                                     // separately prove the operator/type pair.
                                     match bindOperand left, bindOperand right with
                                     | Some(leftBound), Some(rightBound)
-                                        when leftBound.Side <> rightBound.Side
-                                             && String.Equals(
+                                        when String.Equals(
                                                 leftBound.TypeName,
                                                 rightBound.TypeName,
                                                 StringComparison.Ordinal)
                                              && provenOnComparison operator
                                                     leftBound.TypeName ->
-                                        // An ON equality joins the old
-                                        // visible subtree to the new source;
-                                        // the merged key retains its entire
-                                        // physical USING dependency lineage.
-                                        Some(leftBound.Lineage @ rightBound.Lineage)
+                                        // Preserve each local/cross operand's
+                                        // physical dependencies; do not move
+                                        // local ON conditions to WHERE.
+                                        Some(leftBound.Lineage @ rightBound.Lineage,
+                                             leftBound.Side <> rightBound.Side)
                                     | _ -> None)
-                            if proofs |> List.exists Option.isNone then None
+                            let proved = proofs |> List.choose id
+                            if proofs |> List.exists Option.isNone
+                               || not (proved |> List.exists snd) then None
                             else
                                 Some(extend extendLeft visible @
                                      extend extendRight newlyBound,
-                                     proofs |> List.choose id |> List.concat)
+                                     proved |> List.collect fst)
                     match next with
                     | Some(fields, refs) ->
                         visible <- fields
@@ -392,17 +393,18 @@ module internal RewriteScriptAnalyzer =
                                     RewriteResourceBudget.checkpoint ()
                                     match bind left, bind right with
                                     | Some a, Some b
-                                        when a.Side <> b.Side
-                                             && String.Equals(a.TypeName, b.TypeName,
-                                                              StringComparison.Ordinal)
+                                        when String.Equals(a.TypeName, b.TypeName,
+                                                           StringComparison.Ordinal)
                                              && provenOnComparison op a.TypeName ->
-                                        Some(a.Lineage @ b.Lineage)
+                                        Some(a.Lineage @ b.Lineage, a.Side <> b.Side)
                                     | _ -> None)
-                            if proofs |> List.exists Option.isNone then None
+                            let proved = proofs |> List.choose id
+                            if proofs |> List.exists Option.isNone
+                               || not (proved |> List.exists snd) then None
                             else
                                 Some((visible |> withNullable extendLeft)
                                      @ (incoming |> withNullable extendRight),
-                                     proofs |> List.choose id |> List.concat)
+                                     proved |> List.collect fst)
                     match next with
                     | None -> complete <- false
                     | Some(fields, refs) ->
@@ -1025,10 +1027,9 @@ module internal RewriteScriptAnalyzer =
                                             (identity, col.Name)))
                             if found.Length <> members.Length then None
                             else Some(found |> List.map fst, found |> List.map snd)
-                    // Edge by edge, every equality must link one prior
-                    // bound source to this edge's newly introduced input.
-                    // This rejects future-alias references and unrelated
-                    // same-side comparisons, without losing exact ownership.
+                    // Every ON comparison must resolve inside this stage.
+                    // At least one comparison links the two JOIN sides;
+                    // local predicates retain exact physical dependencies.
                     let legacyJoinRefs =
                         let proofs =
                             joins |> List.mapi (fun index edge ->
@@ -1040,19 +1041,36 @@ module internal RewriteScriptAnalyzer =
                                 match edge.Condition with
                                 | OnEquality _ | OnBoolean _ ->
                                     let pairs = viewOnCriteriaLeaves edge.Condition
-                                    pairs |> List.map (fun (left, operator, rightOperand) ->
-                                        match resolveColumn left.Qualifier left.SourceColumn,
-                                              resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
-                                        | Some(leftId, leftCol), Some(rightId, rightCol)
-                                            when String.Equals(leftCol.TypeName, rightCol.TypeName,
-                                                               StringComparison.Ordinal)
-                                                 && provenOnComparison operator leftCol.TypeName
-                                                 && ((String.Equals(leftId.Key, right, StringComparison.Ordinal)
-                                                      && Set.contains rightId.Key prior)
-                                                     || (String.Equals(rightId.Key, right, StringComparison.Ordinal)
-                                                         && Set.contains leftId.Key prior)) ->
-                                            Some [leftId, leftCol.Name; rightId, rightCol.Name]
-                                        | _ -> None)
+                                    let atStage (id: SqlCatalogQualifiedName) =
+                                        Set.contains id.Key prior
+                                        || String.Equals(id.Key, right, StringComparison.Ordinal)
+                                    let comparisons =
+                                        pairs |> List.map (fun (left, operator, rightOperand) ->
+                                            RewriteResourceBudget.checkpoint ()
+                                            match resolveColumn left.Qualifier left.SourceColumn,
+                                                  resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
+                                            | Some(leftId, leftCol), Some(rightId, rightCol)
+                                                when atStage leftId && atStage rightId
+                                                     && String.Equals(
+                                                        leftCol.TypeName,
+                                                        rightCol.TypeName,
+                                                        StringComparison.Ordinal)
+                                                     && provenOnComparison operator leftCol.TypeName ->
+                                                let cross =
+                                                    (String.Equals(leftId.Key, right,
+                                                                   StringComparison.Ordinal)
+                                                     && Set.contains rightId.Key prior)
+                                                    || (String.Equals(rightId.Key, right,
+                                                                      StringComparison.Ordinal)
+                                                        && Set.contains leftId.Key prior)
+                                                Some([leftId, leftCol.Name;
+                                                      rightId, rightCol.Name], cross)
+                                            | _ -> None)
+                                    let proved = comparisons |> List.choose id
+                                    if comparisons |> List.exists Option.isNone
+                                       || not (proved |> List.exists snd)
+                                    then [None]
+                                    else [Some(proved |> List.collect fst)]
                                 | UsingKeys keys ->
                                     match proven with
                                     | [(leftId, _, leftCols); (rightId, _, rightCols)]
