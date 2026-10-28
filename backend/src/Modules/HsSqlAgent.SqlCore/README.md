@@ -173,10 +173,9 @@ preserves existing name/order/type prefixes, and refuses nullability
 changes that would leave descendant View proofs stale.
 
 Resource bounds prevent unbounded parsing/semantic expansion. Five
-other SQL dialects retain their prior proof fences. ON OR, non-equality
-operators, NATURAL, CROSS, unproven USING shapes, parenthesized non-AND ON predicates, subqueries,
-more than four sources or eight conjuncts, and self-joins are not
-currently proven and fail closed.
+other SQL dialects retain their prior proof fences. NATURAL, CROSS, unproven USING shapes, arbitrary ON expressions,
+subqueries, more than four sources or eight typed ON comparison leaves,
+and self-joins are not currently proven and fail closed.
 
 ### PostgreSQL three/four-source left-deep USING View graph proof
 
