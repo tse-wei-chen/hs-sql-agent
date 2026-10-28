@@ -172,11 +172,19 @@ module internal RewriteScriptAnalyzer =
                                             Lineage = [identity, column.Name] }
                                     | _ -> None
                             let proofs =
-                                pairs |> List.map (fun (left, right) ->
+                                pairs |> List.map (fun (left, operator, right) ->
                                     RewriteResourceBudget.checkpoint ()
+                                    // The operator is not erased to "=":
+                                    // each closed case allows a typed
+                                    // cross-edge comparison but retains its
+                                    // distinct PostgreSQL NULL-row behavior.
+                                    let accepted =
+                                        match operator with
+                                        | OrdinaryEquality | NullSafeEquality -> true
                                     match bindOperand left, bindOperand right with
                                     | Some(leftBound), Some(rightBound)
-                                        when leftBound.Side <> rightBound.Side
+                                        when accepted
+                                             && leftBound.Side <> rightBound.Side
                                              && String.Equals(
                                                 leftBound.TypeName,
                                                 rightBound.TypeName,
@@ -744,12 +752,16 @@ module internal RewriteScriptAnalyzer =
                                     |> Set.ofList
                                 match edge.Condition with
                                 | OnEquality pairs ->
-                                    pairs |> List.map (fun (left, rightOperand) ->
+                                    pairs |> List.map (fun (left, operator, rightOperand) ->
+                                        let accepted =
+                                            match operator with
+                                            | OrdinaryEquality | NullSafeEquality -> true
                                         match resolveColumn left.Qualifier left.SourceColumn,
                                               resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
                                         | Some(leftId, leftCol), Some(rightId, rightCol)
-                                            when String.Equals(leftCol.TypeName, rightCol.TypeName,
-                                                               StringComparison.Ordinal)
+                                            when accepted
+                                                 && String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                                                  StringComparison.Ordinal)
                                                  && ((String.Equals(leftId.Key, right, StringComparison.Ordinal)
                                                       && Set.contains rightId.Key prior)
                                                      || (String.Equals(rightId.Key, right, StringComparison.Ordinal)
