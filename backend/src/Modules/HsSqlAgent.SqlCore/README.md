@@ -262,6 +262,30 @@ expressions remain fail-closed. PostgreSQL live parity validates output
 column order/types, returned rows and key DROP guards. This is static
 Catalog analysis only, not SQL execution or permission authority.
 
+### PostgreSQL NULL-safe JOIN ON comparisons
+
+The PostgreSQL-only `CREATE VIEW` JOIN ON analyzer now preserves a
+**closed F# `ViewOnEqualityOperator`**: `OrdinaryEquality` for SQL
+`=`, and `NullSafeEquality` for SQL `IS NOT DISTINCT FROM`.
+These are not interchangeable: PostgreSQL matches two NULL keys under
+`IS NOT DISTINCT FROM`, while `NULL = NULL` is UNKNOWN and does not
+satisfy INNER JOIN ON. Both variants require two proven direct columns
+with identical catalog SQL types and a valid cross-edge binding.
+
+An ON edge may mix up to **eight** `=` and `IS NOT DISTINCT FROM`
+comparisons using bounded parenthesized AND groups. This works for
+INNER/LEFT/RIGHT/FULL JOIN and 3–4-source stage-visible USING graphs.
+Unqualified stage-visible merged keys keep all original physical source
+column dependencies. Static analysis keeps join/nullability types
+conservative and **does not authorize SQL execution**. PostgreSQL live
+parity verifies NULL/NULL row behavior versus `=`, as well as both
+source DROP COLUMN guards and View replacement dependencies.
+
+`IS DISTINCT FROM` (not equality), OR, wrong types, same-side joins,
+literal/arithmetic expressions, unproven coercions, future aliases,
+a ninth comparison, unknown catalogs and non-PostgreSQL dialects
+remain fail-closed.
+
 ### Bounded PostgreSQL View ON equality grouping
 
 A View JOIN ON clause may now use parentheses around individual equality

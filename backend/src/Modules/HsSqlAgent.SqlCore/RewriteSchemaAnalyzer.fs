@@ -65,11 +65,18 @@ module internal RewriteSchemaAnalyzer =
     type ViewJoinKind =
         | InnerJoin | LeftOuterJoin | RightOuterJoin | FullOuterJoin
 
-    /// Closed JOIN criteria: ON requires exact typed equality pairs;
-    /// USING retains names for independent same-name left/right binding.
-    /// Do not erase USING into a text-based or source-ambiguous ON condition.
+    /// Both operators compare columns but have different PostgreSQL NULL
+    /// semantics. Keep the distinction closed and typed across parsing,
+    /// semantic proof and static Catalog dependency analysis; a NULL-safe
+    /// comparison is never rewritten into SQL "=".
+    type ViewOnEqualityOperator =
+        | OrdinaryEquality
+        | NullSafeEquality
+
+    /// Closed JOIN criteria: ON binds typed column equality comparisons,
+    /// each preserving its operator; USING retains same-name merge keys.
     type ViewJoinCriteria =
-        | OnEquality of (ViewPredicateColumn * ViewPredicateColumn) list
+        | OnEquality of (ViewPredicateColumn * ViewOnEqualityOperator * ViewPredicateColumn) list
         | UsingKeys of string list
 
     type ViewJoinEdge =
@@ -543,11 +550,23 @@ module internal RewriteSchemaAnalyzer =
                             let pair () =
                                 RewriteResourceBudget.checkpoint ()
                                 let first = whereColumn ()
-                                match (current ()).Kind with
-                                | Operator "=" -> index <- index + 1
-                                | _ -> raise OutsideSubset
+                                let op =
+                                    match (current ()).Kind with
+                                    | Operator "=" ->
+                                        index <- index + 1
+                                        OrdinaryEquality
+                                    | _ when accept "IS" ->
+                                        // Only the NULL-safe equality form is
+                                        // a join key. IS DISTINCT FROM is a
+                                        // *non*-equality predicate and is
+                                        // outside this closed capability.
+                                        expect "NOT"
+                                        expect "DISTINCT"
+                                        expect "FROM"
+                                        NullSafeEquality
+                                    | _ -> raise OutsideSubset
                                 let second = whereColumn ()
-                                first, second
+                                first, op, second
                             let comparisons = ResizeArray<_>()
                             // Only parentheses and AND are transparent to
                             // typed equality proof; never OR or arbitrary SQL.
