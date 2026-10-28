@@ -262,6 +262,35 @@ expressions remain fail-closed. PostgreSQL live parity validates output
 column order/types, returned rows and key DROP guards. This is static
 Catalog analysis only, not SQL execution or permission authority.
 
+### PostgreSQL bounded JOIN ON Boolean graph (AND / OR)
+
+The PostgreSQL-only `CREATE VIEW` analyzer now parses a **closed F#
+`ViewOnBoolean`** tree with typed `OnCompare` leaves and explicit
+`OnAnd` / `OnOr` nodes. Operator precedence matches SQL:
+**AND binds tighter than OR**, and parentheses preserve grouping.
+Unlike a flat list of join key comparisons, the Boolean tree
+distinguishes `a=b OR c=d AND e=f` from
+`(a=b OR c=d) AND e=f`. The existing conjunction-only
+`OnEquality` path is retained for previously proven views.
+
+Each ON edge permits **1–8** direct cross-edge, same-type column
+comparisons using `=` or `IS NOT DISTINCT FROM`; grouping depth
+is capped at 16 and parsing nodes at 64. Every Boolean branch is
+independently bound with exact source ownership and physical-column
+lineage; no branch silently substitutes for another or relaxes
+catalog guards. Multi-source `USING`/ON combinations keep the
+merged-key lineage and conservative NULL extension. Ordinary SQL
+equality still obeys NULL's UNKNOWN comparison outcome, while the
+NULL-safe operator matches two NULL values. No SQL expression is
+executed during analysis, and no execution permission is created.
+
+Literals, one-sided equality leaves, functions, arbitrary operators,
+unsupported casts, missing or future aliases, unproven types, more
+than eight leaves, excessive nesting, other database dialects,
+and open catalogs remain fail-closed. PostgreSQL live parity
+verifies Boolean precedence, grouped outcomes, NULL-safe OR rows,
+and physical dependency protection.
+
 ### PostgreSQL NULL-safe JOIN ON comparisons
 
 The PostgreSQL-only `CREATE VIEW` JOIN ON analyzer now preserves a
@@ -273,7 +302,7 @@ satisfy INNER JOIN ON. Both variants require two proven direct columns
 with identical catalog SQL types and a valid cross-edge binding.
 
 An ON edge may mix up to **eight** `=` and `IS NOT DISTINCT FROM`
-comparisons using bounded parenthesized AND groups. This works for
+comparisons using bounded parenthesized AND/OR groups. This works for
 INNER/LEFT/RIGHT/FULL JOIN and 3–4-source stage-visible USING graphs.
 Unqualified stage-visible merged keys keep all original physical source
 column dependencies. Static analysis keeps join/nullability types
@@ -295,7 +324,8 @@ Grouping is erased **only after** each equality is parsed into the existing
 typed `ViewJoinEdge.Pairs`. Its source identity, type checking, dependency
 tracking, and outer-join nullability remain unchanged. Each JOIN edge still
 allows only 1–8 column equality pairs; grouping depth is capped at 16 and
-work checkpoints bound grouping nodes at 64. OR, non-equality comparisons,
+work checkpoints bound grouping nodes at 64. OR is modeled by
+`ViewOnBoolean`, not flattened to AND. Non-equality comparisons,
 unbalanced grouping, arbitrary SQL expressions and other unproven grammar
 remain fail-closed. No new executable compiler capability is granted.
 

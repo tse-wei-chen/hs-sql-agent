@@ -22,6 +22,24 @@ module internal RewriteScriptAnalyzer =
           PhysicalName: string
           Lineage: (SqlCatalogQualifiedName * string) list }
 
+    /// Collect every typed comparison leaf while keeping the original
+    /// OnBoolean tree intact for SQL three-valued Boolean semantics.
+    /// Every leaf, including alternate OR branches, must prove its
+    /// source binding and physical dependency independently.
+    let rec private viewOnLeaves predicate =
+        RewriteResourceBudget.checkpoint ()
+        match predicate with
+        | OnCompare(left, op, right) -> [left, op, right]
+        | OnAnd(left, right)
+        | OnOr(left, right) ->
+            viewOnLeaves left @ viewOnLeaves right
+
+    let private viewOnCriteriaLeaves condition =
+        match condition with
+        | OnEquality pairs -> pairs
+        | OnBoolean predicate -> viewOnLeaves predicate
+        | UsingKeys _ -> []
+
     /// One equality operand binds to one side of the *current* join edge.
     /// A prior merged USING column can own several physical dependencies
     /// without losing its single stage-visible SQL name or type.
@@ -119,7 +137,8 @@ module internal RewriteScriptAnalyzer =
                                         |> extend extendRight
                                     Some(merged @ leftRest @ rightRest,
                                          merged |> List.collect (fun field -> field.Lineage))
-                        | OnEquality pairs ->
+                        | OnEquality _ | OnBoolean _ ->
+                            let pairs = viewOnCriteriaLeaves edge.Condition
                             let bindOperand (operand: ViewPredicateColumn)
                                     : ViewStageOnOperand option =
                                 match operand.Qualifier with
@@ -517,6 +536,9 @@ module internal RewriteScriptAnalyzer =
                  || (joins |> List.exists (fun edge ->
                      match edge.Condition with
                      | OnEquality pairs -> pairs.IsEmpty || pairs.Length > 8
+                     | OnBoolean predicate ->
+                         let comparisons = viewOnLeaves predicate
+                         comparisons.IsEmpty || comparisons.Length > 8
                      | UsingKeys keys -> keys.IsEmpty || keys.Length > 8)) then
                 dependencyUnproven "CREATE VIEW graph is outside bounded JOIN capabilities."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
@@ -751,7 +773,8 @@ module internal RewriteScriptAnalyzer =
                                     |> List.map (fun item -> item.Relation.Key)
                                     |> Set.ofList
                                 match edge.Condition with
-                                | OnEquality pairs ->
+                                | OnEquality _ | OnBoolean _ ->
+                                    let pairs = viewOnCriteriaLeaves edge.Condition
                                     pairs |> List.map (fun (left, operator, rightOperand) ->
                                         let accepted =
                                             match operator with

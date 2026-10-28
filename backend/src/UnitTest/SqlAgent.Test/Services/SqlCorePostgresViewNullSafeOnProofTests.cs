@@ -144,7 +144,7 @@ public sealed class SqlCorePostgresViewNullSafeOnProofTests
     [InlineData("a.id IS NOT NULL")]
     [InlineData("a.id <> b.id")]
     [InlineData("a.id IS NOT DISTINCT FROM 1")]
-    [InlineData("a.id IS NOT DISTINCT FROM b.id OR a.tenant = b.tenant")]
+    [InlineData("a.id IS NOT DISTINCT FROM b.id OR a.id = a.tenant")]
     [InlineData("a.id IS NOT DISTINCT FROM a.tenant")]
     [InlineData("b.id IS NOT DISTINCT FROM b.tenant")]
     [InlineData("a.a_note IS NOT DISTINCT FROM b.id")]

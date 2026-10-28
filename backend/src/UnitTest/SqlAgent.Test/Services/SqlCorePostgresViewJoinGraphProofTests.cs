@@ -162,11 +162,11 @@ public sealed class SqlCorePostgresViewJoinGraphProofTests
     }
 
     [Theory]
-    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id OR o.tenant = l.tenant")]
+    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id OR o.label = l.tenant")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id > l.order_id")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l USING (order_id)")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id CROSS JOIN app.shipments s")]
-    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments s ON (l.line_id = s.line_id OR o.tenant = s.tenant)")]
+    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments s ON (l.line_id = s.line_id OR o.label = s.tenant)")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments s ON l.line_id = s.line_id JOIN app.backups b ON s.ship_id = b.shipment_id JOIN app.orders x ON x.id = o.id")]
     public void UnmodeledJoinGrammarRemainsFailClosed(string query)
     {

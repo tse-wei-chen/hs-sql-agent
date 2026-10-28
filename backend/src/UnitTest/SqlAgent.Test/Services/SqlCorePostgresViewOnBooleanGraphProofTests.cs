@@ -175,8 +175,6 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
     [InlineData("a.id = b.id XOR a.ext_id = b.ext_id")]
     [InlineData("a.id = b.id OR NOT (a.ext_id = b.ext_id)")]
     [InlineData("a.id = b.id OR a.id IS DISTINCT FROM b.id")]
-    [InlineData("(a.id = b.id OR a.ext_id = b.ext_id")]
-    [InlineData("a.id = b.id OR a.ext_id = b.ext_id)")]
     public void MalformedOrUnprovenOrGraphNeverPublishesKnownView(string on)
     {
         var result = Analyze(Tables +
@@ -185,6 +183,16 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
         Assert.DoesNotContain(result.Statements[4].Changes,
             x => x.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Views);
+    }
+
+    [Theory]
+    [InlineData("(a.id = b.id OR a.ext_id = b.ext_id")]
+    [InlineData("a.id = b.id OR a.ext_id = b.ext_id)")]
+    public void UnbalancedOnParenthesesAreRejectedByLexicalStage(string on)
+    {
+        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            Analyze(Tables + "CREATE VIEW app.v AS SELECT a.a_note " +
+                "FROM app.a a JOIN app.b b ON " + on + ";"));
     }
 
     [Fact]
