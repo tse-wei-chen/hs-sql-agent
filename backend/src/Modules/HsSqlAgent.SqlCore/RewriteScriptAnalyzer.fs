@@ -1103,9 +1103,9 @@ module internal RewriteScriptAnalyzer =
                                             | _ -> None)
                                     let fullJoinAnchor =
                                         edge.Kind <> FullOuterJoin
-                                        || hasFullJoinEquiAnchor edge.Condition (fun left right ->
-                                            match resolveColumn left.Qualifier left.SourceColumn,
-                                                  resolveColumn right.Qualifier right.SourceColumn with
+                                        || hasFullJoinEquiAnchor edge.Condition (fun leftOperand rightOperand ->
+                                            match resolveColumn leftOperand.Qualifier leftOperand.SourceColumn,
+                                                  resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
                                             | Some(leftId, leftCol), Some(rightId, rightCol) ->
                                                 let crossed =
                                                     (String.Equals(leftId.Key, right,
