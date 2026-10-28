@@ -664,7 +664,7 @@ module internal RewriteScriptAnalyzer =
                         && (joins |> List.exists (fun edge ->
                             match edge.Condition with
                             | UsingKeys _ -> true
-                            | OnEquality _ -> false))
+                            | OnEquality _ | OnBoolean _ -> false))
                     let multiUsingGraph =
                         if hasMultiUsing then proveMultiUsingGraph proven joins
                         else None
