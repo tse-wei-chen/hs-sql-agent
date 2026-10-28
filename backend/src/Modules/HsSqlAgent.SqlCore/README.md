@@ -143,6 +143,33 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL bounded View WHERE predicate proof
+
+PostgreSQL's single-source `CREATE [OR REPLACE] VIEW` static Catalog
+grammar now accepts a typed, closed F# `ViewWherePredicate` DU for
+direct physical-column comparisons to proven integer/string/boolean
+literals, `IS [NOT] NULL`, and parenthesized `AND`/`OR` with SQL
+precedence. Column names may use the single effective `FROM` alias.
+A bounded 256-node/32-grouping limit protects parser recursion; larger
+definitions fall outside the current proven subset.
+
+Every physical predicate column enters the View's `SourceColumns`
+dependency facts **even if it is not present in SELECT output**. This
+prevents `ALTER TABLE ... DROP COLUMN` from removing filter-only
+dependencies. Replacement recalculates source and predicate dependencies
+atomically, while the visible View output-prefix and dependent View
+contracts stay intact. Repeated SELECT projections retain their prior
+source-column representation.
+
+An unknown physical column or unbound qualifier is Invalid with no
+Catalog change. IN/BETWEEN/LIKE, functions, arithmetic, correlated
+subqueries, col-to-col comparisons, unknown literal/operator type
+compatibility and other non-proven expressions cannot publish Known
+Catalog evidence. No parser acceptance is execution or permission
+authorization; `AnalyzeScript` remains strictly static. PostgreSQL
+live differential tests verify filter-only DROP protection and
+`CREATE OR REPLACE VIEW` dependency rebinding.
+
 ## PostgreSQL single-source qualified View projections
 
 The bounded PostgreSQL Virtual Catalog grammar now supports direct
