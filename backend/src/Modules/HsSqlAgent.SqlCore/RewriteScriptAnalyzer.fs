@@ -108,8 +108,8 @@ module internal RewriteScriptAnalyzer =
         let resolvedOperation = function
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
-            | CreateView(view, source, projection, mode, header) ->
-                CreateView(resolve view, resolve source, projection, mode, header)
+            | CreateView(view, source, projection, sourceAlias, mode, header) ->
+                CreateView(resolve view, resolve source, projection, sourceAlias, mode, header)
             | DropView(view, conditional, mode) ->
                 DropView(resolve view, conditional, mode)
             | DropViewBatch(views, conditional, mode) ->
@@ -138,7 +138,7 @@ module internal RewriteScriptAnalyzer =
                     name :: (constraints |> List.choose (fun c ->
                         if isNull c.ReferencedIdentity then None
                         else Some c.ReferencedIdentity))
-                | CreateView(view, source, _, _, _) -> [view; source]
+                | CreateView(view, source, _, _, _, _) -> [view; source]
                 | DropView(view, _, _) -> [view]
                 | DropViewBatch(views, _, _) -> views
                 | AddConstraint(name, constraintInfo) ->
@@ -167,7 +167,7 @@ module internal RewriteScriptAnalyzer =
 
         let referencedTableName = function
             | Create(name, _, _, _)
-            | CreateView(name, _, _, _, _)
+            | CreateView(name, _, _, _, _, _)
             | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
@@ -286,7 +286,7 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
-        | Recognized (CreateView(view, source, projection, mode, outputHeader)) ->
+        | Recognized (CreateView(view, source, projection, sourceAlias, mode, outputHeader)) ->
             // Narrow, single-source SELECT grammar is fully consumed by the
             // DDL parser. The source must already have a proven structural
             // column set; this never authorizes view SQL execution.
@@ -330,11 +330,21 @@ module internal RewriteScriptAnalyzer =
                     // The visible View shape is *not* the physical dependency
                     // shape. Explicit AS aliases rename outputs only; source
                     // column dependencies must remain stable for later DDL.
+                    let binding =
+                        match sourceAlias with
+                        | Some alias -> alias
+                        | None -> relationName source
+                    let qualifierMatches qualifier =
+                        qualifier
+                        |> Option.forall (fun candidate ->
+                            String.Equals(candidate, binding, StringComparison.Ordinal))
                     let selected =
                         match projection with
-                        | None ->
+                        | Wildcard qualifier when qualifierMatches qualifier ->
                             Some(columns, columns |> List.map (fun col -> col.Name))
-                        | Some items ->
+                        | NamedColumns items when
+                            items |> List.forall (fun item ->
+                                qualifierMatches item.Qualifier) ->
                             let matching =
                                 items |> List.choose (fun item ->
                                     columns |> List.tryFind (fun col ->
@@ -346,8 +356,9 @@ module internal RewriteScriptAnalyzer =
                                         item.SourceColumn))
                             if matching.Length <> items.Length then None
                             else Some(matching |> List.map fst, matching |> List.map snd)
+                        | _ -> None
                     match selected with
-                    | None -> fail "CREATE VIEW projection has duplicate or unknown output columns."
+                    | None -> fail "CREATE VIEW projection contains an unbound source column or qualifier."
                     | Some (shape, _) when shape.IsEmpty ->
                         fail "CREATE VIEW projection cannot have zero columns."
                     | Some (shape, sourceColumnNames) ->
