@@ -149,7 +149,7 @@ public sealed class SqlCorePostgresViewOuterUsingProofTests
         var result = Analyze(sql);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[4].Status);
         Assert.Empty(result.Statements[4].Changes);
-        Assert.False(Assert.Single(result.FinalCatalog.Views.Where(v => v.Name == "app.v"))
+        Assert.False(Assert.Single(result.FinalCatalog.Views, v => v.Name == "app.v")
             .Columns[0].Nullable);
     }
 

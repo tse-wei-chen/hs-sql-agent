@@ -105,9 +105,9 @@ public sealed class SqlCorePostgresViewInnerUsingProofTests
     [InlineData("SELECT id FROM app.orders o JOIN app.lines l USING (missing)")]
     [InlineData("SELECT id FROM app.orders o JOIN app.lines l USING (id,missing)")]
     [InlineData("SELECT id FROM app.orders o JOIN app.lines l USING ()")]
-    [InlineData("SELECT id FROM app.orders o LEFT JOIN app.lines l USING (id)")]
-    [InlineData("SELECT id FROM app.orders o RIGHT JOIN app.lines l USING (id)")]
-    [InlineData("SELECT id FROM app.orders o FULL JOIN app.lines l USING (id)")]
+    [InlineData("SELECT id FROM app.orders o LEFT JOIN app.lines l USING (missing)")]
+    [InlineData("SELECT id FROM app.orders o RIGHT JOIN app.lines l USING (id,id)")]
+    [InlineData("SELECT id FROM app.orders o FULL JOIN app.lines l USING (id,missing)")]
     [InlineData("SELECT id FROM app.orders o JOIN app.lines l USING (id) JOIN app.extra e USING (id)")]
     [InlineData("SELECT id FROM app.orders o JOIN app.lines l USING (id) WHERE o.id = l.id")]
     public void UnsupportedOrInvalidUsingNeverMintsKnownView(string select)

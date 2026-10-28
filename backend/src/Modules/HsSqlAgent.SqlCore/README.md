@@ -178,15 +178,41 @@ operators, NATURAL, CROSS, unproven USING shapes, parenthesized non-AND ON predi
 more than four sources or eight conjuncts, and self-joins are not
 currently proven and fail closed.
 
+### PostgreSQL two-source OUTER USING merged-key proof
+
+In addition to INNER, PostgreSQL `CREATE VIEW` now statically proves
+`LEFT [OUTER] JOIN`, `RIGHT [OUTER] JOIN` and `FULL [OUTER] JOIN`
+with 1–8 identical-type, unique `USING` keys on two distinct known
+sources. The typed `ViewJoinKind` controls the merged key's **value
+and nullability**, not the nullable state of an arbitrarily chosen
+physical source:
+
+- LEFT USING keeps the left key's value and base nullability.
+- RIGHT USING keeps the right key's value and base nullability.
+- FULL USING uses PostgreSQL's `COALESCE(left_key,right_key)` value.
+  Its key is conservatively nullable if **either** source key can be
+  nullable, and nonnullable if both sources prove NOT NULL.
+
+The unqualified merged name follows this choice for named columns
+and `SELECT *`, whereas qualified `a.key` and `b.key` retain their
+own null-extension under LEFT/RIGHT/FULL. All `USING` key dependencies
+still belong to **both** physical sources even when the merged output
+is represented by one column. PostgreSQL live parity verifies matched
+rows, LEFT-only, RIGHT-only, NULL-key unmatched rows, ordinal field
+names and DROP COLUMN restrictions. Cross-dialect, self-join, multiway
+USING, implicit coercion, NATURAL and opaque predicates remain
+fail-closed; this grants no SQL execution permission.
+
 ### PostgreSQL two-source INNER USING static View proof
 
 PostgreSQL `CREATE VIEW ... FROM a JOIN b USING (id, tenant)` now has
 a dedicated typed `ViewJoinCriteria.UsingKeys` case, distinct from the
-existing `OnEquality` expression pairs. In a **known, two-relation INNER
-JOIN** only, 1–8 unique, same-named, identical-type keys are bound to both
-physical source identities. The unqualified merged USING key resolves to
-the first input's matching value, but **both** source-column identities
-remain dependencies for DROP COLUMN / DROP TABLE and View replacement.
+existing `OnEquality` expression pairs. For a **known, two-relation JOIN**, 1–8 unique, same-named,
+identical-type keys are bound to both physical source identities.
+INNER USING resolves the unqualified merged key to the first input's
+matching value, while OUTER USING applies the distinct JOIN-kind rules
+described above. **Both** source-column identities remain dependencies
+for DROP COLUMN / DROP TABLE and View replacement.
 
 Explicit named columns and qualified `source.*` preserve physical
 ownership; unqualified non-USING duplicates remain ambiguous. The
@@ -194,12 +220,12 @@ unqualified `SELECT *` expansion follows PostgreSQL's merged projection:
 **USING keys in the exact order declared**, then remaining **left columns**
 in their physical order, then remaining **right columns** in their
 physical order. Each shared key is exposed only once using the proven
-left-source SQL type/nullability, but both physical key dependencies
+JOIN-kind-specific SQL type/nullability, but both physical key dependencies
 remain protected. Non-USING duplicate output names are rejected for
 `CREATE VIEW`; optional View output-header renaming and compatible
 `CREATE OR REPLACE VIEW` retain ordinal shape and owned source columns.
 
-OUTER USING, multiway USING, NATURAL joins, type coercion and non-proven
+Multiway USING, NATURAL joins, type coercion and non-proven
 expressions remain fail-closed. PostgreSQL live parity validates output
 column order/types, returned rows and key DROP guards. This is static
 Catalog analysis only, not SQL execution or permission authority.

@@ -325,12 +325,11 @@ module internal RewriteScriptAnalyzer =
                 dependencyUnproven "CREATE VIEW graph is outside bounded JOIN capabilities."
             elif joins |> List.exists (fun edge ->
                 match edge.Condition with
-                | UsingKeys _ ->
-                    sources.Length <> 2 || edge.Kind <> InnerJoin
+                | UsingKeys _ -> sources.Length <> 2
                 | OnEquality _ -> false) then
-                // OUTER/multiway USING require independent coalesced
-                // provenance and nullability proofs.
-                dependencyUnproven "CREATE VIEW USING requires a proven two-source INNER JOIN."
+                // Each USING clause must operate on exactly two known
+                // source instances, never an implicit larger join graph.
+                dependencyUnproven "CREATE VIEW USING requires a proven two-source JOIN."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then
                 // Self-join also requires instance-scoped provenance, not just
@@ -359,15 +358,46 @@ module internal RewriteScriptAnalyzer =
                     let proven =
                         bindings |> List.choose (fun (id, alias, cols) ->
                             Option.map (fun x -> id, alias, x) cols)
-                    // In PostgreSQL INNER USING the unqualified key is
-                    // merged into one visible column. Qualified references
-                    // still bind their own physical source. ON joins never
-                    // receive this exception to ordinary ambiguity rules.
-                    let mergedUsingKeys =
+                    // A closed JOIN-kind proof determines the physical
+                    // value of a merged USING key. LEFT uses the left key,
+                    // RIGHT the right key, FULL is COALESCE(left,right).
+                    // Qualified key references always resolve to their
+                    // physical owner and receive independent null extension.
+                    let usingJoin =
                         match joins with
-                        | [{ Kind = InnerJoin; Condition = UsingKeys keys }]
-                            when sources.Length = 2 -> Set.ofList keys
-                        | _ -> Set.empty
+                        | [{ Kind = kind; Condition = UsingKeys keys }]
+                            when sources.Length = 2 -> Some(kind, keys)
+                        | _ -> None
+                    let mergedUsingKeys =
+                        match usingJoin with
+                        | Some(_, keys) -> Set.ofList keys
+                        | None -> Set.empty
+                    let mergedKeyProjection name =
+                        match proven, usingJoin with
+                        | [(leftId, _, leftCols); (rightId, _, rightCols)],
+                          Some(kind, keys) when List.contains name keys ->
+                            let lookup (cols: SqlCatalogColumn list) =
+                                cols |> List.tryFind (fun col ->
+                                    String.Equals(col.Name, name, StringComparison.Ordinal))
+                            match lookup leftCols, lookup rightCols with
+                            | Some leftCol, Some rightCol when
+                                String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                              StringComparison.Ordinal) ->
+                                let nullable, owner =
+                                    match kind with
+                                    | InnerJoin | LeftOuterJoin ->
+                                        leftCol.Nullable, leftId
+                                    | RightOuterJoin ->
+                                        rightCol.Nullable, rightId
+                                    | FullOuterJoin ->
+                                        // Unmatched rows from EITHER side
+                                        // survive. COALESCE is non-null only
+                                        // if both source keys are non-null.
+                                        (leftCol.Nullable || rightCol.Nullable), leftId
+                                Some(SqlCatalogColumn(name, leftCol.TypeName, nullable),
+                                     (owner, name))
+                            | _ -> None
+                        | _ -> None
                     let resolveColumn qualifier name =
                         let matches =
                             proven |> List.collect (fun (identity, alias, columns) ->
@@ -380,15 +410,18 @@ module internal RewriteScriptAnalyzer =
                                     |> List.map (fun col -> identity, col))
                         match matches with
                         | [only] -> Some only
-                        | [(leftId, leftCol); (_, rightCol)]
+                        | [(leftId, leftCol); (rightId, rightCol)]
                             when qualifier.IsNone
                                  && Set.contains name mergedUsingKeys
                                  && String.Equals(leftCol.TypeName, rightCol.TypeName,
                                                   StringComparison.Ordinal) ->
-                            // The INNER USING key values are equivalent for
-                            // matched rows. Right-side dependency is still
-                            // mandatory and is supplied by joinRefs below.
-                            Some(leftId, leftCol)
+                            // Used for WHERE type binding; final projection
+                            // nullability is computed by mergedKeyProjection.
+                            // JOIN references below retain both key owners.
+                            match usingJoin with
+                            | Some(RightOuterJoin, _) -> Some(rightId, rightCol)
+                            | Some _ -> Some(leftId, leftCol)
+                            | None -> None
                         | _ -> None
                     // Nullability is a fold over the left-deep JOIN
                     // graph. RIGHT null-extends *all* prior inputs; FULL
@@ -424,30 +457,28 @@ module internal RewriteScriptAnalyzer =
                             // wrong here. Both key owners remain in joinRefs.
                             match proven, joins with
                             | [(leftId, _, leftCols); (rightId, _, rightCols)],
-                              [{ Kind = InnerJoin; Condition = UsingKeys keys }] ->
+                              [{ Condition = UsingKeys keys }] ->
                                 let isKey (col: SqlCatalogColumn) =
                                     Set.contains col.Name mergedUsingKeys
-                                let keyColumns =
-                                    keys |> List.choose (fun key ->
-                                        leftCols |> List.tryFind (fun col ->
-                                            String.Equals(col.Name, key,
-                                                          StringComparison.Ordinal))
-                                        |> Option.map (fun col -> leftId, col))
+                                let keyColumns = keys |> List.choose mergedKeyProjection
                                 if keyColumns.Length <> keys.Length then None
                                 else
                                     let remainingLeft =
                                         leftCols |> List.filter (isKey >> not)
-                                        |> List.map (fun col -> leftId, col)
-                                    let remainingRight =
-                                        rightCols |> List.filter (isKey >> not)
-                                        |> List.map (fun col -> rightId, col)
-                                    let expanded =
-                                        keyColumns @ remainingLeft @ remainingRight
-                                        |> List.map (fun (identity, col) ->
+                                        |> List.map (fun col ->
                                             SqlCatalogColumn(
                                                 col.Name, col.TypeName,
-                                                col.Nullable || nullExtended identity),
-                                            (identity, col.Name))
+                                                col.Nullable || nullExtended leftId),
+                                            (leftId, col.Name))
+                                    let remainingRight =
+                                        rightCols |> List.filter (isKey >> not)
+                                        |> List.map (fun col ->
+                                            SqlCatalogColumn(
+                                                col.Name, col.TypeName,
+                                                col.Nullable || nullExtended rightId),
+                                            (rightId, col.Name))
+                                    let expanded =
+                                        keyColumns @ remainingLeft @ remainingRight
                                     Some(expanded |> List.map fst,
                                          expanded |> List.map snd)
                             | _ -> None
@@ -468,11 +499,24 @@ module internal RewriteScriptAnalyzer =
                         | NamedColumns members ->
                             let found =
                                 members |> List.choose (fun memberInfo ->
-                                    resolveColumn memberInfo.Qualifier memberInfo.SourceColumn
-                                    |> Option.map (fun (identity, col) ->
-                                        SqlCatalogColumn(memberInfo.OutputColumn, col.TypeName,
-                                                         col.Nullable || nullExtended identity),
-                                        (identity, col.Name)))
+                                    if memberInfo.Qualifier.IsNone
+                                       && Set.contains memberInfo.SourceColumn mergedUsingKeys then
+                                        // Unqualified merged key is not the
+                                        // same value as a qualified a.key or
+                                        // b.key under RIGHT / FULL OUTER JOIN.
+                                        mergedKeyProjection memberInfo.SourceColumn
+                                        |> Option.map (fun (col, owner) ->
+                                            SqlCatalogColumn(
+                                                memberInfo.OutputColumn, col.TypeName,
+                                                col.Nullable),
+                                            owner)
+                                    else
+                                        resolveColumn memberInfo.Qualifier memberInfo.SourceColumn
+                                        |> Option.map (fun (identity, col) ->
+                                            SqlCatalogColumn(
+                                                memberInfo.OutputColumn, col.TypeName,
+                                                col.Nullable || nullExtended identity),
+                                            (identity, col.Name)))
                             if found.Length <> members.Length then None
                             else Some(found |> List.map fst, found |> List.map snd)
                     // Edge by edge, every equality must link one prior
@@ -505,7 +549,6 @@ module internal RewriteScriptAnalyzer =
                                     match proven with
                                     | [(leftId, _, leftCols); (rightId, _, rightCols)]
                                         when joins.Length = 1
-                                             && edge.Kind = InnerJoin
                                              && (keys |> List.distinct |> List.length) = keys.Length ->
                                         keys |> List.map (fun key ->
                                             let lookup (cols: SqlCatalogColumn list) =
