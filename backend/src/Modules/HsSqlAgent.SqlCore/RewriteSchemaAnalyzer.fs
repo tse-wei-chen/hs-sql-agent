@@ -498,7 +498,7 @@ module internal RewriteSchemaAnalyzer =
                 // Bounded left-deep FROM graph: up to four distinct sources,
                 // each edge with 1..8 direct column equality conjuncts.
                 // Strictly no OR, USING, NATURAL, derived relations or
-                // unbounded recursive ON expression grammar.
+                // unbounded ON expression grammar; AND grouping is bounded.
                 let joinKind () =
                     if accept "LEFT" then
                         accept "OUTER" |> ignore
@@ -539,10 +539,31 @@ module internal RewriteSchemaAnalyzer =
                         let second = whereColumn ()
                         first, second
                     let comparisons = ResizeArray<_>()
-                    comparisons.Add(pair ())
-                    while accept "AND" do
-                        if comparisons.Count >= 8 then raise OutsideSubset
-                        comparisons.Add(pair ())
+                    // Only parentheses and AND are transparent to the typed
+                    // equality proof. Preserve left-to-right physical column
+                    // ownership, with no opaque OR/expression fallback.
+                    // Bound both depth and token-group work independently of
+                    // the existing maximum eight equality pairs per edge.
+                    let mutable onNodes = 0
+                    let checkpointOn depth =
+                        RewriteResourceBudget.checkpoint ()
+                        onNodes <- onNodes + 1
+                        if depth > 16 || onNodes > 64 then raise OutsideSubset
+                    let rec onConjunction depth =
+                        checkpointOn depth
+                        onAtom depth
+                        while accept "AND" do
+                            checkpointOn depth
+                            onAtom depth
+                    and onAtom depth =
+                        checkpointOn depth
+                        if symbol '(' then
+                            onConjunction (depth + 1)
+                            expectSymbol ')'
+                        else
+                            if comparisons.Count >= 8 then raise OutsideSubset
+                            comparisons.Add(pair ())
+                    onConjunction 0
                     sources.Add(source)
                     joins.Add({ Kind = family; Pairs = comparisons |> Seq.toList })
                     nextJoin <- joinKind ()

@@ -174,9 +174,22 @@ changes that would leave descendant View proofs stale.
 
 Resource bounds prevent unbounded parsing/semantic expansion. Five
 other SQL dialects retain their prior proof fences. ON OR, non-equality
-operators, USING/NATURAL, CROSS, parenthesized ON expressions, subqueries,
+operators, USING/NATURAL, CROSS, parenthesized non-AND ON predicates, subqueries,
 more than four sources or eight conjuncts, and self-joins are not
 currently proven and fail closed.
+
+### Bounded PostgreSQL View ON equality grouping
+
+A View JOIN ON clause may now use parentheses around individual equality
+pairs or groups joined by AND, including bounded nesting, such as
+`ON ((o.id = l.order_id) AND (o.tenant = l.tenant))`.
+Grouping is erased **only after** each equality is parsed into the existing
+typed `ViewJoinEdge.Pairs`. Its source identity, type checking, dependency
+tracking, and outer-join nullability remain unchanged. Each JOIN edge still
+allows only 1–8 column equality pairs; grouping depth is capped at 16 and
+work checkpoints bound grouping nodes at 64. OR, non-equality comparisons,
+unbalanced grouping, arbitrary SQL expressions and other unproven grammar
+remain fail-closed. No new executable compiler capability is granted.
 
 Independent PostgreSQL 16 differential tests include real row outcomes
 for compound equality AND mixed LEFT/RIGHT, and a four-source
