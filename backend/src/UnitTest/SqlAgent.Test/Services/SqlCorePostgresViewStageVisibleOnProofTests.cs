@@ -46,8 +46,9 @@ public sealed class SqlCorePostgresViewStageVisibleOnProofTests
         Assert.Equal(new[] { "public_id", "c_note" }, view.Columns.Select(c => c.Name));
         Assert.Equal(new[] { "app.a", "app.b", "app.c" },
             view.Dependencies.Select(d => d!.DisplayName));
-        Assert.All(view.SourceBindings, x =>
-            Assert.Contains(x.Relation.DisplayName == "app.c" ? "parent_id" : "id", x.Columns));
+        Assert.Contains("id", view.SourceBindings[0].Columns);
+        Assert.Contains("id", view.SourceBindings[1].Columns);
+        Assert.Contains("parent_id", view.SourceBindings[2].Columns);
         Assert.Equal(join is "RIGHT JOIN" or "FULL JOIN", view.Columns[0].Nullable);
     }
 
@@ -166,19 +167,20 @@ public sealed class SqlCorePostgresViewStageVisibleOnProofTests
     public void UnqualifiedOnIsAmbiguousWhenNewRightAlsoExposesId()
     {
         var result = Analyze(Tables +
+            "CREATE TABLE app.duplicate(id INTEGER NOT NULL, parent_id INTEGER NOT NULL);" +
             "CREATE VIEW app.v AS SELECT a.a_note " +
             "FROM app.a a JOIN app.b b USING (id) " +
-            "JOIN app.d d ON id = d.parent_id " +
-            "JOIN app.a x USING (id);");
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
+            "JOIN app.duplicate x ON id = x.parent_id;");
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[5].Status);
+        Assert.DoesNotContain(result.Statements[5].Changes,
+            x => x.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Views);
 
         var ambiguous = Analyze(Tables +
             "CREATE VIEW app.v AS SELECT a.a_note " +
             "FROM app.a a JOIN app.b b USING (id) " +
-            "JOIN app.d d ON id = d.parent_id " +
             "JOIN app.c c ON tenant = c.tenant_ref;");
-        // Prior LEFT visible tenant is not merged because previous USING was id only.
+        // Prior LEFT visible tenant is duplicated because only id was merged.
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, ambiguous.Statements[4].Status);
     }
 
