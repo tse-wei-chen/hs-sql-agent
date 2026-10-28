@@ -16,8 +16,8 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCorePostgresViewOnRelationalProofTests
 {
     private const string Tables =
-        "CREATE TABLE app.a(id INTEGER, amount INTEGER, tag TEXT, a_note TEXT);" +
-        "CREATE TABLE app.b(id INTEGER, amount INTEGER, tag TEXT, b_note TEXT);" +
+        "CREATE TABLE app.a(id INTEGER, amount INTEGER, tag TEXT, a_note TEXT NOT NULL);" +
+        "CREATE TABLE app.b(id INTEGER, amount INTEGER, tag TEXT, b_note TEXT NOT NULL);" +
         "CREATE TABLE app.c(parent_id INTEGER, amount INTEGER, c_note TEXT);";
 
     private static SqlScriptAnalysisResult Analyze(string sql,
@@ -225,7 +225,7 @@ public sealed class SqlCorePostgresViewOnRelationalProofTests
         Assert.Equal(new[] { "a1|b2", "a1|b3", "a2|b3" }, await Rows("v_notequal"));
         Assert.Equal(7, (await Rows("v_distinct")).Length);
         Assert.DoesNotContain("anull|bnull", await Rows("v_distinct"));
-        Assert.Equal(new[] { "a2|b2", "a2|b3" }, await Rows("v_mixed"));
+        Assert.Equal(new[] { "anull|b2", "anull|b3" }, await Rows("v_mixed"));
         foreach (var t in new[] { "a", "b" })
         {
             await Exec("SAVEPOINT rel_guard");
