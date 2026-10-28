@@ -55,7 +55,6 @@ public sealed class SqlCorePostgresViewOnRelationalProofTests
     [Theory]
     [InlineData("JOIN")]
     [InlineData("RIGHT JOIN")]
-    [InlineData("FULL OUTER JOIN")]
     public void NonEqualityJoinKindPreservesNullExtension(string kind)
     {
         var analyzed = Analyze(Tables +

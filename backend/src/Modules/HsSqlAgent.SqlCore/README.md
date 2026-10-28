@@ -306,9 +306,12 @@ of OR and coalesced stage-visible USING keys.
 Local conditions **stay in JOIN ON**. In particular, moving a LEFT
 JOIN's local condition into WHERE would discard unmatched left rows
 and change SQL semantics. The same contracts apply to INNER, LEFT,
-RIGHT, FULL, multi-source USING joins and alias-scoped Self JOIN.
-No cross-edge comparison is required: a completely local ON predicate
-is a legal and now **proven** expression when all its column operands,
+RIGHT, multi-source USING joins and alias-scoped Self JOIN. FULL JOIN
+additionally requires a mandatory cross-source equality usable as a
+merge/hash join key; pure-local or disjunctive-only FULL ON is not
+a plannable PostgreSQL join and remains fail-closed.
+No cross-edge comparison is required for INNER/LEFT/RIGHT: a completely
+local ON predicate is **proven** when all its column operands,
 SQL operators and JOIN-stage dependencies pass the same typed contract.
 A bounded edge still requires at least one comparison leaf. Its
 condition is never rewritten to WHERE, and may match **multiple** right

@@ -33,7 +33,6 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
     [InlineData("INNER JOIN")]
     [InlineData("LEFT JOIN")]
     [InlineData("RIGHT OUTER JOIN")]
-    [InlineData("FULL JOIN")]
     public void TwoSourceOrOfTypedCrossEdgeEqualitiesPublishesKnownView(string kind)
     {
         var script = Tables +

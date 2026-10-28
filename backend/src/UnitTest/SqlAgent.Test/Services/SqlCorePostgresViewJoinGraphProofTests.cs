@@ -146,7 +146,7 @@ public sealed class SqlCorePostgresViewJoinGraphProofTests
     }
 
     [Theory]
-    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments s ON o.id = l.order_id")]
+    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments s ON o.id = s.tracking")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id AND o.tenant = s.tenant JOIN app.shipments s ON l.line_id = s.line_id")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments s ON l.line_id = s.tracking")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.shipments l ON l.line_id = l.line_id")]

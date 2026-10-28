@@ -146,13 +146,13 @@ public sealed class SqlCorePostgresViewStageVisibleOnProofTests
     }
 
     [Theory]
-    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON id = id")]
-    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON parent_id = c.parent_id")]
+    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON id = c.unknown")]
+    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON parent_id = c.c_note")]
     [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON tenant = tenant_ref")]
     [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON missing = c.parent_id")]
     [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON id = c.c_note")]
-    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON a.id = b.id")]
-    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON c.parent_id = c.tenant_ref")]
+    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON a.id = b.b_note")]
+    [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON c.parent_id = c.c_note")]
     [InlineData("SELECT a.a_note FROM app.a a JOIN app.b b USING (id) JOIN app.c c ON a.id = d.parent_id")]
     public void UnsafeOrUnboundOnOperandsStillFailClosed(string select)
     {

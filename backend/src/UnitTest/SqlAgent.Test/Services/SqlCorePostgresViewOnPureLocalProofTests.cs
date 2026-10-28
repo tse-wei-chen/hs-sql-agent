@@ -31,11 +31,9 @@ public sealed class SqlCorePostgresViewOnPureLocalProofTests
     [InlineData("JOIN", "a.tenant = a.region", false, false)]
     [InlineData("LEFT JOIN", "a.tenant = a.region", false, true)]
     [InlineData("RIGHT JOIN", "a.tenant = a.region", true, false)]
-    [InlineData("FULL JOIN", "a.tenant = a.region", true, true)]
     [InlineData("INNER JOIN", "b.tenant = b.region", false, false)]
     [InlineData("LEFT JOIN", "b.tenant = b.region", false, true)]
     [InlineData("RIGHT OUTER JOIN", "b.tenant = b.region", true, false)]
-    [InlineData("FULL OUTER JOIN", "b.tenant = b.region", true, true)]
     public void LocalOnlyOnBindsAndKeepsOuterNullExtension(
         string kind, string on, bool leftNullable, bool rightNullable)
     {
@@ -59,6 +57,23 @@ public sealed class SqlCorePostgresViewOnPureLocalProofTests
             Assert.Equal(SqlStatementAnalysisStatus.Invalid, blocked.Statements[4].Status);
             Assert.Empty(blocked.Statements[4].Changes);
         }
+    }
+
+    /// PostgreSQL's FULL JOIN planner needs a mandatory cross-source
+    /// hashable/mergeable equality, not a local-only or disjunctive ON.
+    [Theory]
+    [InlineData("a.tenant = a.region")]
+    [InlineData("b.tenant = b.region")]
+    [InlineData("a.tenant < a.region")]
+    [InlineData("a.id = b.id OR a.tenant = a.region")]
+    [InlineData("a.id IS NOT DISTINCT FROM b.id")]
+    [InlineData("a.id < b.id")]
+    public void FullJoinWithoutMandatoryCrossEqualityFailsClosed(string on)
+    {
+        var result = Analyze(Tables +
+            "CREATE VIEW app.v AS SELECT a.id FROM app.a a FULL JOIN app.b b ON " + on + ";");
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.Empty(result.FinalCatalog.Views);
     }
 
     [Theory]
@@ -223,8 +238,7 @@ public sealed class SqlCorePostgresViewOnPureLocalProofTests
             $"CREATE TABLE {schema}.b(id INTEGER NOT NULL, tenant INTEGER, region INTEGER, b_note TEXT NOT NULL);" +
             $"CREATE VIEW {schema}.v_left AS SELECT a.a_note, b.b_note FROM {schema}.a a LEFT JOIN {schema}.b b ON a.tenant = a.region;" +
             $"CREATE VIEW {schema}.v_right AS SELECT a.a_note, b.b_note FROM {schema}.a a LEFT JOIN {schema}.b b ON b.tenant = b.region;" +
-            $"CREATE VIEW {schema}.v_nullsafe AS SELECT a.a_note, b.b_note FROM {schema}.a a LEFT JOIN {schema}.b b ON a.tenant IS NOT DISTINCT FROM a.region;" +
-            $"CREATE VIEW {schema}.v_full AS SELECT a.a_note, b.b_note FROM {schema}.a a FULL JOIN {schema}.b b ON a.tenant < a.region;";
+            $"CREATE VIEW {schema}.v_nullsafe AS SELECT a.a_note, b.b_note FROM {schema}.a a LEFT JOIN {schema}.b b ON a.tenant IS NOT DISTINCT FROM a.region;";
         var analyzed = Analyze(sql);
         Assert.Empty(analyzed.Diagnostics);
         Assert.All(analyzed.Statements, s => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
@@ -256,7 +270,17 @@ public sealed class SqlCorePostgresViewOnPureLocalProofTests
         Assert.Equal(new[] { "a1|b1", "a1|b2", "a2|-", "a3|-" }, await Rows("v_left"));
         Assert.Equal(new[] { "a1|b1", "a2|b1", "a3|b1" }, await Rows("v_right"));
         Assert.Equal(new[] { "a1|b1", "a1|b2", "a2|-", "a3|b1", "a3|b2" }, await Rows("v_nullsafe"));
-        Assert.Equal(new[] { "a1|-", "a2|-", "a3|-", "-|b1", "-|b2" }, await Rows("v_full"));
+        // PostgreSQL accepts SQL syntax but rejects planning a FULL JOIN
+        // without a cross-source equijoin. Check its actual SQLSTATE.
+        await Execute("SAVEPOINT rejected_full");
+        await using (var full = new NpgsqlCommand(
+            $"SELECT COUNT(*) FROM {schema}.a a FULL JOIN {schema}.b b ON a.tenant < a.region", db, tx))
+        {
+            var error = await Assert.ThrowsAsync<PostgresException>(() =>
+                full.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            Assert.Equal("0A000", error.SqlState);
+        }
+        await Execute("ROLLBACK TO SAVEPOINT rejected_full");
 
         foreach (var table in new[] { "a", "b" })
         {
