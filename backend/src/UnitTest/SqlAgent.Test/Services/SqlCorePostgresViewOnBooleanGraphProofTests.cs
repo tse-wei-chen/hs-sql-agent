@@ -174,7 +174,7 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
     [InlineData("a.id = b.id OR")]
     [InlineData("a.id = b.id XOR a.ext_id = b.ext_id")]
     [InlineData("a.id = b.id OR NOT (a.ext_id = b.ext_id)")]
-    [InlineData("a.id = b.id OR a.id IS DISTINCT FROM b.id")]
+    [InlineData("a.id = b.id OR a.id IS DISTINCT FROM a.ext_id")]
     public void MalformedOrUnprovenOrGraphNeverPublishesKnownView(string on)
     {
         var result = Analyze(Tables +
