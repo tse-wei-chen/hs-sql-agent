@@ -476,7 +476,7 @@ module internal RewriteScriptAnalyzer =
                                              && edge.Kind = InnerJoin
                                              && (keys |> List.distinct |> List.length) = keys.Length ->
                                         keys |> List.map (fun key ->
-                                            let lookup cols =
+                                            let lookup (cols: SqlCatalogColumn list) =
                                                 cols |> List.tryFind (fun col ->
                                                     String.Equals(col.Name, key, StringComparison.Ordinal))
                                             match lookup leftCols, lookup rightCols with
