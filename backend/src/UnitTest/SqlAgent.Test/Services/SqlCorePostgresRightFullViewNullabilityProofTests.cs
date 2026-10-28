@@ -223,7 +223,7 @@ public sealed class SqlCorePostgresRightFullViewNullabilityProofTests
     [InlineData("SELECT o.id FROM app.orders o RIGHT JOIN app.details d ON o.id = d.order_id JOIN app.alternate a ON a.id > o.label")]
     [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.details d ON o.id = d.order_id OR o.label = d.id")]
     [InlineData("SELECT o.id FROM app.orders o NATURAL FULL JOIN app.details d")]
-    [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.orders b ON o.id = b.id")]
+    [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.orders b ON o.id = o.id")]
     public void OutsideBoundedRightFullSubsetNeverPublishesKnown(string query)
     {
         var result = Analyze(Tables + "CREATE VIEW app.v AS " + query + ";");

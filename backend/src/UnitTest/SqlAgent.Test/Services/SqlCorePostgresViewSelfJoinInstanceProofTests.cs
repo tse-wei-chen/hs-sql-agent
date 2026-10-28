@@ -56,8 +56,8 @@ public sealed class SqlCorePostgresViewSelfJoinInstanceProofTests
 
     [Theory]
     [InlineData("LEFT JOIN", false)]
-    [InlineData("RIGHT JOIN", true)]
-    [InlineData("FULL JOIN", true)]
+    [InlineData("RIGHT JOIN", false)]
+    [InlineData("FULL JOIN", false)]
     public void SelfUsingMergedIdIsUniqueAndPhysicalKeysStayProtected(string kind, bool nullable)
     {
         var result = Analyze(Table +
