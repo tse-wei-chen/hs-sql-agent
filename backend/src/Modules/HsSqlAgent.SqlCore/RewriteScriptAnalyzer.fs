@@ -41,6 +41,27 @@ module internal RewriteScriptAnalyzer =
         | OrdinaryInequality | NullSafeInequality -> scalar
         | LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual -> ordered
 
+    /// PostgreSQL cannot generally plan FULL JOIN without a joinable
+    /// cross-input equality. OR alternatives do not establish a mandatory
+    /// equality, even when some OR branches individually contain one.
+    /// This is stricter than SQL parsing: it proves a usable View contract.
+    let private hasFullJoinEquiAnchor
+            (condition: ViewJoinCriteria)
+            (crossEqui: ViewPredicateColumn -> ViewPredicateColumn -> bool) =
+        let rec mandatory node =
+            RewriteResourceBudget.checkpoint ()
+            match node with
+            | OnCompare(left, OrdinaryEquality, right) -> crossEqui left right
+            | OnCompare _ -> false
+            | OnAnd(left, right) -> mandatory left || mandatory right
+            | OnOr _ -> false
+        match condition with
+        | UsingKeys keys -> not keys.IsEmpty
+        | OnEquality comparisons ->
+            comparisons |> List.exists (fun (left, op, right) ->
+                op = OrdinaryEquality && crossEqui left right)
+        | OnBoolean expression -> mandatory expression
+
     /// Collect every typed comparison leaf while keeping the original
     /// OnBoolean tree intact for SQL three-valued Boolean semantics.
     /// Every leaf, including alternate OR branches, must prove its
@@ -227,7 +248,19 @@ module internal RewriteScriptAnalyzer =
                                         // local ON conditions to WHERE.
                                         Some(leftBound.Lineage @ rightBound.Lineage)
                                     | _ -> None)
-                            if proofs.IsEmpty || (proofs |> List.exists Option.isNone) then None
+                            let fullJoinAnchor =
+                                edge.Kind <> FullOuterJoin
+                                || hasFullJoinEquiAnchor edge.Condition (fun left right ->
+                                    match bindOperand left, bindOperand right with
+                                    | Some a, Some b ->
+                                        a.Side <> b.Side
+                                        && String.Equals(a.TypeName, b.TypeName,
+                                                         StringComparison.Ordinal)
+                                        && provenOnComparison OrdinaryInequality a.TypeName
+                                    | _ -> false)
+                            if proofs.IsEmpty
+                               || (proofs |> List.exists Option.isNone)
+                               || not fullJoinAnchor then None
                             else
                                 Some(extend extendLeft visible @
                                      extend extendRight newlyBound,
@@ -395,7 +428,19 @@ module internal RewriteScriptAnalyzer =
                                              && provenOnComparison op a.TypeName ->
                                         Some(a.Lineage @ b.Lineage)
                                     | _ -> None)
-                            if proofs.IsEmpty || (proofs |> List.exists Option.isNone) then None
+                            let fullJoinAnchor =
+                                edge.Kind <> FullOuterJoin
+                                || hasFullJoinEquiAnchor edge.Condition (fun left right ->
+                                    match bind left, bind right with
+                                    | Some a, Some b ->
+                                        a.Side <> b.Side
+                                        && String.Equals(a.TypeName, b.TypeName,
+                                                         StringComparison.Ordinal)
+                                        && provenOnComparison OrdinaryInequality a.TypeName
+                                    | _ -> false)
+                            if proofs.IsEmpty
+                               || (proofs |> List.exists Option.isNone)
+                               || not fullJoinAnchor then None
                             else
                                 Some((visible |> withNullable extendLeft)
                                      @ (incoming |> withNullable extendRight),
@@ -1056,8 +1101,29 @@ module internal RewriteScriptAnalyzer =
                                                 Some [leftId, leftCol.Name;
                                                       rightId, rightCol.Name]
                                             | _ -> None)
+                                    let fullJoinAnchor =
+                                        edge.Kind <> FullOuterJoin
+                                        || hasFullJoinEquiAnchor edge.Condition (fun left right ->
+                                            match resolveColumn left.Qualifier left.SourceColumn,
+                                                  resolveColumn right.Qualifier right.SourceColumn with
+                                            | Some(leftId, leftCol), Some(rightId, rightCol) ->
+                                                let crossed =
+                                                    (String.Equals(leftId.Key, right,
+                                                                   StringComparison.Ordinal)
+                                                     && Set.contains rightId.Key prior)
+                                                    || (String.Equals(rightId.Key, right,
+                                                                      StringComparison.Ordinal)
+                                                        && Set.contains leftId.Key prior)
+                                                crossed
+                                                && String.Equals(leftCol.TypeName,
+                                                                 rightCol.TypeName,
+                                                                 StringComparison.Ordinal)
+                                                && provenOnComparison OrdinaryInequality
+                                                    leftCol.TypeName
+                                            | _ -> false)
                                     if comparisons.IsEmpty
                                        || (comparisons |> List.exists Option.isNone)
+                                       || not fullJoinAnchor
                                     then [None]
                                     else
                                         [Some(comparisons |> List.choose id |> List.concat)]
