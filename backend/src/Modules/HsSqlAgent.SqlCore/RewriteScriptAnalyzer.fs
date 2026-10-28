@@ -290,7 +290,7 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
                 | _ -> partial name SqlCatalogOperation.CreateTable
-        | Recognized (CreateView(view, sources, projection, joinCondition, predicate,
+        | Recognized (CreateView(view, sources, projection, joins, predicate,
                                  mode, outputHeader)) ->
             // The whole relational graph must be structurally proven before
             // creating a Known View. No join syntax is an execution permit.
@@ -316,10 +316,11 @@ module internal RewriteScriptAnalyzer =
                                          StringComparison.Ordinal))))) then
                 fail ("CREATE VIEW " + view.DisplayName +
                       " conflicts with a known index or key-backed index.")
-            elif sources.Length < 1 || sources.Length > 2
-                 || (sources.Length = 1 && joinCondition.IsSome)
-                 || (sources.Length = 2 && joinCondition.IsNone) then
-                dependencyUnproven "CREATE VIEW source graph is outside the proven subset."
+            elif sources.IsEmpty || sources.Length > 4
+                 || joins.Length <> sources.Length - 1
+                 || (joins |> List.exists (fun edge ->
+                     edge.Pairs.IsEmpty || edge.Pairs.Length > 8)) then
+                dependencyUnproven "CREATE VIEW graph is outside bounded source/ON capabilities."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then
                 // Self-join also requires instance-scoped provenance, not just
@@ -361,20 +362,31 @@ module internal RewriteScriptAnalyzer =
                         match matches with
                         | [only] -> Some only
                         | _ -> None
-                    // Null-extension is a property of the JOIN direction,
-                    // not physical source columns. RIGHT extends the first
-                    // relation, FULL extends both, LEFT extends the second.
-                    // Never mutate the source Catalog or column ownership.
+                    // Nullability is a fold over the left-deep JOIN
+                    // graph. RIGHT null-extends *all* prior inputs; FULL
+                    // extends the prior graph and the newly bound source.
+                    // Previously extended columns remain conservative
+                    // even if a subsequent INNER ON happens to reject nulls.
+                    let nullableSources =
+                        let mutable extended = Set.empty<string>
+                        for index in 0 .. joins.Length - 1 do
+                            RewriteResourceBudget.checkpoint ()
+                            let edge = joins.[index]
+                            let right = sources.[index + 1].Relation.Key
+                            match edge.Kind with
+                            | InnerJoin -> ()
+                            | LeftOuterJoin ->
+                                extended <- Set.add right extended
+                            | RightOuterJoin ->
+                                for prior in sources |> List.take (index + 1) do
+                                    extended <- Set.add prior.Relation.Key extended
+                            | FullOuterJoin ->
+                                extended <- Set.add right extended
+                                for prior in sources |> List.take (index + 1) do
+                                    extended <- Set.add prior.Relation.Key extended
+                        extended
                     let nullExtended (identity: SqlCatalogQualifiedName) =
-                        match joinCondition, sources with
-                        | Some(LeftEquality _), [_; right] ->
-                            String.Equals(identity.Key, right.Relation.Key,
-                                          StringComparison.Ordinal)
-                        | Some(RightEquality _), [left; _] ->
-                            String.Equals(identity.Key, left.Relation.Key,
-                                          StringComparison.Ordinal)
-                        | Some(FullEquality _), [_; _] -> true
-                        | _ -> false
+                        Set.contains identity.Key nullableSources
                     let projected =
                         match projection with
                         | Wildcard qualifier ->
@@ -401,22 +413,33 @@ module internal RewriteScriptAnalyzer =
                                         (identity, col.Name)))
                             if found.Length <> members.Length then None
                             else Some(found |> List.map fst, found |> List.map snd)
+                    // Edge by edge, every equality must link one prior
+                    // bound source to this edge's newly introduced input.
+                    // This rejects future-alias references and unrelated
+                    // same-side comparisons, without losing exact ownership.
                     let joinRefs =
-                        match joinCondition with
-                        | None -> Some []
-                        | Some(InnerEquality(left, right))
-                        | Some(LeftEquality(left, right))
-                        | Some(RightEquality(left, right))
-                        | Some(FullEquality(left, right)) ->
-                            match resolveColumn left.Qualifier left.SourceColumn,
-                                  resolveColumn right.Qualifier right.SourceColumn with
-                            | Some(leftIdentity, leftCol), Some(rightIdentity, rightCol)
-                                when not (String.Equals(leftIdentity.Key, rightIdentity.Key,
-                                                        StringComparison.Ordinal))
-                                     && String.Equals(leftCol.TypeName, rightCol.TypeName,
-                                                      StringComparison.Ordinal) ->
-                                Some [leftIdentity, leftCol.Name; rightIdentity, rightCol.Name]
-                            | _ -> None
+                        let proofs =
+                            joins |> List.mapi (fun index edge ->
+                                let right = sources.[index + 1].Relation.Key
+                                let prior =
+                                    sources |> List.take (index + 1)
+                                    |> List.map (fun item -> item.Relation.Key)
+                                    |> Set.ofList
+                                edge.Pairs |> List.map (fun (left, rightOperand) ->
+                                    match resolveColumn left.Qualifier left.SourceColumn,
+                                          resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
+                                    | Some(leftId, leftCol), Some(rightId, rightCol)
+                                        when String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                                           StringComparison.Ordinal)
+                                             && ((String.Equals(leftId.Key, right, StringComparison.Ordinal)
+                                                  && Set.contains rightId.Key prior)
+                                                 || (String.Equals(rightId.Key, right, StringComparison.Ordinal)
+                                                     && Set.contains leftId.Key prior)) ->
+                                        Some [leftId, leftCol.Name; rightId, rightCol.Name]
+                                    | _ -> None))
+                            |> List.concat
+                        if proofs |> List.exists Option.isNone then None
+                        else Some(proofs |> List.choose id |> List.concat)
                     let rec provePredicate expression =
                         let bind col =
                             resolveColumn col.Qualifier col.SourceColumn

@@ -65,11 +65,12 @@ module internal RewriteSchemaAnalyzer =
     type ViewJoinKind =
         | InnerJoin | LeftOuterJoin | RightOuterJoin | FullOuterJoin
 
-    type ViewJoinCondition =
-        | InnerEquality of ViewPredicateColumn * ViewPredicateColumn
-        | LeftEquality of ViewPredicateColumn * ViewPredicateColumn
-        | RightEquality of ViewPredicateColumn * ViewPredicateColumn
-        | FullEquality of ViewPredicateColumn * ViewPredicateColumn
+    /// Every ON predicate is a typed source-column equality. Each edge
+    /// connects the previously bound left-deep subgraph to exactly one new
+    /// relation, never an arbitrary free-form SQL expression.
+    type ViewJoinEdge =
+        { Kind: ViewJoinKind
+          Pairs: (ViewPredicateColumn * ViewPredicateColumn) list }
 
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
@@ -87,7 +88,7 @@ module internal RewriteSchemaAnalyzer =
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
         | CreateView of view: SqlCatalogQualifiedName * sources: ViewFromSource list *
-                        projection: ViewProjection * join: ViewJoinCondition option *
+                        projection: ViewProjection * joins: ViewJoinEdge list *
                         predicate: ViewWherePredicate option *
                         mode: ViewCreateMode * outputHeader: ViewOutputHeader
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
@@ -494,10 +495,11 @@ module internal RewriteSchemaAnalyzer =
                         { Qualifier = Some first; SourceColumn = namePart () }
                     else
                         { Qualifier = None; SourceColumn = first }
-                // A deliberate two-source, equality-only JOIN grammar. All
-                // aliases and physical identities are resolved later, before
-                // publishing any immutable Catalog delta.
-                let joinKind =
+                // Bounded left-deep FROM graph: up to four distinct sources,
+                // each edge with 1..8 direct column equality conjuncts.
+                // Strictly no OR, USING, NATURAL, derived relations or
+                // unbounded recursive ON expression grammar.
+                let joinKind () =
                     if accept "LEFT" then
                         accept "OUTER" |> ignore
                         expect "JOIN"
@@ -515,27 +517,37 @@ module internal RewriteSchemaAnalyzer =
                         Some InnerJoin
                     elif accept "JOIN" then Some InnerJoin
                     else None
-                let sources, joinCondition =
-                    match joinKind with
-                    | Some family ->
-                        let other = qualifiedName ()
-                        let second = { Relation = other; Alias = sourceAlias () }
-                        // USING/NATURAL JOIN has distinct column coalescing and
-                        // remains outside this equality-ON proof, not Invalid SQL.
-                        if not (accept "ON") then raise OutsideSubset
-                        let left = whereColumn ()
+                let sources = ResizeArray<ViewFromSource>()
+                let joins = ResizeArray<ViewJoinEdge>()
+                sources.Add(firstSource)
+                let mutable nextJoin = joinKind ()
+                while nextJoin.IsSome do
+                    RewriteResourceBudget.checkpoint ()
+                    if sources.Count >= 4 then raise OutsideSubset
+                    let family = Option.get nextJoin
+                    let relation = qualifiedName ()
+                    let source = { Relation = relation; Alias = sourceAlias () }
+                    // Each edge consumes exactly a conjunction of typed
+                    // equalities; no opaque/predicate-text fallback.
+                    if not (accept "ON") then raise OutsideSubset
+                    let pair () =
+                        RewriteResourceBudget.checkpoint ()
+                        let first = whereColumn ()
                         match (current ()).Kind with
                         | Operator "=" -> index <- index + 1
                         | _ -> raise OutsideSubset
-                        let right = whereColumn ()
-                        let clause =
-                            match family with
-                            | InnerJoin -> InnerEquality(left, right)
-                            | LeftOuterJoin -> LeftEquality(left, right)
-                            | RightOuterJoin -> RightEquality(left, right)
-                            | FullOuterJoin -> FullEquality(left, right)
-                        [firstSource; second], Some clause
-                    | None -> [firstSource], None
+                        let second = whereColumn ()
+                        first, second
+                    let comparisons = ResizeArray<_>()
+                    comparisons.Add(pair ())
+                    while accept "AND" do
+                        if comparisons.Count >= 8 then raise OutsideSubset
+                        comparisons.Add(pair ())
+                    sources.Add(source)
+                    joins.Add({ Kind = family; Pairs = comparisons |> Seq.toList })
+                    nextJoin <- joinKind ()
+                let sources = sources |> Seq.toList
+                let joins = joins |> Seq.toList
                 // Proven WHERE subset: atomic direct column comparisons,
                 // IS [NOT] NULL, AND/OR with SQL precedence, grouped clauses.
                 // The bounded recursive grouping + node count prevents
@@ -607,7 +619,7 @@ module internal RewriteSchemaAnalyzer =
                 let predicate =
                     if accept "WHERE" then Some(parseOr 0) else None
                 endOfStatement ()
-                Recognized(CreateView(view, sources, projection, joinCondition,
+                Recognized(CreateView(view, sources, projection, joins,
                                       predicate, viewMode, outputHeader))
             elif viewMode = CreateOrReplace then
                 raise OutsideSubset
