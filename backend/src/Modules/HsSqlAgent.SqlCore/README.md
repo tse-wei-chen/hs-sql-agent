@@ -174,9 +174,27 @@ changes that would leave descendant View proofs stale.
 
 Resource bounds prevent unbounded parsing/semantic expansion. Five
 other SQL dialects retain their prior proof fences. ON OR, non-equality
-operators, USING/NATURAL, CROSS, parenthesized non-AND ON predicates, subqueries,
+operators, NATURAL, CROSS, unproven USING shapes, parenthesized non-AND ON predicates, subqueries,
 more than four sources or eight conjuncts, and self-joins are not
 currently proven and fail closed.
+
+### PostgreSQL two-source INNER USING static View proof
+
+PostgreSQL `CREATE VIEW ... FROM a JOIN b USING (id, tenant)` now has
+a dedicated typed `ViewJoinCriteria.UsingKeys` case, distinct from the
+existing `OnEquality` expression pairs. In a **known, two-relation INNER
+JOIN** only, 1–8 unique, same-named, identical-type keys are bound to both
+physical source identities. The unqualified merged USING key resolves to
+the first input's matching value, but **both** source-column identities
+remain dependencies for DROP COLUMN / DROP TABLE and View replacement.
+
+Explicit named columns and qualified `source.*` preserve physical
+ownership; unqualified non-USING duplicates remain ambiguous. Plain
+`SELECT *` is not yet supported for USING because PostgreSQL suppresses
+duplicate key columns and imposes merged-column ordering. OUTER USING,
+multiway USING, NATURAL joins, type coercion and non-proven expressions
+remain fail-closed. This is static Catalog analysis only, not SQL
+execution or permission authority.
 
 ### Bounded PostgreSQL View ON equality grouping
 

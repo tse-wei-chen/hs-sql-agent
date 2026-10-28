@@ -186,7 +186,7 @@ public sealed class SqlCorePostgresReplaceViewProofTests
     [Theory]
     [InlineData("SELECT id + 1 AS exposed FROM app.old_source")]
     [InlineData("SELECT id AS exposed FROM app.old_source WHERE id IN (1, 2)")]
-    [InlineData("SELECT id AS exposed FROM app.old_source JOIN app.new_source USING (id)")]
+    [InlineData("SELECT id AS exposed FROM app.old_source LEFT JOIN app.new_source USING (id)")]
     public void UnmodeledReplacementBodiesDoNotMintKnownCatalog(string select)
     {
         var result = Analyze(Tables + Original +

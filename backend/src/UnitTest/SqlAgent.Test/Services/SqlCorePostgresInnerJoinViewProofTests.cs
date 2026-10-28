@@ -156,7 +156,7 @@ public sealed class SqlCorePostgresInnerJoinViewProofTests
     [Theory]
     [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.lines l ON o.id > l.order_id")]
     [InlineData("SELECT o.id FROM app.orders o RIGHT JOIN app.lines l USING (id)")]
-    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l USING (id)")]
+    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l USING (missing)")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id > l.order_id")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id CROSS JOIN app.backup b")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id OR o.id = l.id")]
