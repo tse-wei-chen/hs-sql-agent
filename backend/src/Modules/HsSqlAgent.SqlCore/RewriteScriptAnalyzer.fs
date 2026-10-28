@@ -326,13 +326,11 @@ module internal RewriteScriptAnalyzer =
             elif joins |> List.exists (fun edge ->
                 match edge.Condition with
                 | UsingKeys _ ->
-                    sources.Length <> 2
-                    || edge.Kind <> InnerJoin
-                    || (match projection with Wildcard None -> true | _ -> false)
+                    sources.Length <> 2 || edge.Kind <> InnerJoin
                 | OnEquality _ -> false) then
-                // Unqualified '*' needs PostgreSQL USING merged-column
-                // ordering; outer and multiway USING need their own proofs.
-                dependencyUnproven "CREATE VIEW USING currently proves two-source INNER JOIN with explicit or qualified projections only."
+                // OUTER/multiway USING require independent coalesced
+                // provenance and nullability proofs.
+                dependencyUnproven "CREATE VIEW USING requires a proven two-source INNER JOIN."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then
                 // Self-join also requires instance-scoped provenance, not just
@@ -419,6 +417,40 @@ module internal RewriteScriptAnalyzer =
                         Set.contains identity.Key nullableSources
                     let projected =
                         match projection with
+                        | Wildcard None when not (Set.isEmpty mergedUsingKeys) ->
+                            // PostgreSQL USING exposes keys once in USING
+                            // order, then left nonkeys and right nonkeys in
+                            // their physical order. Generic concatenation is
+                            // wrong here. Both key owners remain in joinRefs.
+                            match proven, joins with
+                            | [(leftId, _, leftCols); (rightId, _, rightCols)],
+                              [{ Kind = InnerJoin; Condition = UsingKeys keys }] ->
+                                let isKey (col: SqlCatalogColumn) =
+                                    Set.contains col.Name mergedUsingKeys
+                                let keyColumns =
+                                    keys |> List.choose (fun key ->
+                                        leftCols |> List.tryFind (fun col ->
+                                            String.Equals(col.Name, key,
+                                                          StringComparison.Ordinal))
+                                        |> Option.map (fun col -> leftId, col))
+                                if keyColumns.Length <> keys.Length then None
+                                else
+                                    let remainingLeft =
+                                        leftCols |> List.filter (isKey >> not)
+                                        |> List.map (fun col -> leftId, col)
+                                    let remainingRight =
+                                        rightCols |> List.filter (isKey >> not)
+                                        |> List.map (fun col -> rightId, col)
+                                    let expanded =
+                                        keyColumns @ remainingLeft @ remainingRight
+                                        |> List.map (fun (identity, col) ->
+                                            SqlCatalogColumn(
+                                                col.Name, col.TypeName,
+                                                col.Nullable || nullExtended identity),
+                                            (identity, col.Name))
+                                    Some(expanded |> List.map fst,
+                                         expanded |> List.map snd)
+                            | _ -> None
                         | Wildcard qualifier ->
                             let candidates =
                                 proven |> List.filter (fun (_, alias, _) ->
