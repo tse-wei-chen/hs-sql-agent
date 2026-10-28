@@ -361,9 +361,16 @@ module internal RewriteScriptAnalyzer =
                         match matches with
                         | [only] -> Some only
                         | _ -> None
-                    let sourceRefs (identity: SqlCatalogQualifiedName)
-                                   (names: string list) =
-                        names |> List.map (fun n -> identity, n)
+                    // LEFT JOIN can introduce NULLs for every value read
+                    // from its right operand, even when that source declares
+                    // NOT NULL. Preserve original physical Catalog facts and
+                    // column ownership; adjust only the View's visible shape.
+                    let nullExtended (identity: SqlCatalogQualifiedName) =
+                        match joinCondition, sources with
+                        | Some(LeftEquality _), [_; right] ->
+                            String.Equals(identity.Key, right.Relation.Key,
+                                          StringComparison.Ordinal)
+                        | _ -> false
                     let projected =
                         match projection with
                         | Wildcard qualifier ->
@@ -376,7 +383,9 @@ module internal RewriteScriptAnalyzer =
                                 let expanded =
                                     candidates |> List.collect (fun (identity, _, columns) ->
                                         columns |> List.map (fun col ->
-                                            col, (identity, col.Name)))
+                                            SqlCatalogColumn(col.Name, col.TypeName,
+                                                             col.Nullable || nullExtended identity),
+                                            (identity, col.Name)))
                                 Some(expanded |> List.map fst, expanded |> List.map snd)
                         | NamedColumns members ->
                             let found =
@@ -384,14 +393,15 @@ module internal RewriteScriptAnalyzer =
                                     resolveColumn memberInfo.Qualifier memberInfo.SourceColumn
                                     |> Option.map (fun (identity, col) ->
                                         SqlCatalogColumn(memberInfo.OutputColumn, col.TypeName,
-                                                         col.Nullable),
+                                                         col.Nullable || nullExtended identity),
                                         (identity, col.Name)))
                             if found.Length <> members.Length then None
                             else Some(found |> List.map fst, found |> List.map snd)
                     let joinRefs =
                         match joinCondition with
                         | None -> Some []
-                        | Some(InnerEquality(left, right)) ->
+                        | Some(InnerEquality(left, right))
+                        | Some(LeftEquality(left, right)) ->
                             match resolveColumn left.Qualifier left.SourceColumn,
                                   resolveColumn right.Qualifier right.SourceColumn with
                             | Some(leftIdentity, leftCol), Some(rightIdentity, rightCol)
@@ -484,7 +494,7 @@ module internal RewriteScriptAnalyzer =
                                         String.Equals(existing.Name, replacement.Name, StringComparison.Ordinal)
                                         && String.Equals(existing.TypeName, replacement.TypeName,
                                                          StringComparison.Ordinal)
-                                        && existing.Nullable = replacement.Nullable)
+                                        )
                                     |> Seq.forall id)
                             let descendants =
                                 if existingView.IsSome then
@@ -502,6 +512,18 @@ module internal RewriteScriptAnalyzer =
                             elif existingView |> Option.exists (compatiblePrefix >> not) then
                                 fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
                                       " must preserve existing output column names, order and types.")
+                            elif existingView |> Option.exists (fun prior ->
+                                not (Set.isEmpty descendants)
+                                && (prior.Columns
+                                    |> Seq.mapi (fun index original ->
+                                        original.Nullable <> visibleShape.[index].Nullable)
+                                    |> Seq.exists id)) then
+                                // PostgreSQL permits an unchanged output
+                                // name/type across INNER-to-LEFT replacement,
+                                // but downstream immutable Catalog Views would
+                                // otherwise retain an unsound NOT NULL proof.
+                                fail ("CREATE OR REPLACE VIEW " + view.DisplayName +
+                                      " changes output nullability with dependent Views.")
                             else
                                 // Preserve projection multiplicity, dedupe
                                 // only additional ON/WHERE dependency names.
