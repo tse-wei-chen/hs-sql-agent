@@ -59,13 +59,17 @@ module internal RewriteSchemaAnalyzer =
         { Relation: SqlCatalogQualifiedName
           Alias: string option }
 
-    /// Exactly one typed equality edge between two source bindings.
-    /// LEFT null-extends the second relation; outer join direction is part
-    /// of the closed semantic model, never a nullable string flag.
-    /// RIGHT/FULL, USING/NATURAL and complex ON remain outside this proof.
+    /// Closed two-source equality JOIN semantics. RIGHT null-extends the
+    /// first relation, LEFT the second, FULL both; the outer join family
+    /// is typed, not represented by a flag or free-form SQL string.
+    type ViewJoinKind =
+        | InnerJoin | LeftOuterJoin | RightOuterJoin | FullOuterJoin
+
     type ViewJoinCondition =
         | InnerEquality of ViewPredicateColumn * ViewPredicateColumn
         | LeftEquality of ViewPredicateColumn * ViewPredicateColumn
+        | RightEquality of ViewPredicateColumn * ViewPredicateColumn
+        | FullEquality of ViewPredicateColumn * ViewPredicateColumn
 
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
@@ -495,18 +499,25 @@ module internal RewriteSchemaAnalyzer =
                 // publishing any immutable Catalog delta.
                 let joinKind =
                     if accept "LEFT" then
-                        // OUTER is optional in PostgreSQL syntax.
                         accept "OUTER" |> ignore
                         expect "JOIN"
-                        Some true
+                        Some LeftOuterJoin
+                    elif accept "RIGHT" then
+                        accept "OUTER" |> ignore
+                        expect "JOIN"
+                        Some RightOuterJoin
+                    elif accept "FULL" then
+                        accept "OUTER" |> ignore
+                        expect "JOIN"
+                        Some FullOuterJoin
                     elif accept "INNER" then
                         expect "JOIN"
-                        Some false
-                    elif accept "JOIN" then Some false
+                        Some InnerJoin
+                    elif accept "JOIN" then Some InnerJoin
                     else None
                 let sources, joinCondition =
                     match joinKind with
-                    | Some leftOuter ->
+                    | Some family ->
                         let other = qualifiedName ()
                         let second = { Relation = other; Alias = sourceAlias () }
                         // USING/NATURAL JOIN has distinct column coalescing and
@@ -518,8 +529,11 @@ module internal RewriteSchemaAnalyzer =
                         | _ -> raise OutsideSubset
                         let right = whereColumn ()
                         let clause =
-                            if leftOuter then LeftEquality(left, right)
-                            else InnerEquality(left, right)
+                            match family with
+                            | InnerJoin -> InnerEquality(left, right)
+                            | LeftOuterJoin -> LeftEquality(left, right)
+                            | RightOuterJoin -> RightEquality(left, right)
+                            | FullOuterJoin -> FullEquality(left, right)
                         [firstSource; second], Some clause
                     | None -> [firstSource], None
                 // Proven WHERE subset: atomic direct column comparisons,

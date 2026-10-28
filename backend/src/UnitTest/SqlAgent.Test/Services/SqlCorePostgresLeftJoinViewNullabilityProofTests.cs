@@ -190,8 +190,8 @@ public sealed class SqlCorePostgresLeftJoinViewNullabilityProofTests
 
     [Theory]
     [InlineData("SELECT o.id, d.id FROM app.orders o LEFT JOIN app.details d USING (id)")]
-    [InlineData("SELECT o.id, d.id FROM app.orders o RIGHT JOIN app.details d ON o.id = d.order_id")]
-    [InlineData("SELECT o.id, d.id FROM app.orders o FULL JOIN app.details d ON o.id = d.order_id")]
+    [InlineData("SELECT o.id, d.id FROM app.orders o RIGHT JOIN app.details d USING (id)")]
+    [InlineData("SELECT o.id, d.id FROM app.orders o FULL JOIN app.details d ON o.id > d.order_id")]
     [InlineData("SELECT o.id, d.id FROM app.orders o LEFT JOIN app.details d ON o.id > d.order_id")]
     [InlineData("SELECT o.id, d.id FROM app.orders o LEFT JOIN app.details d ON o.id = d.order_id JOIN app.archive a ON o.id = a.order_id")]
     [InlineData("SELECT o.id, d.id FROM app.orders o LEFT JOIN app.details d ON o.id = d.order_id OR o.id = d.id")]

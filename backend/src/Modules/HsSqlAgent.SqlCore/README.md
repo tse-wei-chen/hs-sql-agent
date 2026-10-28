@@ -143,6 +143,38 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL RIGHT and FULL OUTER JOIN View proof
+
+The bounded PostgreSQL-only static View grammar now supports exactly two
+distinct relations and one typed, equal-type `ON a.col = b.col` edge for
+`RIGHT [OUTER] JOIN` and `FULL [OUTER] JOIN`, alongside the existing INNER
+and LEFT families. The closed F# `ViewJoinKind` and
+`ViewJoinCondition.RightEquality` / `FullEquality` encode direction
+without an unchecked string tag or boolean short-cut.
+
+**RIGHT null-extends the first (left) source**; **FULL null-extends
+both**. A projected NOT NULL input is therefore marked nullable on the
+corresponding side even when its physical base table is NOT NULL. Named
+projections, qualified wildcard expansion, optional View column headers,
+and View-of-View shape propagate that conservative output proof. The
+physical input's column declarations never change; ON and WHERE dependencies
+remain tracked by exact relation identity in `SourceBindings`. WHERE
+null checks do not silently weaken the conservative null-extension proof.
+
+`CREATE OR REPLACE VIEW` follows PostgreSQL's names/order/type prefix
+contract. If a replacement would change nullable facts needed by any
+dependent View, immutable-Catalog analysis refuses the replacement
+until descendant reproving is supported; without descendants the
+new nullable-side shape is computed atomically.
+
+Unsupported USING/NATURAL joins, non-equality ON expressions, additional
+join operands, self-joins, ambiguous aliases/columns and other dialects
+remain fail-closed. Independent PostgreSQL 16 differential tests insert
+matched and unmatched rows to verify **actual NULL values** for RIGHT and
+FULL, rather than inferring nullable contracts solely from
+`information_schema.columns`, and verify both source-column dependency
+guards and PostgreSQL-compatible View replacement.
+
 ## PostgreSQL LEFT JOIN View null-extension proof
 
 The PostgreSQL-only static View grammar accepts exactly two distinct,
