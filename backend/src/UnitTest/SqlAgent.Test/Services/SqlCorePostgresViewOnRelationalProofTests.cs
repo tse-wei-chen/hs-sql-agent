@@ -139,7 +139,7 @@ public sealed class SqlCorePostgresViewOnRelationalProofTests
     [InlineData("a.id IS NOT DISTINCT b.id")]
     [InlineData("a.id < c.parent_id")]
     [InlineData("a.id > b.id OR a.tag >= b.id")]
-    [InlineData("a.id > b.id OR b.id > b.amount")]
+    [InlineData("a.id > b.id OR b.id > b.tag")]
     public void InvalidRelationalOperatorsTypesAndOperandsFailClosed(string on)
     {
         var result = Analyze(Tables +

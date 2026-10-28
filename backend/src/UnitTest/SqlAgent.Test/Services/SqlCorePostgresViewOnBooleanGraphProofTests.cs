@@ -164,8 +164,8 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
     }
 
     [Theory]
-    [InlineData("a.id = b.id OR a.id = a.ext_id")]
-    [InlineData("a.id = b.id OR b.id = b.ext_id")]
+    [InlineData("a.id = b.id OR a.id = a.a_note")]
+    [InlineData("a.id = b.id OR b.id = b.b_note")]
     [InlineData("a.id = b.id OR a.id = b.b_note")]
     [InlineData("a.id = b.id OR a.id = missing.ext_id")]
     [InlineData("a.id = b.id OR a.id = c.parent_id")]
@@ -174,7 +174,7 @@ public sealed class SqlCorePostgresViewOnBooleanGraphProofTests
     [InlineData("a.id = b.id OR")]
     [InlineData("a.id = b.id XOR a.ext_id = b.ext_id")]
     [InlineData("a.id = b.id OR NOT (a.ext_id = b.ext_id)")]
-    [InlineData("a.id = b.id OR a.id IS DISTINCT FROM a.ext_id")]
+    [InlineData("a.id = b.id OR a.id IS DISTINCT FROM a.a_note")]
     public void MalformedOrUnprovenOrGraphNeverPublishesKnownView(string on)
     {
         var result = Analyze(Tables +
