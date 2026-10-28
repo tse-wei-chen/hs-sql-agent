@@ -143,6 +143,76 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         // differential set. The live-provider gate must not expand by guesswork.
     }
 
+    [Fact]
+    public async Task ReplacementDependencyRewiringMatchesLivePostgres()
+    {
+        var schema = "sqlcore_vr_" + Guid.NewGuid().ToString("N");
+        var setup =
+            $"CREATE TABLE {schema}.original(id INTEGER, note TEXT);" +
+            $"CREATE TABLE {schema}.replacement(id INTEGER, note TEXT);" +
+            $"CREATE VIEW {schema}.v AS SELECT id AS exposed FROM {schema}.original;" +
+            $"CREATE VIEW {schema}.child AS SELECT exposed AS child_id FROM {schema}.v;" +
+            $"CREATE OR REPLACE VIEW {schema}.v AS SELECT id AS exposed FROM {schema}.replacement;";
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(analysis.Diagnostics);
+        Assert.All(analysis.Statements, statement =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(analysis.Statements[4].Changes).Operation);
+        Assert.Equal(schema + ".replacement",
+            Assert.Single(analysis.FinalCatalog.Views
+                .Single(v => v.Name == schema + ".v").Dependencies).DisplayName);
+
+        var oldColumnDrop = $"ALTER TABLE {schema}.original DROP COLUMN id;";
+        var newColumnDrop = $"ALTER TABLE {schema}.replacement DROP COLUMN id;";
+        var staleDependencyCheck = SqlCoreFacade.AnalyzeScript(
+            setup + oldColumnDrop, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, staleDependencyCheck.Statements[5].Status);
+        var activeDependencyCheck = SqlCoreFacade.AnalyzeScript(
+            setup + newColumnDrop, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, activeDependencyCheck.Statements[5].Status);
+        Assert.Empty(activeDependencyCheck.Statements[5].Changes);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in analysis.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+
+        // PostgreSQL's dependency rewrite must release the former source.
+        await Execute(db, tx, oldColumnDrop);
+        // And it must still block the currently referenced physical source.
+        await Assert.ThrowsAsync<PostgresException>(() => Execute(db, tx, newColumnDrop));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ReplacingViewWithDifferentOutputTypeIsRejectedByPostgresToo()
+    {
+        var schema = "sqlcore_vr_" + Guid.NewGuid().ToString("N");
+        var create =
+            $"CREATE TABLE {schema}.src(id INTEGER, note TEXT);" +
+            $"CREATE VIEW {schema}.v AS SELECT id AS exposed FROM {schema}.src;";
+        var incompatible =
+            $"CREATE OR REPLACE VIEW {schema}.v AS SELECT note AS exposed FROM {schema}.src;";
+        var staticResult = SqlCoreFacade.AnalyzeScript(
+            create + incompatible, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, staticResult.Statements[2].Status);
+        Assert.Empty(staticResult.Statements[2].Changes);
+        Assert.True(staticResult.FinalCatalog.IsClosedWorld);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        await Execute(db, tx, staticResult.Statements[0].Syntax.Text);
+        await Execute(db, tx, staticResult.Statements[1].Syntax.Text);
+        await Assert.ThrowsAsync<PostgresException>(() => Execute(db, tx, incompatible));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");

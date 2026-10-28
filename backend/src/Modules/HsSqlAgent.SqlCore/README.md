@@ -143,6 +143,32 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL CREATE OR REPLACE VIEW with fixed output contracts
+
+PostgreSQL `CREATE OR REPLACE VIEW app.v AS SELECT ... FROM app.source`
+can statically replace an existing proven View, or create it if absent.
+The closed F# `ViewCreateMode` distinguishes `CreateOnly` from
+`CreateOrReplace`. An existing View replacement preserves **every
+original output column's name, position and type** (and conservatively
+its modeled nullability), but permits trailing output columns.
+Incompatible replacement is rejected without changing the Catalog.
+
+A replacement may change its direct source relation and source-column
+bindings. After the full proof succeeds, one immutable Virtual Catalog
+update replaces the View definition and its physical dependencies.
+A View cannot be replaced to reference itself or a transitive dependent
+View. Downstream Views keep their existing proven output contracts;
+subsequent `ALTER TABLE ... DROP COLUMN` checks follow the **new**
+physical dependency, not a stale original source or the View's alias.
+
+An existing View produces typed `SqlCatalogOperation.ReplaceView` and
+`SqlStatementEffectOperation.ReplaceView` entries; a missing target
+still produces `CreateView`. Other SQL dialects, arbitrary SELECT
+expressions, open-world Catalogs and uncertain relation identities do
+not gain Known proof. `AnalyzeScript` performs **static analysis only**:
+it does not check ownership/permissions, prove the real server accepted
+the command, compile it for execution or issue SQL.
+
 ## PostgreSQL atomic multi-view DROP and graph-aware RESTRICT
 
 A dedicated closed F# `DropViewBatch` models
@@ -171,10 +197,13 @@ authorization, database rollback or unmodeled physical dependencies.
 A distinct immutable `SqlCatalogView` holds structured View relation
 identity, directly proven source dependencies, and source-derived output
 columns. PostgreSQL `CREATE VIEW name AS SELECT * FROM source` and
-direct named-column single-source SELECT forms are proven against a
-closed-world Catalog only. Joins, WHERE, functions, aliases, aggregates,
-materialized views and replacement semantics remain unsupported, and
-must not mint known dependencies.
+direct named-column single-source SELECT forms (including explicit `AS`
+aliases) are proven against a closed-world Catalog only. View output
+names and actual physical source-column dependencies are tracked separately;
+renaming the output cannot bypass source-column DROP dependency checks.
+Joins, WHERE, functions, implicit aliases, aggregates and materialized
+views remain outside the proven View definition subset. Unsupported
+definitions must never mint known dependencies.
 
 `DROP VIEW [IF EXISTS] name [RESTRICT|CASCADE]` and PostgreSQL
 `DROP TABLE ... CASCADE` compute a cycle-safe transitive View dependency

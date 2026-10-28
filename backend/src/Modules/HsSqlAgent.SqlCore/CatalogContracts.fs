@@ -23,6 +23,7 @@ type SqlCatalogOperation =
     | DropConstraint = 8
     | CreateView = 9
     | DropView = 10
+    | ReplaceView = 11
 
 /// Exact, normalized SQL identifier parts. A single quoted "a.b" is one
 /// part, while schema.table has two; neither can collide in Key.
