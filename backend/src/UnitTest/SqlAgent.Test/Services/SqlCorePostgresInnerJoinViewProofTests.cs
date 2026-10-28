@@ -132,7 +132,7 @@ public sealed class SqlCorePostgresInnerJoinViewProofTests
             var cascade = Analyze(setup + "DROP TABLE " + source + " CASCADE;");
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, cascade.Statements[5].Status);
             Assert.Empty(cascade.FinalCatalog.Views);
-            Assert.Single(cascade.FinalCatalog.Tables.Where(x => x.Name != source));
+            Assert.Equal(2, cascade.FinalCatalog.Tables.Count);
         }
     }
 

@@ -500,7 +500,9 @@ module internal RewriteSchemaAnalyzer =
                     if joins then
                         let other = qualifiedName ()
                         let second = { Relation = other; Alias = sourceAlias () }
-                        expect "ON"
+                        // USING/NATURAL JOIN has distinct column coalescing and
+                        // remains outside this equality-ON proof, not Invalid SQL.
+                        if not (accept "ON") then raise OutsideSubset
                         let left = whereColumn ()
                         match (current ()).Kind with
                         | Operator "=" -> index <- index + 1
