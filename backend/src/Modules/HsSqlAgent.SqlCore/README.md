@@ -143,6 +143,41 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL explicit View output headers
+
+`CREATE [OR REPLACE] VIEW schema.view (public_id, public_label) AS
+SELECT id, label FROM schema.table` accepts a PostgreSQL-specific,
+optional typed `ViewOutputHeader` DU (`Inferred` / `Explicit`).
+Header identifiers override SELECT output names **by position**.
+The header length may be shorter than the derived SELECT width:
+provided names override the **leading** columns and remaining SELECT
+names are retained. A header longer than the SELECT width is invalid,
+including with `SELECT *`. The resulting complete list of output
+names must be unique, even when the physical source projection repeats
+a column or uses duplicate intermediate SELECT aliases.
+
+Unquoted PostgreSQL reserved words are not valid View column names.
+The typed Catalog does not yet retain identifier-quoting provenance,
+so all 78 PostgreSQL 16-18 reserved keywords are conservatively
+outside this explicit-header proof, even when quoted. This prevents
+false Known proof where follow-up source binding would be ambiguous.
+
+The immutable Virtual Catalog retains **independent** direct source
+column names and visible output names. Downstream View resolution uses
+the latter; `ALTER TABLE ... DROP COLUMN` dependency checking uses the
+former, never the header alias. Output column types and modeled
+nullability continue to come from source bindings. Existing
+`CREATE OR REPLACE VIEW` output-prefix compatibility checks run
+**after** the optional header has been applied. Overlong header,
+duplicate resolved output names, unbound source columns, incompatible
+replacement or unprovable schema identities cannot emit a Known Catalog delta.
+
+Only narrow single-source, physical-column or wildcard SELECT forms
+are proven for PostgreSQL. This remains static `AnalyzeScript` data
+modeling, not database execution, permissions or full View grammar
+support. Live PostgreSQL CI differential tests compare real header
+names/types and dependency behavior.
+
 ## PostgreSQL CREATE OR REPLACE VIEW with fixed output contracts
 
 PostgreSQL `CREATE OR REPLACE VIEW app.v AS SELECT ... FROM app.source`

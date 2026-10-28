@@ -213,6 +213,108 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task ExplicitViewHeadersAndCompatibleReplacementMatchActualPostgresColumns()
+    {
+        var schema = "sqlcore_vh_" + Guid.NewGuid().ToString("N");
+        var script =
+            $"CREATE TABLE {schema}.src(id INTEGER NOT NULL, label TEXT, extra INTEGER);" +
+            $"CREATE TABLE {schema}.alt(id INTEGER NOT NULL, label TEXT, extra INTEGER);" +
+            $"CREATE VIEW {schema}.v (public_id, public_label) " +
+            $"AS SELECT id AS ignored, label AS ignored FROM {schema}.src;" +
+            $"CREATE VIEW {schema}.child (child_id) AS SELECT public_id FROM {schema}.v;" +
+            $"CREATE OR REPLACE VIEW {schema}.v (public_id, public_label, added_value) " +
+            $"AS SELECT id, label, extra FROM {schema}.alt;" +
+            $"CREATE VIEW {schema}.prefix (public_id) AS SELECT id, label FROM {schema}.alt;";
+        var staticResult = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(staticResult.Diagnostics);
+        Assert.All(staticResult.Statements, statement =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(staticResult.Statements[4].Changes).Operation);
+        Assert.Equal(new[] { "public_id", "public_label", "added_value" },
+            staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".v")
+                .Columns.Select(column => column.Name));
+        Assert.Equal(new[] { "id", "label", "extra" },
+            staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".v").SourceColumns);
+        Assert.Equal(new[] { "public_id", "label" },
+            staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".prefix")
+                .Columns.Select(column => column.Name));
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in staticResult.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+
+        var names = new List<string>();
+        var types = new List<string>();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT column_name, data_type FROM information_schema.columns " +
+            "WHERE table_schema = @schema AND table_name = 'v' ORDER BY ordinal_position",
+            db, tx))
+        {
+            cmd.Parameters.AddWithValue("schema", schema);
+            await using var rows = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await rows.ReadAsync(TestContext.Current.CancellationToken))
+            {
+                names.Add(rows.GetString(0));
+                types.Add(rows.GetString(1));
+            }
+        }
+        Assert.Equal(new[] { "public_id", "public_label", "added_value" }, names);
+        Assert.Equal(new[] { "integer", "text", "integer" }, types);
+
+        // The server, not just the virtual Catalog, must accept a *shorter*
+        // header and preserve the inferred names of remaining columns.
+        var prefixNames = new List<string>();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT column_name FROM information_schema.columns " +
+            "WHERE table_schema = @schema AND table_name = 'prefix' ORDER BY ordinal_position",
+            db, tx))
+        {
+            cmd.Parameters.AddWithValue("schema", schema);
+            await using var rows = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await rows.ReadAsync(TestContext.Current.CancellationToken))
+                prefixNames.Add(rows.GetString(0));
+        }
+        Assert.Equal(new[] { "public_id", "label" }, prefixNames);
+
+        // The physical source-column proof must follow the newly replaced
+        // source, not the user-visible header aliases or the old source.
+        await Execute(db, tx, $"ALTER TABLE {schema}.src DROP COLUMN id;");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.alt DROP COLUMN id;"));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Theory]
+    [InlineData("(one, two, three)", "SELECT id, label")]
+    [InlineData("(repeated, repeated)", "SELECT id, label")]
+    public async Task InvalidViewHeadersFailClosedAndLivePostgresRejectsThem(
+        string header, string select)
+    {
+        var schema = "sqlcore_vh_" + Guid.NewGuid().ToString("N");
+        var table = $"CREATE TABLE {schema}.src(id INTEGER NOT NULL, label TEXT);";
+        var invalid = $"CREATE VIEW {schema}.bad {header} AS {select} FROM {schema}.src;";
+        var staticResult = SqlCoreFacade.AnalyzeScript(
+            table + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, staticResult.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, staticResult.Statements[1].Status);
+        Assert.Empty(staticResult.Statements[1].Changes);
+        Assert.True(staticResult.FinalCatalog.IsClosedWorld);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        await Execute(db, tx, table);
+        await Assert.ThrowsAsync<PostgresException>(() => Execute(db, tx, invalid));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");
