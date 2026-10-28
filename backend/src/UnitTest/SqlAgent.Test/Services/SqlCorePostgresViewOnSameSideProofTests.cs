@@ -68,13 +68,18 @@ public sealed class SqlCorePostgresViewOnSameSideProofTests
     }
 
     [Fact]
-    public void SameSideOnlyComparisonIsOutsideThisBoundedJoinProof()
+    public void PureLocalOnAcrossBothSourcesIsProven()
     {
         var result = Analyze(Tables +
             "CREATE VIEW app.v AS SELECT a.id FROM app.a a JOIN app.b b " +
             "ON a.tenant = a.region OR b.tenant = b.region;");
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.Empty(result.FinalCatalog.Views);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        var view = Assert.Single(result.FinalCatalog.Views);
+        Assert.Contains("tenant", view.SourceBindings[0].Columns);
+        Assert.Contains("region", view.SourceBindings[0].Columns);
+        Assert.Contains("tenant", view.SourceBindings[1].Columns);
+        Assert.Contains("region", view.SourceBindings[1].Columns);
     }
 
     [Fact]

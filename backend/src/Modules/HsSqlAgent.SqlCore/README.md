@@ -233,11 +233,11 @@ unqualified projections and WHERE bind only one final visible column.
 Compatible View replacement rebinds physical dependencies atomically.
 
 Ambiguous keys in a prior ON subtree, unqualified ON operands present
-on both sides (or duplicated within a side), same-side ON comparisons,
+on both sides (or duplicated within a side), unproven ON comparisons,
 future aliases, duplicate or type-incompatible keys, unproven self-join shapes, more
 than four sources, unknown/open catalogs and other database dialects
 remain fail-closed. Unqualified and qualified ON references have the
-same strict cross-edge SQL type and physical dependency proof. No execution/authorization capabilities are added.
+same strict SQL type and physical dependency proof. No execution/authorization capabilities are added.
 
 ### PostgreSQL two-source OUTER USING merged-key proof
 
@@ -293,8 +293,8 @@ Catalog analysis only, not SQL execution or permission authority.
 
 ### PostgreSQL bounded same-side JOIN ON predicates
 
-A PostgreSQL `CREATE VIEW JOIN ON` edge may now combine typed
-**same-side column comparisons** with proven cross-edge comparisons,
+A PostgreSQL `CREATE VIEW JOIN ON` edge may contain **only typed same-side
+column comparisons**, or mix local and cross-edge predicates,
 including nested `AND`/`OR`, `IS [NOT] DISTINCT FROM` and relational
 operators. For example:
 `ON a.id = b.id AND a.tenant = a.region AND b.score > b.minimum`.
@@ -307,11 +307,14 @@ Local conditions **stay in JOIN ON**. In particular, moving a LEFT
 JOIN's local condition into WHERE would discard unmatched left rows
 and change SQL semantics. The same contracts apply to INNER, LEFT,
 RIGHT, FULL, multi-source USING joins and alias-scoped Self JOIN.
-Every bounded ON edge still requires at least **one proven cross-edge
-comparison**; a pure same-side ON clause is legal in PostgreSQL but
-is **not yet a proven capability** of this static subset. Future
-aliases, ambiguous names, unsupported types/operators, constants,
-unbounded grammar, and non-PostgreSQL source dialects fail closed.
+No cross-edge comparison is required: a completely local ON predicate
+is a legal and now **proven** expression when all its column operands,
+SQL operators and JOIN-stage dependencies pass the same typed contract.
+A bounded edge still requires at least one comparison leaf. Its
+condition is never rewritten to WHERE, and may match **multiple** right
+rows for one left row. Future aliases, ambiguous names, unsupported
+types/operators, constants, unbounded grammar, and non-PostgreSQL
+source dialects remain fail-closed.
 Static analysis does not execute SQL or grant permission.
 
 ### PostgreSQL typed relational JOIN ON operators
@@ -348,8 +351,8 @@ distinguishes `a=b OR c=d AND e=f` from
 `(a=b OR c=d) AND e=f`. The existing conjunction-only
 `OnEquality` path is retained for previously proven views.
 
-Each ON edge permits **1–8** direct cross-edge, same-type column
-comparisons using `=` or `IS NOT DISTINCT FROM`; grouping depth
+Each ON edge permits **1–8** direct same-type column comparisons,
+local or cross-edge, with all proven PostgreSQL ON operators; grouping depth
 is capped at 16 and parsing nodes at 64. Every Boolean branch is
 independently bound with exact source ownership and physical-column
 lineage; no branch silently substitutes for another or relaxes
@@ -369,12 +372,13 @@ and physical dependency protection.
 ### PostgreSQL NULL-safe JOIN ON comparisons
 
 The PostgreSQL-only `CREATE VIEW` JOIN ON analyzer now preserves a
-**closed F# `ViewOnEqualityOperator`**: `OrdinaryEquality` for SQL
+**closed F# `ViewOnComparisonOperator`**: `OrdinaryEquality` for SQL
 `=`, and `NullSafeEquality` for SQL `IS NOT DISTINCT FROM`.
 These are not interchangeable: PostgreSQL matches two NULL keys under
 `IS NOT DISTINCT FROM`, while `NULL = NULL` is UNKNOWN and does not
 satisfy INNER JOIN ON. Both variants require two proven direct columns
-with identical catalog SQL types and a valid cross-edge binding.
+with identical catalog SQL types and proven JOIN-stage bindings,
+which may be local-only, cross-edge or mixed.
 
 An ON edge may mix up to **eight** `=` and `IS NOT DISTINCT FROM`
 comparisons using bounded parenthesized AND/OR groups. This works for
@@ -385,10 +389,11 @@ conservative and **does not authorize SQL execution**. PostgreSQL live
 parity verifies NULL/NULL row behavior versus `=`, as well as both
 source DROP COLUMN guards and View replacement dependencies.
 
-`IS DISTINCT FROM` (not equality), OR, wrong types, same-side joins,
-literal/arithmetic expressions, unproven coercions, future aliases,
-a ninth comparison, unknown catalogs and non-PostgreSQL dialects
-remain fail-closed.
+Wrong types, literal/arithmetic expressions, unproven coercions,
+future aliases, a ninth comparison, unknown catalogs and
+non-PostgreSQL dialects remain fail-closed. `IS DISTINCT FROM`
+and bounded OR are supported as distinct typed comparison/Boolean
+cases, never silently converted into equality or AND.
 
 ### Bounded PostgreSQL View ON equality grouping
 
