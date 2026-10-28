@@ -138,7 +138,7 @@ public sealed class SqlCorePostgresQualifiedViewProjectionTests
 
     [Theory]
     [InlineData("SELECT s.id FROM app.src AS s WHERE s.id IN (1, 2)")]
-    [InlineData("SELECT s.id FROM app.src s FULL JOIN app.alt a USING (id)")]
+    [InlineData("SELECT s.id FROM app.src s FULL JOIN app.alt a USING (missing)")]
     [InlineData("SELECT s.id + 1 FROM app.src AS s")]
     [InlineData("SELECT app.src.id FROM app.src")]
     [InlineData("SELECT s.id FROM app.src AS s(x)")]

@@ -69,8 +69,18 @@ public sealed class SqlCorePostgresViewOuterUsingProofTests
             view.Columns.Select(c => c.Name));
         Assert.Equal(new[] { false, keyNullable, true, true },
             view.Columns.Select(c => c.Nullable));
-        Assert.Equal(new[] { "tenant", "id", "left_note" }, view.SourceBindings[0].Columns);
-        Assert.Equal(new[] { "right_note", "tenant", "id" }, view.SourceBindings[1].Columns);
+        if (join.StartsWith("RIGHT", StringComparison.Ordinal))
+        {
+            // The merged keys are right-projected; the left owner still
+            // keeps both keys as JOIN dependencies after left_note.
+            Assert.Equal(new[] { "left_note", "tenant", "id" }, view.SourceBindings[0].Columns);
+            Assert.Equal(new[] { "tenant", "id", "right_note" }, view.SourceBindings[1].Columns);
+        }
+        else
+        {
+            Assert.Equal(new[] { "tenant", "id", "left_note" }, view.SourceBindings[0].Columns);
+            Assert.Equal(new[] { "right_note", "tenant", "id" }, view.SourceBindings[1].Columns);
+        }
     }
 
     [Fact]
