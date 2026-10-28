@@ -143,6 +143,39 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL LEFT JOIN View null-extension proof
+
+The PostgreSQL-only static View grammar accepts exactly two distinct,
+known FROM relations joined by `LEFT JOIN` or `LEFT OUTER JOIN` with
+one provable equality `ON` condition. The F# closed
+`ViewJoinCondition.LeftEquality` distinguishes outer from inner
+semantics; no nullable boolean or opaque SQL grants capability.
+
+The right relation is **null-extended** for unmatched left rows. Its
+projected columns are modeled `Nullable = true` even if their source
+`SqlCatalogColumn` declares NOT NULL. This applies equally to
+explicitly named columns, `right.*`, explicit View header overrides,
+and downstream Views that project from the View. The left side retains
+its already proven input nullability. The original physical Catalog
+schema, per-relation `SourceBindings`, ON dependencies and WHERE-only
+dependencies remain unchanged and are still checked before DROP COLUMN.
+
+`CREATE OR REPLACE VIEW` must preserve PostgreSQL's output column
+names, order and types. A nullable-shape change between INNER and LEFT
+is permitted when no descendants would retain stale immutable output
+facts. If there are dependent Views, a nullability-changing replacement
+is rejected until downstream reproving is implemented. This is a
+conservative *static* restriction; PostgreSQL itself can permit the
+replacement, which the live parity suite exercises without treating
+the parsed View shape as physical NOT NULL DDL metadata.
+
+`WHERE right.col IS NOT NULL` does not automatically override the
+conservative null-extended output shape. RIGHT/FULL, USING/NATURAL,
+self-join, more than two sources, and complex ON expressions still
+fail closed. Real PostgreSQL 16 tests assert unmatched right-hand
+values are NULL (not merely `information_schema.is_nullable`) and
+cover replacement and both physical source dependencies.
+
 ## PostgreSQL two-source INNER JOIN View proof and owned dependencies
 
 A bounded PostgreSQL-only View DDL grammar now permits precisely two

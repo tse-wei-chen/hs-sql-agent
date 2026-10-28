@@ -605,6 +605,115 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task LeftJoinViewNullExtensionAndReplacementMatchLivePostgresRows()
+    {
+        var schema = "sqlcore_vl_" + Guid.NewGuid().ToString("N");
+        var setup =
+            $"CREATE TABLE {schema}.orders(id INTEGER NOT NULL, label TEXT);" +
+            $"CREATE TABLE {schema}.details(id INTEGER NOT NULL, order_id INTEGER NOT NULL, amount INTEGER NOT NULL);" +
+            $"CREATE VIEW {schema}.v (order_id, detail_id, total) AS " +
+            $"SELECT o.id, d.id, d.amount FROM {schema}.orders o " +
+            $"LEFT OUTER JOIN {schema}.details AS d ON o.id = d.order_id;" +
+            $"CREATE VIEW {schema}.child AS SELECT total FROM {schema}.v;";
+        var staticResult = SqlCoreFacade.AnalyzeScript(
+            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(staticResult.Diagnostics);
+        Assert.All(staticResult.Statements, s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        var v = staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".v");
+        var child = staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".child");
+        Assert.Equal(new[] { "order_id", "detail_id", "total" }, v.Columns.Select(c => c.Name));
+        Assert.Equal(new[] { false, true, true }, v.Columns.Select(c => c.Nullable));
+        Assert.True(Assert.Single(child.Columns).Nullable);
+        Assert.Equal(new[] { "id" }, v.SourceBindings[0].Columns);
+        Assert.Equal(new[] { "id", "amount", "order_id" }, v.SourceBindings[1].Columns);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in staticResult.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+        await Execute(db, tx,
+            $"INSERT INTO {schema}.orders(id,label) VALUES (1,'no match'),(2,'matched');");
+        await Execute(db, tx,
+            $"INSERT INTO {schema}.details(id,order_id,amount) VALUES (9,2,50);");
+
+        var names = new List<string>();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT column_name FROM information_schema.columns " +
+            "WHERE table_schema = @schema AND table_name = 'v' ORDER BY ordinal_position", db, tx))
+        {
+            cmd.Parameters.AddWithValue("schema", schema);
+            await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+                names.Add(reader.GetString(0));
+        }
+        Assert.Equal(v.Columns.Select(c => c.Name), names);
+
+        await using (var cmd = new NpgsqlCommand(
+            $"SELECT order_id, detail_id, total FROM {schema}.v ORDER BY order_id", db, tx))
+        await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))
+        {
+            Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(1, reader.GetInt32(0));
+            Assert.True(reader.IsDBNull(1));
+            Assert.True(reader.IsDBNull(2));
+            Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(2, reader.GetInt32(0));
+            Assert.Equal(9, reader.GetInt32(1));
+            Assert.Equal(50, reader.GetInt32(2));
+            Assert.False(await reader.ReadAsync(TestContext.Current.CancellationToken));
+        }
+
+        await Execute(db, tx, "SAVEPOINT left_view_drop");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.details DROP COLUMN amount;"));
+        await Execute(db, tx, "ROLLBACK TO SAVEPOINT left_view_drop");
+        await Execute(db, tx, "SAVEPOINT left_view_drop2");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.orders DROP COLUMN id;"));
+        await Execute(db, tx, "ROLLBACK TO SAVEPOINT left_view_drop2");
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task PostgresAcceptsInnerToLeftReplacementWhileStaticProofPreservesDependentSafety()
+    {
+        var schema = "sqlcore_vl_" + Guid.NewGuid().ToString("N");
+        var script =
+            $"CREATE TABLE {schema}.orders(id INTEGER NOT NULL);" +
+            $"CREATE TABLE {schema}.details(id INTEGER NOT NULL, order_id INTEGER NOT NULL);" +
+            $"CREATE VIEW {schema}.v (public_id, detail_id) AS " +
+            $"SELECT o.id, d.id FROM {schema}.orders o " +
+            $"INNER JOIN {schema}.details d ON o.id = d.order_id;" +
+            $"CREATE OR REPLACE VIEW {schema}.v (public_id, detail_id) AS " +
+            $"SELECT o.id, d.id FROM {schema}.orders o " +
+            $"LEFT JOIN {schema}.details d ON o.id = d.order_id;";
+        var staticResult = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(staticResult.Diagnostics);
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(staticResult.Statements[3].Changes).Operation);
+        Assert.Equal(new[] { false, true }, Assert.Single(staticResult.FinalCatalog.Views)
+            .Columns.Select(c => c.Nullable));
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in staticResult.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+        await Execute(db, tx, $"INSERT INTO {schema}.orders(id) VALUES (1);");
+        await using (var cmd = new NpgsqlCommand($"SELECT detail_id FROM {schema}.v", db, tx))
+        {
+            var actual = await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+            Assert.True(actual is null || actual is DBNull);
+        }
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");

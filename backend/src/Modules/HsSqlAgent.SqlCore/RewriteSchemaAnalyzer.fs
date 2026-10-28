@@ -59,11 +59,13 @@ module internal RewriteSchemaAnalyzer =
         { Relation: SqlCatalogQualifiedName
           Alias: string option }
 
-    /// Exactly one typed equality edge between two source column bindings.
-    /// Outer joins, USING/NATURAL and complex ON expressions remain outside
-    /// this statically proven subset.
+    /// Exactly one typed equality edge between two source bindings.
+    /// LEFT null-extends the second relation; outer join direction is part
+    /// of the closed semantic model, never a nullable string flag.
+    /// RIGHT/FULL, USING/NATURAL and complex ON remain outside this proof.
     type ViewJoinCondition =
         | InnerEquality of ViewPredicateColumn * ViewPredicateColumn
+        | LeftEquality of ViewPredicateColumn * ViewPredicateColumn
 
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
@@ -491,13 +493,20 @@ module internal RewriteSchemaAnalyzer =
                 // A deliberate two-source, equality-only JOIN grammar. All
                 // aliases and physical identities are resolved later, before
                 // publishing any immutable Catalog delta.
-                let joins =
-                    if accept "INNER" then
+                let joinKind =
+                    if accept "LEFT" then
+                        // OUTER is optional in PostgreSQL syntax.
+                        accept "OUTER" |> ignore
                         expect "JOIN"
-                        true
-                    else accept "JOIN"
+                        Some true
+                    elif accept "INNER" then
+                        expect "JOIN"
+                        Some false
+                    elif accept "JOIN" then Some false
+                    else None
                 let sources, joinCondition =
-                    if joins then
+                    match joinKind with
+                    | Some leftOuter ->
                         let other = qualifiedName ()
                         let second = { Relation = other; Alias = sourceAlias () }
                         // USING/NATURAL JOIN has distinct column coalescing and
@@ -508,8 +517,11 @@ module internal RewriteSchemaAnalyzer =
                         | Operator "=" -> index <- index + 1
                         | _ -> raise OutsideSubset
                         let right = whereColumn ()
-                        [firstSource; second], Some(InnerEquality(left, right))
-                    else [firstSource], None
+                        let clause =
+                            if leftOuter then LeftEquality(left, right)
+                            else InnerEquality(left, right)
+                        [firstSource; second], Some clause
+                    | None -> [firstSource], None
                 // Proven WHERE subset: atomic direct column comparisons,
                 // IS [NOT] NULL, AND/OR with SQL precedence, grouped clauses.
                 // The bounded recursive grouping + node count prevents
