@@ -223,8 +223,9 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             $"CREATE VIEW {schema}.v (public_id, public_label) " +
             $"AS SELECT id AS ignored, label AS ignored FROM {schema}.src;" +
             $"CREATE VIEW {schema}.child (child_id) AS SELECT public_id FROM {schema}.v;" +
-            $"CREATE OR REPLACE VIEW {schema}.v (public_id, public_label, trailing) " +
-            $"AS SELECT id, label, extra FROM {schema}.alt;";
+            $"CREATE OR REPLACE VIEW {schema}.v (public_id, public_label, added_value) " +
+            $"AS SELECT id, label, extra FROM {schema}.alt;" +
+            $"CREATE VIEW {schema}.prefix (public_id) AS SELECT id, label FROM {schema}.alt;";
         var staticResult = SqlCoreFacade.AnalyzeScript(
             script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
         Assert.Empty(staticResult.Diagnostics);
@@ -232,11 +233,14 @@ public sealed class SqlCorePostgresLiveDdlParityTests
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
         Assert.Equal(SqlCatalogOperation.ReplaceView,
             Assert.Single(staticResult.Statements[4].Changes).Operation);
-        Assert.Equal(new[] { "public_id", "public_label", "trailing" },
+        Assert.Equal(new[] { "public_id", "public_label", "added_value" },
             staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".v")
                 .Columns.Select(column => column.Name));
         Assert.Equal(new[] { "id", "label", "extra" },
             staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".v").SourceColumns);
+        Assert.Equal(new[] { "public_id", "label" },
+            staticResult.FinalCatalog.Views.Single(v => v.Name == schema + ".prefix")
+                .Columns.Select(column => column.Name));
 
         await using var db = new NpgsqlConnection(GetConnectionString());
         await db.OpenAsync(TestContext.Current.CancellationToken);
@@ -260,8 +264,23 @@ public sealed class SqlCorePostgresLiveDdlParityTests
                 types.Add(rows.GetString(1));
             }
         }
-        Assert.Equal(new[] { "public_id", "public_label", "trailing" }, names);
+        Assert.Equal(new[] { "public_id", "public_label", "added_value" }, names);
         Assert.Equal(new[] { "integer", "text", "integer" }, types);
+
+        // The server, not just the virtual Catalog, must accept a *shorter*
+        // header and preserve the inferred names of remaining columns.
+        var prefixNames = new List<string>();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT column_name FROM information_schema.columns " +
+            "WHERE table_schema = @schema AND table_name = 'prefix' ORDER BY ordinal_position",
+            db, tx))
+        {
+            cmd.Parameters.AddWithValue("schema", schema);
+            await using var rows = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await rows.ReadAsync(TestContext.Current.CancellationToken))
+                prefixNames.Add(rows.GetString(0));
+        }
+        Assert.Equal(new[] { "public_id", "label" }, prefixNames);
 
         // The physical source-column proof must follow the newly replaced
         // source, not the user-visible header aliases or the old source.
@@ -272,7 +291,6 @@ public sealed class SqlCorePostgresLiveDdlParityTests
     }
 
     [Theory]
-    [InlineData("(only_one)", "SELECT id, label")]
     [InlineData("(one, two, three)", "SELECT id, label")]
     [InlineData("(repeated, repeated)", "SELECT id, label")]
     public async Task InvalidViewHeadersFailClosedAndLivePostgresRejectsThem(

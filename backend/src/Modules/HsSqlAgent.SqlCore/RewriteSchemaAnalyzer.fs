@@ -122,6 +122,93 @@ module internal RewriteSchemaAnalyzer =
               DropColumnIfExists = false }
         | _ -> raise OutsideSubset
 
+    /// PostgreSQL 16-18 RESERVED_KEYWORD entries from
+    /// src/include/parser/kwlist.h (REL_16_STABLE, REL_17_STABLE,
+    /// REL_18_STABLE). Our typed Catalog cannot retain the SQL quoting
+    /// provenance for output names, so any reserved header name is outside
+    /// the proven subset even when SQL quotes it.
+    let private postgresReservedViewHeaderNames =
+        set [
+            "ALL"; 
+            "ANALYSE"; 
+            "ANALYZE"; 
+            "AND"; 
+            "ANY"; 
+            "ARRAY"; 
+            "AS"; 
+            "ASC"; 
+            "ASYMMETRIC"; 
+            "BOTH"; 
+            "CASE"; 
+            "CAST"; 
+            "CHECK"; 
+            "COLLATE"; 
+            "COLUMN"; 
+            "CONSTRAINT"; 
+            "CREATE"; 
+            "CURRENT_CATALOG"; 
+            "CURRENT_DATE"; 
+            "CURRENT_ROLE"; 
+            "CURRENT_TIME"; 
+            "CURRENT_TIMESTAMP"; 
+            "CURRENT_USER"; 
+            "DEFAULT"; 
+            "DEFERRABLE"; 
+            "DESC"; 
+            "DISTINCT"; 
+            "DO"; 
+            "ELSE"; 
+            "END"; 
+            "EXCEPT"; 
+            "FALSE"; 
+            "FETCH"; 
+            "FOR"; 
+            "FOREIGN"; 
+            "FROM"; 
+            "GRANT"; 
+            "GROUP"; 
+            "HAVING"; 
+            "IN"; 
+            "INITIALLY"; 
+            "INTERSECT"; 
+            "INTO"; 
+            "LATERAL"; 
+            "LEADING"; 
+            "LIMIT"; 
+            "LOCALTIME"; 
+            "LOCALTIMESTAMP"; 
+            "NOT"; 
+            "NULL"; 
+            "OFFSET"; 
+            "ON"; 
+            "ONLY"; 
+            "OR"; 
+            "ORDER"; 
+            "PLACING"; 
+            "PRIMARY"; 
+            "REFERENCES"; 
+            "RETURNING"; 
+            "SELECT"; 
+            "SESSION_USER"; 
+            "SOME"; 
+            "SYMMETRIC"; 
+            "SYSTEM_USER"; 
+            "TABLE"; 
+            "THEN"; 
+            "TO"; 
+            "TRAILING"; 
+            "TRUE"; 
+            "UNION"; 
+            "UNIQUE"; 
+            "USER"; 
+            "USING"; 
+            "VARIADIC"; 
+            "WHEN"; 
+            "WHERE"; 
+            "WINDOW"; 
+            "WITH"
+        ]
+
     let private tokenWord (token: Token) =
         match token.Kind with
         | Keyword value
@@ -269,13 +356,23 @@ module internal RewriteSchemaAnalyzer =
             if accept "VIEW" then
                 if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
                 let view = qualifiedName ()
+                let viewHeaderPart () =
+                    match (current ()).Kind with
+                    | Identifier(name, _) when
+                        Set.contains (name.ToUpperInvariant())
+                            postgresReservedViewHeaderNames ->
+                        // Without a quoted-identifier provenance in the
+                        // public Catalog, do not claim that reserved-name
+                        // headers will bind correctly downstream.
+                        raise OutsideSubset
+                    | _ -> namePart ()
                 let outputHeader =
                     if symbol '(' then
                         let names = ResizeArray<string>()
-                        names.Add(namePart ())
+                        names.Add(viewHeaderPart ())
                         while symbol ',' do
                             RewriteResourceBudget.checkpoint ()
-                            names.Add(namePart ())
+                            names.Add(viewHeaderPart ())
                         expectSymbol ')'
                         Explicit(names |> Seq.toList)
                     else Inferred

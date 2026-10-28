@@ -357,15 +357,21 @@ module internal RewriteScriptAnalyzer =
                         let visibleColumns =
                             match outputHeader with
                             | Inferred -> Some shape
-                            | Explicit names when names.Length = shape.Length ->
-                                Some(List.map2 (fun (col: SqlCatalogColumn) name ->
-                                    SqlCatalogColumn(name, col.TypeName, col.Nullable))
-                                    shape names)
+                            | Explicit names when names.Length <= shape.Length ->
+                                // PostgreSQL permits *fewer* header names than
+                                // the SELECT width. Override the supplied
+                                // prefix; retain SELECT-derived trailing names.
+                                let specified = names |> List.toArray
+                                Some(shape |> List.mapi (fun index col ->
+                                    if index < specified.Length then
+                                        SqlCatalogColumn(specified.[index], col.TypeName,
+                                                         col.Nullable)
+                                    else col))
                             | Explicit _ -> None
                         match visibleColumns with
                         | None ->
                             fail ("CREATE VIEW " + view.DisplayName +
-                                  " column-name list count must equal the SELECT projection.")
+                                  " column-name list cannot exceed the SELECT projection.")
                         | Some visibleShape when
                             (visibleShape
                              |> List.distinctBy (fun col -> col.Name)

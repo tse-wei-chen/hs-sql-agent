@@ -97,10 +97,9 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
     }
 
     [Theory]
-    [InlineData("(single)", "SELECT id, label FROM app.src")]
-    [InlineData("(one, two, three)", "SELECT id, label FROM app.src")]
-    [InlineData("(single)", "SELECT * FROM app.src")]
+    [InlineData("(one, two, three, four)", "SELECT id, label FROM app.src")]
     [InlineData("(a, b, c, d)", "SELECT * FROM app.src")]
+    [InlineData("(label)", "SELECT id, label FROM app.src")]
     [InlineData("(same, same)", "SELECT id, label FROM app.src")]
     [InlineData("(same, SAME)", "SELECT id, label FROM app.src")]
     [InlineData("(first, second)", "SELECT id, missing FROM app.src")]
@@ -114,6 +113,55 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
         Assert.Same(statement.CatalogBefore, statement.CatalogAfter);
         Assert.Empty(result.FinalCatalog.Views);
         Assert.True(result.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void HeaderMayOverrideOnlyThePrefixAndLeavesTrailingQueryNamesIntact()
+    {
+        var result = Analyze(Base +
+            "CREATE VIEW app.direct (public_id) AS SELECT id, label FROM app.src;" +
+            "CREATE VIEW app.star (public_id) AS SELECT * FROM app.src;" +
+            "CREATE VIEW app.child AS SELECT label FROM app.direct;");
+        Assert.Empty(result.Diagnostics);
+        Assert.All(result.Statements, s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        Assert.Equal(new[] { "public_id", "label" }, result.FinalCatalog.Views
+            .Single(v => v.Name == "app.direct").Columns.Select(c => c.Name));
+        Assert.Equal(new[] { "public_id", "label", "extra" }, result.FinalCatalog.Views
+            .Single(v => v.Name == "app.star").Columns.Select(c => c.Name));
+        Assert.Equal(new[] { "id", "label" }, result.FinalCatalog.Views
+            .Single(v => v.Name == "app.direct").SourceColumns);
+        Assert.Equal("label", Assert.Single(result.FinalCatalog.Views
+            .Single(v => v.Name == "app.child").Columns).Name);
+    }
+
+    [Fact]
+    public void ReplacementMaySpecifyOnlyAnUnchangedOutputPrefix()
+    {
+        var result = Analyze(Base +
+            "CREATE VIEW app.v (public_id, label) AS SELECT id, label FROM app.src;" +
+            "CREATE OR REPLACE VIEW app.v (public_id) AS SELECT id, label FROM app.alt;");
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(result.Statements[3].Changes).Operation);
+        Assert.Equal(new[] { "public_id", "label" },
+            Assert.Single(result.FinalCatalog.Views).Columns.Select(c => c.Name));
+        Assert.Equal("app.alt",
+            Assert.Single(Assert.Single(result.FinalCatalog.Views).Dependencies)!.DisplayName);
+    }
+
+    [Theory]
+    [InlineData("trailing")]
+    [InlineData("select")]
+    [InlineData("\"trailing\"")]
+    public void PostgreSqlReservedHeaderNamesRemainOutsideProvenSubset(string headerName)
+    {
+        var result = Analyze(Base +
+            "CREATE VIEW app.v (" + headerName + ") AS SELECT id FROM app.src;");
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.DoesNotContain(result.Statements[2].Changes,
+            c => c.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Empty(result.FinalCatalog.Views);
     }
 
     [Fact]
