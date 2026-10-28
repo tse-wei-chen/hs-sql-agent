@@ -6,6 +6,7 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Script;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Npgsql;
 using Xunit;
 
@@ -45,10 +46,10 @@ public sealed class SqlCorePostgresViewGroupedOnProofTests
             view.Dependencies.Select(x => x.DisplayName));
         Assert.Equal(new[] { "id" }.Concat(on.Contains("tenant", StringComparison.Ordinal)
                 ? new[] { "tenant" } : Array.Empty<string>()),
-            view.SourceBindings[0].Columns);
+            view.SourceBindings[0]!.Columns);
         Assert.Equal(new[] { "order_id" }.Concat(on.Contains("tenant", StringComparison.Ordinal)
                 ? new[] { "tenant" } : Array.Empty<string>()),
-            view.SourceBindings[1].Columns);
+            view.SourceBindings[1]!.Columns);
         Assert.True(result.FinalCatalog.IsClosedWorld);
     }
 
@@ -66,8 +67,8 @@ public sealed class SqlCorePostgresViewGroupedOnProofTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
         var view = Assert.Single(result.FinalCatalog.Views);
         Assert.Equal(new[] { false, false, true }, view.Columns.Select(c => c.Nullable));
-        Assert.Equal(new[] { "id", "tenant", "label" }, view.SourceBindings[0].Columns);
-        Assert.Equal(new[] { "line_id", "order_id", "tenant" }, view.SourceBindings[1].Columns);
+        Assert.Equal(new[] { "id", "tenant", "label" }, view.SourceBindings[0]!.Columns);
+        Assert.Equal(new[] { "line_id", "order_id", "tenant" }, view.SourceBindings[1]!.Columns);
         Assert.Equal(new[] { "ship_id", "line_id", "tenant" }, view.SourceBindings[2].Columns);
 
         foreach (var (table, column) in new[]
@@ -88,7 +89,6 @@ public sealed class SqlCorePostgresViewGroupedOnProofTests
     [InlineData("((o.id = l.order_id) OR (o.tenant = l.tenant))")]
     [InlineData("(o.id = l.order_id AND)")]
     [InlineData("()")]
-    [InlineData("(o.id = l.order_id")]
     [InlineData("(o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id) AND (o.id = l.order_id)")]
     public void UnknownOrInvalidGroupingCannotPublishView(string on)
     {
@@ -98,6 +98,14 @@ public sealed class SqlCorePostgresViewGroupedOnProofTests
         Assert.DoesNotContain(result.Statements[3].Changes,
             change => change.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Views);
+    }
+
+    [Fact]
+    public void LexicallyUnbalancedOnFailsClosedBeforeScriptAnalysis()
+    {
+        Assert.Throws<SqlParseException>(() => Analyze(Tables +
+            "CREATE VIEW app.v AS SELECT o.id FROM app.orders o JOIN app.lines l " +
+            "ON (o.id = l.order_id;"));
     }
 
     [Fact]
