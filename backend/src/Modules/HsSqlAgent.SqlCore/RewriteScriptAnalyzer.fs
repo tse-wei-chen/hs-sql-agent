@@ -22,6 +22,25 @@ module internal RewriteScriptAnalyzer =
           PhysicalName: string
           Lineage: (SqlCatalogQualifiedName * string) list }
 
+    /// New relational comparisons require a proven PostgreSQL scalar
+    /// operator, rather than accepting arbitrary same-name SQL type tags.
+    /// Existing equality / NULL-safe equality retain their prior contract.
+    let private provenOnComparison op (typeName: string) =
+        let name = typeName.ToUpperInvariant()
+        let ordered =
+            List.contains name
+                ["SMALLINT"; "INT"; "INTEGER"; "BIGINT"; "REAL";
+                 "DOUBLE PRECISION"; "TEXT"; "DATE"]
+            || name.StartsWith("VARCHAR(", StringComparison.Ordinal)
+            || name.StartsWith("CHAR(", StringComparison.Ordinal)
+            || name.StartsWith("DECIMAL(", StringComparison.Ordinal)
+            || name.StartsWith("NUMERIC(", StringComparison.Ordinal)
+        let scalar = ordered || List.contains name ["BOOLEAN"; "UUID"]
+        match op with
+        | OrdinaryEquality | NullSafeEquality -> true
+        | OrdinaryInequality | NullSafeInequality -> scalar
+        | LessThan | LessThanOrEqual | GreaterThan | GreaterThanOrEqual -> ordered
+
     /// Collect every typed comparison leaf while keeping the original
     /// OnBoolean tree intact for SQL three-valued Boolean semantics.
     /// Every leaf, including alternate OR branches, must prove its
@@ -193,21 +212,17 @@ module internal RewriteScriptAnalyzer =
                             let proofs =
                                 pairs |> List.map (fun (left, operator, right) ->
                                     RewriteResourceBudget.checkpoint ()
-                                    // The operator is not erased to "=":
-                                    // each closed case allows a typed
-                                    // cross-edge comparison but retains its
-                                    // distinct PostgreSQL NULL-row behavior.
-                                    let accepted =
-                                        match operator with
-                                        | OrdinaryEquality | NullSafeEquality -> true
+                                    // Preserve original SQL comparison and
+                                    // separately prove the operator/type pair.
                                     match bindOperand left, bindOperand right with
                                     | Some(leftBound), Some(rightBound)
-                                        when accepted
-                                             && leftBound.Side <> rightBound.Side
+                                        when leftBound.Side <> rightBound.Side
                                              && String.Equals(
                                                 leftBound.TypeName,
                                                 rightBound.TypeName,
-                                                StringComparison.Ordinal) ->
+                                                StringComparison.Ordinal)
+                                             && provenOnComparison operator
+                                                    leftBound.TypeName ->
                                         // An ON equality joins the old
                                         // visible subtree to the new source;
                                         // the merged key retains its entire
@@ -776,15 +791,12 @@ module internal RewriteScriptAnalyzer =
                                 | OnEquality _ | OnBoolean _ ->
                                     let pairs = viewOnCriteriaLeaves edge.Condition
                                     pairs |> List.map (fun (left, operator, rightOperand) ->
-                                        let accepted =
-                                            match operator with
-                                            | OrdinaryEquality | NullSafeEquality -> true
                                         match resolveColumn left.Qualifier left.SourceColumn,
                                               resolveColumn rightOperand.Qualifier rightOperand.SourceColumn with
                                         | Some(leftId, leftCol), Some(rightId, rightCol)
-                                            when accepted
-                                                 && String.Equals(leftCol.TypeName, rightCol.TypeName,
-                                                                  StringComparison.Ordinal)
+                                            when String.Equals(leftCol.TypeName, rightCol.TypeName,
+                                                               StringComparison.Ordinal)
+                                                 && provenOnComparison operator leftCol.TypeName
                                                  && ((String.Equals(leftId.Key, right, StringComparison.Ordinal)
                                                       && Set.contains rightId.Key prior)
                                                      || (String.Equals(rightId.Key, right, StringComparison.Ordinal)
