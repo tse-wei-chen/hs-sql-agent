@@ -66,15 +66,21 @@ module internal RewriteCatalogModel =
             StringComparer.Ordinal.Compare(left.QualifiedName.Key, right.QualifiedName.Key)) tables
         SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables), state.Views)
 
-    let withView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName)
-                 (columns: seq<SqlCatalogColumn>)
-                 (dependencies: seq<SqlCatalogQualifiedName>)
-                 (sourceColumns: seq<string>) =
+    let withViewSources (state: SqlCatalogState)
+                        (identity: SqlCatalogQualifiedName)
+                        (columns: seq<SqlCatalogColumn>)
+                        (bindings: seq<SqlCatalogViewSourceBinding>) =
+        let exact = bindings |> Seq.toArray
+        let dependencies =
+            exact |> Seq.map (fun b -> b.Relation) |> Seq.toArray
+        let flattened =
+            exact |> Seq.collect (fun b -> b.Columns) |> Seq.toArray
         let view =
             SqlCatalogView(identity.DisplayName, identity,
                            columns |> Seq.toArray |> Array.AsReadOnly,
-                           dependencies |> Seq.toArray |> Array.AsReadOnly,
-                           sourceColumns |> Seq.toArray |> Array.AsReadOnly)
+                           dependencies |> Array.AsReadOnly,
+                           flattened |> Array.AsReadOnly,
+                           exact |> Array.AsReadOnly)
         let next =
             state.Views |> Seq.filter (fun existing ->
                 not (sameIdentity existing.QualifiedName identity))
@@ -82,6 +88,18 @@ module internal RewriteCatalogModel =
             |> Seq.sortBy (fun item -> item.QualifiedName.Key)
             |> Seq.toArray |> Array.AsReadOnly
         SqlCatalogState(state.IsClosedWorld, state.Tables, next)
+
+    /// Preserve existing direct-source usage without distributing flat
+    /// column names over unrelated relations.
+    let withView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName)
+                 (columns: seq<SqlCatalogColumn>)
+                 (dependencies: seq<SqlCatalogQualifiedName>)
+                 (sourceColumns: seq<string>) =
+        let physicalNames = sourceColumns |> Seq.toArray |> Array.AsReadOnly
+        let inputs =
+            dependencies |> Seq.map (fun relation ->
+                SqlCatalogViewSourceBinding(relation, physicalNames))
+        withViewSources state identity columns inputs
 
     let dropView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName) =
         let next =
@@ -152,10 +170,10 @@ module internal RewriteCatalogModel =
         let viewDependencies =
             state.Views
             |> Seq.filter (fun view ->
-                view.Dependencies |> Seq.exists (fun dependency ->
-                    sameIdentity dependency tableName)
-                && view.SourceColumns |> Seq.exists (fun sourceColumn ->
-                    sameName sourceColumn columnName))
+                view.SourceBindings |> Seq.exists (fun binding ->
+                    sameIdentity binding.Relation tableName
+                    && (binding.Columns |> Seq.exists (fun sourceColumn ->
+                        sameName sourceColumn columnName))))
             |> Seq.map (fun view -> view.QualifiedName, "View")
         Seq.concat [
             indexed

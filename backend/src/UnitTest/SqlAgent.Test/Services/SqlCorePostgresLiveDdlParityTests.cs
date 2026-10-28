@@ -491,6 +491,120 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task TwoSourceInnerJoinViewColumnsAndBothDependenciesMatchLivePostgres()
+    {
+        var schema = "sqlcore_vj_" + Guid.NewGuid().ToString("N");
+        var setup =
+            $"CREATE TABLE {schema}.orders(id INTEGER NOT NULL, title TEXT, status TEXT);" +
+            $"CREATE TABLE {schema}.lines(id INTEGER NOT NULL, order_id INTEGER NOT NULL, amount INTEGER);" +
+            $"CREATE TABLE {schema}.backup(id INTEGER NOT NULL, title TEXT, status TEXT);" +
+            $"CREATE VIEW {schema}.v AS SELECT o.title, l.amount " +
+            $"FROM {schema}.orders o INNER JOIN {schema}.lines l ON o.id = l.order_id " +
+            $"WHERE o.status = 'ready' AND l.amount > 0;" +
+            $"CREATE VIEW {schema}.child AS SELECT title FROM {schema}.v;";
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(analysis.Diagnostics);
+        Assert.All(analysis.Statements,
+            stmt => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, stmt.Status));
+        var view = analysis.FinalCatalog.Views.Single(v => v.Name == schema + ".v");
+        Assert.Equal(new[] { "title", "amount" }, view.Columns.Select(c => c.Name));
+        Assert.Equal(new[] { "title", "id", "status" }, view.SourceBindings[0].Columns);
+        Assert.Equal(new[] { "amount", "order_id" }, view.SourceBindings[1].Columns);
+
+        var filtered = SqlCoreFacade.AnalyzeScript(
+            setup + $"ALTER TABLE {schema}.orders DROP COLUMN status;",
+            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, filtered.Statements[5].Status);
+        var joinKey = SqlCoreFacade.AnalyzeScript(
+            setup + $"ALTER TABLE {schema}.lines DROP COLUMN order_id;",
+            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, joinKey.Statements[5].Status);
+        var unrelated = SqlCoreFacade.AnalyzeScript(
+            setup + $"ALTER TABLE {schema}.lines DROP COLUMN id;",
+            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, unrelated.Statements[5].Status);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var stmt in analysis.Statements)
+            await Execute(db, tx, stmt.Syntax.Text);
+
+        var actual = new List<string>();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT column_name FROM information_schema.columns " +
+            "WHERE table_schema = @schema AND table_name = 'v' ORDER BY ordinal_position",
+            db, tx))
+        {
+            cmd.Parameters.AddWithValue("schema", schema);
+            await using var rows = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await rows.ReadAsync(TestContext.Current.CancellationToken))
+                actual.Add(rows.GetString(0));
+        }
+        Assert.Equal(new[] { "title", "amount" }, actual);
+
+        await Execute(db, tx, "SAVEPOINT joined_guard");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.orders DROP COLUMN status;"));
+        await Execute(db, tx, "ROLLBACK TO SAVEPOINT joined_guard");
+
+        await Execute(db, tx, "SAVEPOINT joined_guard2");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.lines DROP COLUMN order_id;"));
+        await Execute(db, tx, "ROLLBACK TO SAVEPOINT joined_guard2");
+
+        await Execute(db, tx, $"ALTER TABLE {schema}.lines DROP COLUMN id;");
+
+        var replace =
+            $"CREATE OR REPLACE VIEW {schema}.v AS SELECT b.title, l.amount " +
+            $"FROM {schema}.backup b JOIN {schema}.lines l ON b.id = l.order_id " +
+            $"WHERE b.status = 'ready';";
+        var staticReplace = SqlCoreFacade.AnalyzeScript(
+            setup + replace, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(staticReplace.Diagnostics);
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(staticReplace.Statements[5].Changes).Operation);
+        Assert.Equal(new[] { schema + ".backup", schema + ".lines" },
+            staticReplace.FinalCatalog.Views.Single(v => v.Name == schema + ".v")
+                .Dependencies.Select(d => d.DisplayName));
+        await Execute(db, tx, replace);
+        await Execute(db, tx, $"ALTER TABLE {schema}.orders DROP COLUMN title;");
+        await Execute(db, tx, "SAVEPOINT joined_guard3");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.backup DROP COLUMN title;"));
+        await Execute(db, tx, "ROLLBACK TO SAVEPOINT joined_guard3");
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task AmbiguousUnqualifiedJoinColumnFailsBothStaticAndLivePostgres()
+    {
+        var schema = "sqlcore_vj_" + Guid.NewGuid().ToString("N");
+        var setup =
+            $"CREATE TABLE {schema}.orders(id INTEGER);" +
+            $"CREATE TABLE {schema}.lines(id INTEGER, order_id INTEGER);";
+        var invalid =
+            $"CREATE VIEW {schema}.v AS SELECT id FROM {schema}.orders o " +
+            $"JOIN {schema}.lines l ON o.id = l.order_id;";
+        var staticResult = SqlCoreFacade.AnalyzeScript(
+            setup + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, staticResult.Statements[2].Status);
+        Assert.Empty(staticResult.Statements[2].Changes);
+        Assert.True(staticResult.FinalCatalog.IsClosedWorld);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var stmt in staticResult.Statements.Take(2))
+            await Execute(db, tx, stmt.Syntax.Text);
+        await Assert.ThrowsAsync<PostgresException>(() => Execute(db, tx, invalid));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");

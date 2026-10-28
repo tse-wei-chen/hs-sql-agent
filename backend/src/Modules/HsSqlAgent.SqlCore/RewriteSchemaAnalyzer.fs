@@ -53,6 +53,18 @@ module internal RewriteSchemaAnalyzer =
         | Conjunction of ViewWherePredicate * ViewWherePredicate
         | Disjunction of ViewWherePredicate * ViewWherePredicate
 
+    /// A direct relation in one View SELECT, with only a local binding
+    /// alias. Never infer a second physical source from an expression tag.
+    type ViewFromSource =
+        { Relation: SqlCatalogQualifiedName
+          Alias: string option }
+
+    /// Exactly one typed equality edge between two source column bindings.
+    /// Outer joins, USING/NATURAL and complex ON expressions remain outside
+    /// this statically proven subset.
+    type ViewJoinCondition =
+        | InnerEquality of ViewPredicateColumn * ViewPredicateColumn
+
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
         | CreateOnly
@@ -68,8 +80,8 @@ module internal RewriteSchemaAnalyzer =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
-        | CreateView of view: SqlCatalogQualifiedName * source: SqlCatalogQualifiedName *
-                        projection: ViewProjection * fromAlias: string option *
+        | CreateView of view: SqlCatalogQualifiedName * sources: ViewFromSource list *
+                        projection: ViewProjection * join: ViewJoinCondition option *
                         predicate: ViewWherePredicate option *
                         mode: ViewCreateMode * outputHeader: ViewOutputHeader
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
@@ -457,8 +469,8 @@ module internal RewriteSchemaAnalyzer =
                 expect "FROM"
                 let source = qualifiedName ()
                 // PostgreSQL permits both AS and implicit FROM aliases.
-                // Never absorb clause words as implicit aliases.
-                let fromAlias =
+                // Never absorb clause keywords as implicit aliases.
+                let sourceAlias () =
                     if accept "AS" then
                         Some(namePart ())
                     else
@@ -469,6 +481,35 @@ module internal RewriteSchemaAnalyzer =
                             Some(namePart ())
                         | Identifier(_, true) -> Some(namePart ())
                         | _ -> None
+                let firstSource = { Relation = source; Alias = sourceAlias () }
+                let whereColumn () =
+                    let first = namePart ()
+                    if symbol '.' then
+                        { Qualifier = Some first; SourceColumn = namePart () }
+                    else
+                        { Qualifier = None; SourceColumn = first }
+                // A deliberate two-source, equality-only JOIN grammar. All
+                // aliases and physical identities are resolved later, before
+                // publishing any immutable Catalog delta.
+                let joins =
+                    if accept "INNER" then
+                        expect "JOIN"
+                        true
+                    else accept "JOIN"
+                let sources, joinCondition =
+                    if joins then
+                        let other = qualifiedName ()
+                        let second = { Relation = other; Alias = sourceAlias () }
+                        // USING/NATURAL JOIN has distinct column coalescing and
+                        // remains outside this equality-ON proof, not Invalid SQL.
+                        if not (accept "ON") then raise OutsideSubset
+                        let left = whereColumn ()
+                        match (current ()).Kind with
+                        | Operator "=" -> index <- index + 1
+                        | _ -> raise OutsideSubset
+                        let right = whereColumn ()
+                        [firstSource; second], Some(InnerEquality(left, right))
+                    else [firstSource], None
                 // Proven WHERE subset: atomic direct column comparisons,
                 // IS [NOT] NULL, AND/OR with SQL precedence, grouped clauses.
                 // The bounded recursive grouping + node count prevents
@@ -478,12 +519,6 @@ module internal RewriteSchemaAnalyzer =
                     RewriteResourceBudget.checkpoint ()
                     predicateNodes <- predicateNodes + 1
                     if predicateNodes > 256 then raise OutsideSubset
-                let whereColumn () =
-                    let first = namePart ()
-                    if symbol '.' then
-                        { Qualifier = Some first; SourceColumn = namePart () }
-                    else
-                        { Qualifier = None; SourceColumn = first }
                 let whereLiteral () =
                     match (current ()).Kind with
                     | IntegerLiteral number ->
@@ -546,7 +581,7 @@ module internal RewriteSchemaAnalyzer =
                 let predicate =
                     if accept "WHERE" then Some(parseOr 0) else None
                 endOfStatement ()
-                Recognized(CreateView(view, source, projection, fromAlias,
+                Recognized(CreateView(view, sources, projection, joinCondition,
                                       predicate, viewMode, outputHeader))
             elif viewMode = CreateOrReplace then
                 raise OutsideSubset
