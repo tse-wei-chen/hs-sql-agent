@@ -143,10 +143,40 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL Self JOIN with per-instance Catalog provenance
+
+PostgreSQL `CREATE VIEW` now distinguishes **FROM relation instances**
+from persistent physical relation identities. The same known table may
+appear under multiple unique effective aliases within a bounded
+2–4-source left-deep JOIN graph. `JOIN ON` is proved by **source instance
+index**, so `employees e JOIN employees m ON e.manager_id = m.id`
+binds two different sides even though they share the same physical table.
+The existing typed AND/OR, NULL-safe and relational ON operator fences
+remain in force.
+
+Each stage carries its ordered visible columns, physical lineage and
+**instance-specific null-extension** across INNER/LEFT/RIGHT/FULL JOIN.
+The `e.*` and `m.*` projections use the correct instance; unqualified
+ambiguous names still fail closed. `USING` merges the stage-visible
+key while preserving both original physical key references, even when
+they refer to the same table. Only proven columns are published to
+the View shape.
+
+Persistent `SqlCatalogViewSourceBinding` entries are deduplicated by
+**physical relation key**, not by FROM alias. DROP COLUMN therefore
+protects a column referenced from either instance, without adding
+synthetic tables or duplicate physical owners to the Catalog. Compatible
+CREATE OR REPLACE VIEW rebinds dependencies without breaking child
+Views. Duplicate aliases, unsupported predicates, unknown source
+types, more than four instances and cross-dialect inheritance still
+fail closed. PostgreSQL live parity covers unmatched self-join rows,
+source-column nullability and actual DROP COLUMN restrictions.
+No SQL execution or authorization permission is added.
+
 ## PostgreSQL bounded multi-source View JOIN graph and compound ON proof
 
 The static PostgreSQL-only Virtual Catalog now proves a **left-deep graph
-of up to four distinct physical relations** using the four closed JOIN
+of up to four alias-bound relation instances** using the four closed JOIN
 families (`INNER`, `LEFT`, `RIGHT`, `FULL`) and a bounded conjunction
 of **1–8 direct column equality pairs per ON**. The F# `ViewJoinEdge`
 contains typed `ViewJoinKind` and column-reference pairs. Its ordered
@@ -154,7 +184,7 @@ position pairs each edge with the newly bound source: a valid ON equality
 must connect that source to **an already bound left-subtree source**.
 Forward aliases, two prior-only operands, two new-only operands,
 unresolved/ambiguous columns, incompatible SQL types, duplicate aliases
-and self-joins cannot publish a Known Catalog change.
+and unproven instance bindings cannot publish a Known Catalog change.
 
 Outer-join nullability is folded from left to right over the entire
 bound source graph. A LEFT edge null-extends the new input. A RIGHT edge
@@ -175,7 +205,7 @@ changes that would leave descendant View proofs stale.
 Resource bounds prevent unbounded parsing/semantic expansion. Five
 other SQL dialects retain their prior proof fences. NATURAL, CROSS, unproven USING shapes, arbitrary ON expressions,
 subqueries, more than four sources or eight typed ON comparison leaves,
-and self-joins are not currently proven and fail closed.
+and unproven self-join shapes remain fail-closed.
 
 ### PostgreSQL three/four-source left-deep USING View graph proof
 
@@ -204,7 +234,7 @@ Compatible View replacement rebinds physical dependencies atomically.
 
 Ambiguous keys in a prior ON subtree, unqualified ON operands present
 on both sides (or duplicated within a side), same-side ON comparisons,
-future aliases, duplicate or type-incompatible keys, self-joins, more
+future aliases, duplicate or type-incompatible keys, unproven self-join shapes, more
 than four sources, unknown/open catalogs and other database dialects
 remain fail-closed. Unqualified and qualified ON references have the
 same strict cross-edge SQL type and physical dependency proof. No execution/authorization capabilities are added.
@@ -230,7 +260,7 @@ own null-extension under LEFT/RIGHT/FULL. All `USING` key dependencies
 still belong to **both** physical sources even when the merged output
 is represented by one column. PostgreSQL live parity verifies matched
 rows, LEFT-only, RIGHT-only, NULL-key unmatched rows, ordinal field
-names and DROP COLUMN restrictions. Cross-dialect, self-join, multiway
+names and DROP COLUMN restrictions. Cross-dialect, unproven self-join and multiway
 USING, implicit coercion, NATURAL and opaque predicates remain
 fail-closed; this grants no SQL execution permission.
 
@@ -381,7 +411,7 @@ until descendant reproving is supported; without descendants the
 new nullable-side shape is computed atomically.
 
 Unsupported USING/NATURAL joins, non-equality ON expressions, additional
-join operands, self-joins, ambiguous aliases/columns and other dialects
+join operands, unproven self-joins, ambiguous aliases/columns and other dialects
 remain fail-closed. Independent PostgreSQL 16 differential tests insert
 matched and unmatched rows to verify **actual NULL values** for RIGHT and
 FULL, rather than inferring nullable contracts solely from
@@ -416,8 +446,8 @@ the parsed View shape as physical NOT NULL DDL metadata.
 
 `WHERE right.col IS NOT NULL` does not automatically override the
 conservative null-extended output shape. RIGHT/FULL, USING/NATURAL,
-self-join, more than two sources, and complex ON expressions still
-fail closed. Real PostgreSQL 16 tests assert unmatched right-hand
+unproven self-join, multi-source, and complex ON expressions
+still fail closed in this older two-source subset. Real PostgreSQL 16 tests assert unmatched right-hand
 values are NULL (not merely `information_schema.is_nullable`) and
 cover replacement and both physical source dependencies.
 
@@ -430,8 +460,8 @@ scope, each ON operand must bind to a **different** source and have
 identical Catalog types. A unique unqualified column may resolve
 from either input; ambiguous columns, unknown qualifiers, missing
 sources, incompatible ON types or duplicate aliases are rejected
-without creating Known Catalog facts. Self joins remain unsupported
-until per-instance dependency provenance can be modeled.
+without creating Known Catalog facts. Self JOIN instances require distinct aliases and typed instance-level
+provenance before any Known View may be published.
 
 The View Catalog retains `Dependencies` and the legacy flattened
 `SourceColumns` for compatibility, and now exposes typed immutable
