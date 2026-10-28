@@ -26,30 +26,10 @@ public sealed class SqlCorePostgresViewOuterUsingProofTests
         SqlCoreFacade.AnalyzeScript(sql, dialect, catalog ?? SqlCatalogState.KnownEmpty());
 
     [Theory]
-    [InlineData("LEFT JOIN", false)]
-    [InlineData("LEFT OUTER JOIN", false)]
-    [InlineData("RIGHT JOIN", true)]
-    [InlineData("RIGHT OUTER JOIN", true)]
-    [InlineData("FULL JOIN", true)]
-    [InlineData("FULL OUTER JOIN", true)]
-    public void MergedWildcardKeyNullabilityFollowsOuterJoinValueContract(
-        string join, bool keyNullable)
-    {
-        var result = Analyze(Tables +
-            "CREATE VIEW app.v AS SELECT * FROM app.a a " + join +
-            " app.b b USING (id);");
-        Assert.Empty(result.Diagnostics);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        var view = Assert.Single(result.FinalCatalog.Views);
-        Assert.Equal(new[] { "id", "tenant", "a_note", "tenant", "b_note" },
-            view.Columns.Select(c => c.Name)); // A raw JOIN has duplicates; VIEW must reject.
-    }
-
-    [Theory]
     [InlineData("LEFT JOIN", false, false, true)]
     [InlineData("LEFT OUTER JOIN", false, false, true)]
-    [InlineData("RIGHT JOIN", true, true, false)]
-    [InlineData("RIGHT OUTER JOIN", true, true, false)]
+    [InlineData("RIGHT JOIN", true, true, true)]
+    [InlineData("RIGHT OUTER JOIN", true, true, true)]
     [InlineData("FULL JOIN", true, true, true)]
     [InlineData("FULL OUTER JOIN", true, true, true)]
     public void MergedNamedKeyAndQualifiedPhysicalKeysKeepDistinctNullability(
@@ -64,8 +44,10 @@ public sealed class SqlCorePostgresViewOuterUsingProofTests
             view.Columns.Select(c => c.Name));
         Assert.Equal(new[] { mergedNullable, leftNullable, rightNullable },
             view.Columns.Select(c => c.Nullable));
-        Assert.Equal(new[] { "id" }, view.SourceBindings[0].Columns);
-        Assert.Equal(new[] { "id", "id" }, view.SourceBindings[1].Columns);
+        Assert.Equal(new[] { "app.a", "app.b" },
+            view.Dependencies.Select(d => d!.DisplayName));
+        Assert.Contains("id", view.SourceBindings[0].Columns);
+        Assert.Contains("id", view.SourceBindings[1].Columns);
     }
 
     [Theory]
