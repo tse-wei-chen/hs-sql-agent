@@ -315,6 +315,101 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task QualifiedViewSourceAliasesMatchPostgresAndRebindPhysicalDependencies()
+    {
+        var schema = "sqlcore_vq_" + Guid.NewGuid().ToString("N");
+        var script =
+            $"CREATE TABLE {schema}.src(id INTEGER NOT NULL, label TEXT, extra INTEGER);" +
+            $"CREATE TABLE {schema}.alternate(id INTEGER NOT NULL, label TEXT, extra INTEGER);" +
+            $"CREATE VIEW {schema}.v (public_id) AS " +
+            $"SELECT s.id, s.label FROM {schema}.src AS s;" +
+            $"CREATE VIEW {schema}.child (child_id) AS " +
+            $"SELECT v.public_id FROM {schema}.v AS v;" +
+            $"CREATE OR REPLACE VIEW {schema}.v (public_id, label, extra) AS " +
+            $"SELECT a.* FROM {schema}.alternate a;" +
+            $"CREATE VIEW {schema}.wild (public_id) AS " +
+            $"SELECT a.* FROM {schema}.alternate AS a;";
+
+        var result = SqlCoreFacade.AnalyzeScript(
+            script, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(result.Diagnostics);
+        Assert.All(result.Statements, s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        Assert.Equal(SqlCatalogOperation.ReplaceView,
+            Assert.Single(result.Statements[4].Changes).Operation);
+        var view = result.FinalCatalog.Views.Single(v => v.Name == schema + ".v");
+        Assert.Equal(new[] { "public_id", "label", "extra" },
+            view.Columns.Select(x => x.Name));
+        Assert.Equal("alternate",
+            Assert.Single(view.Dependencies)!.Parts[1]);
+        Assert.Equal(new[] { "id", "label", "extra" }, view.SourceColumns);
+
+        var oldDrop = SqlCoreFacade.AnalyzeScript(
+            script + $"ALTER TABLE {schema}.src DROP COLUMN id;",
+            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, oldDrop.Statements[6].Status);
+        var newDrop = SqlCoreFacade.AnalyzeScript(
+            script + $"ALTER TABLE {schema}.alternate DROP COLUMN id;",
+            SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, newDrop.Statements[6].Status);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in result.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+
+        foreach (var target in new[] { "v", "child", "wild" })
+        {
+            var actual = new List<string>();
+            await using (var cmd = new NpgsqlCommand(
+                "SELECT column_name FROM information_schema.columns " +
+                "WHERE table_schema = @schema AND table_name = @table ORDER BY ordinal_position",
+                db, tx))
+            {
+                cmd.Parameters.AddWithValue("schema", schema);
+                cmd.Parameters.AddWithValue("table", target);
+                await using var rows = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+                while (await rows.ReadAsync(TestContext.Current.CancellationToken))
+                    actual.Add(rows.GetString(0));
+            }
+            var expected = result.FinalCatalog.Views.Single(v =>
+                v.Name == schema + "." + target).Columns.Select(c => c.Name);
+            Assert.Equal(expected, actual);
+        }
+
+        // Once replaced, the old physical source must be droppable;
+        // the new source retains the PostgreSQL dependency protection.
+        await Execute(db, tx, $"ALTER TABLE {schema}.src DROP COLUMN id;");
+        await Assert.ThrowsAsync<PostgresException>(() =>
+            Execute(db, tx, $"ALTER TABLE {schema}.alternate DROP COLUMN id;"));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task ShadowedViewSourceQualifierIsRejectedByPostgresAsWell()
+    {
+        var schema = "sqlcore_vq_" + Guid.NewGuid().ToString("N");
+        var create = $"CREATE TABLE {schema}.src(id INTEGER);";
+        var invalid =
+            $"CREATE VIEW {schema}.wrong AS SELECT src.id FROM {schema}.src AS s;";
+        var result = SqlCoreFacade.AnalyzeScript(
+            create + invalid, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[1].Status);
+        Assert.Empty(result.Statements[1].Changes);
+        Assert.True(result.FinalCatalog.IsClosedWorld);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        await Execute(db, tx, create);
+        await Assert.ThrowsAsync<PostgresException>(() => Execute(db, tx, invalid));
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");
