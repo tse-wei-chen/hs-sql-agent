@@ -262,6 +262,29 @@ expressions remain fail-closed. PostgreSQL live parity validates output
 column order/types, returned rows and key DROP guards. This is static
 Catalog analysis only, not SQL execution or permission authority.
 
+### PostgreSQL typed relational JOIN ON operators
+
+PostgreSQL `CREATE VIEW` joins now prove a closed F#
+`ViewOnComparisonOperator` with `=`, `<>` / `!=`, `<`,
+`<=`, `>`, `>=`, `IS NOT DISTINCT FROM` and
+`IS DISTINCT FROM`. The latter is **NULL-safe inequality**:
+NULL versus a non-NULL value is distinct, but two NULLs are not.
+Ordinary `<>` instead yields UNKNOWN if either operand is NULL.
+The operator and the AND/OR expression tree are preserved, never
+silently rewritten into equality.
+
+Every comparison must link the prior JOIN subtree to the newly
+introduced source, with equal proven catalog SQL types and all
+physical source-column dependencies tracked. New non-equality
+operators require explicitly proven PostgreSQL scalar families;
+ordered comparisons are restricted to known numeric, TEXT/CHAR/
+VARCHAR and DATE types. Unknown/custom types, implicit coercion,
+expressions, literal operands, ninth ON leaf and other dialects
+remain fail-closed. This covers 2–4 sources, LEFT/RIGHT/FULL joins,
+USING merged-key lineage and safe View replacement. PostgreSQL
+live row-parity tests distinguish NULL-safe inequality from `<>`
+and ordered comparisons. No SQL execution capability is added.
+
 ### PostgreSQL bounded JOIN ON Boolean graph (AND / OR)
 
 The PostgreSQL-only `CREATE VIEW` analyzer now parses a **closed F#

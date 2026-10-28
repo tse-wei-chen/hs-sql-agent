@@ -65,26 +65,31 @@ module internal RewriteSchemaAnalyzer =
     type ViewJoinKind =
         | InnerJoin | LeftOuterJoin | RightOuterJoin | FullOuterJoin
 
-    /// Both operators compare columns but have different PostgreSQL NULL
-    /// semantics. Keep the distinction closed and typed across parsing,
-    /// semantic proof and static Catalog dependency analysis; a NULL-safe
-    /// comparison is never rewritten into SQL "=".
-    type ViewOnEqualityOperator =
+    /// Distinct closed PostgreSQL ON comparison operators. Ordinary SQL
+    /// comparisons use three-valued NULL logic. DISTINCT FROM is total:
+    /// NULL-safe equality / inequality must not be replaced with = / <>.
+    type ViewOnComparisonOperator =
         | OrdinaryEquality
+        | OrdinaryInequality
+        | LessThan
+        | LessThanOrEqual
+        | GreaterThan
+        | GreaterThanOrEqual
         | NullSafeEquality
+        | NullSafeInequality
 
     /// Closed Boolean ON AST. Ordinary = keeps SQL's UNKNOWN NULL result,
     /// while IS NOT DISTINCT FROM uses NULL-safe equality; AND and OR
     /// retain PostgreSQL precedence and grouping rather than a flat list.
     type ViewOnBoolean =
-        | OnCompare of ViewPredicateColumn * ViewOnEqualityOperator * ViewPredicateColumn
+        | OnCompare of ViewPredicateColumn * ViewOnComparisonOperator * ViewPredicateColumn
         | OnAnd of ViewOnBoolean * ViewOnBoolean
         | OnOr of ViewOnBoolean * ViewOnBoolean
 
     /// Preserve the previous conjunction-only proof representation for
     /// compatibility; any OR expression is stored as a closed Boolean tree.
     type ViewJoinCriteria =
-        | OnEquality of (ViewPredicateColumn * ViewOnEqualityOperator * ViewPredicateColumn) list
+        | OnEquality of (ViewPredicateColumn * ViewOnComparisonOperator * ViewPredicateColumn) list
         | OnBoolean of ViewOnBoolean
         | UsingKeys of string list
 
@@ -564,15 +569,27 @@ module internal RewriteSchemaAnalyzer =
                                     | Operator "=" ->
                                         index <- index + 1
                                         OrdinaryEquality
+                                    | Operator "<>" | Operator "!=" ->
+                                        index <- index + 1
+                                        OrdinaryInequality
+                                    | Operator "<" ->
+                                        index <- index + 1
+                                        LessThan
+                                    | Operator "<=" ->
+                                        index <- index + 1
+                                        LessThanOrEqual
+                                    | Operator ">" ->
+                                        index <- index + 1
+                                        GreaterThan
+                                    | Operator ">=" ->
+                                        index <- index + 1
+                                        GreaterThanOrEqual
                                     | _ when accept "IS" ->
-                                        // Only the NULL-safe equality form is
-                                        // a join key. IS DISTINCT FROM is a
-                                        // *non*-equality predicate and is
-                                        // outside this closed capability.
-                                        expect "NOT"
+                                        let negated = accept "NOT"
                                         expect "DISTINCT"
                                         expect "FROM"
-                                        NullSafeEquality
+                                        if negated then NullSafeEquality
+                                        else NullSafeInequality
                                     | _ -> raise OutsideSubset
                                 let second = whereColumn ()
                                 first, op, second
