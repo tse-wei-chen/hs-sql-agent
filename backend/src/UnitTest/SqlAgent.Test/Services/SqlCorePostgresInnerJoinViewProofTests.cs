@@ -116,6 +116,26 @@ public sealed class SqlCorePostgresInnerJoinViewProofTests
             "ALTER TABLE app.backup DROP COLUMN id;").Statements[6].Status);
     }
 
+    [Fact]
+    public void EitherInputTableCanCascadeTheJoinViewAndItsDescendants()
+    {
+        var setup = Tables +
+            "CREATE VIEW app.v AS SELECT o.title, l.amount FROM app.orders o " +
+            "JOIN app.lines l ON o.id = l.order_id;" +
+            "CREATE VIEW app.child AS SELECT title FROM app.v;";
+        foreach (var source in new[] { "app.orders", "app.lines" })
+        {
+            var restrict = Analyze(setup + "DROP TABLE " + source + ";");
+            Assert.Equal(SqlStatementAnalysisStatus.Invalid, restrict.Statements[5].Status);
+            Assert.Equal(2, restrict.FinalCatalog.Views.Count);
+
+            var cascade = Analyze(setup + "DROP TABLE " + source + " CASCADE;");
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, cascade.Statements[5].Status);
+            Assert.Empty(cascade.FinalCatalog.Views);
+            Assert.Single(cascade.FinalCatalog.Tables.Where(x => x.Name != source));
+        }
+    }
+
     [Theory]
     [InlineData("SELECT id FROM app.orders o JOIN app.lines l ON o.id = l.order_id")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines o ON o.id = o.order_id")]

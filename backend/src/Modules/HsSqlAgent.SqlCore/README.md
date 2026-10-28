@@ -143,6 +143,38 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL two-source INNER JOIN View proof and owned dependencies
+
+A bounded PostgreSQL-only View DDL grammar now permits precisely two
+known physical relations with `JOIN` / `INNER JOIN` and one equality
+`ON a.column = b.column`. Aliases are resolved in their local FROM
+scope, each ON operand must bind to a **different** source and have
+identical Catalog types. A unique unqualified column may resolve
+from either input; ambiguous columns, unknown qualifiers, missing
+sources, incompatible ON types or duplicate aliases are rejected
+without creating Known Catalog facts. Self joins remain unsupported
+until per-instance dependency provenance can be modeled.
+
+The View Catalog retains `Dependencies` and the legacy flattened
+`SourceColumns` for compatibility, and now exposes typed immutable
+`SourceBindings`: one relation identity plus the exact names read
+from that relation, including projection, INNER JOIN key and WHERE-only
+columns. **DROP COLUMN checks SourceBindings, not SourceColumns**:
+`orders.id` and `lines.id` can no longer be conflated. DROP TABLE
+RESTRICT/CASCADE and DROP VIEW transitive dependency closure follow
+both physical relations. OR REPLACE atomically rewires both references,
+while preserving existing output names, types, order and downstream
+View contracts. Repeated single-source projections retain their
+previous source-name representation.
+
+Outer joins (with nullable-side semantics), more than two sources,
+ON predicates beyond a direct equality, USING/NATURAL, derived
+relations, and mixed wildcard projection lists remain outside the
+proven subset and fail closed. This is static `AnalyzeScript`
+dependency evidence only, not an executable permission. PostgreSQL
+16 live differential tests compare real output columns and DROP
+dependency behavior.
+
 ## PostgreSQL bounded View WHERE predicate proof
 
 PostgreSQL's single-source `CREATE [OR REPLACE] VIEW` static Catalog
