@@ -23,8 +23,15 @@ module internal RewriteSchemaAnalyzer =
     /// Each projected output name is tracked separately from the physical
     /// source column it reads. Never use display aliases as dependency proof.
     type ViewColumnProjection =
-        { SourceColumn: string
+        { /// A local binding to one FROM source, never an independent relation.
+          Qualifier: string option
+          SourceColumn: string
           OutputColumn: string }
+
+    /// A closed, statically provable single-source SELECT projection.
+    type ViewProjection =
+        | Wildcard of qualifier: string option
+        | NamedColumns of columns: ViewColumnProjection list
 
     /// Explicit, closed semantics for CREATE [OR REPLACE] VIEW.
     type ViewCreateMode =
@@ -42,8 +49,8 @@ module internal RewriteSchemaAnalyzer =
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
         | CreateView of view: SqlCatalogQualifiedName * source: SqlCatalogQualifiedName *
-                        projection: ViewColumnProjection list option * mode: ViewCreateMode *
-                        outputHeader: ViewOutputHeader
+                        projection: ViewProjection * fromAlias: string option *
+                        mode: ViewCreateMode * outputHeader: ViewOutputHeader
         | DropView of view: SqlCatalogQualifiedName * ifExists: bool *
                       dependencyMode: DropDependencyMode
         /// One PostgreSQL statement; validates all views and their closure together.
@@ -378,46 +385,72 @@ module internal RewriteSchemaAnalyzer =
                     else Inferred
                 expect "AS"
                 expect "SELECT"
-                // Deliberately bounded query shape: exactly one relation,
-                // direct physical column names with optional explicit AS
-                // output aliases, or a wildcard. No arbitrary expression,
-                // implicit alias, join, predicate, function or view option
-                // may mint a known View relation.
-                let wildcard =
-                    // RewriteLexer represents multiplication/wildcard as
-                    // Operator "*", not Symbol '*'. Never treat another
-                    // operator as a SELECT projection wildcard.
-                    match (current ()).Kind with
-                    | Operator "*" -> index <- index + 1; true
-                    | _ -> false
-                let projection =
-                    if wildcard then None
+                // The only proven SELECT shape has one physical FROM
+                // relation, optionally aliased; direct columns may be
+                // qualified by its effective local binding. Never authorize
+                // JOIN, predicates, expressions or SQL execution here.
+                let projectionItem () =
+                    let first = namePart ()
+                    if symbol '.' then
+                        match (current ()).Kind with
+                        | Operator "*" ->
+                            index <- index + 1
+                            Choice1Of2 first
+                        | _ ->
+                            let physical = namePart ()
+                            let output = if accept "AS" then namePart () else physical
+                            Choice2Of2 {
+                                Qualifier = Some first
+                                SourceColumn = physical
+                                OutputColumn = output }
                     else
-                        let column () =
-                            let sourceColumn = namePart ()
-                            let outputColumn =
-                                if accept "AS" then namePart ()
-                                else sourceColumn
-                            { SourceColumn = sourceColumn
-                              OutputColumn = outputColumn }
-                        let columns = ResizeArray<ViewColumnProjection>()
-                        columns.Add(column ())
-                        while symbol ',' do
-                            RewriteResourceBudget.checkpoint ()
-                            columns.Add(column ())
-                        Some(columns |> Seq.toList)
-                // A syntactically present SELECT expression or implicit
-                // alias is outside this narrow proven View subset. It is
-                // unsupported, not a malformed SQL statement. A missing
-                // FROM at end-of-statement remains an Invalid syntax error.
+                        let output = if accept "AS" then namePart () else first
+                        Choice2Of2 {
+                            Qualifier = None
+                            SourceColumn = first
+                            OutputColumn = output }
+                let projection =
+                    match (current ()).Kind with
+                    | Operator "*" ->
+                        index <- index + 1
+                        Wildcard None
+                    | _ ->
+                        match projectionItem () with
+                        | Choice1Of2 name -> Wildcard(Some name)
+                        | Choice2Of2 first ->
+                            let items = ResizeArray<ViewColumnProjection>()
+                            items.Add(first)
+                            while symbol ',' do
+                                RewriteResourceBudget.checkpoint ()
+                                match projectionItem () with
+                                | Choice1Of2 _ -> raise OutsideSubset
+                                | Choice2Of2 next -> items.Add(next)
+                            NamedColumns(items |> Seq.toList)
+                // Any trailing SELECT expression or implicit column alias
+                // is outside the closed proof. End-of-statement without FROM
+                // is malformed; all other additional query tokens are opaque.
                 if word () <> "FROM" then
                     match (current ()).Kind with
                     | End -> raise (Malformed "CREATE VIEW SELECT requires FROM.")
                     | _ -> raise OutsideSubset
                 expect "FROM"
                 let source = qualifiedName ()
+                // PostgreSQL permits both AS and implicit FROM aliases.
+                // Never absorb clause words as implicit aliases.
+                let fromAlias =
+                    if accept "AS" then
+                        Some(namePart ())
+                    else
+                        match (current ()).Kind with
+                        | Identifier(name, false) when
+                            not (Set.contains (name.ToUpperInvariant())
+                                  postgresReservedViewHeaderNames) ->
+                            Some(namePart ())
+                        | Identifier(_, true) -> Some(namePart ())
+                        | _ -> None
                 endOfStatement ()
-                Recognized(CreateView(view, source, projection, viewMode, outputHeader))
+                Recognized(CreateView(view, source, projection, fromAlias,
+                                      viewMode, outputHeader))
             elif viewMode = CreateOrReplace then
                 raise OutsideSubset
             elif accept "INDEX" then

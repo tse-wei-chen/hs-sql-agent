@@ -143,6 +143,34 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL single-source qualified View projections
+
+The bounded PostgreSQL Virtual Catalog grammar now supports direct
+single-relation projections such as `SELECT o.id, o.label FROM app.orders
+AS o` and `SELECT o.* FROM app.orders o`, plus ordinary unqualified
+columns/`*`. The existing typed projection is a **closed F# DU**
+(`Wildcard` or `NamedColumns`), with an optional qualifier on each
+column. The optional `FROM` alias is resolved as a local binding;
+without one, the source relation's final identifier is its binding.
+A declared alias **hides** the unaliased relation name.
+
+Proof requires every explicit qualifier to match the one effective
+`FROM` binding. An unbound/shadowed qualifier is Invalid, and its
+Catalog remains unchanged. Three-part projections, joins, predicates,
+multiple FROM relations, source column-alias lists and arbitrary
+expressions remain outside this proof. No other dialect gains Known DDL.
+
+Visible output names still follow projection `AS` aliases and
+View header-prefix overrides, while `SourceColumns` preserve the
+actual names read from the direct source. `CREATE OR REPLACE VIEW`
+retains output-prefix compatibility and rewires source dependencies
+without affecting dependent View contracts. Live PostgreSQL parity
+verifies the output-column shape and physical DROP-column dependencies.
+
+This is static `AnalyzeScript` Catalog reasoning, not executable
+SQL compilation, authentication/authorization or proof of actual DDL
+execution.
+
 ## PostgreSQL explicit View output headers
 
 `CREATE [OR REPLACE] VIEW schema.view (public_id, public_label) AS
