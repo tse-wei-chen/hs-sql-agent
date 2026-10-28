@@ -164,7 +164,6 @@ public sealed class SqlCorePostgresViewWherePredicateProofTests
     [InlineData("WHERE id = qty")]
     [InlineData("WHERE status = 1")]
     [InlineData("WHERE qty = 'one'")]
-    [InlineData("WHERE (qty = 1")]
     public void UnsupportedPredicateGrammarOrUnprovenTypeCannotPublishKnownCatalog(
         string predicate)
     {
@@ -174,6 +173,16 @@ public sealed class SqlCorePostgresViewWherePredicateProofTests
         Assert.DoesNotContain(result.Statements[2].Changes,
             c => c.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Views);
+    }
+
+    [Fact]
+    public void UnclosedGroupingIsRejectedAtTheLexicalBoundary()
+    {
+        // The lexer reports malformed grouping before Script analysis and
+        // must not be misclassified as a supported or silently partial View.
+        Assert.Throws<HsSqlAgent.SqlCore.SqlParsing.SqlParseException>(() =>
+            Analyze(Tables +
+                "CREATE VIEW app.v AS SELECT id FROM app.orders WHERE (qty = 1;"));
     }
 
     [Theory]

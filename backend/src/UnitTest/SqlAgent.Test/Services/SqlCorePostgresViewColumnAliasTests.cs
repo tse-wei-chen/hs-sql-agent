@@ -111,7 +111,7 @@ public sealed class SqlCorePostgresViewColumnAliasTests
     [InlineData("SELECT id order_id FROM app.orders")]
     [InlineData("SELECT id + 1 AS order_id FROM app.orders")]
     [InlineData("SELECT * AS everything FROM app.orders")]
-    [InlineData("SELECT id AS order_id FROM app.orders WHERE id > 0")]
+    [InlineData("SELECT id AS order_id FROM app.orders WHERE id IN (1, 2)")]
     public void OutsideProvenAliasGrammarRemainsUnsupported(string query)
     {
         var result = Analyze(Base + "CREATE VIEW app.v_orders AS " + query + ";");

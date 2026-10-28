@@ -250,7 +250,7 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
     {
         var r = Analyze(
             "CREATE TABLE app.parent(id INTEGER);" +
-            "CREATE VIEW app.v AS SELECT id FROM app.parent WHERE id > 1;");
+            "CREATE VIEW app.v AS SELECT id FROM app.parent WHERE id IN (1, 2);");
         var ddl = r.Statements[1];
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, ddl.Status);
         Assert.NotEqual(SqlCatalogKnowledge.Known, ddl.Certainty);
@@ -274,7 +274,7 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
     {
         var r = Analyze(
             "CREATE TABLE app.parent(id INTEGER);" +
-            "CREATE VIEW app.v AS SELECT id FROM app.parent WHERE id > 1;" +
+            "CREATE VIEW app.v AS SELECT id FROM app.parent WHERE id IN (1, 2);" +
             "DROP TABLE app.parent CASCADE;");
         Assert.False(r.FinalCatalog.IsClosedWorld);
         Assert.NotEqual(SqlCatalogKnowledge.Known, r.Statements[2].Certainty);
