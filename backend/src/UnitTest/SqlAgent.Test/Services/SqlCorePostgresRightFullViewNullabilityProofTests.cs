@@ -220,7 +220,7 @@ public sealed class SqlCorePostgresRightFullViewNullabilityProofTests
     [Theory]
     [InlineData("SELECT o.id FROM app.orders o RIGHT JOIN app.details d USING (id)")]
     [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.details d ON o.id > d.order_id")]
-    [InlineData("SELECT o.id FROM app.orders o RIGHT JOIN app.details d ON o.id = d.order_id JOIN app.alternate a ON a.id = o.id")]
+    [InlineData("SELECT o.id FROM app.orders o RIGHT JOIN app.details d ON o.id = d.order_id JOIN app.alternate a ON a.id > o.id")]
     [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.details d ON o.id = d.order_id OR o.id = d.id")]
     [InlineData("SELECT o.id FROM app.orders o NATURAL FULL JOIN app.details d")]
     [InlineData("SELECT o.id FROM app.orders o FULL JOIN app.orders b ON o.id = b.id")]

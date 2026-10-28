@@ -158,7 +158,7 @@ public sealed class SqlCorePostgresInnerJoinViewProofTests
     [InlineData("SELECT o.id FROM app.orders o RIGHT JOIN app.lines l USING (id)")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l USING (id)")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id > l.order_id")]
-    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id JOIN app.backup b ON b.id = o.id")]
+    [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id CROSS JOIN app.backup b")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id OR o.id = l.id")]
     [InlineData("SELECT o.id FROM app.orders o JOIN app.lines l ON o.id = l.order_id WHERE l.amount + 1 = 10")]
     public void UnmodeledJoinGrammarRemainsFailClosed(string query)

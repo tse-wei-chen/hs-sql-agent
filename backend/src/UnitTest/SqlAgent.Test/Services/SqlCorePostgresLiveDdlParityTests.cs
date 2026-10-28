@@ -840,6 +840,125 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         await tx.RollbackAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    public async Task ThreeSourceCompoundOnAndOuterGraphMatchLivePostgresRowsAndDependencies()
+    {
+        var schema = "sqlcore_vg_" + Guid.NewGuid().ToString("N");
+        var setup =
+            $"CREATE TABLE {schema}.orders(id INTEGER NOT NULL, tenant INTEGER NOT NULL, label TEXT);" +
+            $"CREATE TABLE {schema}.lines(line_id INTEGER NOT NULL, order_id INTEGER NOT NULL, tenant INTEGER NOT NULL);" +
+            $"CREATE TABLE {schema}.shipments(ship_id INTEGER NOT NULL, line_id INTEGER NOT NULL, tenant INTEGER NOT NULL);" +
+            $"CREATE VIEW {schema}.v (order_id, line_id, ship_id) AS " +
+            $"SELECT o.id, l.line_id, s.ship_id FROM {schema}.orders o " +
+            $"LEFT JOIN {schema}.lines l ON o.id = l.order_id AND o.tenant = l.tenant " +
+            $"RIGHT JOIN {schema}.shipments s ON l.line_id = s.line_id AND l.tenant = s.tenant;";
+
+        var model = SqlCoreFacade.AnalyzeScript(
+            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(model.Diagnostics);
+        Assert.All(model.Statements, stmt =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, stmt.Status));
+        var view = Assert.Single(model.FinalCatalog.Views);
+        Assert.Equal(new[] { "order_id", "line_id", "ship_id" }, view.Columns.Select(c => c.Name));
+        Assert.Equal(new[] { true, true, false }, view.Columns.Select(c => c.Nullable));
+        Assert.Equal(new[] { schema + ".orders", schema + ".lines", schema + ".shipments" },
+            view.Dependencies.Select(d => d.DisplayName));
+        Assert.Equal(new[] { "id", "tenant" }, view.SourceBindings[0].Columns);
+        Assert.Equal(new[] { "line_id", "order_id", "tenant" }, view.SourceBindings[1].Columns);
+        Assert.Equal(new[] { "ship_id", "line_id", "tenant" }, view.SourceBindings[2].Columns);
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in model.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+        await Execute(db, tx,
+            $"INSERT INTO {schema}.orders(id,tenant,label) VALUES (1,7,'matched'),(2,7,'missing');");
+        await Execute(db, tx,
+            $"INSERT INTO {schema}.lines(line_id,order_id,tenant) VALUES (10,1,7),(11,2,8);");
+        await Execute(db, tx,
+            $"INSERT INTO {schema}.shipments(ship_id,line_id,tenant) VALUES (100,10,7),(101,11,8),(102,999,8);");
+
+        var observed = new List<(int?,int?,int?)>();
+        await using (var cmd = new NpgsqlCommand(
+            $"SELECT order_id, line_id, ship_id FROM {schema}.v", db, tx))
+        await using (var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken))
+        {
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+                observed.Add((
+                    reader.IsDBNull(0) ? null : reader.GetInt32(0),
+                    reader.IsDBNull(1) ? null : reader.GetInt32(1),
+                    reader.IsDBNull(2) ? null : reader.GetInt32(2)));
+        }
+        Assert.Equal(3, observed.Count);
+        Assert.Contains(((int?)1, (int?)10, (int?)100), observed);
+        Assert.Contains(((int?)null, (int?)null, (int?)101), observed);
+        Assert.Contains(((int?)null, (int?)null, (int?)102), observed);
+
+        foreach (var (table, column) in new[]
+        {
+            ("orders", "tenant"), ("lines", "order_id"),
+            ("lines", "tenant"), ("shipments", "tenant")
+        })
+        {
+            var proposed = SqlCoreFacade.AnalyzeScript(
+                setup + $"ALTER TABLE {schema}.{table} DROP COLUMN {column};",
+                SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+            Assert.Equal(SqlStatementAnalysisStatus.Invalid, proposed.Statements[4].Status);
+            var savepoint = "SAVEPOINT graph_drop";
+            await Execute(db, tx, savepoint);
+            await Assert.ThrowsAsync<PostgresException>(() =>
+                Execute(db, tx, $"ALTER TABLE {schema}.{table} DROP COLUMN {column};"));
+            await Execute(db, tx, "ROLLBACK TO SAVEPOINT graph_drop");
+        }
+        await Execute(db, tx, $"ALTER TABLE {schema}.orders DROP COLUMN label;");
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task FourSourceViewPhysicalHeaderAndCompoundKeysMatchPostgres()
+    {
+        var schema = "sqlcore_vg_" + Guid.NewGuid().ToString("N");
+        var setup =
+            $"CREATE TABLE {schema}.a(id INTEGER NOT NULL, tenant INTEGER NOT NULL);" +
+            $"CREATE TABLE {schema}.b(id INTEGER NOT NULL, a_id INTEGER NOT NULL, tenant INTEGER NOT NULL);" +
+            $"CREATE TABLE {schema}.c(id INTEGER NOT NULL, b_id INTEGER NOT NULL, tenant INTEGER NOT NULL);" +
+            $"CREATE TABLE {schema}.d(id INTEGER NOT NULL, c_id INTEGER NOT NULL, tenant INTEGER NOT NULL);" +
+            $"CREATE VIEW {schema}.v (a_id, b_id, c_id, d_id) AS " +
+            $"SELECT a.id, b.id, c.id, d.id FROM {schema}.a a " +
+            $"JOIN {schema}.b b ON a.id = b.a_id AND a.tenant = b.tenant " +
+            $"LEFT JOIN {schema}.c c ON b.id = c.b_id AND b.tenant = c.tenant " +
+            $"FULL OUTER JOIN {schema}.d d ON c.id = d.c_id AND c.tenant = d.tenant;";
+        var result = SqlCoreFacade.AnalyzeScript(
+            setup, SqlAgentToolType.Postgres, SqlCatalogState.KnownEmpty());
+        Assert.Empty(result.Diagnostics);
+        Assert.All(result.Statements, s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        Assert.Equal(new[] { true, true, true, true },
+            Assert.Single(result.FinalCatalog.Views).Columns.Select(c => c.Nullable));
+
+        await using var db = new NpgsqlConnection(GetConnectionString());
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        await using var tx = await db.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await Execute(db, tx, "CREATE SCHEMA " + schema);
+        foreach (var statement in result.Statements)
+            await Execute(db, tx, statement.Syntax.Text);
+
+        var names = new List<string>();
+        await using (var cmd = new NpgsqlCommand(
+            "SELECT column_name FROM information_schema.columns " +
+            "WHERE table_schema = @schema AND table_name = 'v' ORDER BY ordinal_position", db, tx))
+        {
+            cmd.Parameters.AddWithValue("schema", schema);
+            await using var reader = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+            while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+                names.Add(reader.GetString(0));
+        }
+        Assert.Equal(new[] { "a_id", "b_id", "c_id", "d_id" }, names);
+        await tx.RollbackAsync(TestContext.Current.CancellationToken);
+    }
+
     private static string GetConnectionString()
     {
         var value = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");

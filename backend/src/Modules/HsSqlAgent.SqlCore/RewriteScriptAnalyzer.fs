@@ -318,8 +318,8 @@ module internal RewriteScriptAnalyzer =
                       " conflicts with a known index or key-backed index.")
             elif sources.IsEmpty || sources.Length > 4
                  || joins.Length <> sources.Length - 1
-                 || joins |> List.exists (fun edge ->
-                     edge.Pairs.IsEmpty || edge.Pairs.Length > 8) then
+                 || (joins |> List.exists (fun edge ->
+                     edge.Pairs.IsEmpty || edge.Pairs.Length > 8)) then
                 dependencyUnproven "CREATE VIEW graph is outside bounded source/ON capabilities."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then

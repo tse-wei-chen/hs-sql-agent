@@ -143,6 +143,46 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL bounded multi-source View JOIN graph and compound ON proof
+
+The static PostgreSQL-only Virtual Catalog now proves a **left-deep graph
+of up to four distinct physical relations** using the four closed JOIN
+families (`INNER`, `LEFT`, `RIGHT`, `FULL`) and a bounded conjunction
+of **1–8 direct column equality pairs per ON**. The F# `ViewJoinEdge`
+contains typed `ViewJoinKind` and column-reference pairs. Its ordered
+position pairs each edge with the newly bound source: a valid ON equality
+must connect that source to **an already bound left-subtree source**.
+Forward aliases, two prior-only operands, two new-only operands,
+unresolved/ambiguous columns, incompatible SQL types, duplicate aliases
+and self-joins cannot publish a Known Catalog change.
+
+Outer-join nullability is folded from left to right over the entire
+bound source graph. A LEFT edge null-extends the new input. A RIGHT edge
+null-extends **every** relation in the accumulated left subtree. A FULL
+edge null-extends both that subtree and the new right relation. Previous
+nullable proofs are kept conservative across later INNER predicates;
+no unproven WHERE simplification erases nullability. Named projections,
+`source.*`, View headers and dependent Views preserve the resulting
+typed column shape.
+
+Physical SELECT, ON and WHERE-only source-column dependencies remain
+identity-owned via `SourceBindings`; DROP COLUMN and recursive
+RESTRICT/CASCADE correctly cover every source. CREATE OR REPLACE VIEW
+recomputes all source bindings atomically, detects dependency cycles,
+preserves existing name/order/type prefixes, and refuses nullability
+changes that would leave descendant View proofs stale.
+
+Resource bounds prevent unbounded parsing/semantic expansion. Five
+other SQL dialects retain their prior proof fences. ON OR, non-equality
+operators, USING/NATURAL, CROSS, parenthesized ON expressions, subqueries,
+more than four sources or eight conjuncts, and self-joins are not
+currently proven and fail closed.
+
+Independent PostgreSQL 16 differential tests include real row outcomes
+for compound equality AND mixed LEFT/RIGHT, and a four-source
+INNER/LEFT/FULL graph. This capability is **structural DDL proof**,
+never execution authority.
+
 ## PostgreSQL RIGHT and FULL OUTER JOIN View proof
 
 The bounded PostgreSQL-only static View grammar now supports exactly two
