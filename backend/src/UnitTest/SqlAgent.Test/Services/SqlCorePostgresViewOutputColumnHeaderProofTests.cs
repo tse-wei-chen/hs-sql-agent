@@ -45,7 +45,7 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
         Assert.False(view.Columns[0].Nullable);
         Assert.Equal("TEXT", view.Columns[1].TypeName);
         Assert.True(view.Columns[1].Nullable);
-        Assert.Equal("app.src", Assert.NotNull(Assert.Single(view.Dependencies)).DisplayName);
+        Assert.Equal("app.src", Assert.Single(view.Dependencies)!.DisplayName);
     }
 
     [Fact]
@@ -63,7 +63,7 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
         var child = result.FinalCatalog.Views.Single(x => x.Name == "app.child");
         Assert.Equal("child_id", Assert.Single(child.Columns).Name);
         Assert.Equal("public_id", Assert.Single(child.SourceColumns));
-        Assert.Equal("app.v", Assert.NotNull(Assert.Single(child.Dependencies)).DisplayName);
+        Assert.Equal("app.v", Assert.Single(child.Dependencies)!.DisplayName);
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
             Assert.Single(result.Statements[4].DetailedEffects).Operation);
         var v = result.FinalCatalog.Views.Single(x => x.Name == "app.v");
         Assert.Equal(new[] { "public_id", "public_label" }, v.Columns.Select(x => x.Name));
-        Assert.Equal("app.alt", Assert.NotNull(Assert.Single(v.Dependencies)).DisplayName);
+        Assert.Equal("app.alt", Assert.Single(v.Dependencies)!.DisplayName);
         Assert.Equal(new[] { "id", "label" }, v.SourceColumns);
         Assert.Equal("public_id", Assert.Single(result.FinalCatalog.Views
             .Single(x => x.Name == "app.consumer").Columns).Name);
@@ -153,7 +153,7 @@ public sealed class SqlCorePostgresViewOutputColumnHeaderProofTests
         Assert.Same(replacement.CatalogBefore, replacement.CatalogAfter);
         var old = Assert.Single(result.FinalCatalog.Views);
         Assert.Equal("public_id", Assert.Single(old.Columns).Name);
-        Assert.Equal("app.src", Assert.NotNull(Assert.Single(old.Dependencies)).DisplayName);
+        Assert.Equal("app.src", Assert.Single(old.Dependencies)!.DisplayName);
         Assert.True(result.FinalCatalog.IsClosedWorld);
     }
 
