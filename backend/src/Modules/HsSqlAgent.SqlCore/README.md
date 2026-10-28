@@ -182,8 +182,13 @@ currently proven and fail closed.
 
 The PostgreSQL-only Virtual Catalog now proves **up to four distinct known
 relations** in a bounded left-deep JOIN graph containing typed `USING`
-edges, including INNER/LEFT/RIGHT/FULL and mixed `ON`/USING edges with
-**physically qualified ON equality operands**. Every stage owns a closed
+edges, including INNER/LEFT/RIGHT/FULL and mixed `ON`/USING edges.
+`ON` equality operands may be **physically qualified** or **uniquely
+stage-visible unqualified columns**. PostgreSQL resolves an unqualified
+name across the prior JOIN result and the newly introduced source;
+exactly one matching column is required. A prior `USING` merged key
+counts as **one** visible value even when its lineage includes several
+physical tables, including FULL JOIN's coalesced key. Every stage owns a closed
 ordered visible-column model: a USING edge consumes the prior stage's
 **single merged key**, never an ambiguous raw scan over the original
 tables. Each edge projects USING keys in clause order, then left
@@ -198,10 +203,12 @@ Qualified physical projections keep per-source null-extension; named
 unqualified projections and WHERE bind only one final visible column.
 Compatible View replacement rebinds physical dependencies atomically.
 
-Ambiguous keys in a prior ON subtree, unqualified ambiguous ON operands,
+Ambiguous keys in a prior ON subtree, unqualified ON operands present
+on both sides (or duplicated within a side), same-side ON comparisons,
 future aliases, duplicate or type-incompatible keys, self-joins, more
 than four sources, unknown/open catalogs and other database dialects
-remain fail-closed. No execution/authorization capabilities are added.
+remain fail-closed. Unqualified and qualified ON references have the
+same strict cross-edge SQL type and physical dependency proof. No execution/authorization capabilities are added.
 
 ### PostgreSQL two-source OUTER USING merged-key proof
 
