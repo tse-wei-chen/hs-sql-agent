@@ -178,6 +178,31 @@ operators, NATURAL, CROSS, unproven USING shapes, parenthesized non-AND ON predi
 more than four sources or eight conjuncts, and self-joins are not
 currently proven and fail closed.
 
+### PostgreSQL three/four-source left-deep USING View graph proof
+
+The PostgreSQL-only Virtual Catalog now proves **up to four distinct known
+relations** in a bounded left-deep JOIN graph containing typed `USING`
+edges, including INNER/LEFT/RIGHT/FULL and mixed `ON`/USING edges with
+**physically qualified ON equality operands**. Every stage owns a closed
+ordered visible-column model: a USING edge consumes the prior stage's
+**single merged key**, never an ambiguous raw scan over the original
+tables. Each edge projects USING keys in clause order, then left
+nonkeys, then newly joined right nonkeys.
+
+A stage-visible column carries its SQL type/nullability, one projected
+physical owner, and a complete **physical dependency lineage**. RIGHT
+takes the new right key, FULL merges prior visible key and right key
+with conservative coalesced nullability. Both sides of every JOIN key,
+including all earlier USING stages, remain protected from DROP COLUMN.
+Qualified physical projections keep per-source null-extension; named
+unqualified projections and WHERE bind only one final visible column.
+Compatible View replacement rebinds physical dependencies atomically.
+
+Ambiguous keys in a prior ON subtree, unqualified ambiguous ON operands,
+future aliases, duplicate or type-incompatible keys, self-joins, more
+than four sources, unknown/open catalogs and other database dialects
+remain fail-closed. No execution/authorization capabilities are added.
+
 ### PostgreSQL two-source OUTER USING merged-key proof
 
 In addition to INNER, PostgreSQL `CREATE VIEW` now statically proves

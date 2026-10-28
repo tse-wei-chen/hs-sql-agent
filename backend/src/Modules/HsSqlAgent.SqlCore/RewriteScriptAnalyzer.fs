@@ -13,6 +13,156 @@ open HsSqlAgent.SqlCore.Rewrite.RewriteSchemaAnalyzer
 /// executed; neither successful analysis nor a known Catalog authorizes SQL.
 module internal RewriteScriptAnalyzer =
 
+    /// One visible stage-column can represent several physical USING
+    /// inputs. The chosen projected owner and the complete physical
+    /// dependency lineage are deliberately distinct.
+    type private ViewGraphColumn =
+        { Output: SqlCatalogColumn
+          Owner: SqlCatalogQualifiedName
+          PhysicalName: string
+          Lineage: (SqlCatalogQualifiedName * string) list }
+
+    /// Closed left-deep multi-source JOIN proof. ON edges in a mixed
+    /// USING graph require qualified physical columns. This intentionally
+    /// rejects unqualified stage-scoped ON expressions until separately
+    /// proven; no raw SQL or name-guessing fallback is permitted.
+    let private proveMultiUsingGraph
+            (proven: (SqlCatalogQualifiedName * string * SqlCatalogColumn list) list)
+            (joins: ViewJoinEdge list)
+            : (ViewGraphColumn list * (SqlCatalogQualifiedName * string) list) option =
+        match proven with
+        | [] -> None
+        | (firstId, _, firstColumns)::_ ->
+            let bindPhysical identity (column: SqlCatalogColumn) =
+                { Output = column
+                  Owner = identity
+                  PhysicalName = column.Name
+                  Lineage = [identity, column.Name] }
+            let nullExtend (field: ViewGraphColumn) =
+                { field with
+                    Output = SqlCatalogColumn(
+                        field.Output.Name, field.Output.TypeName, true) }
+            let mutable visible =
+                firstColumns |> List.map (bindPhysical firstId)
+            let required = ResizeArray<SqlCatalogQualifiedName * string>()
+            let mutable provenGraph = true
+            for edgeIndex in 0 .. joins.Length - 1 do
+                RewriteResourceBudget.checkpoint ()
+                if provenGraph then
+                    let edge = joins.[edgeIndex]
+                    let newId, _, newColumns = proven.[edgeIndex + 1]
+                    let newlyBound = newColumns |> List.map (bindPhysical newId)
+                    let priorIds =
+                        proven |> List.take (edgeIndex + 1)
+                        |> List.map (fun (id, _, _) -> id.Key)
+                        |> Set.ofList
+                    let extendLeft =
+                        edge.Kind = RightOuterJoin || edge.Kind = FullOuterJoin
+                    let extendRight =
+                        edge.Kind = LeftOuterJoin || edge.Kind = FullOuterJoin
+                    let extend apply fields =
+                        if apply then fields |> List.map nullExtend else fields
+                    let next =
+                        match edge.Condition with
+                        | UsingKeys keys ->
+                            if (keys |> List.distinct |> List.length) <> keys.Length then
+                                None
+                            else
+                                let keyProof key =
+                                    RewriteResourceBudget.checkpoint ()
+                                    let byName fields =
+                                        fields |> List.filter (fun field ->
+                                            String.Equals(field.Output.Name, key,
+                                                          StringComparison.Ordinal))
+                                    match byName visible, byName newlyBound with
+                                    | [left], [right] when
+                                        String.Equals(left.Output.TypeName,
+                                                      right.Output.TypeName,
+                                                      StringComparison.Ordinal) ->
+                                        let chosen, nullable =
+                                            match edge.Kind with
+                                            | InnerJoin | LeftOuterJoin ->
+                                                left, left.Output.Nullable
+                                            | RightOuterJoin ->
+                                                right, right.Output.Nullable
+                                            | FullOuterJoin ->
+                                                left,
+                                                (left.Output.Nullable
+                                                 || right.Output.Nullable)
+                                        Some {
+                                            Output = SqlCatalogColumn(
+                                                key, chosen.Output.TypeName, nullable)
+                                            Owner = chosen.Owner
+                                            PhysicalName = chosen.PhysicalName
+                                            Lineage = left.Lineage @ right.Lineage }
+                                    | _ -> None
+                                let proofs = keys |> List.map keyProof
+                                if proofs |> List.exists Option.isNone then None
+                                else
+                                    let merged = proofs |> List.choose id
+                                    let keySet = Set.ofList keys
+                                    let notMerged (field: ViewGraphColumn) =
+                                        not (Set.contains field.Output.Name keySet)
+                                    let leftRest =
+                                        visible |> List.filter notMerged
+                                        |> extend extendLeft
+                                    let rightRest =
+                                        newlyBound |> List.filter notMerged
+                                        |> extend extendRight
+                                    Some(merged @ leftRest @ rightRest,
+                                         merged |> List.collect (fun field -> field.Lineage))
+                        | OnEquality pairs ->
+                            let bindOperand (operand: ViewPredicateColumn) =
+                                match operand.Qualifier with
+                                | None -> None
+                                | Some qualifier ->
+                                    let matches =
+                                        proven |> List.take (edgeIndex + 2)
+                                        |> List.collect (fun (identity, alias, cols) ->
+                                            if not (String.Equals(alias, qualifier,
+                                                                  StringComparison.Ordinal))
+                                            then []
+                                            else
+                                                cols |> List.filter (fun column ->
+                                                    String.Equals(
+                                                        column.Name, operand.SourceColumn,
+                                                        StringComparison.Ordinal))
+                                                |> List.map (fun column -> identity, column))
+                                    match matches with
+                                    | [single] -> Some single
+                                    | _ -> None
+                            let proofs =
+                                pairs |> List.map (fun (left, right) ->
+                                    RewriteResourceBudget.checkpoint ()
+                                    match bindOperand left, bindOperand right with
+                                    | Some(leftId, leftCol), Some(rightId, rightCol)
+                                        when String.Equals(leftCol.TypeName,
+                                                           rightCol.TypeName,
+                                                           StringComparison.Ordinal)
+                                             && ((String.Equals(
+                                                    leftId.Key, newId.Key,
+                                                    StringComparison.Ordinal)
+                                                  && Set.contains rightId.Key priorIds)
+                                                 || (String.Equals(
+                                                    rightId.Key, newId.Key,
+                                                    StringComparison.Ordinal)
+                                                     && Set.contains leftId.Key priorIds)) ->
+                                        Some [leftId, leftCol.Name; rightId, rightCol.Name]
+                                    | _ -> None)
+                            if proofs |> List.exists Option.isNone then None
+                            else
+                                Some(extend extendLeft visible @
+                                     extend extendRight newlyBound,
+                                     proofs |> List.choose id |> List.concat)
+                    match next with
+                    | Some(fields, refs) ->
+                        visible <- fields
+                        for reference in refs do
+                            required.Add(reference)
+                    | None -> provenGraph <- false
+            if provenGraph then Some(visible, required |> Seq.toList)
+            else None
+
     type private BatchIndexResolution =
         | BatchIndexFound of SqlCatalogQualifiedName * string
         | BatchIndexAbsent
@@ -325,11 +475,9 @@ module internal RewriteScriptAnalyzer =
                 dependencyUnproven "CREATE VIEW graph is outside bounded JOIN capabilities."
             elif joins |> List.exists (fun edge ->
                 match edge.Condition with
-                | UsingKeys _ -> sources.Length <> 2
+                | UsingKeys _ -> false
                 | OnEquality _ -> false) then
-                // Each USING clause must operate on exactly two known
-                // source instances, never an implicit larger join graph.
-                dependencyUnproven "CREATE VIEW USING requires a proven two-source JOIN."
+                dependencyUnproven "CREATE VIEW graph is outside proven JOIN capabilities."
             elif (sources |> List.map (fun s -> s.Relation.Key) |> List.distinct
                   |> List.length) <> sources.Length then
                 // Self-join also requires instance-scoped provenance, not just
@@ -448,8 +596,22 @@ module internal RewriteScriptAnalyzer =
                         extended
                     let nullExtended (identity: SqlCatalogQualifiedName) =
                         Set.contains identity.Key nullableSources
+                    let hasMultiUsing =
+                        joins.Length > 1
+                        && (joins |> List.exists (fun edge ->
+                            match edge.Condition with
+                            | UsingKeys _ -> true
+                            | OnEquality _ -> false))
+                    let multiUsingGraph =
+                        if hasMultiUsing then proveMultiUsingGraph proven joins
+                        else None
                     let projected =
                         match projection with
+                        | Wildcard None when hasMultiUsing ->
+                            multiUsingGraph |> Option.map (fun (fields, _) ->
+                                fields |> List.map (fun field -> field.Output),
+                                fields |> List.map (fun field ->
+                                    field.Owner, field.PhysicalName))
                         | Wildcard None when not (Set.isEmpty mergedUsingKeys) ->
                             // PostgreSQL USING exposes keys once in USING
                             // order, then left nonkeys and right nonkeys in
@@ -499,8 +661,24 @@ module internal RewriteScriptAnalyzer =
                         | NamedColumns members ->
                             let found =
                                 members |> List.choose (fun memberInfo ->
-                                    if memberInfo.Qualifier.IsNone
-                                       && Set.contains memberInfo.SourceColumn mergedUsingKeys then
+                                    if hasMultiUsing && memberInfo.Qualifier.IsNone then
+                                        match multiUsingGraph with
+                                        | None -> None
+                                        | Some(fields, _) ->
+                                            match fields |> List.filter (fun field ->
+                                                String.Equals(
+                                                    field.Output.Name,
+                                                    memberInfo.SourceColumn,
+                                                    StringComparison.Ordinal)) with
+                                            | [field] ->
+                                                Some(SqlCatalogColumn(
+                                                    memberInfo.OutputColumn,
+                                                    field.Output.TypeName,
+                                                    field.Output.Nullable),
+                                                     (field.Owner, field.PhysicalName))
+                                            | _ -> None
+                                    elif memberInfo.Qualifier.IsNone
+                                         && Set.contains memberInfo.SourceColumn mergedUsingKeys then
                                         // Unqualified merged key is not the
                                         // same value as a qualified a.key or
                                         // b.key under RIGHT / FULL OUTER JOIN.
@@ -523,7 +701,7 @@ module internal RewriteScriptAnalyzer =
                     // bound source to this edge's newly introduced input.
                     // This rejects future-alias references and unrelated
                     // same-side comparisons, without losing exact ownership.
-                    let joinRefs =
+                    let legacyJoinRefs =
                         let proofs =
                             joins |> List.mapi (fun index edge ->
                                 let right = sources.[index + 1].Relation.Key
@@ -564,9 +742,22 @@ module internal RewriteScriptAnalyzer =
                             |> List.concat
                         if proofs |> List.exists Option.isNone then None
                         else Some(proofs |> List.choose id |> List.concat)
+                    let joinRefs =
+                        if hasMultiUsing then multiUsingGraph |> Option.map snd
+                        else legacyJoinRefs
                     let rec provePredicate expression =
                         let bind col =
-                            resolveColumn col.Qualifier col.SourceColumn
+                            if hasMultiUsing && col.Qualifier.IsNone then
+                                match multiUsingGraph with
+                                | None -> None
+                                | Some(fields, _) ->
+                                    match fields |> List.filter (fun field ->
+                                        String.Equals(
+                                            field.Output.Name, col.SourceColumn,
+                                            StringComparison.Ordinal)) with
+                                    | [field] -> Some(field.Owner, field.Output)
+                                    | _ -> None
+                            else resolveColumn col.Qualifier col.SourceColumn
                         match expression with
                         | NullTest(col, _) ->
                             match bind col with
