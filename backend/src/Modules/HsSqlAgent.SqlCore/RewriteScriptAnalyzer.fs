@@ -22,10 +22,22 @@ module internal RewriteScriptAnalyzer =
           PhysicalName: string
           Lineage: (SqlCatalogQualifiedName * string) list }
 
-    /// Closed left-deep multi-source JOIN proof. ON edges in a mixed
-    /// USING graph require qualified physical columns. This intentionally
-    /// rejects unqualified stage-scoped ON expressions until separately
-    /// proven; no raw SQL or name-guessing fallback is permitted.
+    /// One equality operand binds to one side of the *current* join edge.
+    /// A prior merged USING column can own several physical dependencies
+    /// without losing its single stage-visible SQL name or type.
+    type private ViewStageOnSide =
+        | PriorStage
+        | IntroducedSource
+
+    type private ViewStageOnOperand =
+        { Side: ViewStageOnSide
+          TypeName: string
+          Lineage: (SqlCatalogQualifiedName * string) list }
+
+    /// Closed left-deep multi-source JOIN proof. An ON operand may be
+    /// physically qualified or uniquely visible at this precise stage.
+    /// Neither form may cross to a future source or resolve ambiguity
+    /// by guessing one of several same-named physical columns.
     let private proveMultiUsingGraph
             (proven: (SqlCatalogQualifiedName * string * SqlCatalogColumn list) list)
             (joins: ViewJoinEdge list)
@@ -52,10 +64,6 @@ module internal RewriteScriptAnalyzer =
                     let edge = joins.[edgeIndex]
                     let newId, _, newColumns = proven.[edgeIndex + 1]
                     let newlyBound = newColumns |> List.map (bindPhysical newId)
-                    let priorIds =
-                        proven |> List.take (edgeIndex + 1)
-                        |> List.map (fun (id, _, _) -> id.Key)
-                        |> Set.ofList
                     let extendLeft =
                         edge.Kind = RightOuterJoin || edge.Kind = FullOuterJoin
                     let extendRight =
@@ -112,9 +120,31 @@ module internal RewriteScriptAnalyzer =
                                     Some(merged @ leftRest @ rightRest,
                                          merged |> List.collect (fun field -> field.Lineage))
                         | OnEquality pairs ->
-                            let bindOperand (operand: ViewPredicateColumn) =
+                            let bindOperand (operand: ViewPredicateColumn)
+                                    : ViewStageOnOperand option =
                                 match operand.Qualifier with
-                                | None -> None
+                                | None ->
+                                    // PostgreSQL name resolution uses the
+                                    // prior visible LEFT join result plus the
+                                    // newly introduced RIGHT input, *not*
+                                    // all underlying physical source columns.
+                                    let matches =
+                                        (visible |> List.map (fun field ->
+                                            PriorStage, field))
+                                        @ (newlyBound |> List.map (fun field ->
+                                            IntroducedSource, field))
+                                        |> List.filter (fun (_, field) ->
+                                            String.Equals(
+                                                field.Output.Name,
+                                                operand.SourceColumn,
+                                                StringComparison.Ordinal))
+                                    match matches with
+                                    | [side, field] ->
+                                        Some {
+                                            Side = side
+                                            TypeName = field.Output.TypeName
+                                            Lineage = field.Lineage }
+                                    | _ -> None
                                 | Some qualifier ->
                                     let matches =
                                         proven |> List.take (edgeIndex + 2)
@@ -129,25 +159,33 @@ module internal RewriteScriptAnalyzer =
                                                         StringComparison.Ordinal))
                                                 |> List.map (fun column -> identity, column))
                                     match matches with
-                                    | [single] -> Some single
+                                    | [identity, column] ->
+                                        let side =
+                                            if String.Equals(
+                                                identity.Key, newId.Key,
+                                                StringComparison.Ordinal)
+                                            then IntroducedSource
+                                            else PriorStage
+                                        Some {
+                                            Side = side
+                                            TypeName = column.TypeName
+                                            Lineage = [identity, column.Name] }
                                     | _ -> None
                             let proofs =
                                 pairs |> List.map (fun (left, right) ->
                                     RewriteResourceBudget.checkpoint ()
                                     match bindOperand left, bindOperand right with
-                                    | Some(leftId, leftCol), Some(rightId, rightCol)
-                                        when String.Equals(leftCol.TypeName,
-                                                           rightCol.TypeName,
-                                                           StringComparison.Ordinal)
-                                             && ((String.Equals(
-                                                    leftId.Key, newId.Key,
-                                                    StringComparison.Ordinal)
-                                                  && Set.contains rightId.Key priorIds)
-                                                 || (String.Equals(
-                                                    rightId.Key, newId.Key,
-                                                    StringComparison.Ordinal)
-                                                     && Set.contains leftId.Key priorIds)) ->
-                                        Some [leftId, leftCol.Name; rightId, rightCol.Name]
+                                    | Some(leftBound), Some(rightBound)
+                                        when leftBound.Side <> rightBound.Side
+                                             && String.Equals(
+                                                leftBound.TypeName,
+                                                rightBound.TypeName,
+                                                StringComparison.Ordinal) ->
+                                        // An ON equality joins the old
+                                        // visible subtree to the new source;
+                                        // the merged key retains its entire
+                                        // physical USING dependency lineage.
+                                        Some(leftBound.Lineage @ rightBound.Lineage)
                                     | _ -> None)
                             if proofs |> List.exists Option.isNone then None
                             else
