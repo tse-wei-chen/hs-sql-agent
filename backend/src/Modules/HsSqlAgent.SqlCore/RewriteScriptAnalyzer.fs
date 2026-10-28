@@ -361,15 +361,19 @@ module internal RewriteScriptAnalyzer =
                         match matches with
                         | [only] -> Some only
                         | _ -> None
-                    // LEFT JOIN can introduce NULLs for every value read
-                    // from its right operand, even when that source declares
-                    // NOT NULL. Preserve original physical Catalog facts and
-                    // column ownership; adjust only the View's visible shape.
+                    // Null-extension is a property of the JOIN direction,
+                    // not physical source columns. RIGHT extends the first
+                    // relation, FULL extends both, LEFT extends the second.
+                    // Never mutate the source Catalog or column ownership.
                     let nullExtended (identity: SqlCatalogQualifiedName) =
                         match joinCondition, sources with
                         | Some(LeftEquality _), [_; right] ->
                             String.Equals(identity.Key, right.Relation.Key,
                                           StringComparison.Ordinal)
+                        | Some(RightEquality _), [left; _] ->
+                            String.Equals(identity.Key, left.Relation.Key,
+                                          StringComparison.Ordinal)
+                        | Some(FullEquality _), [_; _] -> true
                         | _ -> false
                     let projected =
                         match projection with
@@ -401,7 +405,9 @@ module internal RewriteScriptAnalyzer =
                         match joinCondition with
                         | None -> Some []
                         | Some(InnerEquality(left, right))
-                        | Some(LeftEquality(left, right)) ->
+                        | Some(LeftEquality(left, right))
+                        | Some(RightEquality(left, right))
+                        | Some(FullEquality(left, right)) ->
                             match resolveColumn left.Qualifier left.SourceColumn,
                                   resolveColumn right.Qualifier right.SourceColumn with
                             | Some(leftIdentity, leftCol), Some(rightIdentity, rightCol)
