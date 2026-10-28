@@ -291,6 +291,29 @@ expressions remain fail-closed. PostgreSQL live parity validates output
 column order/types, returned rows and key DROP guards. This is static
 Catalog analysis only, not SQL execution or permission authority.
 
+### PostgreSQL bounded same-side JOIN ON predicates
+
+A PostgreSQL `CREATE VIEW JOIN ON` edge may now combine typed
+**same-side column comparisons** with proven cross-edge comparisons,
+including nested `AND`/`OR`, `IS [NOT] DISTINCT FROM` and relational
+operators. For example:
+`ON a.id = b.id AND a.tenant = a.region AND b.score > b.minimum`.
+Every comparison leaf must resolve to two columns visible at that
+stage, and must pass the existing SQL type/operator capability proof.
+All physical operand dependencies are retained, including branches
+of OR and coalesced stage-visible USING keys.
+
+Local conditions **stay in JOIN ON**. In particular, moving a LEFT
+JOIN's local condition into WHERE would discard unmatched left rows
+and change SQL semantics. The same contracts apply to INNER, LEFT,
+RIGHT, FULL, multi-source USING joins and alias-scoped Self JOIN.
+Every bounded ON edge still requires at least **one proven cross-edge
+comparison**; a pure same-side ON clause is legal in PostgreSQL but
+is **not yet a proven capability** of this static subset. Future
+aliases, ambiguous names, unsupported types/operators, constants,
+unbounded grammar, and non-PostgreSQL source dialects fail closed.
+Static analysis does not execute SQL or grant permission.
+
 ### PostgreSQL typed relational JOIN ON operators
 
 PostgreSQL `CREATE VIEW` joins now prove a closed F#
