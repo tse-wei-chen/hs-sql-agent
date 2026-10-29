@@ -31,7 +31,7 @@ module internal RewriteScriptParser =
         else
             match tokens.[index].Kind with
             | Keyword value
-            | Identifier(value, false) -> value.ToUpperInvariant()
+            | TokenKind.Identifier(value, false) -> value.ToUpperInvariant()
             | _ -> ""
 
     let private classify (tokens: Token[]) index sourceDialect =
@@ -183,7 +183,7 @@ module internal RewriteScriptParser =
 
             let isGoSeparator (token: Token) =
                 match token.Kind with
-                | Identifier(value, false)
+                | TokenKind.Identifier(value, false)
                     when sourceDialect = SqlAgentToolType.MsSqlServer
                          && String.Equals(value, "GO", StringComparison.OrdinalIgnoreCase) ->
                     while goLineEnd < token.Start do
