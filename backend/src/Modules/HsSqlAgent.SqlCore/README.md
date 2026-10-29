@@ -298,6 +298,25 @@ remain unchanged. It does not authorize SQL execution or establish runtime
 function effects. Views are never treated as physical INSERT/UPDATE/DELETE
 targets by this feature.
 
+## PostgreSQL statement-level WITH INSERT SELECT (strict source subset)
+
+The PostgreSQL source grammar accepts a read-only statement-level CTE prefix
+before `INSERT INTO ... SELECT`, including multiple ordered CTEs and explicit
+CTE output-column aliases. The parser keeps every CTE as a closed, typed
+`Query` within the existing `InsertInput.QuerySource` F# AST: no raw SQL
+splicing, new execution path, or synthetic authorization proof is introduced.
+The PostgreSQL renderer emits the CTEs before `INSERT`; Mutation binding,
+resource budgets, table policy, parameterization and typed diagnostics are
+unchanged. Script statement classification uses the *parsed* Statement DU, so
+`WITH ... INSERT ... SELECT` is exposed as Mutation, not Query.
+
+This first conservative subset does not admit recursive statement CTEs,
+data-modifying CTE bodies, top-level CTE INSERT VALUES or DEFAULT VALUES,
+nested input WITH, RETURNING or ON CONFLICT. Top-level CTE UPDATE, DELETE,
+MERGE and the remaining five source dialects retain their strict rejection
+until scope, capability and renderer parity are modeled. As always, parsing
+and static analysis do not authorize DML execution.
+
 ## SQL Server GO comments in static scripts
 
 The SQL Server Script Frontend recognizes a standalone client-side `GO` separator

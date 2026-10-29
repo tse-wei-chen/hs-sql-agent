@@ -8,6 +8,8 @@ open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite.RewriteLexer
+open HsSqlAgent.SqlCore.Rewrite.CoreModel
+open HsSqlAgent.SqlCore.Rewrite.Typestate
 
 /// Script-only parsing layer. Never produces executable plans or authorization proofs.
 /// The existing parser remains the single owner of recognized Query/Mutation grammar.
@@ -214,24 +216,34 @@ module internal RewriteScriptParser =
                     let length = last.Start + last.Length - absoluteStart
                     let text = sql.Substring(absoluteStart, length)
                     let family = classify tokens start sourceDialect
-                    let status, diagnostic =
+                    let actualFamily, status, diagnostic =
                         match family with
                         | Query | Mutation ->
                             try
-                                RewriteResourceBudget.withStage "ScriptStatementParse" SqlDiagnosticStage.Parse (fun () ->
-                                    RewriteFacadeAdapter.parseSourceValidated text sourceDialect sourceProfile
-                                    |> ignore)
-                                SqlScriptParseStatus.Parsed, None
+                                let parsed =
+                                    RewriteResourceBudget.withStage "ScriptStatementParse" SqlDiagnosticStage.Parse (fun () ->
+                                        RewriteFacadeAdapter.parseSourceValidated text sourceDialect sourceProfile)
+                                // WITH is a lexical prefix, not reliable Query
+                                // evidence. Only the closed, parsed F# AST
+                                // determines the public DQL/DML statement kind.
+                                let parsedFamily =
+                                    match (Typestate.Parsed.value parsed).Statement with
+                                    | Statement.QueryStatement _ -> Query
+                                    | Statement.InsertStatement _
+                                    | Statement.UpdateStatement _
+                                    | Statement.DeleteStatement _
+                                    | Statement.MergeStatement _ -> Mutation
+                                parsedFamily, SqlScriptParseStatus.Parsed, None
                             with
                             | :? SqlParseException as ex
                                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
                                      && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
                                 reraise()
                             | :? SqlParseException as ex ->
-                                SqlScriptParseStatus.Invalid,
+                                family, SqlScriptParseStatus.Invalid,
                                 Some(invalidDiagnostic ex absoluteStart length)
                         | _ ->
-                            SqlScriptParseStatus.Unsupported,
+                            family, SqlScriptParseStatus.Unsupported,
                             Some(
                                 SqlDiagnostic(
                                     "SQL_SCRIPT_UNSUPPORTED_STATEMENT",
@@ -242,7 +254,7 @@ module internal RewriteScriptParser =
                     diagnostic |> Option.iter diagnostics.Add
                     result.Add(
                         SqlScriptStatementSyntax(
-                            publicKind family,
+                            publicKind actualFamily,
                             status,
                             batch,
                             SqlDiagnosticSpan(absoluteStart, length),
