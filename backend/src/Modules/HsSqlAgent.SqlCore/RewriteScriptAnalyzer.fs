@@ -2083,7 +2083,7 @@ module internal RewriteScriptAnalyzer =
                             && fkCols.Length <= indexCols.Length
                             && List.forall2
                                 (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
-                                fkCols (indexCols |> List.take fkCols.Length)))
+                                fkCols (indexCols |> List.take fkCols.Length))))
                 match owners with
                 | [owner] when sourceDialect = SqlAgentToolType.Postgres
                                && Option.isNone target
