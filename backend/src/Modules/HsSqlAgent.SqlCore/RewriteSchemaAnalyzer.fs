@@ -146,6 +146,11 @@ module internal RewriteSchemaAnalyzer =
         | AddConstraint of table: SqlCatalogQualifiedName * constraintInfo: SqlCatalogConstraint
         | DropConstraint of table: SqlCatalogQualifiedName * name: string *
                             ifExists: bool * dependencyMode: DropDependencyMode
+        /// MySQL native ALTER: one or several named FOREIGN KEY drops, then
+        /// zero or more dependent COLUMN drops in the SAME physical statement.
+        /// Order is intentionally constrained and represented as closed facts.
+        | DropForeignKeys of table: SqlCatalogQualifiedName *
+                             names: string list * columns: string list
 
     type DdlSyntax =
         | Recognized of DdlOperation
@@ -1042,6 +1047,26 @@ module internal RewriteSchemaAnalyzer =
                 actions.Add(parseOne ())
                 while symbol ',' do actions.Add(parseOne ())
                 actions |> Seq.toList
+            let mysqlForeignKeyDropAction () =
+                let names = ResizeArray<string>()
+                let columns = ResizeArray<string>()
+                let mutable droppingColumns = false
+                let clause () =
+                    RewriteResourceBudget.checkpoint ()
+                    expect "DROP"
+                    if accept "FOREIGN" then
+                        if droppingColumns then raise OutsideSubset
+                        expect "KEY"
+                        names.Add(namePart ())
+                    else
+                        droppingColumns <- true
+                        accept "COLUMN" |> ignore
+                        columns.Add(namePart ())
+                clause ()
+                while symbol ',' do clause ()
+                endOfStatement ()
+                if names.Count = 0 then raise OutsideSubset
+                Recognized(DropForeignKeys(table, names |> Seq.toList, columns |> Seq.toList))
             // MySQL ALTER TABLE has a native secondary-index lifecycle
             // that is equivalent to CREATE/DROP INDEX ... ON table. Parse
             // each source spelling into the existing closed DDL union, never
@@ -1079,6 +1104,10 @@ module internal RewriteSchemaAnalyzer =
                     let newName = namePart ()
                     endOfStatement ()
                     Recognized(RenameColumn(table, oldName, newName))
+            elif sourceDialect = SqlAgentToolType.MySQL
+                 && word () = "DROP" && index + 1 < tokens.Length
+                 && tokenWord tokens.[index + 1] = "FOREIGN" then
+                mysqlForeignKeyDropAction ()
             elif mysqlIndexAction then
                 let adding = accept "ADD"
                 if not adding then expect "DROP"
