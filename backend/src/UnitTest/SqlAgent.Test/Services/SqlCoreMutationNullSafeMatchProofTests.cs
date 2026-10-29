@@ -16,7 +16,7 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreMutationNullSafeMatchProofTests
 {
     private const string Ddl =
-        "CREATE TABLE app.dest(id INTEGER PRIMARY KEY, tag INTEGER, label TEXT);" +
+        "CREATE TABLE app.dest(id INTEGER PRIMARY KEY, tag INTEGER, label TEXT, note TEXT);" +
         "CREATE TABLE app.flex(code INTEGER, note TEXT, CONSTRAINT uq_flex UNIQUE(code));" +
         "CREATE TABLE app.required(code INTEGER NOT NULL, note TEXT, CONSTRAINT uq_required UNIQUE(code));" +
         "CREATE TABLE app.pk(code INTEGER PRIMARY KEY, note TEXT);" +
@@ -109,8 +109,8 @@ public sealed class SqlCoreMutationNullSafeMatchProofTests
     }
 
     [Theory]
-    [InlineData("UPDATE app.dest d SET label = 'x' FROM app.flex f WHERE d.id = id")]
-    [InlineData("DELETE FROM app.dest d USING app.flex f WHERE id = d.id")]
+    [InlineData("UPDATE app.dest d SET label = 'x' FROM app.flex f WHERE d.label = note")]
+    [InlineData("DELETE FROM app.dest d USING app.flex f WHERE note = d.label")]
     public void AmbiguousUnqualifiedColumnCannotBeUpgradedByMatchProof(string sql)
     {
         var stmt = One(sql);
