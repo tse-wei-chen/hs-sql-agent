@@ -151,6 +151,8 @@ module internal RewriteSchemaAnalyzer =
         /// Order is intentionally constrained and represented as closed facts.
         | DropForeignKeys of table: SqlCatalogQualifiedName *
                              names: string list * columns: string list
+        /// MySQL physical PRIMARY key/index, not a generic named constraint.
+        | DropPrimaryKey of table: SqlCatalogQualifiedName
 
     type DdlSyntax =
         | Recognized of DdlOperation
@@ -1104,6 +1106,15 @@ module internal RewriteSchemaAnalyzer =
                     let newName = namePart ()
                     endOfStatement ()
                     Recognized(RenameColumn(table, oldName, newName))
+            elif sourceDialect = SqlAgentToolType.MySQL
+                 && word () = "DROP" && index + 1 < tokens.Length
+                 && tokenWord tokens.[index + 1] = "PRIMARY" then
+                expect "DROP"
+                expect "PRIMARY"
+                expect "KEY"
+                // No compound statement proof: reject other ALTER members.
+                endOfStatement ()
+                Recognized(DropPrimaryKey table)
             elif sourceDialect = SqlAgentToolType.MySQL
                  && word () = "DROP" && index + 1 < tokens.Length
                  && tokenWord tokens.[index + 1] = "FOREIGN" then

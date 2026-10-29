@@ -203,6 +203,30 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL standalone DROP PRIMARY KEY — known Catalog only
+
+MySQL 8's `ALTER TABLE owner DROP PRIMARY KEY` is a closed F#
+`DropPrimaryKey` operation, separate from `DROP CONSTRAINT` and `DROP
+FOREIGN KEY`. It removes precisely one modeled PRIMARY constraint only after
+the entire Catalog and target physical identifiers are proven. The Catalog
+change records the actual MySQL server key/index identity `PRIMARY`,
+regardless of an optional user-written PRIMARY constraint label. Existing
+UNIQUE constraints, standalone indexes, table columns, outgoing foreign keys,
+unrelated relations, and immutable earlier Catalog snapshots remain unchanged.
+
+Incoming or self-referencing foreign keys on PRIMARY columns block deletion.
+Absent PK on a known table is invalid; open-world, unproven casing, unknown
+dependencies or other unmodeled keys remain fail-closed. Only standalone
+`DROP PRIMARY KEY` is accepted: compound ALTER, `IF EXISTS`, CASCADE,
+other SQL dialects, and implicit/automatic index changes are not promoted.
+The existing explicit lowercase Linux `LOWER_CASE_TABLE_NAMES=0` static
+identifier proof is reused, never inferred from the running OS/server.
+Static MySQL implicit-COMMIT effects remain conservative. SqlCore itself
+does not connect to or execute any database; the test harness performs
+four isolated real MySQL InnoDB scripts and compares ordered primary key
+columns, physical PRIMARY index members and column inventories after each
+step, plus a real referencing-FK refusal.
+
 ## MySQL atomic FOREIGN KEY drop and lowercase Linux identity proof
 
 MySQL 8 native `ALTER TABLE child DROP FOREIGN KEY fk_symbol` is now modeled

@@ -592,6 +592,7 @@ module internal RewriteScriptAnalyzer =
                 DropConstraint(resolve name, constraintName, conditional, mode)
             | DropForeignKeys(name, symbols, columns) ->
                 DropForeignKeys(resolve name, symbols, columns)
+            | DropPrimaryKey name -> DropPrimaryKey(resolve name)
         // Inspect raw AST parts before qualifying them; a converted two-part
         // name must never hide an unsupported one-part lookup.
         let rawNames =
@@ -617,7 +618,8 @@ module internal RewriteScriptAnalyzer =
                 | RenameConstraint(name, _, _)
                 | CreateIndex(name, _, _, _)
                 | DropConstraint(name, _, _, _)
-                | DropForeignKeys(name, _, _) -> [name]
+                | DropForeignKeys(name, _, _)
+                | DropPrimaryKey name -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
                 | DropIndexBatch(identities, _) -> identities
@@ -646,7 +648,8 @@ module internal RewriteScriptAnalyzer =
             | CreateIndex(name, _, _, _)
             | AddConstraint(name, _)
             | DropConstraint(name, _, _, _)
-            | DropForeignKeys(name, _, _) -> Some name
+            | DropForeignKeys(name, _, _)
+            | DropPrimaryKey name -> Some name
             | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _
             | DropIndexBatch _
@@ -2066,6 +2069,60 @@ module internal RewriteScriptAnalyzer =
                         ("DROP INDEX '" + indexName +
                          "' is not a tracked standalone index; implicit constraint indexes cannot be ruled out.")
                 | _ -> dependencyUnproven "Index name resolves to more than one modeled owner."
+        | Recognized (DropPrimaryKey tableName) ->
+            // MySQL physical PRIMARY identity is not an optional user-written
+            // constraint name. Never represent a secondary-index change here.
+            if sourceDialect <> SqlAgentToolType.MySQL
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven
+                    "MySQL DROP PRIMARY KEY requires a complete known provider Catalog."
+            else
+                match RewriteCatalogModel.lookup state tableName with
+                | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
+                    let provenNames =
+                        RewriteCatalogIdentifierProof.canProvePhysicalNames
+                            sourceDialect sourceProfile state tableName.DisplayName
+                        || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroCatalog
+                            sourceProfile state tableName
+                            (owner.Columns |> Seq.toList)
+                            (owner.Constraints |> Seq.toList)
+                    if not provenNames then
+                        dependencyUnproven
+                            "MySQL DROP PRIMARY KEY needs explicit proven table/key identifier semantics."
+                    else
+                        match owner.Constraints
+                              |> Seq.filter (fun c ->
+                                  c.Kind = SqlCatalogConstraintKind.PrimaryKey)
+                              |> Seq.toList with
+                        | [] ->
+                            fail ("ALTER TABLE " + tableName.DisplayName +
+                                  " has no modeled PRIMARY KEY to drop.")
+                        | [key] ->
+                            match RewriteSchemaDependencies.canDropConstraint
+                                    state tableName key with
+                            | RewriteSchemaDependencies.Proven ->
+                                let next =
+                                    RewriteCatalogModel.withConstraints state tableName
+                                        (owner.Constraints |> Seq.filter (fun c ->
+                                            c.Kind <> SqlCatalogConstraintKind.PrimaryKey))
+                                SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                                next,
+                                [changedConstraintExact syntax tableName "PRIMARY"],
+                                ([]: SqlDiagnostic list)
+                            | RewriteSchemaDependencies.Invalid message -> fail message
+                            | RewriteSchemaDependencies.Unproven message ->
+                                dependencyUnproven message
+                        | _ ->
+                            dependencyUnproven
+                                "Multiple PRIMARY KEY constraints have no unique physical proof."
+                | _ when RewriteCatalogModel.isKnownAbsent state tableName ->
+                    fail ("ALTER TABLE " + tableName.DisplayName +
+                          " does not exist in the known Catalog.")
+                | _ ->
+                    dependencyUnproven
+                        "MySQL DROP PRIMARY KEY requires a proven table owner."
         | Recognized (DropForeignKeys(tableName, symbols, columns)) ->
             // MySQL uses native DROP FOREIGN KEY, not DROP CONSTRAINT.
             // All requested names and local columns must resolve against
@@ -2081,7 +2138,7 @@ module internal RewriteScriptAnalyzer =
                     let knownNames =
                         RewriteCatalogIdentifierProof.canProvePhysicalNames
                             sourceDialect sourceProfile state tableName.DisplayName
-                        || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroForeignKeys
+                        || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroCatalog
                             sourceProfile state tableName
                             (owner.Columns |> Seq.toList)
                             (owner.Constraints |> Seq.toList)

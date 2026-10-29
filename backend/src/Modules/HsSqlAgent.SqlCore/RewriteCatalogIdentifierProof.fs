@@ -95,8 +95,9 @@ module internal RewriteCatalogIdentifierProof =
     /// TABLE names but case-insensitive COLUMN names. An exact ASCII-lowercase
     /// subset makes both comparisons agree, without treating "0" as the
     /// existing FoldAscii provider-wide mode or inventing collation metadata.
-    /// This is ONLY an explicit FK Catalog structural-proof premise.
-    let canProveMySqlLowercaseZeroForeignKeys
+    /// Shared only by proven MySQL FK and PRIMARY-key Catalog transitions.
+    /// This proves identifier equality, not server configuration or execution.
+    let canProveMySqlLowercaseZeroCatalog
             (profile: SqlProviderCapabilityProfile | null)
             (state: SqlCatalogState)
             (name: SqlCatalogQualifiedName)
