@@ -122,8 +122,10 @@ module internal RewriteCatalogModel =
             (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
             (oldName: string) (newName: string) =
         let renamed value = if sameName value oldName then newName else value
-        let renameColumns (values: System.Collections.Generic.IReadOnlyList<string>) =
+        let renameColumns (values: System.Collections.Generic.IReadOnlyList<string>)
+                : System.Collections.Generic.IReadOnlyList<string> =
             values |> Seq.map renamed |> Seq.toArray |> Array.AsReadOnly
+            :> System.Collections.Generic.IReadOnlyList<string>
         let result =
             state.Tables
             |> Seq.map (fun table ->
