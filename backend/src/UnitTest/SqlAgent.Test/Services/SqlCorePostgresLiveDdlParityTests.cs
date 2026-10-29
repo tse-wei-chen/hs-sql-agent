@@ -1031,9 +1031,9 @@ public sealed class SqlCorePostgresLiveDdlParityTests
                 while (await rows.ReadAsync(TestContext.Current.CancellationToken))
                 {
                     var indexName = rows.GetString(0);
-                    if (!indexedColumns.TryGetValue(indexName, out var names))
-                        indexedColumns.Add(indexName, names = new List<string>());
-                    names.Add(rows.GetString(1));
+                    if (!indexedColumns.TryGetValue(indexName, out var indexColumnNames))
+                        indexedColumns.Add(indexName, indexColumnNames = new List<string>());
+                    indexColumnNames.Add(rows.GetString(1));
                 }
             }
             tables.Add(new Table(name, columns.ToArray(), indexedColumns
@@ -1068,8 +1068,8 @@ public sealed class SqlCorePostgresLiveDdlParityTests
                 physical.Indexes.Select(x => x.Name).Order(StringComparer.Ordinal));
             foreach (var expectedIndex in table.Indexes)
             {
-                var observed = Assert.Single(physical.Indexes.Where(index =>
-                    string.Equals(index.Name, expectedIndex.Name, StringComparison.Ordinal)));
+                var observed = Assert.Single(physical.Indexes, index =>
+                    string.Equals(index.Name, expectedIndex.Name, StringComparison.Ordinal));
                 Assert.Equal(expectedIndex.Columns, observed.Columns);
             }
         }
