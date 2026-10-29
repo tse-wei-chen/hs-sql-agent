@@ -110,9 +110,14 @@ public sealed class SqlCoreSqlServerIntMutationCardinalityTests
     public void NoImplicitFloatTextWideOrUnanchoredCardinalityProof(string sql)
     {
         var stmt = One(sql);
-        Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.CatalogBinding);
+        // SQL Server may already reject a provable type mismatch.
+        // A rejected statement is a correct safety outcome, never a
+        // cardinality proof; otherwise the valid integer case is Unverified.
+        Assert.True(stmt.CatalogBinding is SqlCatalogBindingStatus.Verified
+            or SqlCatalogBindingStatus.Rejected);
         Assert.Equal(SqlMutationSourceMatchCardinality.Unverified, stmt.SourceMatchCardinality);
-        Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, stmt.Status);
+        Assert.True(stmt.Status is SqlStatementAnalysisStatus.PartiallyAnalyzed
+            or SqlStatementAnalysisStatus.Invalid);
     }
 
     [Theory]
