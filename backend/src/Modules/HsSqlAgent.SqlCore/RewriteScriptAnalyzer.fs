@@ -2114,14 +2114,15 @@ module internal RewriteScriptAnalyzer =
                     elif hasColumn newName then
                         fail ("ALTER TABLE " + name.DisplayName +
                               " target column " + newName + " already exists.")
-                    elif (RewriteCatalogModel.inboundForeignKeys state name
-                          |> Seq.exists (fun (_, fk) ->
-                              fk.ReferencedColumns |> Seq.exists (fun col ->
-                                  same col oldName))) then
-                        // PostgreSQL and Oracle update other tables' FK references, too.
-                        // Until a cross-table immutable rewrite is proven,
-                        // do not publish a stale dependent Catalog.
-                        dependencyUnproven "Inbound foreign keys require cross-table rename lineage proof."
+                    elif sourceDialect = SqlAgentToolType.Oracle
+                         && (RewriteCatalogModel.inboundForeignKeys state name
+                             |> Seq.exists (fun (_, fk) ->
+                                 fk.ReferencedColumns |> Seq.exists (fun col ->
+                                     same col oldName))) then
+                        // Oracle's cross-table rename remains unproven.
+                        // PostgreSQL instead uses one atomic, typed Catalog
+                        // rewrite of every proven inbound/self FK reference.
+                        dependencyUnproven "Oracle inbound foreign keys require cross-table rename lineage proof."
                     elif not (RewriteCatalogModel.dependentViews
                                   state (Set.singleton name.Key)).IsEmpty then
                         dependencyUnproven "View dependency invalidation after column rename is unproven."
@@ -2146,8 +2147,12 @@ module internal RewriteScriptAnalyzer =
                                         c.Columns |> Seq.map renamed |> Seq.toArray),
                                     c.ReferencedIdentity, c.ReferencedColumns))
                         let updated =
-                            RewriteCatalogModel.replaceTable
-                                state name updatedColumns updatedConstraints updatedIndexes
+                            if sourceDialect = SqlAgentToolType.Postgres then
+                                RewriteCatalogModel.renameColumnWithInboundForeignKeys
+                                    state name oldName newName
+                            else
+                                RewriteCatalogModel.replaceTable
+                                    state name updatedColumns updatedConstraints updatedIndexes
                         SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
                         updated,
                         [changedColumnExact syntax name newName SqlCatalogOperation.RenameColumn],
