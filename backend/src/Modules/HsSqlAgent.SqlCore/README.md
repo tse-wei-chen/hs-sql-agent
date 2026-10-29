@@ -89,6 +89,23 @@ static column names/shape may be checked but fixed type families are not
 asserted. Parser and catalog diagnostics do not authorize INSERT execution,
 and an unknown/open Catalog remains unverified.
 
+## Qualifier identity and Mutation source scope
+
+Strict schema binding proves the uniqueness of a **relation qualifier**
+before looking up a qualified column. If the write target alias and an
+unaliased UPDATE FROM / DELETE USING source expose the same qualifier, or
+two unaliased sources in different schemas expose the same table-name tail,
+`src.unique_column` is **not** proof of a unique source even when that
+column exists in only one of those relations. Binding fails closed with
+`SQL_SCHEMA_QUALIFIER_UNPROVABLE`; type-family evidence never upgrades an
+ambiguous source. An explicit distinct alias, or a fully qualified
+`schema.table.column` identifying one source, remains supported.
+
+This safety rule also applies to DQL with a host-supplied schema snapshot
+for all six SQL dialects. It does not conflate qualified source names or
+change lexical outer-scope shadowing, executable SQL permissions or the
+`PartiallyAnalyzed` status of static scripts.
+
 ## Mutation source relations versus physical write targets
 
 In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,
