@@ -165,18 +165,31 @@ are preserved; downstream DROP COLUMN checks see the updated relationship.
 This is static schema analysis, not a command to execute DDL or a proof that
 server-side locks/privileges are available.
 
-Known dependent Views are still unproven rather than silently retaining stale
-source-column bindings; unknown/open-world states do not mint known changes.
-Oracle's inbound-FK rename remains fail-closed until independently proven.
+PostgreSQL **View dependencies** now follow renamed physical source
+columns with the same atomic state transition as table indexes and inbound
+FKs. The Catalog retargets only direct identity-qualified
+`SqlCatalogViewSourceBinding.Columns`, rebuilding the legacy flattened
+`SourceColumns` consistently; existing `View.Columns` output headers,
+aliases, types and nullability do **not** change. That distinction is
+critical for `SELECT *`, projected aliases and multi-hop Views:
+downstream Views continue to reference stable upstream output names.
+JOIN/WHERE-only source dependencies retain their exact owner, and
+subsequent DROP COLUMN proof sees the newly named physical column.
+Historical snapshots and unaffected View instances remain untouched.
+This is metadata analysis, not a rewrite or execution of physical SQL.
+
+Unknown/open-world states cannot mint known changes. Oracle's inbound-FK
+and dependent-View rename both remain fail-closed pending separate proof.
 Compound ALTER clauses, table rename, unmodeled objects, unsupported
 annotations and dialects without their own proof remain outside this subset.
 PostgreSQL and Oracle share a typed internal operation, **not** blanket dialect
-equivalence. Regression coverage includes both PostgreSQL spellings, 24
-independent general live-DDL scripts with index-column lineage checks, and
-four additional real PostgreSQL FK workflows. The latter compare modeled FK
-owner/target identities, ordered local/ref columns and constraint names
-against physical `pg_constraint.conkey/confkey` after **every** statement,
-including self-FK and multi-child cases.
+equivalence. Regression coverage includes 24 general real PostgreSQL DDL
+scripts with index-column lineage, four real PostgreSQL FK workflows comparing
+ordered `pg_constraint.conkey/confkey` bindings, and five additional real
+PostgreSQL View workflows. The View oracle examines
+`pg_rewrite → pg_depend → pg_attribute` and `information_schema.columns`
+after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
+FK+View and wildcard dependencies.
 
 ## PostgreSQL Self JOIN with per-instance Catalog provenance
 
