@@ -25,33 +25,33 @@ public sealed class SqlCorePostgresRenameViewLiveParityTests
     private static readonly Scenario[] Scenarios =
     [
         new("direct_alias",
-            "CREATE TABLE src(id INTEGER, label TEXT);" +
-            "CREATE VIEW v (public_id) AS SELECT id FROM src;" +
-            "ALTER TABLE src RENAME COLUMN id TO new_id;"),
+            "CREATE TABLE app.src(id INTEGER, label TEXT);" +
+            "CREATE VIEW app.v (public_id) AS SELECT id FROM app.src;" +
+            "ALTER TABLE app.src RENAME COLUMN id TO new_id;"),
         new("chain_aliased",
-            "CREATE TABLE src(id INTEGER, label TEXT);" +
-            "CREATE VIEW v1 (external_id) AS SELECT id FROM src;" +
-            "CREATE VIEW v2 AS SELECT external_id FROM v1;" +
-            "ALTER TABLE src RENAME COLUMN id TO physical_id;" +
-            "CREATE VIEW v3 AS SELECT external_id FROM v2;"),
+            "CREATE TABLE app.src(id INTEGER, label TEXT);" +
+            "CREATE VIEW app.v1 (external_id) AS SELECT id FROM app.src;" +
+            "CREATE VIEW app.v2 AS SELECT external_id FROM app.v1;" +
+            "ALTER TABLE app.src RENAME COLUMN id TO physical_id;" +
+            "CREATE VIEW app.v3 AS SELECT external_id FROM app.v2;"),
         new("join_where",
-            "CREATE TABLE orders(id INTEGER NOT NULL, title TEXT, status TEXT);" +
-            "CREATE TABLE lines(id INTEGER, order_id INTEGER, amount INTEGER);" +
-            "CREATE VIEW joined (display_title, total) AS SELECT o.title, l.amount " +
-            "FROM orders o JOIN lines l ON o.id = l.order_id WHERE o.status = 'ready';" +
-            "ALTER TABLE orders RENAME COLUMN id TO order_key;" +
-            "ALTER TABLE orders RENAME COLUMN status TO state;" +
-            "ALTER TABLE lines RENAME COLUMN order_id TO order_ref;"),
+            "CREATE TABLE app.orders(id INTEGER NOT NULL, title TEXT, status TEXT);" +
+            "CREATE TABLE app.lines(id INTEGER, order_id INTEGER, amount INTEGER);" +
+            "CREATE VIEW app.joined (display_title, total) AS SELECT o.title, l.amount " +
+            "FROM app.orders o JOIN app.lines l ON o.id = l.order_id WHERE o.status = 'ready';" +
+            "ALTER TABLE app.orders RENAME COLUMN id TO order_key;" +
+            "ALTER TABLE app.orders RENAME COLUMN status TO state;" +
+            "ALTER TABLE app.lines RENAME COLUMN order_id TO order_ref;"),
         new("fk_and_view",
-            "CREATE TABLE parent(id INTEGER NOT NULL, CONSTRAINT pk_parent PRIMARY KEY(id));" +
-            "CREATE TABLE child(pid INTEGER, CONSTRAINT fk_child FOREIGN KEY(pid) REFERENCES parent(id));" +
-            "CREATE VIEW v (public_id) AS SELECT id FROM parent;" +
-            "ALTER TABLE parent RENAME COLUMN id TO renamed_id;"),
+            "CREATE TABLE app.parent(id INTEGER NOT NULL, CONSTRAINT pk_parent PRIMARY KEY(id));" +
+            "CREATE TABLE app.child(pid INTEGER, CONSTRAINT fk_child FOREIGN KEY(pid) REFERENCES app.parent(id));" +
+            "CREATE VIEW app.v (public_id) AS SELECT id FROM app.parent;" +
+            "ALTER TABLE app.parent RENAME COLUMN id TO renamed_id;"),
         new("star_projection",
-            "CREATE TABLE src(id INTEGER, label TEXT);" +
-            "CREATE VIEW v AS SELECT * FROM src;" +
-            "ALTER TABLE src RENAME COLUMN id TO renamed_id;" +
-            "CREATE VIEW child AS SELECT id FROM v;")
+            "CREATE TABLE app.src(id INTEGER, label TEXT);" +
+            "CREATE VIEW app.v AS SELECT * FROM app.src;" +
+            "ALTER TABLE app.src RENAME COLUMN id TO renamed_id;" +
+            "CREATE VIEW app.child AS SELECT id FROM app.v;")
     ];
 
     public static IEnumerable<object[]> Cases => Scenarios.Select(s => new object[] { s.Name });
@@ -86,7 +86,11 @@ public sealed class SqlCorePostgresRenameViewLiveParityTests
         {
             var statement = model.Statements[index];
             Assert.True(statement.CatalogAfter.IsClosedWorld, id + "#" + index);
-            await Execute(db, tx, statement.Syntax.Text);
+            // SqlCore's known View proof uses exact qualified identities.
+            // Only the physical schema name varies per rollback-only test;
+            // analyzer and PostgreSQL see the same qualified relation graph.
+            await Execute(db, tx, statement.Syntax.Text.Replace(
+                "app.", schema + ".", StringComparison.Ordinal));
 
             // pg_rewrite -> pg_depend -> pg_attribute is independent of SQL
             // deparsing and tracks dependency by physical attribute number.
