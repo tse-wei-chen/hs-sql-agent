@@ -166,12 +166,14 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionTests
     public void TwoForeignKeysWithOverlappingPrefixesRemainUnproven()
     {
         const string sql =
-            "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY);" +
+            "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY, second_id INT NOT NULL, " +
+            "CONSTRAINT uq_parent_pair UNIQUE(id,second_id));" +
             "CREATE TABLE child(id INT NOT NULL PRIMARY KEY, p1 INT, p2 INT, note INT, " +
             "CONSTRAINT fk_one FOREIGN KEY(p1) REFERENCES parent(id), " +
-            "CONSTRAINT fk_two FOREIGN KEY(p1,p2) REFERENCES parent(id,id));" +
+            "CONSTRAINT fk_two FOREIGN KEY(p1,p2) REFERENCES parent(id,second_id));" +
             "CREATE INDEX ix_note ON child(note);";
         var result = Analyze(sql);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[^1].Status);
         Assert.DoesNotContain(result.Statements[^1].Changes,
             change => change.Certainty == SqlCatalogKnowledge.Known);

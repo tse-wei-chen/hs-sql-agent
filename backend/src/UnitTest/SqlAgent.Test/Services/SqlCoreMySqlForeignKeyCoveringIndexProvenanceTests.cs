@@ -106,26 +106,36 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexProvenanceTests
     [Theory]
     [InlineData("CREATE INDEX fk_child ON child(pid,note);")]
     [InlineData("CREATE INDEX FK_CHILD ON child(pid,note);")]
-    public void CoveringIndexCannotStealExistingImplicitIndexName(string statement)
+    public void OwnNamedImplicitFkIndexCanBePromotedButItsPhysicalHistoryRemainsOpaque(string statement)
     {
-        var result = Analyze(Graph + statement);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.DoesNotContain(result.Statements[2].Changes,
+        var result = Analyze(Graph + statement +
+            "CREATE INDEX ix_extra ON child(note);");
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.Equal(SqlCatalogOperation.CreateIndex,
+            Assert.Single(result.Statements[2].Changes).Operation);
+        Assert.Equal("pid", Assert.Single(result.Statements[2]
+            .CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Columns[0]);
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.DoesNotContain(result.Statements[3].Changes,
             change => change.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Fact]
-    public void MultipleFksStillHaveNoProvenSingleSupportingIndexLineage()
+    public void IndependentMultipleFksCanProveOneCoveringIndexWithoutInventingOtherIndexRemoval()
     {
         const string sql =
             "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY);" +
             "CREATE TABLE child(id INT NOT NULL PRIMARY KEY, p1 INT, p2 INT, note INT, " +
             "CONSTRAINT fk_one FOREIGN KEY(p1) REFERENCES parent(id)," +
             "CONSTRAINT fk_two FOREIGN KEY(p2) REFERENCES parent(id));" +
-            "CREATE INDEX ix_cover ON child(p1,note);";
+            "CREATE INDEX ix_cover ON child(p1,note);" +
+            "CREATE INDEX ix_other ON child(note);";
         var result = Analyze(sql);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[^1].Status);
-        Assert.DoesNotContain(result.Statements[^1].Changes,
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.Equal("ix_cover", Assert.Single(result.Statements[2]
+            .CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.DoesNotContain(result.Statements[3].Changes,
             change => change.Certainty == SqlCatalogKnowledge.Known);
     }
 

@@ -92,8 +92,8 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionLiveParityTests
             {
                 // Same-name index promotion changes the ordinal index members
                 // but does not drop its foreign-key constraint.
-                Assert.Single(after.Where(x => x.Name == scenario.ExplicitName &&
-                    x.Column == scenario.ExpectedColumns[0]));
+                Assert.Single(after, x => x.Name == scenario.ExplicitName &&
+                    x.Column == scenario.ExpectedColumns[0]);
             }
             var table = model.Statements[2].CatalogAfter.Tables.Single(t => t.Name == "child");
             Assert.Equal(scenario.ExplicitName, Assert.Single(table.Indexes).Name);
