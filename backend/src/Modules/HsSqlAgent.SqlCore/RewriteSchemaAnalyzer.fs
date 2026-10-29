@@ -855,13 +855,14 @@ module internal RewriteSchemaAnalyzer =
         let parseDrop () =
             expect "DROP"
             if accept "INDEX" then
-                // Keep the legacy single-name and provider ON-table forms.
-                // Only PostgreSQL may supply an explicit index schema or
-                // the qualified IF EXISTS form in this proven DDL subset.
+                // PostgreSQL index DROP and SQL Server 2016+ conditional
+                // DROP share the closed typed flag, not a generic SQL fallback.
+                // SQL Server still requires ON <table> and a version proof;
+                // only PostgreSQL permits a qualified index identity.
                 let conditional =
-                    if sourceDialect = SqlAgentToolType.Postgres && accept "IF" then
-                        expect "EXISTS"
-                        true
+                    if sourceDialect = SqlAgentToolType.Postgres
+                       || sourceDialect = SqlAgentToolType.MsSqlServer then
+                        ifExists ()
                     else false
                 let indexIdentity = qualifiedName ()
                 let indexIdentities = ResizeArray<SqlCatalogQualifiedName>()

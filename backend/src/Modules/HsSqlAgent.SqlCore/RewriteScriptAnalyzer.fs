@@ -1863,6 +1863,35 @@ module internal RewriteScriptAnalyzer =
                     dependencyUnproven "Qualified index owner or absence cannot be proven against implicit indexes."
                 | _ ->
                     dependencyUnproven "Qualified index identity has conflicting or unproven Catalog owners."
+        | Recognized (DropIndex(indexName, Some tableName, true))
+            when sourceDialect = SqlAgentToolType.MsSqlServer ->
+            // T-SQL indexes are table-local, unlike PostgreSQL's
+            // schema-local index relations. IF EXISTS only proves that a
+            // missing index on a *known existing target* is a no-op.
+            // Constraint-backed index identities remain unmodeled, so an
+            // absent standalone index cannot be certified when the target
+            // has any potentially implicit PK/UNIQUE backing index.
+            if not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun table ->
+                   table.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "SQL Server conditional DROP INDEX requires a closed, fully known Catalog."
+            else
+                match RewriteCatalogModel.lookup state tableName with
+                | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
+                    let isNamed (idx: SqlCatalogIndex) =
+                        String.Equals(idx.Name, indexName, StringComparison.Ordinal)
+                    match owner.Indexes |> Seq.tryFind isNamed with
+                    | Some _ ->
+                        let remaining = owner.Indexes |> Seq.filter (isNamed >> not)
+                        RewriteCatalogModel.withIndexes state owner.QualifiedName remaining
+                        |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
+                    | None when owner.Constraints.Count > 0 ->
+                        dependencyUnproven
+                            "SQL Server constraint-backed index identity cannot be proven absent from the target."
+                    | None -> noChange
+                | _ ->
+                    dependencyUnproven
+                        "SQL Server DROP INDEX IF EXISTS requires a proven existing target table."
         | Recognized (DropIndex(indexName, None, true)) ->
             // IF EXISTS must not promote absence from an arbitrary SQL
             // search_path. The modeled single-schema session premise

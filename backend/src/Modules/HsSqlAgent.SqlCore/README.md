@@ -829,6 +829,27 @@ fail-closed.
 Only closed-world, fully known virtual Catalogs can mint exact index
 changes. This is static SQL analysis, not server-side schema attestation.
 
+## SQL Server 2016+ conditional DROP INDEX proof
+
+The SQL Server source analyzer supports `DROP INDEX IF EXISTS index_name
+ON table_name` only with an explicit SQL Server version profile of
+**13.0 or later** (SQL Server 2016+). It reuses the closed typed
+`DropIndex(name, target, ifExists)` operation, preserves the target
+table's identity, and does not infer cross-table index ownership.
+
+When the target is a known existing table in a complete Virtual Catalog,
+a matching tracked standalone index yields one exact DropIndex delta; if
+no index matches on that table, the statement yields an exact no-op even
+when another table has an index of the same name. An unknown or missing
+target, unknown Catalog, or a target with possibly implicit
+constraint-backed indexes cannot provide certainty about absence and
+remains fail-closed. Non-conditional DROP INDEX behavior is unchanged.
+
+Unsupported T-SQL options, multi-index forms and other dialect grammar
+are not generalized. The SQL Server 2022 in-container differential
+corpus verifies real sys.indexes metadata after every statement. The
+SqlCore analyzer never connects to the server or executes any SQL.
+
 ## SQLite conditional CREATE INDEX proof
 
 The SQLite-only static Catalog analyzer supports `CREATE INDEX IF NOT
