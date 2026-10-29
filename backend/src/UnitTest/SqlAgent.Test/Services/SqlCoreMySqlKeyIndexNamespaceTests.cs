@@ -116,9 +116,8 @@ public sealed class SqlCoreMySqlKeyIndexNamespaceTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
         Assert.Equal("ix_note", Assert.Single(
             result.Statements[1].CatalogAfter.Tables.Single().Indexes).Name);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.DoesNotContain(result.Statements[2].Changes,
-            delta => delta.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.Equal(2, result.FinalCatalog.Tables.Single().Indexes.Count);
     }
 
     [Fact]

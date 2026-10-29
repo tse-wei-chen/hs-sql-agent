@@ -313,18 +313,20 @@ A same-name index that does **not** cover its own FK remains invalid; names
 matching a different FK, PRIMARY, UNIQUE, or ordinary index are collisions.
 The transition publishes one proven explicit `CreateIndex` Catalog change
 without asserting that an implicit physical index was removed, and retains
-the persistent uncertain-physical-lineage marker. Consequently a later
-`DROP INDEX` that might remove the last FK support and subsequent index
-namespace absence proofs remain fail-closed.
+the persistent uncertain-physical-lineage marker. A later
+`DROP INDEX` that might remove the last proven FK support remains
+fail-closed; distinct names and independently proven replacement
+support may now be analyzed using the bounded residual-name evidence.
 
 Multiple named FKs are only treated as **independently owned** support indexes
 if none of their ordered local key prefixes is a prefix of another and none
 is already supported by any modeled PK/UNIQUE/standalone index. A new index
 may be unrelated to every FK (stable) or replace **one** independently owned
 FK support index (possibly replaced); never multiple or overlapping FKs.
-Unnamed FKs, opaque server identifier settings, unknown index provenance,
-schema history after replacement, and all other five database dialects
-remain conservatively rejected.
+Unnamed FKs, opaque server identifier settings, unknown residual
+physical names, and all other five database dialects remain
+conservatively rejected. A prior replacement with known physical
+names does not, by itself, prevent subsequent distinct-name indexes.
 
 Static analysis does not connect to MySQL, authorize a change or execute SQL.
 Test-only disposable InnoDB databases compare real physical key columns and
@@ -345,25 +347,23 @@ It does **not** mint a physical DROP INDEX delta or assert that the implicit
 index survived or disappeared.
 
 A possible replacement sets an immutable table-local unknown-physical-history
-fence, reused from the previous FK-support lifecycle. Even after removing
-the FK, later index-name-absence proofs remain denied. Dropping a newly
-created index that is potentially the **last** FK-supporting index is also
-fail-closed; MySQL can reject it with ER_DROP_INDEX_FK (1553).
-The guarded proof requires one explicitly named FK, complete known Catalog,
-explicit MySQL identifier semantics, no preexisting PK/UNIQUE/secondary
-index supporting that FK, and no physical-name collision. A covering index
-reusing the implicit FK-support index's *same* name is **not** supported:
-real InnoDB may perform a special same-name replacement, but SqlCore does
-not have a proven provenance/effect contract for that case. Multi-FK,
-unknown physical origin, other database dialects, and uncertain Catalog
-remain rejected.
+fence, now refined with a bounded set of names that **may still be
+occupied**. Even after removing the FK, attempting to reuse one of those
+physical names remains fail-closed, while independently proven distinct
+names are allowed. Dropping an index that is potentially the **last**
+FK-supporting index is fail-closed (ER_DROP_INDEX_FK, 1553), unless an
+independent tracked PK/UNIQUE/explicit index supports every affected FK.
+The guarded proof requires complete known Catalog, explicit MySQL
+identifier semantics, no opaque physical-name collisions and an ordered
+left-prefix supporting index. The later same-name promotion and independent
+multi-FK extensions are documented above; overlapping shared FK prefixes,
+unknown physical index origins, and other dialects remain rejected.
 
 Independent MySQL 8 InnoDB tests verify that the new index's ordered
 members and the original FK constraint remain valid; the old implicit
-index's presence is observed, not guessed. Tests also verify that the real
-database may accept a same-name replacement while static analysis
-conservatively refuses it. No production SQL execution or authorization
-is introduced.
+index's presence is observed, not guessed. Same-name replacement is now
+accepted only under its typed provenance proof, not by inference from the
+SQL spelling alone. No production SQL execution or authorization is introduced.
 
 ## MySQL named FK supporting-index stability (bounded)
 

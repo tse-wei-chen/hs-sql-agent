@@ -64,14 +64,14 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexProvenanceTests
     [Theory]
     [InlineData("CREATE INDEX ix_cover ON child(pid)")]
     [InlineData("ALTER TABLE child ADD KEY ix_cover(pid,note)")]
-    public void IndexAddMayReplaceImplicitFkIndexSoLaterNameAbsenceIsNotProven(string statement)
+    public void DistinctNewNameAfterFkIndexReplacementIsProven(string statement)
     {
         var result = Analyze(Graph + statement + ";" +
             "CREATE INDEX ix_after ON child(note);");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.Equal(2, result.FinalCatalog.Tables
+            .Single(t => t.Name == "child").Indexes.Count);
         Assert.Single(result.Statements[2].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes);
     }
 
@@ -99,7 +99,7 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexProvenanceTests
         Assert.Empty(result.Statements[2].Diagnostics);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
         Assert.Single(result.Statements[3].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes);
     }
 
@@ -115,9 +115,7 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexProvenanceTests
             Assert.Single(result.Statements[2].Changes).Operation);
         Assert.Equal("pid", Assert.Single(result.Statements[2]
             .CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Columns[0]);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
     }
 
     [Fact]
@@ -134,9 +132,9 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexProvenanceTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
         Assert.Equal("ix_cover", Assert.Single(result.Statements[2]
             .CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.Equal(2, result.FinalCatalog.Tables
+            .Single(t => t.Name == "child").Indexes.Count);
     }
 
     [Fact]

@@ -66,15 +66,15 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionTests
     }
 
     [Fact]
-    public void SameNameReplacementCannotProveLaterNewIndexNamespaceAbsence()
+    public void SameNameReplacementCanProveDistinctNewIndexName()
     {
         var result = Analyze(OneFk +
             "CREATE INDEX fk_child ON child(pid,note);" +
             "CREATE INDEX ix_note ON child(note);");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.Equal(2, result.FinalCatalog.Tables
+            .Single(t => t.Name == "child").Indexes.Count);
         Assert.Equal("fk_child", Assert.Single(
             result.Statements[2].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
     }
@@ -101,7 +101,7 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionTests
             "CREATE INDEX ix_extra ON child(note);");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
         Assert.Single(result.Statements[3].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes);
     }
 
@@ -129,11 +129,11 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionTests
             "CREATE INDEX ix_p1 ON child(p1,note);" +
             "CREATE INDEX ix_p2 ON child(p2,note);");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        // After the first possible auto replacement, the *whole physical
-        // namespace* remains unknown. A second index requires new evidence.
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        // The two FK physical names are independent and known; neither
+        // implicit index is presumed absent, but the second *new* name is.
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
+        Assert.Equal(2, result.FinalCatalog.Tables
+            .Single(t => t.Name == "child").Indexes.Count);
         Assert.Equal("ix_p1", Assert.Single(result.Statements[2]
             .CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
     }
