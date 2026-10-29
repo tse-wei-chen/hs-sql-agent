@@ -178,8 +178,9 @@ subsequent DROP COLUMN proof sees the newly named physical column.
 Historical snapshots and unaffected View instances remain untouched.
 This is metadata analysis, not a rewrite or execution of physical SQL.
 
-Unknown/open-world states cannot mint known changes. Oracle's inbound-FK
-and dependent-View rename both remain fail-closed pending separate proof.
+Unknown/open-world states cannot mint known changes. Oracle now has its
+own proven inbound-FK rename lineage, but Oracle dependent-View rename
+remains fail-closed pending separate proof.
 Compound ALTER clauses, table rename, unmodeled objects, unsupported
 annotations and dialects without their own proof remain outside this subset.
 PostgreSQL and Oracle share a typed internal operation, **not** blanket dialect
@@ -190,6 +191,35 @@ PostgreSQL View workflows. The View oracle examines
 `pg_rewrite → pg_depend → pg_attribute` and `information_schema.columns`
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
+
+## PostgreSQL DROP CONSTRAINT — typed dependency-mode proof
+
+PostgreSQL `ALTER TABLE owner DROP CONSTRAINT [IF EXISTS] name [RESTRICT |
+CASCADE]` now records the conditional and dependency mode in one closed F#
+`DropConstraint` operation. Ordinary `DROP CONSTRAINT` and explicit
+`RESTRICT` continue to reject known inbound foreign keys. `IF EXISTS`
+can produce an exact, zero-effect no-op only when the target table and
+entire Catalog are known; it never hides a missing table.
+
+`CASCADE` first proves the named parent PRIMARY KEY/UNIQUE constraint and
+matches incoming FOREIGN KEY dependencies by **exact referenced relation
+identity and ordered key columns**. It atomically removes the chosen
+constraint together with precisely its dependent child/self FKs and
+publishes a separate exact `DropConstraint` delta/effect for each object.
+Unrelated keys, local columns, Views, standalone indexes and immutable
+previous snapshots survive. Dropping an FK itself only removes the local
+FK. Subsequent `DROP COLUMN` sees the updated graph. If two parent
+keys share identical ordered columns and the Catalog cannot prove which
+unique index the FK actually references, `CASCADE` stays fail-closed.
+
+No SQL or DDL is executed by SqlCore; the feature is **static schema
+analysis**, not an authorization grant. Missing/unknown Catalog facts,
+unmodeled dependencies, ambiguous key identity, compound ALTER forms
+and PostgreSQL syntax accidentally inherited by another dialect are
+never promoted to known evidence. Five independent live PostgreSQL
+workflows compare `pg_constraint`, ordered physical `conkey/confkey`
+bindings and referenced table identities after **every** statement,
+in rollback-only isolated schemas.
 
 ## PostgreSQL Self JOIN with per-instance Catalog provenance
 
