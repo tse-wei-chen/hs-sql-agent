@@ -99,9 +99,9 @@ public sealed class SqlCorePostgresRenameViewLineageTests
         Assert.All(r.Statements, x => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, x.Status));
         var view = Assert.Single(r.FinalCatalog.Views);
         Assert.Equal(new[] { "display_title", "total" }, view.Columns.Select(c => c.Name));
-        Assert.Equal("app.orders", view.SourceBindings[0].Relation.DisplayName);
+        Assert.Equal("app.orders", view.SourceBindings[0].Relation!.DisplayName);
         Assert.Equal(new[] { "title", "order_key", "state" }, view.SourceBindings[0].Columns);
-        Assert.Equal("app.lines", view.SourceBindings[1].Relation.DisplayName);
+        Assert.Equal("app.lines", view.SourceBindings[1].Relation!.DisplayName);
         Assert.Equal(new[] { "amount", "order_ref" }, view.SourceBindings[1].Columns);
         Assert.Equal(new[] { "title", "order_key", "state", "amount", "order_ref" },
             view.SourceColumns);
