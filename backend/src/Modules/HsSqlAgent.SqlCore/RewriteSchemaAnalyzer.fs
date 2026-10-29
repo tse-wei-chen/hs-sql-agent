@@ -959,18 +959,7 @@ module internal RewriteSchemaAnalyzer =
             expect "ALTER"
             if not (accept "TABLE") then raise OutsideSubset
             let table = qualifiedName ()
-            let oracleRename =
-                sourceDialect = SqlAgentToolType.Oracle
-                && accept "RENAME"
-            if oracleRename then
-                expect "COLUMN"
-                let oldName = namePart ()
-                expect "TO"
-                let newName = namePart ()
-                endOfStatement ()
-                Recognized(RenameColumn(table, oldName, newName))
-            else
-                let constraintDefinition constraintName =
+            let constraintDefinition constraintName =
                 let make kind cols (target: SqlCatalogQualifiedName) targetCols =
                     SqlCatalogConstraint(
                         constraintName, kind, Array.AsReadOnly(List.toArray cols),
@@ -1049,7 +1038,15 @@ module internal RewriteSchemaAnalyzer =
                 && (word () = "ADD" || word () = "DROP")
                 && (tokenWord tokens.[index + 1] = "INDEX"
                     || tokenWord tokens.[index + 1] = "KEY")
-            if mysqlIndexAction then
+            if sourceDialect = SqlAgentToolType.Oracle && word () = "RENAME" then
+                expect "RENAME"
+                expect "COLUMN"
+                let oldName = namePart ()
+                expect "TO"
+                let newName = namePart ()
+                endOfStatement ()
+                Recognized(RenameColumn(table, oldName, newName))
+            elif mysqlIndexAction then
                 let adding = accept "ADD"
                 if not adding then expect "DROP"
                 if not (accept "INDEX" || accept "KEY") then raise OutsideSubset
