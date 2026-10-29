@@ -79,7 +79,7 @@ public sealed class SqlCorePostgresRenameColumnTests
     }
 
     [Fact]
-    public void InboundForeignKeyIsRetargetedButDependentViewRemainsUnproven()
+    public void InboundForeignKeyAndDependentViewBothRetainExactLineage()
     {
         var inbound = Analyze(
             "CREATE TABLE parents (id INTEGER NOT NULL, CONSTRAINT pk_parent PRIMARY KEY(id));" +
@@ -95,9 +95,10 @@ public sealed class SqlCorePostgresRenameColumnTests
             "CREATE VIEW public.item_names AS SELECT name FROM public.items;" +
             "ALTER TABLE public.items RENAME COLUMN name TO label;");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, view.Statements[1].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, view.Statements[2].Status);
-        Assert.DoesNotContain(view.Statements[2].Changes,
-            c => c.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, view.Statements[2].Status);
+        Assert.Equal("label", Assert.Single(view.FinalCatalog.Views.Single().SourceColumns));
+        Assert.Equal("name", Assert.Single(view.FinalCatalog.Views.Single().Columns).Name);
+        Assert.Equal("name", Assert.Single(view.Statements[2].CatalogBefore.Views.Single().SourceColumns));
     }
 
     [Theory]

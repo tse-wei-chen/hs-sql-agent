@@ -2123,9 +2123,13 @@ module internal RewriteScriptAnalyzer =
                         // PostgreSQL instead uses one atomic, typed Catalog
                         // rewrite of every proven inbound/self FK reference.
                         dependencyUnproven "Oracle inbound foreign keys require cross-table rename lineage proof."
-                    elif not (RewriteCatalogModel.dependentViews
-                                  state (Set.singleton name.Key)).IsEmpty then
-                        dependencyUnproven "View dependency invalidation after column rename is unproven."
+                    elif sourceDialect = SqlAgentToolType.Oracle
+                         && not (RewriteCatalogModel.dependentViews
+                                      state (Set.singleton name.Key)).IsEmpty then
+                        // Oracle dependent View validity is not yet proven.
+                        // PostgreSQL retains the View's public output schema
+                        // while retargeting only directly owned source columns.
+                        dependencyUnproven "Oracle View dependency invalidation after column rename is unproven."
                     else
                         let renamed value = if same value oldName then newName else value
                         let updatedColumns =
@@ -2148,7 +2152,7 @@ module internal RewriteScriptAnalyzer =
                                     c.ReferencedIdentity, c.ReferencedColumns))
                         let updated =
                             if sourceDialect = SqlAgentToolType.Postgres then
-                                RewriteCatalogModel.renameColumnWithInboundForeignKeys
+                                RewriteCatalogModel.renameColumnWithProvenDependents
                                     state name oldName newName
                             else
                                 RewriteCatalogModel.replaceTable

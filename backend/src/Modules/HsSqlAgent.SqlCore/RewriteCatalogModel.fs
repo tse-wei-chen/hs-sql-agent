@@ -114,11 +114,12 @@ module internal RewriteCatalogModel =
         let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
         replace state name (Some(SqlCatalogTable(name.DisplayName, SqlCatalogKnowledge.Known, cols, keys, idxs, name)))
 
-    /// Atomically publish a PostgreSQL column rename and all structurally
-    /// proven inbound/self-referencing FK edges. Every new table is derived
-    /// from the SAME pre-rename snapshot; no intermediate Catalog is visible.
-    /// Caller must first prove a closed, known Catalog and exclude Views.
-    let renameColumnWithInboundForeignKeys
+    /// Atomically publish a PostgreSQL column rename across modeled physical
+    /// tables, inbound/self-referencing FKs and directly bound View sources.
+    /// Existing View output headers never change on physical column rename.
+    /// All replacements derive from ONE pre-rename immutable snapshot.
+    /// Caller must prove a complete known Catalog and the target column.
+    let renameColumnWithProvenDependents
             (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
             (oldName: string) (newName: string) =
         let renamed value = if sameName value oldName then newName else value
@@ -178,7 +179,39 @@ module internal RewriteCatalogModel =
                         Array.AsReadOnly(constraints), indexes, table.QualifiedName)
                 else table)
             |> Seq.toArray |> Array.AsReadOnly
-        SqlCatalogState(state.IsClosedWorld, result, state.Views)
+        let rewrittenViews =
+            state.Views
+            |> Seq.map (fun (view: SqlCatalogView) ->
+                RewriteResourceBudget.checkpoint ()
+                let mutable changed = false
+                let bindings =
+                    view.SourceBindings
+                    |> Seq.map (fun (binding: SqlCatalogViewSourceBinding) ->
+                        RewriteResourceBudget.checkpoint ()
+                        // Only direct physical inputs of the renamed relation
+                        // track the new attribute name. A downstream View uses
+                        // the upstream View's stable SQL-facing output header.
+                        let owned =
+                            sameIdentity binding.Relation name
+                            && (binding.Columns |> Seq.exists (sameName oldName))
+                        if owned then
+                            changed <- true
+                            SqlCatalogViewSourceBinding(
+                                binding.Relation, renameColumns binding.Columns)
+                        else binding)
+                    |> Seq.toArray
+                if changed then
+                    let flattened =
+                        bindings
+                        |> Seq.collect (fun binding -> binding.Columns)
+                        |> Seq.toArray |> Array.AsReadOnly
+                    SqlCatalogView(
+                        view.Name, view.QualifiedName, view.Columns,
+                        view.Dependencies, flattened,
+                        Array.AsReadOnly(bindings))
+                else view)
+            |> Seq.toArray |> Array.AsReadOnly
+        SqlCatalogState(state.IsClosedWorld, result, rewrittenViews)
 
     let knownTableWithConstraints state name columns constraints =
         replaceTable state name columns constraints Seq.empty
