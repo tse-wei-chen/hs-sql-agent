@@ -94,8 +94,8 @@ public sealed class SqlCorePostgresRenameViewLiveParityTests
             var expectedSources = statement.CatalogAfter.Views
                 .SelectMany(v => v.SourceBindings.SelectMany(b =>
                     b.Columns.Select(c => new Source(
-                        v.QualifiedName.Parts[^1],
-                        b.Relation.Parts[^1], c))))
+                        v.QualifiedName!.Parts[^1],
+                        b.Relation!.Parts[^1], c))))
                 .Distinct()
                 .OrderBy(s => s.View, StringComparer.Ordinal)
                 .ThenBy(s => s.Relation, StringComparer.Ordinal)
@@ -105,7 +105,7 @@ public sealed class SqlCorePostgresRenameViewLiveParityTests
             var observedOutputs = await ReadOutputs(db, tx, schema);
             var expectedOutputs = statement.CatalogAfter.Views
                 .SelectMany(v => v.Columns.Select(c =>
-                    new Output(v.QualifiedName.Parts[^1], c.Name, c.TypeName,
+                    new Output(v.QualifiedName!.Parts[^1], c.Name, c.TypeName.ToLowerInvariant(),
                                c.Nullable)))
                 .OrderBy(o => o.View, StringComparer.Ordinal)
                 .ThenBy(o => o.Column, StringComparer.Ordinal).ToArray();
