@@ -118,8 +118,14 @@ public sealed class SqlCoreFirebirdRecreateTableTests
     {
         var report = Analyze("CREATE TABLE docs (id INTEGER, note VARCHAR(32));" + ddl);
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, report.Statements[1].Status);
-        Assert.Empty(report.Statements[1].Changes);
-        Assert.Same(report.Statements[1].CatalogBefore, report.Statements[1].CatalogAfter);
+        // Rejected or unsupported DDL cannot publish a Known successful
+        // replacement. Unsupported syntax may conservatively taint the
+        // resulting Catalog; it must not overwrite the input snapshot.
+        Assert.DoesNotContain(report.Statements[1].Changes,
+            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(new[] { "ID", "NOTE" },
+            Assert.Single(report.Statements[1].CatalogBefore.Tables)
+                .Columns.Select(c => c.Name));
     }
 
     [Fact]

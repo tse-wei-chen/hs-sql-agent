@@ -854,6 +854,26 @@ PRIMARY/UNIQUE-backed index identity is not claimed as standalone.
 The real MySQL DDL differential corpus checks all **25** scripts after
 every statement; the analyzer itself never executes SQL.
 
+## Firebird RECREATE TABLE atomic static Catalog proof
+
+Firebird 5 supports `RECREATE TABLE table (column definitions...)` as
+one DDL statement. Unlike a two-statement `DROP TABLE; CREATE TABLE`
+sequence, the typed F# `Recreate` operation validates the entire
+replacement first and publishes **one immutable Catalog transition**.
+A proven existing table produces both exact DropTable and CreateTable
+effect deltas; a proven absent table produces only a CreateTable delta.
+Existing indexed-column lineage, standalone indexes and constraints are
+removed before the new columns and constraints are modeled.
+
+Known inbound foreign keys and dependent Views block recreation. Unknown
+or incomplete Catalogs, unsupported table attributes, invalid columns
+and unprovable new constraints never publish partial successful
+recreation evidence. The parser accepts this syntax only for Firebird;
+it does not generalize RECREATE to the other five dialects or expose
+DDL execution. The Firebird 5 live integration corpus now has **22**
+multi-statement scenarios comparing each resulting Catalog against
+independent RDB$ metadata.
+
 ## SQL Server 2016+ conditional DROP INDEX proof
 
 The SQL Server source analyzer supports `DROP INDEX IF EXISTS index_name
