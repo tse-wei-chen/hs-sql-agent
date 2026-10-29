@@ -49,6 +49,7 @@ module internal RewriteMutationSourceMatchProof =
           Columns: Set<string>
           NonNullColumns: Set<string>
           ExactIntColumns: Set<string>
+          OracleNumberColumns: Set<string>
           UniqueKeys: string list list }
 
     // A literal NULL is a fixed value but does not provide non-NULL evidence.
@@ -63,6 +64,10 @@ module internal RewriteMutationSourceMatchProof =
             // This proof is invoked *only after* identifier validation has
             // verified an explicitly declared ASCII-safe catalog collation.
             part.Value.ToUpperInvariant()
+        | SqlAgentToolType.Oracle ->
+            // Oracle folds unquoted identifiers to uppercase, while quoted
+            // names retain their exact spelling. Never uppercase quoted names.
+            if part.WasQuoted then part.Value else part.Value.ToUpperInvariant()
         | _ ->
             if part.WasQuoted then part.Value else part.Value.ToLowerInvariant()
 
@@ -91,12 +96,24 @@ module internal RewriteMutationSourceMatchProof =
             else None)
         |> Set.ofSeq
 
+    let private oracleNumberColumns (table: SqlCatalogTable) =
+        table.Columns
+        |> Seq.choose (fun column ->
+            RewriteResourceBudget.checkpoint ()
+            // No NUMBER(p,s) / FLOAT / BINARY_FLOAT / VARCHAR2 implicit
+            // conversion or precision/scale inference is modeled here.
+            if String.Equals(column.TypeName, "NUMBER", StringComparison.OrdinalIgnoreCase) then
+                Some column.Name
+            else None)
+        |> Set.ofSeq
+
     let private uniqueKeys dialect (table: SqlCatalogTable) =
         // SQL Server compares unlike types using its precedence/conversion
         // rules. An equality to REAL/FLOAT/VARCHAR/BIGINT can collapse values
         // that are distinct in a physical unique index. Admit only exact INT
         // keys in that provider; PostgreSQL keeps its existing proof model.
         let safeInt = exactIntColumns table
+        let safeOracleNumber = oracleNumberColumns table
         table.Constraints
         |> Seq.choose (fun item ->
             RewriteResourceBudget.checkpoint ()
@@ -104,10 +121,12 @@ module internal RewriteMutationSourceMatchProof =
             | SqlCatalogConstraintKind.PrimaryKey
             | SqlCatalogConstraintKind.Unique when item.Columns.Count > 0 ->
                 let columns = item.Columns |> Seq.toList
-                if dialect <> SqlAgentToolType.MsSqlServer
-                   || columns |> List.forall safeInt.Contains then
-                    Some columns
-                else None
+                let supported =
+                    match dialect with
+                    | SqlAgentToolType.MsSqlServer -> columns |> List.forall safeInt.Contains
+                    | SqlAgentToolType.Oracle -> columns |> List.forall safeOracleNumber.Contains
+                    | _ -> true
+                if supported then Some columns else None
             | _ -> None)
         |> Seq.toList
 
@@ -155,17 +174,23 @@ module internal RewriteMutationSourceMatchProof =
                         relation.Qualifiers.Contains qualifier)
             match matches with
             | [relation] when relation.Columns.Contains columnName
-                              && (dialect <> SqlAgentToolType.MsSqlServer
-                                  || relation.ExactIntColumns.Contains columnName) ->
+                              && (match dialect with
+                                  | SqlAgentToolType.MsSqlServer ->
+                                      relation.ExactIntColumns.Contains columnName
+                                  | SqlAgentToolType.Oracle ->
+                                      relation.OracleNumberColumns.Contains columnName
+                                  | _ -> true) ->
                 Some(Field(relation.Position, columnName))
             | _ -> None
-        | Literal ScalarValue.Null when dialect <> SqlAgentToolType.MsSqlServer ->
+        | Literal ScalarValue.Null when dialect = SqlAgentToolType.Postgres ->
             Some(FixedLiteral false)
-        | Literal(ScalarValue.Integer value) when dialect = SqlAgentToolType.MsSqlServer ->
+        | Literal(ScalarValue.Integer value)
+            when dialect = SqlAgentToolType.MsSqlServer
+                 || dialect = SqlAgentToolType.Oracle ->
             if value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue then
                 Some(FixedLiteral true)
             else None
-        | Literal _ when dialect <> SqlAgentToolType.MsSqlServer ->
+        | Literal _ when dialect = SqlAgentToolType.Postgres ->
             Some(FixedLiteral true)
         | _ -> None
         | _ -> None
@@ -208,6 +233,7 @@ module internal RewriteMutationSourceMatchProof =
                        Columns = table.Columns |> Seq.map (fun col -> col.Name) |> Set.ofSeq
                        NonNullColumns = nonNullColumns table
                        ExactIntColumns = exactIntColumns table
+                       OracleNumberColumns = oracleNumberColumns table
                        UniqueKeys = uniqueKeys dialect table }
         let targetRelation = create 0 target targetAlias
         let readRelations =
@@ -306,19 +332,28 @@ module internal RewriteMutationSourceMatchProof =
             else SqlMutationSourceMatchCardinality.Unverified
 
     /// Name/type proof and a closed Virtual Catalog must be established FIRST.
-    /// SQL Server additionally requires an explicit trusted ASCII-safe
-    /// identifier collation (checked by RewriteCatalogBinding) and strict
-    /// INT-only comparison graph; no data collation/coercion is inferred.
-    let classify dialect (state: SqlCatalogState) (bound: BoundSql) =
+    /// Oracle 26 direct-join syntax needs an explicit server version proof;
+    /// Oracle's NUMBER equality and identifier folding are provider-local.
+    /// SQL Server has its separate declared collation and INT-only fence.
+    let classify dialect (profile: SqlProviderCapabilityProfile | null)
+                 (state: SqlCatalogState) (bound: BoundSql) =
+        let canClassify =
+            match dialect with
+            | SqlAgentToolType.Postgres
+            | SqlAgentToolType.MsSqlServer -> true
+            | SqlAgentToolType.Oracle ->
+                not (isNull profile)
+                && profile.Provider = SqlAgentToolType.Oracle
+                && not (isNull profile.ServerVersion)
+                && profile.ServerVersion.Major >= 26
+            | _ -> false
         match (Bound.value bound).Statement with
         | UpdateStatement update when not update.From.IsEmpty ->
-            if (dialect = SqlAgentToolType.Postgres
-                || dialect = SqlAgentToolType.MsSqlServer) && state.IsClosedWorld then
+            if canClassify && state.IsClosedWorld then
                 proof dialect state update.Target update.TargetAlias update.From update.Where
             else SqlMutationSourceMatchCardinality.Unverified
         | DeleteStatement delete when not delete.Using.IsEmpty ->
-            if (dialect = SqlAgentToolType.Postgres
-                || dialect = SqlAgentToolType.MsSqlServer) && state.IsClosedWorld then
+            if canClassify && state.IsClosedWorld then
                 proof dialect state delete.Target delete.TargetAlias delete.Using delete.Where
             else SqlMutationSourceMatchCardinality.Unverified
         | _ -> SqlMutationSourceMatchCardinality.NotApplicable
