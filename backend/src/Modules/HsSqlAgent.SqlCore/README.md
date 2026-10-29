@@ -192,6 +192,44 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL atomic FOREIGN KEY drop and lowercase Linux identity proof
+
+MySQL 8 native `ALTER TABLE child DROP FOREIGN KEY fk_symbol` is now modeled
+using one closed F# `DropForeignKeys(table, symbols, columns)` operation.
+The statically proven subset supports one or multiple explicitly named
+foreign-key removals, followed by zero or more `DROP [COLUMN] column`
+clauses in the **same MySQL ALTER TABLE statement**. All names, FK kinds,
+column dependencies, duplicate targets and retained-column cardinality
+are validated against a complete **pre-statement** immutable Catalog. Only
+after every action passes may SqlCore publish a single resulting Catalog
+and per-FK exact `DropConstraint` / per-column exact `DropColumn`
+changes. An invalid later clause cannot partially drop an earlier FK.
+Foreign keys in other tables, primary/unique constraints, physical
+references and earlier Catalog snapshots remain untouched. FK drops
+unlock dependent column operations only after their original references
+have been eliminated. MySQL DDL still discloses **possible implicit
+COMMIT** and never pretends to be rollbackable.
+
+MySQL's table-name casing varies by `lower_case_table_names`. The
+existing explicit `1` profile continues its ASCII-fold contract; the
+new **explicit `LOWER_CASE_TABLE_NAMES=0` Linux proof** permits only
+simple lowercase ASCII table, column, constraint, index and reference
+identifiers in the entire known Catalog. That narrow subset avoids
+assuming MySQL's case-sensitive table names and case-insensitive column
+names have the same unrestricted equality rules. No provider mode is
+inferred from the client OS or an unqueried server; callers must supply
+the correct profile, and an unknown/mixed-case scope stays fail-closed.
+MySQL FK symbols must also be unique across the known schema.
+
+MySQL native `DROP CONSTRAINT`, `DROP PRIMARY KEY`, implicit FK-support
+index mutations, mixed `ADD` clauses, `ALGORITHM` hints, `IF EXISTS`,
+unknown FK names and other dialect variants are **not** silently promoted.
+The feature adds static evidence only; the test harness (not SqlCore)
+executes six isolated real MySQL 8 InnoDB DDL scripts and checks ordered
+`information_schema.KEY_COLUMN_USAGE` and physical column presence
+after **every** statement. Tests use a separate database for each case
+because MySQL DDL implicitly commits, with explicit database cleanup.
+
 ## PostgreSQL and Oracle RENAME CONSTRAINT — exact Catalog identity
 
 `ALTER TABLE relation RENAME CONSTRAINT old_name TO new_name` is a new
