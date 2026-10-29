@@ -125,6 +125,40 @@ public sealed class SqlCoreMySqlAlterFkGraphLiveParityTests
         });
     }
 
+    [Theory]
+    [InlineData("ALTER TABLE child DROP FOREIGN KEY fk_short, ADD INDEX ix_atomic(note);", "fk_long", "ix_atomic", "note")]
+    [InlineData("ALTER TABLE child DROP FOREIGN KEY fk_long, ADD KEY ix_atomic(p,q);", "fk_short", "ix_atomic", "p")]
+    [InlineData("ALTER TABLE child DROP FOREIGN KEY fk_short, DROP FOREIGN KEY fk_long, ADD INDEX ix_atomic(p);", "", "ix_atomic", "p")]
+    public async Task AtomicDropFkAndAddIndexMatchesRealMySqlOneStatement(
+        string sql, string fk, string name, string firstColumn)
+    {
+        var model = SqlCoreFacade.AnalyzeScript(Shared + sql,
+            SqlAgentToolType.MySQL, SqlCatalogState.KnownEmpty(), Linux,
+            TestContext.Current.CancellationToken);
+        Assert.Empty(model.Diagnostics);
+        Assert.All(model.Statements, step =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, step.Status));
+        await WithDatabase(async (db, database) =>
+        {
+            foreach (var step in model.Statements.Take(2))
+                await Execute(db, step.Syntax.Text);
+            var physicalBefore = await ReadPhysical(db, database);
+            Assert.True(Supports(physicalBefore, ["p","q"]));
+            await Execute(db, model.Statements[2].Syntax.Text);
+            var actual = await ReadPhysical(db, database);
+            Assert.Contains(actual, x => x.Name == name && x.Column == firstColumn);
+            Assert.Equal(string.IsNullOrEmpty(fk) ? [] : [fk],
+                await ReadForeignKeys(db, database));
+            if (fk == "fk_short") Assert.True(Supports(actual, ["p"]));
+            if (fk == "fk_long") Assert.True(Supports(actual, ["p","q"]));
+            var current = model.FinalCatalog.Tables.Single(t => t.Name == "child");
+            Assert.Equal(name, Assert.Single(current.Indexes).Name);
+            Assert.Equal(string.IsNullOrEmpty(fk) ? [] : [fk],
+                current.Constraints.Where(c => c.Kind == SqlCatalogConstraintKind.ForeignKey)
+                    .Select(c => c.Name).ToArray());
+        });
+    }
+
     private static bool Supports(Physical[] physical, string[] prefix) =>
         physical.GroupBy(x => x.Name).Any(group =>
             prefix.SequenceEqual(group.OrderBy(x => x.Position)
