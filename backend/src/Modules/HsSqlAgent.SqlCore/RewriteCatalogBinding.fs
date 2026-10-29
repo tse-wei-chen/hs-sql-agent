@@ -168,4 +168,4 @@ module internal RewriteCatalogBinding =
                         SqlDiagnosticStage.Parse SqlDiagnosticCategory.Syntax ex.Message
                 SqlCatalogBindingStatus.Rejected, SqlCatalogBindingStatus.Rejected,
                 SqlCatalogBindingStatus.NotApplicable, SqlStatementAnalysisStatus.Invalid,
-                SqlCatalogKnowledge.Unknown, [diagnostic]
+                SqlCatalogKnowledge.Unknown, [diagnostic], fallbackMatch syntax
