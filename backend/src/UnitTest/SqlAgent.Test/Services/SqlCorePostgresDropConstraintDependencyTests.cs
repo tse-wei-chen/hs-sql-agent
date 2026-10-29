@@ -41,8 +41,8 @@ public sealed class SqlCorePostgresDropConstraintDependencyTests
             step.Changes.Select(c => c.TableName).ToArray());
         Assert.All(step.Changes, c => Assert.Equal(SqlCatalogOperation.DropConstraint, c.Operation));
         Assert.Equal(3, step.DetailedEffects.Count);
-        Assert.Equal(1, result.FinalCatalog.Tables.Single(t =>
-            t.Name == "app.parent").Constraints.Count);
+        Assert.Single(result.FinalCatalog.Tables.Single(t =>
+            t.Name == "app.parent").Constraints);
         Assert.Equal("uq_parent_code", Assert.Single(result.FinalCatalog.Tables.Single(t =>
             t.Name == "app.parent").Constraints).Name);
         Assert.Empty(result.FinalCatalog.Tables.Single(t =>
@@ -185,8 +185,8 @@ public sealed class SqlCorePostgresDropConstraintDependencyTests
             "ALTER TABLE app.parent DROP CONSTRAINT pk_parent CASCADE;");
         var step = result.Statements[2];
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, step.Status);
-        Assert.Empty(step.Changes.Where(c =>
-            c.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(step.Changes, c =>
+            c.Certainty == SqlCatalogKnowledge.Known);
         Assert.NotEqual(SqlCatalogKnowledge.Known, step.Certainty);
     }
 
@@ -214,8 +214,8 @@ public sealed class SqlCorePostgresDropConstraintDependencyTests
     {
         var result = Analyze(ParentChildren + command);
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[4].Status);
-        Assert.Empty(result.Statements[4].Changes.Where(c =>
-            c.Certainty == SqlCatalogKnowledge.Known));
+        Assert.DoesNotContain(result.Statements[4].Changes, c =>
+            c.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Theory]
