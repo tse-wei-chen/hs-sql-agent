@@ -48,7 +48,7 @@ public sealed class SqlCorePostgresInboundForeignKeyRenameTests
         Assert.Equal("parent_id", Assert.Single(fk.Columns));
         Assert.Equal("parent_key", Assert.Single(fk.ReferencedColumns));
         Assert.Equal("fk_child", fk.Name);
-        Assert.Equal(parent.QualifiedName.Key, fk.ReferencedIdentity.Key);
+        Assert.Equal(parent.QualifiedName!.Key, fk.ReferencedIdentity!.Key);
         Assert.NotSame(originalChild, child);
         Assert.True(result.FinalCatalog.IsClosedWorld);
     }
