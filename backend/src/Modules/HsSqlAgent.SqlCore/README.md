@@ -260,6 +260,48 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL FK alternative-index proof and bounded residual-name lineage
+
+The Virtual Catalog now retains **the exact set of possibly surviving
+implicit InnoDB FK-supporting index names**, with immutable per-table
+history, rather than using only a blanket Boolean. This set is
+*possibly present*, **not** a claim that those physical indexes exist.
+The uncertain identity is preserved when a named FK is removed, when
+its implicit support index may be replaced by a covering secondary
+index, and through further column/index edits or schema-binding
+aliases. An unknown/unnamed implicit index is represented by an
+unprovable name and retains the fail-closed fence.
+
+The bounded MySQL proof checks that each new index's **physical
+case-insensitive name** is distinct from every possibly surviving
+implicit FK-support name, all primary/unique indexes and all known
+standalone indexes. It requires complete known Catalog, explicit
+provider identifier semantics and fully proven physical names.
+If a previously proven explicit index already supports the FK,
+adding a second distinct explicit left-prefix supporting index
+cannot remove that user-declared index. Catalog retains only the
+known explicit additions and the original named FK constraint;
+no imaginary DROP INDEX effect is emitted.
+
+`DROP INDEX` is proven only when removing that tracked explicit
+index leaves a **different modeled physical PK, UNIQUE, or explicit
+index** whose ordered first columns cover *every* FK that depends
+on the removed index. A possibly retained InnoDB auto-index
+is **never** counted as an alternative, even if its name is known.
+The check is table-local, independent of current index-name lettercase
+and does not silently weaken the other five dialects.
+The final supporting explicit index continues to fail-closed.
+Following DROP FOREIGN KEY, the old implicit physical name remains
+possibly occupied; a different proven name can be added without
+pretending that name was deleted.
+
+Real MySQL 8 InnoDB differential tests independently verify the
+3-step cover → backup → safe DROP workflow, including same-name
+promotion, ordered physical keys from `information_schema.STATISTICS`,
+FK survival from `REFERENTIAL_CONSTRAINTS`, and the rejection of
+unsafe final-support DROP when the original implicit index disappeared.
+Static SqlCore still never executes SQL or grants permissions.
+
 ## MySQL same-name FK implicit-index promotion and independent multi-FK ownership
 
 An InnoDB implicit foreign-key support index may be promoted by declaring an

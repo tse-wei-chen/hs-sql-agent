@@ -97,7 +97,8 @@ module internal RewriteCatalogSchemaResolution =
                         let alias = partName [| name.Parts[1] |]
                         Some(SqlCatalogTable(alias.DisplayName, table.Knowledge,
                              table.Columns, table.Constraints, table.Indexes, alias,
-                             table.MayRetainUnmodeledFkIndexes))
+                             table.MayRetainUnmodeledFkIndexes,
+                             table.PossibleFkIndexNames))
                     else None)
             SqlCatalogState(
                 state.IsClosedWorld,

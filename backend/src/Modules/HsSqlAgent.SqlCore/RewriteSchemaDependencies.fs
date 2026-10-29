@@ -184,6 +184,54 @@ module internal RewriteSchemaDependencies =
                             Error(Invalid ("CREATE INDEX '" + proposedName +
                                   "' collides with a MySQL PRIMARY/UNIQUE/FK-support/standalone physical index."))
                         else Ok transition
+    /// A MySQL DROP INDEX is safe for every local FK only when removing
+    /// this *tracked physical index* leaves another independent, proven
+    /// PK/UNIQUE/explicit index with the same ordered FK left prefix.
+    /// A possibly retained InnoDB auto-index is NEVER counted as support.
+    let canDropMySqlTrackedIndex
+            (state: SqlCatalogState)
+            (owner: SqlCatalogTable)
+            (indexName: string) =
+        let same (a: string) (b: string) =
+            String.Equals(a, b, StringComparison.OrdinalIgnoreCase)
+        let startsWith (prefix: string list) (candidate: string list) =
+            prefix.Length <= candidate.Length
+            && List.forall2 (fun a b ->
+                String.Equals(a, b, StringComparison.Ordinal))
+                prefix (candidate |> List.take prefix.Length)
+        if not (complete state) then
+            Unproven "A MySQL DROP INDEX requires a complete known Catalog."
+        else
+            match owner.Indexes |> Seq.tryFind (fun idx ->
+                same idx.Name indexName) with
+            | None ->
+                Unproven "The requested MySQL index is not a tracked explicit index."
+            | Some target ->
+                let unsupportedFk =
+                    owner.Constraints
+                    |> Seq.filter (fun fk ->
+                        fk.Kind = SqlCatalogConstraintKind.ForeignKey
+                        && startsWith (fk.Columns |> Seq.toList)
+                            (target.Columns |> Seq.toList))
+                    |> Seq.tryFind (fun fk ->
+                        let members = fk.Columns |> Seq.toList
+                        let otherExplicit =
+                            owner.Indexes |> Seq.exists (fun idx ->
+                                not (same idx.Name target.Name)
+                                && startsWith members (idx.Columns |> Seq.toList))
+                        let otherKey =
+                            owner.Constraints |> Seq.exists (fun c ->
+                                (c.Kind = SqlCatalogConstraintKind.PrimaryKey
+                                 || c.Kind = SqlCatalogConstraintKind.Unique)
+                                && startsWith members (c.Columns |> Seq.toList))
+                        not (otherExplicit || otherKey))
+                match unsupportedFk with
+                | Some fk ->
+                    Unproven ("Dropping index '" + indexName +
+                        "' could remove the last proven support for foreign key '" +
+                        fk.Name + "'.")
+                | None -> Proven
+
     let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
                        (columns: SqlCatalogColumn list)
                        (constraints: SqlCatalogConstraint list) =
