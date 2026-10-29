@@ -727,15 +727,23 @@ module internal RewriteSchemaValidation =
         if not state.IsClosedWorld
            || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
             invalidArg "state" "Strict catalog binding requires a complete known closed-world catalog."
-        let tables =
-            state.Tables
-            |> Seq.map (fun table ->
-                RewriteResourceBudget.checkpoint ()
-                table.QualifiedName.BinderKey,
-                (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
+        // DQL may read a proven PostgreSQL View by its DECLARED output columns,
+        // not by the columns of its physical sources. This local name map is
+        // never published as a physical Catalog or passed to DML validators.
+        let relations =
+            seq {
+                for table in state.Tables do
+                    RewriteResourceBudget.checkpoint ()
+                    yield table.QualifiedName.BinderKey,
+                          (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+            }
             |> Seq.toList
-        if tables.Length <> (tables |> List.map fst |> List.distinct |> List.length) then
+        if relations.Length <> (relations |> List.map fst |> List.distinct |> List.length) then
             invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
-        let catalog = { Dialect = dialect; Tables = Map.ofList tables }
+        let catalog = { Dialect = dialect; Tables = Map.ofList relations }
         (createValidation ()) catalog (Bound.value bound)
         bound
