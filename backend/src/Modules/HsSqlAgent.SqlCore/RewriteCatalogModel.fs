@@ -229,6 +229,27 @@ module internal RewriteCatalogModel =
         | Some table -> replaceTable state name table.Columns constraints table.Indexes
         | None -> invalidArg "name" "Table not found."
 
+    /// Replace one proven named constraint in an immutable table snapshot.
+    /// Remote FK columns/relation identities are physical key bindings, not
+    /// links to the old constraint's displayed name: retain them unchanged.
+    let renameKnownConstraint
+            (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
+            (oldName: string) (newName: string) =
+        match lookup state name with
+        | Some owner ->
+            let next =
+                owner.Constraints
+                |> Seq.map (fun c ->
+                    RewriteResourceBudget.checkpoint ()
+                    if sameName c.Name oldName then
+                        SqlCatalogConstraint(
+                            newName, c.Kind, c.Columns,
+                            c.ReferencedIdentity, c.ReferencedColumns)
+                    else c)
+                |> Seq.toArray |> Array.AsReadOnly
+            replaceTable state name owner.Columns next owner.Indexes
+        | None -> invalidArg "name" "Constraint owner was not proven."
+
     /// PostgreSQL DROP CONSTRAINT CASCADE: remove the target key and only
     /// provably dependent inbound/self foreign keys in one immutable state.
     /// The proof planner resolves every (owner, constraint name) against the

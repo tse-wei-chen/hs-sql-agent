@@ -192,6 +192,43 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## PostgreSQL and Oracle RENAME CONSTRAINT — exact Catalog identity
+
+`ALTER TABLE relation RENAME CONSTRAINT old_name TO new_name` is a new
+**closed F# `RenameConstraint` DDL operation** for PostgreSQL and Oracle.
+A complete known virtual Catalog is mandatory; the analyzer changes only
+one explicitly named PRIMARY KEY, UNIQUE or FOREIGN KEY constraint on
+the proven owner relation, preserving its kind, ordered local/remote
+physical columns and referenced relation identity. A single exact
+`SqlCatalogOperation.RenameConstraint` delta records the new constraint
+identity. Historical snapshots, children and unrelated constraints
+remain unchanged. Repeated renames and later `DROP CONSTRAINT` use the
+new name, without fabricating SQL execution or authorizing DDL.
+
+The two databases have deliberately separate namespace contracts:
+
+- **PostgreSQL** permits separate child tables to use the same FK name.
+  Renaming PK/UNIQUE also renames the underlying physical index. Before
+  proving a rename of either indexed key, SqlCore checks the physical
+  relation namespace for matching table, View, standalone index and
+  implicit PK/UNIQUE index names across possible schema owners. Unnamed
+  key-backed indexes or unproven schema scope fail closed rather than
+  allowing an unverified index name collision.
+- **Oracle** requires each constraint name to be unique in its schema,
+  even across different tables. SqlCore conservatively checks all known
+  table constraints; remote FK physical bindings remain valid and are
+  not renamed with the parent key. Oracle implicit constraint indexes
+  are not misrepresented as standalone Catalog indexes.
+
+Unknown/open-world catalogs, absent or duplicate names, same-name
+renames, unsupported composite clauses and all other four dialects
+remain fail-closed. This is metadata analysis only. Five live PostgreSQL
+DDL scenarios check `pg_constraint`, `conkey/confkey` and the
+`conindid → pg_class` physical implicit index name after each DDL,
+while four live Oracle Free scenarios check `USER_CONSTRAINTS`,
+`USER_CONS_COLUMNS` and `R_CONSTRAINT_NAME` with explicit cleanup
+for Oracle's implicitly committed DDL.
+
 ## PostgreSQL DROP CONSTRAINT — typed dependency-mode proof
 
 PostgreSQL `ALTER TABLE owner DROP CONSTRAINT [IF EXISTS] name [RESTRICT |
