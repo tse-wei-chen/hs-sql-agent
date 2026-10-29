@@ -138,7 +138,6 @@ module internal RewriteCatalogModel =
                         :> System.Collections.Generic.IReadOnlyList<SqlCatalogColumn>
                     else table.Columns
                 let indexes : System.Collections.Generic.IReadOnlyList<SqlCatalogIndex> =
-
                     if target then
                         table.Indexes
                         |> Seq.map (fun index ->
@@ -153,8 +152,8 @@ module internal RewriteCatalogModel =
                         RewriteResourceBudget.checkpoint ()
                         // A self-FK is both local and inbound. Preserve its
                         // physical target identity and constraint name.
-                        let localChange = target &&
-                            (c.Columns |> Seq.exists (sameName oldName))
+                        let localChange =
+                            target && (c.Columns |> Seq.exists (sameName oldName))
                         let inboundChange =
                             c.Kind = SqlCatalogConstraintKind.ForeignKey
                             && not (isNull c.ReferencedIdentity)
