@@ -46,6 +46,7 @@ module internal RewriteSchemaAnalyzer =
 
     type ViewComparison =
         | Equal | NotEqual | Less | LessOrEqual | Greater | GreaterOrEqual
+        | IsDistinctFrom | IsNotDistinctFrom
 
     type ViewWherePredicate =
         | Compare of ViewPredicateColumn * ViewComparison * ViewPredicateLiteral
@@ -711,9 +712,18 @@ module internal RewriteSchemaAnalyzer =
                     else
                         let column = whereColumn ()
                         if accept "IS" then
-                            let isNotNull = accept "NOT"
-                            expect "NULL"
-                            NullTest(column, isNotNull)
+                            let negated = accept "NOT"
+                            if accept "NULL" then
+                                NullTest(column, negated)
+                            else
+                                // PostgreSQL NULL-safe comparison is not an ordinary
+                                // = or <> predicate; retain the operator in the DU.
+                                expect "DISTINCT"
+                                expect "FROM"
+                                let literal = whereLiteral ()
+                                Compare(column,
+                                        (if negated then IsNotDistinctFrom else IsDistinctFrom),
+                                        literal)
                         else
                             let op = comparison ()
                             let literal = whereLiteral ()

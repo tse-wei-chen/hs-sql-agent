@@ -1188,11 +1188,14 @@ module internal RewriteScriptAnalyzer =
                                         || kind.StartsWith("CHAR(", StringComparison.Ordinal)
                                     | BooleanValue _ -> kind = "BOOLEAN"
                                 let supported =
+                                    // Exhaustive operator proof: future comparison variants
+                                    // must not silently inherit an execution-like capability.
                                     match literal, op with
-                                    | BooleanValue _, (Less | LessOrEqual | Greater | GreaterOrEqual)
-                                    | StringValue _, (Less | LessOrEqual | Greater | GreaterOrEqual) ->
-                                        false
-                                    | _ -> true
+                                    | _, (Equal | NotEqual | IsDistinctFrom | IsNotDistinctFrom) ->
+                                        true
+                                    | IntegerValue _, (Less | LessOrEqual | Greater | GreaterOrEqual) ->
+                                        true
+                                    | _ -> false
                                 if compatible && supported then Ok [identity, info.Name]
                                 else Error "type"
                         | Conjunction(left, right)
