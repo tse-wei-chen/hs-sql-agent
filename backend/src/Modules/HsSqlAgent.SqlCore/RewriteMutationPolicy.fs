@@ -23,6 +23,15 @@ module internal RewriteMutationPolicy =
         | Literal(ScalarValue.Boolean x), Literal(ScalarValue.Boolean y) -> Some(x = y)
         | _ -> None
 
+    // Compare only same-kind exact SQL numeric literals. Never infer outcomes
+    // through implicit provider casts, floating-point NaN, text collation or
+    // nullable operands: those remain UnknownTruth.
+    let private literalOrdering left right =
+        match Expr.unspan left, Expr.unspan right with
+        | Literal(ScalarValue.Integer x), Literal(ScalarValue.Integer y) -> Some(compare x y)
+        | Literal(ScalarValue.Decimal x), Literal(ScalarValue.Decimal y) -> Some(compare x y)
+        | _ -> None
+
     type private PredicateFrame = Visit of Expr | Negate | CombineAnd | CombineOr
 
     let private constantPredicate expression =
@@ -66,6 +75,14 @@ module internal RewriteMutationPolicy =
                     values.Push(literalEquality left right |> Option.map truth |> Option.defaultValue UnknownTruth)
                 | Binary(BinaryOperator.NotEqual, left, right) ->
                     values.Push(literalEquality left right |> Option.map (not >> truth) |> Option.defaultValue UnknownTruth)
+                | Binary(BinaryOperator.LessThan, left, right) ->
+                    values.Push(literalOrdering left right |> Option.map (fun c -> truth (c < 0)) |> Option.defaultValue UnknownTruth)
+                | Binary(BinaryOperator.LessThanOrEqual, left, right) ->
+                    values.Push(literalOrdering left right |> Option.map (fun c -> truth (c <= 0)) |> Option.defaultValue UnknownTruth)
+                | Binary(BinaryOperator.GreaterThan, left, right) ->
+                    values.Push(literalOrdering left right |> Option.map (fun c -> truth (c > 0)) |> Option.defaultValue UnknownTruth)
+                | Binary(BinaryOperator.GreaterThanOrEqual, left, right) ->
+                    values.Push(literalOrdering left right |> Option.map (fun c -> truth (c >= 0)) |> Option.defaultValue UnknownTruth)
                 | IsNull(inner, negated) ->
                     let result =
                         match Expr.unspan inner with
