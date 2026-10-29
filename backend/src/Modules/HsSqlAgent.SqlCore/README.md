@@ -203,6 +203,38 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL PRIMARY/UNIQUE and explicit secondary index namespace
+
+MySQL physical indexes have a **table-local** index name namespace whether
+an index was created explicitly or belongs to a key constraint. Both
+`CREATE INDEX` and `ALTER TABLE ADD INDEX|KEY` now share one closed F#
+physical-name model: `PrimaryIndex` is always the MySQL physical
+`PRIMARY` index, `NamedUniqueIndex` belongs only to a UNIQUE constraint
+with an explicitly proven name, and `StandaloneIndex` is a tracked
+non-unique physical index. The latter remains the only kind stored in
+`SqlCatalogTable.Indexes`; key-backed names are derived from typed
+constraint evidence and not fabricated as new Catalog indexes.
+
+For table-local key namespaces, matching uses the provider's
+case-insensitive **simple ASCII** identity; collisions against PRIMARY,
+named UNIQUE, and existing standalone indexes are rejected. The known,
+closed Catalog must have a declared MySQL identifier premise (the
+existing Linux `LOWER_CASE_TABLE_NAMES=0` lowercase subset or the
+`LOWER_CASE_TABLE_NAMES=1` FoldAscii subset). Unknown server settings,
+non-ASCII index identity, unmodeled FK-support indexes, and unnamed
+UNIQUE indexes with generated server index names remain fail-closed.
+InnoDB can silently create or replace an implicit FK-supporting index
+when a new matching index is created, so this change intentionally
+**does not** assume a FOREIGN KEY symbol is a physical index name.
+
+The MySQL proof is not inherited by the other five providers. Catalog
+history remains immutable, new indexes still require validated real
+columns, and static analysis does not authorize or execute SQL.
+Independent MySQL 8 InnoDB tests compare names, ordered key columns
+and `NON_UNIQUE` flags from `information_schema.STATISTICS` after
+every statement in four isolated databases and check real-name
+collision failures.
+
 ## MySQL standalone DROP PRIMARY KEY — known Catalog only
 
 MySQL 8's `ALTER TABLE owner DROP PRIMARY KEY` is a closed F#

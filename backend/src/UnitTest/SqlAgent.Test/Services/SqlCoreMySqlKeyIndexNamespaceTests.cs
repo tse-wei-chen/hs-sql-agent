@@ -93,7 +93,7 @@ public sealed class SqlCoreMySqlKeyIndexNamespaceTests
 
     [Theory]
     [InlineData("CREATE TABLE orders(id INT, note INT, UNIQUE(id));")]
-    [InlineData("CREATE TABLE orders(id INT, note INT, CONSTRAINT fk_self FOREIGN KEY(note) REFERENCES orders(id));")]
+    [InlineData("CREATE TABLE orders(id INT NOT NULL PRIMARY KEY, note INT, CONSTRAINT fk_self FOREIGN KEY(note) REFERENCES orders(id));")]
     public void UnknownGeneratedIndexIdentityNeverBecomesAnExplicitIndexProof(string create)
     {
         // Both setup forms have non-proven physical names or FK auto-index

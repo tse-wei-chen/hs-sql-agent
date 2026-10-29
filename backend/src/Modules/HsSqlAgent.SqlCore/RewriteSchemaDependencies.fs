@@ -22,6 +22,84 @@ module internal RewriteSchemaDependencies =
         state.IsClosedWorld &&
         (state.Tables |> Seq.forall (fun t -> t.Knowledge = SqlCatalogKnowledge.Known))
 
+    /// Closed algebraic identities of MySQL physical index names. A PRIMARY
+    /// constraint owns the physical index PRIMARY regardless of its optional
+    /// SQL constraint symbol. Named UNIQUE constraints own a physical index.
+    /// FK support indexes have NO representation here: InnoDB may silently
+    /// create or replace them as other indexes are introduced.
+    type private MySqlPhysicalIndexName =
+        | PrimaryIndex
+        | NamedUniqueIndex of string
+        | StandaloneIndex of string
+
+    let private physicalMySqlIndexName = function
+        | PrimaryIndex -> "PRIMARY"
+        | NamedUniqueIndex name
+        | StandaloneIndex name -> name
+
+    let canCreateMySqlSecondaryIndex
+            (profile: SqlProviderCapabilityProfile | null)
+            (state: SqlCatalogState)
+            (owner: SqlCatalogTable)
+            (proposedName: string) =
+        let same (a: string) (b: string) =
+            String.Equals(a, b, StringComparison.OrdinalIgnoreCase)
+        let asciiName (value: string) =
+            RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier value
+            && value.Length <= 64
+        if not (complete state) then
+            Unproven "MySQL index namespace requires a complete known Catalog."
+        elif not (asciiName proposedName)
+             || (owner.Indexes |> Seq.exists (fun idx -> not (asciiName idx.Name))) then
+            Unproven "MySQL index names need bounded simple ASCII identity proof."
+        elif same proposedName "PRIMARY" then
+            Invalid "The physical MySQL PRIMARY index name is reserved."
+        elif owner.Constraints.Count = 0 then
+            // Existing standalone-index collisions are checked by the
+            // caller using MySQL's case-insensitive index-name equality.
+            Proven
+        else
+            let namesKnown =
+                RewriteCatalogIdentifierProof.canProvePhysicalNames
+                    SqlAgentToolType.MySQL profile state owner.QualifiedName.DisplayName
+                || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroCatalog
+                    profile state owner.QualifiedName
+                    (owner.Columns |> Seq.toList)
+                    (owner.Constraints |> Seq.toList)
+            if not namesKnown then
+                Unproven "MySQL constraint-backed indexes require declared proven identifier semantics."
+            elif owner.Constraints |> Seq.exists (fun c ->
+                     c.Kind = SqlCatalogConstraintKind.ForeignKey) then
+                Unproven "MySQL foreign-key support index creation or replacement is not proven."
+            elif owner.Constraints |> Seq.exists (fun c ->
+                     c.Kind = SqlCatalogConstraintKind.Unique
+                     && String.IsNullOrWhiteSpace c.Name) then
+                Unproven "MySQL generated UNIQUE index names are not represented by the Catalog."
+            else
+                let keyNames =
+                    owner.Constraints
+                    |> Seq.choose (fun c ->
+                        match c.Kind with
+                        | SqlCatalogConstraintKind.PrimaryKey -> Some PrimaryIndex
+                        | SqlCatalogConstraintKind.Unique ->
+                            Some(NamedUniqueIndex c.Name)
+                        | _ -> None)
+                    |> Seq.toList
+                let all =
+                    keyNames @
+                    (owner.Indexes |> Seq.map (fun i -> StandaloneIndex i.Name)
+                                   |> Seq.toList)
+                let rendered = all |> List.map physicalMySqlIndexName
+                let canonical = rendered |> List.map (fun n -> n.ToUpperInvariant())
+                if rendered |> List.exists (fun name -> not (asciiName name)) then
+                    Unproven "Physical PRIMARY/UNIQUE index identity is not a bounded simple ASCII name."
+                elif canonical.Length <> (canonical |> List.distinct |> List.length) then
+                    Invalid "The known MySQL key/index namespace contains colliding physical names."
+                elif rendered |> List.exists (same proposedName) then
+                    Invalid ("CREATE INDEX '" + proposedName +
+                             "' collides with a MySQL PRIMARY/UNIQUE/standalone physical index.")
+                else Proven
+
     let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
                        (columns: SqlCatalogColumn list)
                        (constraints: SqlCatalogConstraint list) =

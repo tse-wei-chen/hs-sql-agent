@@ -1699,7 +1699,10 @@ module internal RewriteScriptAnalyzer =
                     indexNamespace
                     |> Seq.tryFind (fun owner ->
                         owner.Indexes |> Seq.exists (fun idx ->
-                            String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
+                            String.Equals(idx.Name, indexName,
+                                if sourceDialect = SqlAgentToolType.MySQL then
+                                    StringComparison.OrdinalIgnoreCase
+                                else StringComparison.Ordinal)))
                 // PostgreSQL indexes also conflict with ordinary tables
                 // named the same within the target schema.
                 let relationOwner =
@@ -1736,21 +1739,31 @@ module internal RewriteScriptAnalyzer =
                     dependencyUnproven "View schema is unproven; index name collision is possible."
                 | None, None, Some _ ->
                     fail ("CREATE INDEX '" + indexName + "' conflicts with a known View relation.")
-                | None, None, None when indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) ->
-                    dependencyUnproven "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
                 | None, None, None ->
-                    if members.IsEmpty || List.distinct members <> members then
-                        fail "CREATE INDEX has duplicate or empty column members."
-                    elif members |> List.exists (fun memberName ->
-                        not (table.Columns |> Seq.exists (fun col ->
-                            String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
-                        fail "CREATE INDEX references an absent column."
-                    else
-                        let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
-                        let updated =
-                            RewriteCatalogModel.withIndexes state tableName
-                                (seq { yield! table.Indexes; yield idx })
-                        exact tableName SqlCatalogOperation.CreateIndex updated
+                    let namespaceProof =
+                        if sourceDialect = SqlAgentToolType.MySQL then
+                            RewriteSchemaDependencies.canCreateMySqlSecondaryIndex
+                                sourceProfile state table indexName
+                        elif indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) then
+                            RewriteSchemaDependencies.Unproven
+                                "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
+                        else RewriteSchemaDependencies.Proven
+                    match namespaceProof with
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+                    | RewriteSchemaDependencies.Proven ->
+                        if members.IsEmpty || List.distinct members <> members then
+                            fail "CREATE INDEX has duplicate or empty column members."
+                        elif members |> List.exists (fun memberName ->
+                            not (table.Columns |> Seq.exists (fun col ->
+                                String.Equals(col.Name, memberName, StringComparison.Ordinal)))) then
+                            fail "CREATE INDEX references an absent column."
+                        else
+                            let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
+                            let updated =
+                                RewriteCatalogModel.withIndexes state tableName
+                                    (seq { yield! table.Indexes; yield idx })
+                            exact tableName SqlCatalogOperation.CreateIndex updated
             | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
         | Recognized (DropIndexBatch(identities, conditional)) ->
             // This statement must never commit a virtual Catalog delta
