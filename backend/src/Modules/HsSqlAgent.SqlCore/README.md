@@ -907,22 +907,34 @@ every statement; the analyzer itself never executes SQL.
 Oracle `ALTER TABLE table RENAME COLUMN old_name TO new_name` is a
 closed F# `RenameColumn` operation with one exact `RenameColumn`
 Catalog/effect tag, not an opaque string transform. Against a
-closed-world, known table, the analyzer preserves physical column
-position, type and nullability; it updates every modeled standalone
-index's ordered physical-column list and local PRIMARY KEY / UNIQUE /
-FOREIGN KEY column list in **one immutable Catalog replacement**.
-Previous snapshots retain their original column/index references.
+closed-world, known Catalog, the analyzer preserves physical column
+position, type and nullability. It also retargets every modeled
+standalone index's ordered columns and local PRIMARY KEY / UNIQUE /
+FOREIGN KEY bindings. Oracle now shares the proven immutable
+cross-object transition with PostgreSQL: **all inbound and self-FK
+referenced columns follow the renamed parent's exact structured
+identity**, including ordered composite keys, multiple child tables,
+and repeated renames. Local child columns, unrelated FKs, constraint
+names, and all old Catalog snapshots remain unchanged. The entire
+rename publishes **one** Known Catalog state and `RenameColumn` delta.
 
-Unknown tables/Catalogs and unmodeled objects are never promoted to
-known facts. Inbound foreign keys on the renamed referenced column
-are refused until cross-table reference rewriting is proved, and known
-View dependencies are refused because Oracle can invalidate dependent
-objects. Duplicate/new-name collisions, absent old columns, composite
-ALTER forms and other provider grammars remain fail-closed.
+Oracle does **not** inherit PostgreSQL's View rewrite proof. The
+database invalidates dependent Views on column rename, so known
+dependent Views remain fail-closed. Unknown/open-world Catalogs,
+unmodeled objects, implicit reference inference, invalid/duplicate
+column names, composite ALTER forms and unsupported dialect grammar
+never mint Known proof. Analysis is metadata-only, not DDL execution
+or permission authorization.
 
-The real Oracle DDL differential corpus has **26** unique scripts. It
-now compares both physical columns and **USER_IND_COLUMNS ordered index
-lineage** after every statement; the analyzer does not execute SQL.
+The original real Oracle DDL differential corpus includes **26**
+unique scripts comparing physical columns and `USER_IND_COLUMNS`
+index lineage after each step. Five additional live Oracle Free FK
+scripts now verify the *actual* physical `USER_CONSTRAINTS` and
+`USER_CONS_COLUMNS` referenced-column lineage, matched by
+`R_CONSTRAINT_NAME` and ordered `POSITION`, after every statement.
+Unlike PostgreSQL, Oracle DDL implicitly commits: test isolation uses
+unique identifiers and explicit `CASCADE CONSTRAINTS PURGE` cleanup,
+never rollback. SqlCore itself does not execute SQL.
 
 ## Firebird RECREATE TABLE atomic static Catalog proof
 
