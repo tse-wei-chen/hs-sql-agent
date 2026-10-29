@@ -302,6 +302,47 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL typed shared-FK left-prefix dependency graph
+
+Named foreign keys are **logical obligations**, not guarantees of separately
+existing InnoDB physical support indexes. Two or more child-side FK column
+lists can belong to one support group if either is an ordered left prefix
+of the other. SqlCore now builds a closed F# dependency graph whose connected
+components distinguish a single independent FK from a shared-prefix group.
+The graph is calculated from known immutable Catalog constraints, and
+**does not** pretend every FK name occupies a separate physical index.
+
+For a shared group, a new secondary index is proved only if it is entirely
+unrelated to the group's prefixes, or its ordered columns cover **all**
+FKs in the impacted group. A partial group-covering index is rejected
+unless a distinct, previously proven explicit index already supports
+every member of the group; in that case the partial new index cannot
+replace the proven user-created support index. An index covering two
+independent groups at once, if representable, is rejected rather than
+inventing a multi-group physical replacement.
+
+A full shared-group replacement publishes one known explicit
+`CreateIndex` delta and retains the **possible** names of *all* impacted
+implicit FK-support indexes. These names are conservative collision
+candidates, not assertions of physical presence. Reusing an implicit
+FK symbol as the name of a new covering index remains rejected for a
+shared group: unlike one independent FK, MySQL may already have reused
+or silently replaced the underlying physical key. A separately named
+backup covering all group members can be added, then the old explicit
+covering index safely dropped. A backup covering only the shorter FK
+is not sufficient to remove the last explicit supporter of the longer
+FK; auto indexes cannot be counted as proof.
+
+This proof is limited to complete known MySQL catalogs, explicitly named
+simple ASCII foreign keys, proven server identifier semantics, bounded
+physical index names and table-local ordered prefixes. Unknown FK
+names or physical history, partial first-replacement groups, schema
+ambiguity and all other five SQL dialects stay fail-closed. The
+dependency graph cannot connect to databases or authorize/execute SQL.
+Disposable live InnoDB tests check full physical `STATISTICS` index
+column order and `REFERENTIAL_CONSTRAINTS` after each DDL, including
+two shared FKs, an independent third FK, and full-backup safe DROP.
+
 ## MySQL FK alternative-index proof and bounded residual-name lineage
 
 The Virtual Catalog now retains **the exact set of possibly surviving
@@ -365,11 +406,11 @@ the persistent uncertain-physical-lineage marker. A later
 fail-closed; distinct names and independently proven replacement
 support may now be analyzed using the bounded residual-name evidence.
 
-Multiple named FKs are only treated as **independently owned** support indexes
-if none of their ordered local key prefixes is a prefix of another and none
-is already supported by any modeled PK/UNIQUE/standalone index. A new index
-may be unrelated to every FK (stable) or replace **one** independently owned
-FK support index (possibly replaced); never multiple or overlapping FKs.
+Multiple named FKs are independently owned only if their ordered
+local prefixes do not overlap. Prefix-related FK obligations now form
+typed **shared support groups** as documented above. An unrelated
+new index is stable, and a full-group-covering index may replace
+possible implicit supporting indexes without asserting how many existed.
 Unnamed FKs, opaque server identifier settings, unknown residual
 physical names, and all other five database dialects remain
 conservatively rejected. A prior replacement with known physical
@@ -403,8 +444,9 @@ independent tracked PK/UNIQUE/explicit index supports every affected FK.
 The guarded proof requires complete known Catalog, explicit MySQL
 identifier semantics, no opaque physical-name collisions and an ordered
 left-prefix supporting index. The later same-name promotion and independent
-multi-FK extensions are documented above; overlapping shared FK prefixes,
-unknown physical index origins, and other dialects remain rejected.
+multi-FK and shared-group extensions are documented above; partial
+shared-group replacement without known explicit coverage, unknown
+physical index origins, and other dialects remain rejected.
 
 Independent MySQL 8 InnoDB tests verify that the new index's ordered
 members and the original FK constraint remain valid; the old implicit

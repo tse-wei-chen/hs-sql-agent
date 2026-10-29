@@ -25,10 +25,10 @@ module internal RewriteSchemaDependencies =
     /// Closed algebraic identities of MySQL physical index names. A PRIMARY
     /// constraint owns the physical index PRIMARY regardless of its optional
     /// SQL constraint symbol. Named UNIQUE constraints own a physical index.
-    /// An explicitly named FK may prove one *implicit* supporting index
-    /// only while no other key could cover the same FK-left-prefix. This is
-    /// not a general physical-index history or executable schema plan:
-    /// overlapping/replacement and post-drop states remain unproven.
+    /// FK names describe candidates for physical implicit supporting indexes,
+    /// never independently proven physical keys. Prefix-related FK obligations
+    /// form a shared dependency graph and may be backed by one InnoDB index.
+    /// No graph node asserts a physical index survived or disappeared.
     type private MySqlPhysicalIndexName =
         | PrimaryIndex
         | NamedUniqueIndex of string
@@ -47,6 +47,58 @@ module internal RewriteSchemaDependencies =
     type MySqlPhysicalIndexTransition =
         | StableImplicitFkSupport
         | MayReplaceImplicitFkSupport
+
+    /// A connected component of the undirected FK left-prefix graph.
+    /// The source object is a logical constraint obligation; it does NOT
+    /// assert an implicit physical supporting index with the same name.
+    type private MySqlFkSupportComponent =
+        | IndependentFk of SqlCatalogConstraint
+        | SharedPrefixFkGroup of SqlCatalogConstraint list
+
+    let private mysqlOrderedLeftPrefix (prefix: string list) (candidate: string list) =
+        prefix.Length <= candidate.Length
+        && List.forall2
+            (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
+            prefix (candidate |> List.take prefix.Length)
+
+    let private mysqlFkSupportGraph (foreignKeys: SqlCatalogConstraint list) =
+        let all = foreignKeys |> List.toArray
+        let linked i j =
+            i <> j
+            && (mysqlOrderedLeftPrefix
+                    (all[i].Columns |> Seq.toList) (all[j].Columns |> Seq.toList)
+                || mysqlOrderedLeftPrefix
+                    (all[j].Columns |> Seq.toList) (all[i].Columns |> Seq.toList))
+        let rec reach frontier visited =
+            match frontier with
+            | [] -> visited
+            | idx :: rest when Set.contains idx visited ->
+                reach rest visited
+            | idx :: rest ->
+                RewriteResourceBudget.checkpoint ()
+                let neighbors =
+                    [ for next in 0 .. all.Length - 1 do
+                        if linked idx next then yield next ]
+                reach (neighbors @ rest) (Set.add idx visited)
+        let rec components remaining acc =
+            match remaining with
+            | [] -> List.rev acc
+            | first :: others ->
+                let component = reach [first] Set.empty
+                let members =
+                    component |> Set.toList |> List.map (fun i -> all[i])
+                let proof =
+                    match members with
+                    | [single] -> IndependentFk single
+                    | group -> SharedPrefixFkGroup group
+                components
+                    (others |> List.filter (fun i -> not (Set.contains i component)))
+                    (proof :: acc)
+        components [0 .. all.Length - 1] []
+
+    let private mysqlFkComponentMembers = function
+        | IndependentFk constraintInfo -> [constraintInfo]
+        | SharedPrefixFkGroup members -> members
 
     let canCreateMySqlSecondaryIndex
             (profile: SqlProviderCapabilityProfile | null)
@@ -104,32 +156,18 @@ module internal RewriteSchemaDependencies =
                      && String.IsNullOrWhiteSpace c.Name) then
                 Error(Unproven "MySQL generated UNIQUE index names are not represented by the Catalog.")
             else
-                // A named FK created on a complete MySQL Catalog may own
-                // an implicit physical supporting index. Two FKs have
-                // independent lineage ONLY if their ordered local prefixes
-                // are incomparable: shared/prefix-related keys may reuse
-                // the same physical index and cannot be proven statically.
+                // Classify the named FK logical dependency graph before any
+                // physical-index claim. Shared left-prefix components are
+                // not one independently existing physical index per FK.
                 let foreignKeys =
                     owner.Constraints
                     |> Seq.filter (fun c ->
                         c.Kind = SqlCatalogConstraintKind.ForeignKey)
                     |> Seq.toList
-                let startsWith (prefix: string list) (candidate: string list) =
-                    prefix.Length <= candidate.Length
-                    && List.forall2 (fun left right ->
-                        String.Equals(left, right, StringComparison.Ordinal))
-                            prefix (candidate |> List.take prefix.Length)
+                let startsWith = mysqlOrderedLeftPrefix
                 let localColumns (fk: SqlCatalogConstraint) =
                     fk.Columns |> Seq.toList
-                let overlaps =
-                    foreignKeys
-                    |> List.mapi (fun i fk ->
-                        foreignKeys
-                        |> List.skip (i + 1)
-                        |> List.exists (fun other ->
-                            startsWith (localColumns fk) (localColumns other)
-                            || startsWith (localColumns other) (localColumns fk)))
-                    |> List.exists id
+                let graph = mysqlFkSupportGraph foreignKeys
                 let invalidNames =
                     foreignKeys |> List.exists (fun fk ->
                         String.IsNullOrWhiteSpace fk.Name
@@ -153,22 +191,49 @@ module internal RewriteSchemaDependencies =
                 let covered =
                     foreignKeys |> List.filter (fun fk ->
                         startsWith (localColumns fk) members)
+                // Touching only part of a shared FK prefix component cannot
+                // establish which physical implicit index InnoDB would
+                // rewrite. Once a known explicit key already supports ALL
+                // members of that component, another partial explicit key
+                // cannot replace that user-created key, so it is stable.
+                let incompletelyCoveredSharedGroup =
+                    graph |> List.exists (function
+                        | IndependentFk _ -> false
+                        | SharedPrefixFkGroup group ->
+                            let touched =
+                                group |> List.filter (fun fk ->
+                                    startsWith (localColumns fk) members)
+                            not touched.IsEmpty
+                            && touched.Length <> group.Length
+                            && not (owner.Indexes |> Seq.exists (fun index ->
+                                group |> List.forall (fun fk ->
+                                    startsWith (localColumns fk)
+                                        (index.Columns |> Seq.toList)))))
+                let impactedComponents =
+                    graph |> List.filter (fun component ->
+                        mysqlFkComponentMembers component
+                        |> List.exists (fun fk ->
+                            startsWith (localColumns fk) members))
+                let independentOwnName name =
+                    graph |> List.exists (function
+                        | IndependentFk fk -> same fk.Name name
+                        | SharedPrefixFkGroup _ -> false)
                 let supportProof =
                     if invalidNames then
                         Error(Unproven "Unnamed or non-ASCII FK supporting indexes have no physical name proof.")
-                    elif overlaps then
-                        Error(Unproven "Foreign keys sharing an ordered left prefix may share one InnoDB support index.")
                     elif competingSupport then
                         Error(Unproven "An existing PRIMARY/UNIQUE/standalone index may already support a foreign key.")
-                    elif covered.Length > 1 then
-                        Error(Unproven "One new index may replace multiple implicit FK indexes; physical lineage is not proven.")
+                    elif incompletelyCoveredSharedGroup then
+                        Error(Unproven "A partial shared-FK-prefix replacement cannot prove InnoDB physical index lineage.")
+                    elif impactedComponents.Length > 1 then
+                        Error(Unproven "One physical index may replace more than one independent FK support group.")
                     elif covered.IsEmpty then Ok StableImplicitFkSupport
                     elif covered |> List.forall (fun fk ->
                          owner.PossibleFkIndexNames |> Seq.exists (fun name ->
                              same name fk.Name)) then
-                        // An older proven explicit index already covers this
-                        // FK. A second independently named explicit index
-                        // cannot remove that user-created physical index.
+                        // Already covered by a previously proven *explicit*
+                        // physical support index. Further key creation does
+                        // not silently drop that existing user-created key.
                         Ok StableImplicitFkSupport
                     else Ok MayReplaceImplicitFkSupport
                 match supportProof with
@@ -220,6 +285,7 @@ module internal RewriteSchemaDependencies =
                               MayReplaceImplicitFkSupport ->
                                 covered |> List.exists (fun fk ->
                                     same fk.Name name
+                                    && independentOwnName name
                                     && startsWith (localColumns fk) members)
                             | _ -> false
                         if not collisions.IsEmpty && not ownFkPromotion then
