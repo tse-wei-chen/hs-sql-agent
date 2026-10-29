@@ -129,19 +129,22 @@ module internal RewriteCatalogModel =
             |> Seq.map (fun table ->
                 RewriteResourceBudget.checkpoint ()
                 let target = sameIdentity table.QualifiedName name
-                let columns =
+                let columns : System.Collections.Generic.IReadOnlyList<SqlCatalogColumn> =
                     if target then
                         table.Columns
                         |> Seq.map (fun col ->
                             SqlCatalogColumn(renamed col.Name, col.TypeName, col.Nullable))
                         |> Seq.toArray |> Array.AsReadOnly
+                        :> System.Collections.Generic.IReadOnlyList<SqlCatalogColumn>
                     else table.Columns
-                let indexes =
+                let indexes : System.Collections.Generic.IReadOnlyList<SqlCatalogIndex> =
+
                     if target then
                         table.Indexes
                         |> Seq.map (fun index ->
                             SqlCatalogIndex(index.Name, renameColumns index.Columns))
                         |> Seq.toArray |> Array.AsReadOnly
+                        :> System.Collections.Generic.IReadOnlyList<SqlCatalogIndex>
                     else table.Indexes
                 let mutable changedConstraints = false
                 let constraints =
