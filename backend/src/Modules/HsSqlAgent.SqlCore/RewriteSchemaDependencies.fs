@@ -31,7 +31,7 @@ module internal RewriteSchemaDependencies =
             d.Kind = SqlCatalogConstraintKind.ForeignKey)
              && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name.DisplayName
                      || (dialect = SqlAgentToolType.MySQL
-                         && RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroForeignKeys
+                         && RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroCatalog
                              profile state name columns constraints)) then
             Unproven "Foreign-key table resolution needs a proven provider identifier case/collation contract."
         else
