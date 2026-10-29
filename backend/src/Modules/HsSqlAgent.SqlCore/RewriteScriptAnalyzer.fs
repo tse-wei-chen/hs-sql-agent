@@ -2576,6 +2576,10 @@ module internal RewriteScriptAnalyzer =
                     let mutable proceduralDefinitions : SqlProceduralDefinition list = []
                     let mutable sessionOperation = SqlStatementEffectOperation.Unknown
                     let mutable controlOperation = SqlTransactionControlOperation.None
+                    let mutable sourceMatchCardinality =
+                        if syntax.Kind = SqlScriptStatementKind.Mutation then
+                            SqlMutationSourceMatchCardinality.Unverified
+                        else SqlMutationSourceMatchCardinality.NotApplicable
                     let status, effects, certainty, bindingStatus, nameStatus, typeStatus, next, changes, diagnostics =
                         if syntax.Status = SqlScriptParseStatus.Invalid then
                             SqlStatementAnalysisStatus.Invalid, SqlEffectKind.None,
@@ -2733,8 +2737,11 @@ module internal RewriteScriptAnalyzer =
                                 if syntax.Status = SqlScriptParseStatus.Parsed
                                    && (syntax.Kind = SqlScriptStatementKind.Query
                                        || syntax.Kind = SqlScriptStatementKind.Mutation) then
-                                    RewriteCatalogBinding.verify sourceDialect sourceProfile
-                                        (RewriteSessionAnalyzer.scope session) current syntax
+                                    let binding, names, types, state, certainty, diagnostics, matchProof =
+                                        RewriteCatalogBinding.verify sourceDialect sourceProfile
+                                            (RewriteSessionAnalyzer.scope session) current syntax
+                                    sourceMatchCardinality <- matchProof
+                                    binding, names, types, state, certainty, diagnostics
                                 else
                                     SqlCatalogBindingStatus.NotApplicable,
                                     SqlCatalogBindingStatus.NotApplicable,
@@ -2854,7 +2861,7 @@ module internal RewriteScriptAnalyzer =
                             readOnly securityIntents, readOnly securityDependencies,
                             readOnly utilityIntents, readOnly proceduralIntents,
                             readOnly proceduralDefinitions,
-                            provenance, readOnly allDiagnostics)))
+                            provenance, sourceMatchCardinality, readOnly allDiagnostics)))
             SqlScriptAnalysisResult(
                 readOnly results, readOnly errors, current,
                 RewriteTransactionAnalyzer.status transaction,

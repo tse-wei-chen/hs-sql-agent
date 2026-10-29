@@ -106,6 +106,31 @@ for all six SQL dialects. It does not conflate qualified source names or
 change lexical outer-scope shadowing, executable SQL permissions or the
 `PartiallyAnalyzed` status of static scripts.
 
+## Static source-match cardinality for joined mutations
+
+`SqlStatementAnalysis.SourceMatchCardinality` is an independent, non-executable
+cardinality result for PostgreSQL `UPDATE ... FROM` and `DELETE ... USING`:
+`NotApplicable`, `Unverified`, or `ProvenAtMostOne`. It is deliberately
+**not** part of `CatalogBinding`: verified names and type families do not prove
+how many source rows can match one target row.
+
+In a fully known, closed Virtual Catalog, a proven physical PRIMARY KEY or
+UNIQUE constraint can establish at most one row from an auxiliary source
+when **every** key column is constrained by a mandatory `=` equality to
+a literal, the target row, or an already proven single source row. Multiple
+source relations are handled by a bounded fixpoint, so unanchored cycles,
+`OR`, non-key predicates, partial composite keys, ordinary non-unique
+indexes and View outputs do **not** create a positive proof. Foreign keys
+are not uniqueness proofs. The analyzer uses the closed, bound F# AST,
+not a SQL text pattern or assumptions about actual records.
+
+The result describes a *hypothetical* row-matching upper bound under the
+modeled schema, not a guarantee of deterministic UPDATE value evaluation,
+live server uniqueness, or runtime behavior. An unknown/invalid Catalog,
+unvalidated statement or other SQL provider remains unverified. No SQL
+execution permission, mutation approval, transaction assurance, or effect
+coverage is upgraded by this property.
+
 ## Mutation source relations versus physical write targets
 
 In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,

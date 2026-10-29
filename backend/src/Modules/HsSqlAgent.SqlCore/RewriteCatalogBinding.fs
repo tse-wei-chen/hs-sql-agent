@@ -14,6 +14,11 @@ open HsSqlAgent.SqlCore.SqlParsing
 /// partially-modeled provider.
 module internal RewriteCatalogBinding =
 
+    let private fallbackMatch (syntax: SqlScriptStatementSyntax) =
+        if syntax.Kind = SqlScriptStatementKind.Mutation then
+            SqlMutationSourceMatchCardinality.Unverified
+        else SqlMutationSourceMatchCardinality.NotApplicable
+
     let private report (syntax: SqlScriptStatementSyntax) code stage category message =
         SqlDiagnostic(code, stage, category, message, syntax.Span)
 
@@ -47,24 +52,25 @@ module internal RewriteCatalogBinding =
                 SqlCatalogBindingStatus.Verified, binding
             else
                 binding, SqlCatalogBindingStatus.NotApplicable
-        binding, nameStatus, typeStatus, analysis, SqlCatalogKnowledge.Unknown, [adjusted]
+        binding, nameStatus, typeStatus, analysis, SqlCatalogKnowledge.Unknown, [adjusted],
+        fallbackMatch syntax
 
     let private unverified syntax code message =
         let d = report syntax code SqlDiagnosticStage.Binding SqlDiagnosticCategory.Capability message
         SqlCatalogBindingStatus.Unverified, SqlCatalogBindingStatus.Unverified,
         SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-        SqlCatalogKnowledge.Unknown, [d]
+        SqlCatalogKnowledge.Unknown, [d], fallbackMatch syntax
 
     let private typeUnverified syntax code message =
         let d = report syntax code SqlDiagnosticStage.SemanticValidation SqlDiagnosticCategory.Capability message
         SqlCatalogBindingStatus.Unverified, SqlCatalogBindingStatus.Verified,
         SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-        SqlCatalogKnowledge.Unknown, [d]
+        SqlCatalogKnowledge.Unknown, [d], fallbackMatch syntax
 
-    let private verified =
+    let private verified sourceMatch =
         SqlCatalogBindingStatus.Verified, SqlCatalogBindingStatus.Verified,
         SqlCatalogBindingStatus.Verified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-        SqlCatalogKnowledge.Known, []
+        SqlCatalogKnowledge.Known, [], sourceMatch
 
     let verify sourceDialect (profile: SqlProviderCapabilityProfile | null)
                (scoped: RewriteCatalogSchemaResolution.SchemaScope)
@@ -138,7 +144,8 @@ module internal RewriteCatalogBinding =
                         RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteSchemaTypeValidation.verifyVirtual sourceDialect catalogForBinding namesChecked)
                         |> ignore
-                        verified
+                        verified (RewriteMutationSourceMatchProof.classify
+                                      sourceDialect catalogForBinding bound)
             with
             | :? SqlCompilationException as ex
                 when not (Object.ReferenceEquals(ex.Diagnostic, null))

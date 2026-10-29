@@ -497,6 +497,7 @@ type SqlStatementAnalysis internal (
     proceduralIntents: IReadOnlyList<SqlProceduralIntent>,
     proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>,
     transactionProvenance: SqlTransactionEffectProvenance,
+    sourceMatchCardinality: SqlMutationSourceMatchCardinality,
     diagnostics: IReadOnlyList<SqlDiagnostic>) =
     member _.Syntax = syntax
     member _.Kind = syntax.Kind
@@ -504,12 +505,11 @@ type SqlStatementAnalysis internal (
     member _.Effects = effects
     member _.Certainty = certainty
     member _.CatalogBinding = catalogBinding
-    /// Initially unproven: joined Mutation cardinality requires a separate
-    /// structural proof. Ordinary DQL/DDL does not have a Mutation source.
-    member _.SourceMatchCardinality =
-        if syntax.Kind = SqlScriptStatementKind.Mutation then
-            SqlMutationSourceMatchCardinality.Unverified
-        else SqlMutationSourceMatchCardinality.NotApplicable
+    /// Hypothetical upper bound on source-row combinations per fixed target
+    /// row, based only on modeled uniqueness and mandatory key equalities.
+    /// This is not a proof of actual server data, expression determinism or
+    /// execution authorization.
+    member _.SourceMatchCardinality = sourceMatchCardinality
     /// Proof of physical and scoped SQL identifiers against the Virtual Catalog.
     member _.NameBinding = nameBinding
     /// Proof of the modeled source-dialect value categories; independent of name binding.
