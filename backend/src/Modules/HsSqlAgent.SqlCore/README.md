@@ -1959,7 +1959,12 @@ Typed metadata is part of compilation fingerprint and evidence identity.
 
 With the default DML policy, UPDATE and DELETE require a WHERE clause. The compiler now also
 rejects WHERE conditions **provably TRUE for every row**, such as `WHERE 1 = 1`,
-`WHERE 1 = 1 OR id = 5`, and `WHERE NOT (1 = 0)`.
+`WHERE 1 = 1 OR id = 5`, `WHERE 1 < 2`, `WHERE 5 >= 5`, and
+`WHERE NOT (3 > 4)`. It also proves integer/decimal constant order comparisons
+inside AND/OR/NOT, without treating unknown column-dependent predicates as true.
+Only same-kind exact integer/decimal literals may establish an ordering proof;
+mixed numeric types, floating-point, NULL, implicit conversions, arbitrary
+functions and collations remain unproven.
 These denials carry stable Policy-stage diagnostic codes
 `SQL_POLICY_UPDATE_UNBOUNDED_PREDICATE` and
 `SQL_POLICY_DELETE_UNBOUNDED_PREDICATE`. Explicit full-table DML authorization bypasses
