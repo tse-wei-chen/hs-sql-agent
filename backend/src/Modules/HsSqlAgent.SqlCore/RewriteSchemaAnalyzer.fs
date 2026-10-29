@@ -1119,6 +1119,33 @@ module internal RewriteSchemaAnalyzer =
                  && word () = "DROP" && index + 1 < tokens.Length
                  && tokenWord tokens.[index + 1] = "FOREIGN" then
                 mysqlForeignKeyDropAction ()
+            elif sourceDialect = SqlAgentToolType.MySQL
+                 && word () = "ADD" && index + 1 < tokens.Length
+                 && (tokenWord tokens.[index + 1] = "CONSTRAINT"
+                     || tokenWord tokens.[index + 1] = "FOREIGN") then
+                // Native ALTER ADD FOREIGN KEY syntax is structurally typed
+                // but does NOT prove existing child row referential integrity.
+                // The semantic analyzer must remain fail-closed for such
+                // data-dependent additions, even after CREATE TABLE earlier
+                // in the script: DDL can implicitly commit and other writers
+                // may have modified the rows in the meantime.
+                expect "ADD"
+                let name =
+                    if accept "CONSTRAINT" then namePart ()
+                    else null
+                if not (accept "FOREIGN") then raise OutsideSubset
+                expect "KEY"
+                let localColumns = columnNames ()
+                expect "REFERENCES"
+                let parent = qualifiedName ()
+                let remoteColumns = columnNames ()
+                endOfStatement ()
+                let constraintInfo =
+                    SqlCatalogConstraint(
+                        name, SqlCatalogConstraintKind.ForeignKey,
+                        Array.AsReadOnly(List.toArray localColumns),
+                        parent, Array.AsReadOnly(List.toArray remoteColumns))
+                Recognized(AddConstraint(table, constraintInfo))
             elif mysqlIndexAction then
                 let adding = accept "ADD"
                 if not adding then expect "DROP"
