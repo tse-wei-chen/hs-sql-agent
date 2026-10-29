@@ -134,6 +134,9 @@ module internal RewriteSchemaAnalyzer =
         /// Oracle and PostgreSQL physical column rename; index/constraint
         /// lineage is checked and atomically rewritten by the Catalog analyzer.
         | RenameColumn of table: SqlCatalogQualifiedName * oldName: string * newName: string
+        /// PostgreSQL / Oracle single-constraint physical identity rename.
+        /// Key-backed index behavior and name scope are provider-specific.
+        | RenameConstraint of table: SqlCatalogQualifiedName * oldName: string * newName: string
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list * ifNotExists: bool
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
         /// Exact PostgreSQL index relation identity, never the owning table.
@@ -1056,17 +1059,26 @@ module internal RewriteSchemaAnalyzer =
                 || sourceDialect = SqlAgentToolType.Postgres)
                && word () = "RENAME" then
                 expect "RENAME"
-                // Oracle requires COLUMN. PostgreSQL permits both
-                // RENAME COLUMN old TO new and RENAME old TO new.
-                if sourceDialect = SqlAgentToolType.Oracle then
-                    expect "COLUMN"
+                if accept "CONSTRAINT" then
+                    // Both providers share the spelling, not the physical
+                    // constraint/index namespace or capability proof.
+                    let oldName = namePart ()
+                    expect "TO"
+                    let newName = namePart ()
+                    endOfStatement ()
+                    Recognized(RenameConstraint(table, oldName, newName))
                 else
-                    accept "COLUMN" |> ignore
-                let oldName = namePart ()
-                expect "TO"
-                let newName = namePart ()
-                endOfStatement ()
-                Recognized(RenameColumn(table, oldName, newName))
+                    // Oracle requires COLUMN. PostgreSQL permits both
+                    // RENAME COLUMN old TO new and RENAME old TO new.
+                    if sourceDialect = SqlAgentToolType.Oracle then
+                        expect "COLUMN"
+                    else
+                        accept "COLUMN" |> ignore
+                    let oldName = namePart ()
+                    expect "TO"
+                    let newName = namePart ()
+                    endOfStatement ()
+                    Recognized(RenameColumn(table, oldName, newName))
             elif mysqlIndexAction then
                 let adding = accept "ADD"
                 if not adding then expect "DROP"
