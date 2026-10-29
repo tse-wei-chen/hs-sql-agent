@@ -91,8 +91,11 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexLiveParityTests
     }
 
     [Fact]
-    public async Task PhysicalFkSupportIndexNameCollisionStillFailsBeforeCovering()
+    public async Task SameNameCoveringIndexMayBeReplacedByInnoDbButCatalogRemainsConservative()
     {
+        // The physical engine CAN replace its own implicit FK-support index
+        // under the same name, but SqlCore cannot establish its provenance
+        // from constraint metadata alone. Fail closed on this distinct case.
         var model = SqlCoreFacade.AnalyzeScript(Graph +
             "CREATE INDEX fk_child ON child(pid,note);", SqlAgentToolType.MySQL,
             SqlCatalogState.KnownEmpty(), Linux, TestContext.Current.CancellationToken);
@@ -101,10 +104,16 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexLiveParityTests
         {
             await Execute(db, model.Statements[0].Syntax.Text);
             await Execute(db, model.Statements[1].Syntax.Text);
-            var physical = await ReadPhysical(db, database);
-            await Assert.ThrowsAsync<MySqlException>(async () =>
-                await Execute(db, "CREATE INDEX fk_child ON child(pid,note)"));
-            Assert.Equal(physical, await ReadPhysical(db, database));
+            Assert.Equal(new[] { "pid" },
+                (await ReadPhysical(db, database))
+                    .Where(x => x.Name == "fk_child")
+                    .OrderBy(x => x.Ordinal).Select(x => x.Column).ToArray());
+            await Execute(db, "CREATE INDEX fk_child ON child(pid,note)");
+            Assert.Equal(new[] { "pid", "note" },
+                (await ReadPhysical(db, database))
+                    .Where(x => x.Name == "fk_child")
+                    .OrderBy(x => x.Ordinal).Select(x => x.Column).ToArray());
+            Assert.Equal(1, await CountForeignKey(db, database));
         });
     }
 
