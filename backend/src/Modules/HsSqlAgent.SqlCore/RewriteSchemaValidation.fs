@@ -733,6 +733,25 @@ module internal RewriteSchemaValidation =
                 let current = makeScope None (target :: otherSources)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun assignment ->
+                    // Real Oracle 26 direct-join UPDATE rejects unqualified
+                    // SET columns that are visible in both the physical
+                    // target and a FROM source (ORA-00918). Resolving the
+                    // assignment against targetScope alone is not enough.
+                    // Only explicitly target-qualified assignments can
+                    // disambiguate the column on Oracle.
+                    if catalog.Dialect = SqlAgentToolType.Oracle
+                       && not update.From.IsEmpty then
+                        match Identifier.parts assignment.Target with
+                        | [ part ] ->
+                            let name = keyPart catalog.Dialect part
+                            if otherSources |> List.exists (fun other ->
+                                RewriteResourceBudget.checkpoint ()
+                                countColumn other name > 0) then
+                                reject "SQL_SCHEMA_UPDATE_ASSIGNMENT_AMBIGUOUS" doc.Span (
+                                    "Oracle direct-join UPDATE SET column '" + name
+                                    + "' is ambiguous between the target and a FROM relation; "
+                                    + "qualify it with the update target.")
+                        | _ -> ()
                     column catalog targetScope doc.Span assignment.Target
                     expression catalog emptyCtes current Span.unknown assignment.Value)
                 update.Where |> Option.iter (expression catalog emptyCtes current Span.unknown)

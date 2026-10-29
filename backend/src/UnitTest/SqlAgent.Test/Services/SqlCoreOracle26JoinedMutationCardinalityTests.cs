@@ -49,19 +49,19 @@ public sealed class SqlCoreOracle26JoinedMutationCardinalityTests
     {
         string[] statements =
         [
-            "UPDATE dest SET payload = s.payload FROM lookup s WHERE dest.id = s.id",
+            "UPDATE dest SET dest.payload = s.payload FROM lookup s WHERE dest.id = s.id",
             "DELETE FROM dest FROM lookup s WHERE s.id = dest.id",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE s.id = 17",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE s.id = 17",
             "DELETE FROM dest FROM lookup s WHERE 17 = s.id",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE dest.id = s.bridge AND s.bridge = s.id",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE dest.id = s.bridge AND s.bridge = s.id",
             "DELETE FROM dest FROM lookup s WHERE s.id = s.bridge AND s.bridge = dest.id",
-            "UPDATE dest SET payload = 1 FROM lookup s, extra e WHERE dest.id = s.id AND s.id = e.id",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s, extra e WHERE dest.id = s.id AND s.id = e.id",
             "DELETE FROM dest FROM lookup s, extra e WHERE dest.id = s.id AND s.id = e.id",
-            "UPDATE dest SET payload = 1 FROM lookup s, extra e WHERE dest.id = s.bridge AND s.bridge = s.id AND s.id = e.bridge AND e.bridge = e.id",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s, extra e WHERE dest.id = s.bridge AND s.bridge = s.id AND s.id = e.bridge AND e.bridge = e.id",
             "DELETE FROM dest FROM lookup s, extra e WHERE e.id = e.bridge AND e.bridge = s.id AND s.id = s.bridge AND s.bridge = dest.id",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE s.id = dest.bucket",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE s.id = dest.bucket",
             "DELETE FROM dest FROM lookup s WHERE s.id = s.bridge AND s.bridge = 42",
-            "UPDATE dest SET payload = 1 FROM comp c WHERE c.k1 = dest.id AND c.k2 = 2",
+            "UPDATE dest SET dest.payload = 1 FROM comp c WHERE c.k1 = dest.id AND c.k2 = 2",
             "DELETE FROM dest FROM comp c WHERE c.k1 = c.bridge AND c.bridge = dest.id AND c.k2 = 2"
         ];
         foreach (var statement in statements) yield return [statement];
@@ -86,23 +86,23 @@ public sealed class SqlCoreOracle26JoinedMutationCardinalityTests
     {
         string[] statements =
         [
-            "UPDATE dest SET payload = 1 FROM bag b WHERE dest.id = b.id",
+            "UPDATE dest SET dest.payload = 1 FROM bag b WHERE dest.id = b.id",
             "DELETE FROM dest FROM bag b WHERE b.id = dest.id",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE dest.id = s.bridge",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE dest.id = s.bridge",
             "DELETE FROM dest FROM lookup s WHERE s.bridge = dest.id",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE s.id = s.bridge",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE s.id = s.bridge",
             "DELETE FROM dest FROM lookup s WHERE s.id = s.bridge",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE dest.id = s.bridge AND (s.bridge = s.id OR s.payload = 4)",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE dest.id = s.bridge AND (s.bridge = s.id OR s.payload = 4)",
             "DELETE FROM dest FROM lookup s WHERE dest.id = s.id OR s.id = 2",
-            "UPDATE dest SET payload = 1 FROM lookup s, bag b WHERE dest.id = s.id AND b.id = s.id",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s, bag b WHERE dest.id = s.id AND b.id = s.id",
             "DELETE FROM dest FROM lookup s, bag b WHERE dest.id = s.id AND b.id = s.id",
-            "UPDATE dest SET payload = 1 FROM comp c WHERE c.k1 = dest.id",
+            "UPDATE dest SET dest.payload = 1 FROM comp c WHERE c.k1 = dest.id",
             "DELETE FROM dest FROM comp c WHERE c.k1 = dest.id AND c.k2 = c.bridge",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE s.id = '1'",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE s.id = '1'",
             "DELETE FROM dest FROM lookup s WHERE s.id = 1.5",
-            "UPDATE dest SET payload = 1 FROM textkey t WHERE dest.id = t.id",
+            "UPDATE dest SET dest.payload = 1 FROM textkey t WHERE dest.id = t.id",
             "DELETE FROM dest FROM textkey t WHERE dest.id = t.id",
-            "UPDATE dest SET payload = 1 FROM lookup s WHERE s.id > dest.id",
+            "UPDATE dest SET dest.payload = 1 FROM lookup s WHERE s.id > dest.id",
             "DELETE FROM dest FROM lookup s WHERE NOT (s.id = dest.id)"
         ];
         foreach (var statement in statements) yield return [statement];
@@ -121,7 +121,7 @@ public sealed class SqlCoreOracle26JoinedMutationCardinalityTests
     }
 
     [Theory]
-    [InlineData("UPDATE dest SET payload = 1 FROM lookup s WHERE dest.id = s.id")]
+    [InlineData("UPDATE dest SET dest.payload = 1 FROM lookup s WHERE dest.id = s.id")]
     [InlineData("DELETE FROM dest FROM lookup s WHERE dest.id = s.id")]
     public void OlderOrUnspecifiedOracleVersionCannotInheritJoinProof(string sql)
     {
@@ -137,14 +137,14 @@ public sealed class SqlCoreOracle26JoinedMutationCardinalityTests
     [Fact]
     public void OpenWorldCannotMintOracle26UniqueMatchEvidence()
     {
-        var stmt = One("UPDATE dest SET payload = 1 FROM lookup s WHERE dest.id = s.id",
+        var stmt = One("UPDATE dest SET dest.payload = 1 FROM lookup s WHERE dest.id = s.id",
             state: SqlCatalogState.Unknown());
         Assert.Equal(SqlCatalogBindingStatus.Unverified, stmt.CatalogBinding);
         Assert.Equal(SqlMutationSourceMatchCardinality.Unverified, stmt.SourceMatchCardinality);
     }
 
     [Theory]
-    [InlineData("UPDATE dest SET payload = 1 WHERE id = 1")]
+    [InlineData("UPDATE dest SET dest.payload = 1 WHERE id = 1")]
     [InlineData("DELETE FROM dest WHERE id = 1")]
     [InlineData("INSERT INTO dest(id,payload) VALUES (1,1)")]
     [InlineData("SELECT id FROM dest")]

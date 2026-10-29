@@ -216,6 +216,24 @@ report `Unverified` for joined mutations unless their own provider
 contract is proved. As before, cardinality evidence never authorizes
 execution or upgrades DML approvals, runtime certainty or effect coverage.
 
+### Oracle 26 direct-join UPDATE assignment name parity
+
+Real Oracle 26ai live DML detects `ORA-00918` if an UPDATE SET target
+is **unqualified** and a `FROM` relation has a column with the same
+name. Source-name/type binding previously looked only in the physical
+target for assignment names, yielding an incorrectly `Verified`
+statement. Strict Catalog binding now fails closed with
+`SQL_SCHEMA_UPDATE_ASSIGNMENT_AMBIGUOUS` in that case. The canonical
+F# parser admits Oracle-specific `SET target.column = value` as the
+unambiguous, target-qualified form; the qualifier must denote the
+actual target table (or its parsed target alias), never a FROM source
+alias. Other dialects retain their original assignment grammar.
+
+The dedicated pinned real-Oracle integration job executes both the
+valid target-qualified DML and the raw ambiguous spelling, checking
+Oracle physical results, `ORA-00918` and `ORA-30926`. This only
+strengthens static name evidence; it does not authorize execution.
+
 ### Oracle 26: conservatively proven direct-join NUMBER keys
 
 Oracle 26+ native `UPDATE ... FROM` and `DELETE ... FROM` have a
