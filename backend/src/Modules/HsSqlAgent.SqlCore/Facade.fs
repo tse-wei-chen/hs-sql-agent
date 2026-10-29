@@ -209,7 +209,9 @@ module private FacadeResult =
                 value,
                 noDiagnostics,
                 evidenceForValue value)
-        with ex ->
+        with
+        | :? OperationCanceledException -> reraise()
+        | ex ->
             SqlCoreTryResult<'T>.CapturedFailure(
                 codeFor ex,
                 ex.Message,
@@ -600,3 +602,68 @@ type SqlCoreFacade private () =
                 sourceDialect,
                 targetProvider,
                 validationContext))
+
+    /// Opt-in cancellation is scoped to this synchronous compiler attempt.
+    /// The same validated F# pipeline remains the only producer of commands.
+    static member CompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileQuery(
+                sql, sourceDialect, targetProvider, validationContext, executionPolicy))
+
+    static member CompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileDml(
+                sql, sourceDialect, targetProvider, validationContext))
+
+    static member CompileQuery(
+        parsed: ParsedStatement,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileQuery(
+                parsed, targetProvider, validationContext, executionPolicy))
+
+    static member CompileDml(
+        parsed: ParsedStatement,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        cancellationToken: CancellationToken) : CompiledSqlCommand =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.CompileDml(
+                parsed, targetProvider, validationContext))
+
+    /// Cancellation propagates as OperationCanceledException and is never
+    /// represented as a failed SQL validation or ordinary Try result.
+    static member TryCompileQuery(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        executionPolicy: SqlExecutionPlanPolicy,
+        cancellationToken: CancellationToken) : SqlCoreTryResult<CompiledSqlCommand> =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.TryCompileQuery(
+                sql, sourceDialect, targetProvider, validationContext, executionPolicy))
+
+    static member TryCompileDml(
+        sql: string,
+        sourceDialect: SqlAgentToolType,
+        targetProvider: SqlAgentToolType,
+        validationContext: SqlPlanValidationContext,
+        cancellationToken: CancellationToken) : SqlCoreTryResult<CompiledSqlCommand> =
+        RewriteResourceBudget.withCancellation cancellationToken (fun () ->
+            SqlCoreFacade.TryCompileDml(
+                sql, sourceDialect, targetProvider, validationContext))
