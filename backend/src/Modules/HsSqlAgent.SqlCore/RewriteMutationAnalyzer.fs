@@ -5,6 +5,7 @@ open System.Collections.Generic
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.Enums
+open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
 
