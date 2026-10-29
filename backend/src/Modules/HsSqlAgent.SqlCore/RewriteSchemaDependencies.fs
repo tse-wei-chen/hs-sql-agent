@@ -363,8 +363,17 @@ module internal RewriteSchemaDependencies =
             // MySQL InnoDB FK symbols are unique per schema, not per child
             // table. The physical engine rejects duplicates across children.
             if dialect = SqlAgentToolType.MySQL then
+                // When validateCreate is reused for ALTER ADD, the
+                // target's unchanged FK constraints are already present
+                // in the Catalog. Their symbols must not be compared to
+                // themselves as if they came from a *different* table.
+                // The proposed same-table set is checked separately by
+                // the named-constraint duplicate check above. Preserve
+                // MySQL's schema-wide uniqueness across other owners.
                 let knownForeignNames =
                     state.Tables
+                    |> Seq.filter (fun table ->
+                        not (equals table.QualifiedName.Key name.Key))
                     |> Seq.collect (fun table -> table.Constraints)
                     |> Seq.filter (fun c ->
                         c.Kind = SqlCatalogConstraintKind.ForeignKey

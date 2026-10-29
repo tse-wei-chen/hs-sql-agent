@@ -387,6 +387,60 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL ALTER FOREIGN KEY — incremental dependency graph and row-proof boundary
+
+`ALTER TABLE ... DROP FOREIGN KEY fk_symbol` and the existing proven
+multi-symbol DROP grammar update the immutable Virtual Catalog in statement
+order. The bounded **single-statement atomic** form
+`ALTER TABLE child DROP FOREIGN KEY fk_old, ADD INDEX ix_new(cols)`
+is also recognized, including multiple preceding named FK drops and
+one final named non-UNIQUE `ADD KEY|INDEX` clause. Both actions are
+validated against the same original known table, with the index checked
+against the *resulting* FK dependency graph and possible residual
+physical names before **any** Catalog effect is published. It produces
+one immutable Catalog transition with ordered `DropConstraint` and
+`CreateIndex` evidence, never a speculative partial-success state.
+Reusing a possibly surviving FK-index name, duplicate FK symbols,
+missing indexed columns, mixed clause order, multiple new indexes and
+mixed DROP COLUMN are rejected unless a separate atomic proof exists.
+
+Every subsequent `CREATE INDEX`, `ALTER ADD INDEX|KEY` or
+`DROP INDEX` recomputes FK left-prefix connected components from the
+**remaining** named constraints, not from a stale CREATE TABLE graph.
+Dropping a shorter or longer member can split or shrink a shared-prefix
+group, allowing new independently named support indexes or a proven
+backup-before-DROP sequence. Previously removed FK symbols and their
+possibly surviving implicit physical index names stay in the bounded
+residual-name lineage: DROP FK never proves DROP INDEX. Name reuse is
+denied when an implicit index may still occupy that name, even when no
+FK constraint by that name remains in the Catalog. All mutations stay
+table-local and preserve immutable before/after snapshots.
+
+MySQL 8 `ALTER TABLE ... ADD [CONSTRAINT symbol] FOREIGN KEY (columns)
+REFERENCES parent(columns)` now has a dedicated **typed DDL syntax path**.
+It binds the table, local columns, parent identity and referenced
+columns as one `AddConstraint` value; it is no longer conflated with
+unknown/opaque ALTER SQL. Invalid duplicate symbols and invalid known
+bindings are checked semantically, whereas an otherwise structurally
+valid addition **must still be rejected as unproven** because the
+Catalog does not know the existing child rows. Even a CREATE TABLE
+earlier in one analyzed script does not prove the table remains empty
+under concurrent writes and MySQL's implicit DDL commits. Thus no
+`Known` constraint delta is issued for ALTER ADD FK, no physical
+auto-index name is guessed, and the subsequent Catalog is tainted
+if the unsupported data-dependent DDL might have run.
+
+No implicit name, `ON DELETE`/`ON UPDATE` action, composite ADD/DROP,
+or index-name override is upgraded without separate proofs. Other five
+dialects retain their existing grammar and safety boundaries. CI runs
+positive and negative ordered grammar checks and independent real
+MySQL 8 InnoDB differential verification of the exact physical
+`information_schema.STATISTICS` indexes and
+`REFERENTIAL_CONSTRAINTS` after every modeled DROP transition.
+A separate empty-table live ADD confirms that MySQL may accept the
+statement while static analysis must remain fail-closed without row
+evidence. None of these analyses executes or authorizes production SQL.
+
 ## MySQL typed shared-FK left-prefix dependency graph
 
 Named foreign keys are **logical obligations**, not guarantees of separately
