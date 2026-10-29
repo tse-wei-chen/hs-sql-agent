@@ -26,7 +26,8 @@ public sealed class SqlCoreMySqlForeignKeyLifecycleTests
         SqlCatalogState? state = null, SqlProviderCapabilityProfile? profile = null,
         SqlAgentToolType dialect = SqlAgentToolType.MySQL) =>
         SqlCoreFacade.AnalyzeScript(sql, dialect, state ?? SqlCatalogState.KnownEmpty(),
-            profile ?? ExactLinux, TestContext.Current.CancellationToken);
+            profile ?? (dialect == SqlAgentToolType.MySQL ? ExactLinux : null),
+            TestContext.Current.CancellationToken);
 
     private const string Graph =
         "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY, code INT NOT NULL UNIQUE);" +
@@ -210,6 +211,22 @@ public sealed class SqlCoreMySqlForeignKeyLifecycleTests
     {
         var r = Analyze("ALTER TABLE child DROP FOREIGN KEY fk_child;", dialect: dialect);
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, Assert.Single(r.Statements).Status);
+    }
+
+    [Fact]
+    public void DuplicateMySqlForeignKeySymbolAcrossChildTablesIsRejected()
+    {
+        var r = Analyze(
+            "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY);" +
+            "CREATE TABLE child_a(pid INT, CONSTRAINT fk_shared FOREIGN KEY(pid) REFERENCES parent(id));" +
+            "CREATE TABLE child_b(pid INT, CONSTRAINT fk_shared FOREIGN KEY(pid) REFERENCES parent(id));");
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[1].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, r.Statements[2].Status);
+        Assert.Empty(r.Statements[2].Changes);
+        Assert.Same(r.Statements[2].CatalogBefore, r.Statements[2].CatalogAfter);
+        Assert.Equal(2, r.FinalCatalog.Tables.Count);
+        Assert.True(r.FinalCatalog.IsClosedWorld);
     }
 
     [Fact]
