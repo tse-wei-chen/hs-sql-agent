@@ -829,6 +829,31 @@ fail-closed.
 Only closed-world, fully known virtual Catalogs can mint exact index
 changes. This is static SQL analysis, not server-side schema attestation.
 
+## MySQL ALTER TABLE secondary-index lifecycle
+
+MySQL now supports `ALTER TABLE table ADD INDEX name(columns)`,
+`ADD KEY name(columns)`, `DROP INDEX name`, and `DROP KEY name`
+through the **same closed F#** `CreateIndex` and `DropIndex` DDL union
+cases used by standalone `CREATE INDEX` and `DROP INDEX ... ON table`.
+The source dialect is checked before recognition; no new runtime
+executor or Query/Mutation compiler route is introduced.
+
+A physical-column-only, named index on a known table can produce an
+exact Catalog delta; dropping an existing tracked standalone index
+removes only the index on that target table. Index identities are
+table-local in MySQL, so different tables may carry the same name.
+Immutable Catalog snapshots preserve earlier states, and the existing
+column-dependency proof prevents removing an indexed column before its
+index is dropped.
+
+Unique, unnamed, expression, prefix-length, descending and
+index-option syntax, and multi-action ALTER statements are not
+silently normalized. Missing target tables or index identities and
+unknown Catalogs do not publish a false Known delta; implicit
+PRIMARY/UNIQUE-backed index identity is not claimed as standalone.
+The real MySQL DDL differential corpus checks all **25** scripts after
+every statement; the analyzer itself never executes SQL.
+
 ## SQL Server 2016+ conditional DROP INDEX proof
 
 The SQL Server source analyzer supports `DROP INDEX IF EXISTS index_name

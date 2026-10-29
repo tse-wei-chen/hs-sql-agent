@@ -38,6 +38,15 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
         ("quoted_simple", "CREATE TABLE `order_items`(`id` INT NOT NULL, `label` VARCHAR(64)); ALTER TABLE `order_items` ADD COLUMN `amount` INT;"),
         ("alter_then_index", "CREATE TABLE reports(id INT); ALTER TABLE reports ADD COLUMN tag VARCHAR(64); CREATE INDEX idx_reports_tag ON reports(tag);"),
         ("indexes_drop_then_column", "CREATE TABLE balances(id INT, memo VARCHAR(64)); CREATE INDEX idx_balances_memo ON balances(memo); DROP INDEX idx_balances_memo ON balances; ALTER TABLE balances DROP COLUMN memo;"),
+        ("alter_add_index", "CREATE TABLE orders(id INT, state VARCHAR(64)); ALTER TABLE orders ADD INDEX ix_state (state);"),
+        ("alter_add_key", "CREATE TABLE logs(id INT, severity INT); ALTER TABLE logs ADD KEY ix_severity (severity);"),
+        ("alter_drop_index", "CREATE TABLE orders(id INT, state VARCHAR(64)); CREATE INDEX ix_state ON orders(state); ALTER TABLE orders DROP INDEX ix_state;"),
+        ("alter_drop_key", "CREATE TABLE logs(id INT, severity INT); CREATE INDEX ix_severity ON logs(severity); ALTER TABLE logs DROP KEY ix_severity;"),
+        ("alter_index_roundtrip", "CREATE TABLE metrics(id INT, value INT); ALTER TABLE metrics ADD KEY ix_value (value); DROP INDEX ix_value ON metrics; CREATE INDEX ix_id ON metrics(id); ALTER TABLE metrics DROP KEY ix_id;"),
+        ("alter_two_table_namespace", "CREATE TABLE orders(id INT); CREATE TABLE events(id INT); ALTER TABLE orders ADD INDEX ix_shared (id); ALTER TABLE events ADD KEY ix_shared (id); ALTER TABLE events DROP INDEX ix_shared;"),
+        ("alter_add_after_column", "CREATE TABLE reports(id INT); ALTER TABLE reports ADD COLUMN tag VARCHAR(64); ALTER TABLE reports ADD INDEX ix_tag (tag);"),
+        ("alter_drop_then_column", "CREATE TABLE messages(id INT, body VARCHAR(64)); ALTER TABLE messages ADD INDEX ix_body (body); ALTER TABLE messages DROP KEY ix_body; ALTER TABLE messages DROP COLUMN body;"),
+        ("alter_quoted_identifiers", "CREATE TABLE `order_items`(`id` INT, `label` VARCHAR(64)); ALTER TABLE `order_items` ADD INDEX `ix_label` (`label`); ALTER TABLE `order_items` DROP INDEX `ix_label`;"),
         ("mixed_delete", "CREATE TABLE scratch(id INT); CREATE TABLE records(id INT, note VARCHAR(64)); DROP TABLE scratch; ALTER TABLE records ADD COLUMN active INT;")
     ];
 
@@ -45,11 +54,11 @@ public sealed class SqlCoreMySqlLiveDdlParityTests
         Scenarios.Select(x => new object[] { x.Id });
 
     [Fact]
-    public void CorpusHasSixteenDistinctConcreteMySqlDdlScripts()
+    public void CorpusHasTwentyFiveDistinctConcreteMySqlDdlScripts()
     {
-        Assert.Equal(16, Scenarios.Length);
-        Assert.Equal(16, Scenarios.Select(x => x.Id).Distinct().Count());
-        Assert.Equal(16, Scenarios.Select(x => x.Sql).Distinct().Count());
+        Assert.Equal(25, Scenarios.Length);
+        Assert.Equal(25, Scenarios.Select(x => x.Id).Distinct().Count());
+        Assert.Equal(25, Scenarios.Select(x => x.Sql).Distinct().Count());
         Assert.All(Scenarios, x => Assert.True(x.Sql.Count(c => c == ';') >= 2));
     }
 
