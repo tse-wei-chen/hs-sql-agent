@@ -194,35 +194,66 @@ module internal RewriteMutationSourceMatchProof =
                 |> Option.defaultValue []
             let anchored = HashSet<int>()
             anchored.Add 0 |> ignore // A single target row is already fixed.
+            // Build an undirected graph only from *mandatory* WHERE
+            // equalities. Edges retain their SQL NULL semantics; a NULL-safe
+            // path without any non-NULL evidence cannot prove nullable UNIQUE.
+            // This graph never contains predicates under OR, NOT, subqueries
+            // or unmodeled expression operators.
+            let graph = Dictionary<Operand, ResizeArray<Operand * bool>>()
+            let addEdge fromNode next isOrdinary =
+                match graph.TryGetValue fromNode with
+                | true, edges -> edges.Add((next, isOrdinary))
+                | false, _ ->
+                    let edges = ResizeArray<Operand * bool>()
+                    edges.Add((next, isOrdinary))
+                    graph.Add(fromNode, edges)
+            for (comparison, left, right) in equalities do
+                RewriteResourceBudget.checkpoint ()
+                let ordinary = comparison = BinaryOperator.Equal
+                addEdge left right ordinary
+                addEdge right left ordinary
+
+            let isNonNull value =
+                match value with
+                | FixedLiteral nonNull -> nonNull
+                | Field(index, name) ->
+                    relationByPosition.[index].NonNullColumns.Contains name
+
+            let isFixedByOtherSource source value =
+                match value with
+                | FixedLiteral _ -> true
+                | Field(index, _) ->
+                    index <> source && anchored.Contains index
+
             let constrains source column =
-                equalities
-                |> List.exists (fun (comparison, left, right) ->
-                    let other =
-                        match left, right with
-                        | Field(index, name), value when index = source && name = column -> Some value
-                        | value, Field(index, name) when index = source && name = column -> Some value
-                        | _ -> None
-                    let anchoredValue =
-                        match other with
-                        | Some(FixedLiteral _) -> true
-                        | Some(Field(index, _)) ->
-                            index <> source && anchored.Contains index
-                        | None -> false
-                    if not anchoredValue then false
-                    elif comparison = BinaryOperator.Equal then
-                        // Ordinary SQL '=' never matches NULL; nullable UNIQUE
-                        // keys still cannot match multiple NULL source rows.
-                        true
-                    else
-                        // IS NOT DISTINCT FROM can match many NULLs under a
-                        // nullable UNIQUE key. A positive proof requires one
-                        // non-NULL side, not just a unique key declaration.
-                        relationByPosition.[source].NonNullColumns.Contains column
-                        || match other with
-                           | Some(FixedLiteral true) -> true
-                           | Some(Field(index, name)) ->
-                               relationByPosition.[index].NonNullColumns.Contains name
-                           | _ -> false)
+                let first = Field(source, column)
+                // Each state tracks whether *this path* proves non-NULL:
+                // either a physical NOT NULL / PRIMARY KEY, a non-NULL
+                // literal, or an ordinary '=' anywhere along the path.
+                // The visited set bounds cycles without depending on the
+                // caller stack; no source is implicitly fixed by a cycle.
+                let pending = Queue<Operand * bool * bool>()
+                let visited = HashSet<Operand * bool * bool>()
+                pending.Enqueue((first, false, isNonNull first))
+                let mutable proven = false
+                while pending.Count > 0 && not proven do
+                    RewriteResourceBudget.checkpoint ()
+                    let value, hasOrdinary, hasNonNull = pending.Dequeue()
+                    if visited.Add((value, hasOrdinary, hasNonNull)) then
+                        if isFixedByOtherSource source value
+                           && (hasOrdinary || hasNonNull) then
+                            proven <- true
+                        else
+                            match graph.TryGetValue value with
+                            | false, _ -> ()
+                            | true, edges ->
+                                for (next, ordinary) in edges do
+                                    RewriteResourceBudget.checkpoint ()
+                                    pending.Enqueue((
+                                        next,
+                                        hasOrdinary || ordinary,
+                                        hasNonNull || ordinary || isNonNull next))
+                proven
             // Each newly fixed unique-key source may anchor another source.
             // A cycle of as-yet-unfixed sources cannot establish cardinality.
             let mutable changed = true
