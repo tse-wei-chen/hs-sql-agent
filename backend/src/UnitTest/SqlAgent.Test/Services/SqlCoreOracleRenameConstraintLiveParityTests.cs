@@ -183,8 +183,12 @@ public sealed class SqlCoreOracleRenameConstraintLiveParityTests
             var table = reader.GetString(0);
             if (!table.StartsWith(prefix + "_", StringComparison.Ordinal))
                 continue;
-            rows.Add((table, reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                      reader.GetString(4), reader.GetString(6),
+            // Oracle treats SQL empty strings as NULL. Non-FK keys have
+            // no target relation or remote key columns by definition.
+            rows.Add((table, reader.GetString(1), reader.GetString(2),
+                      reader.IsDBNull(3) ? "" : reader.GetString(3),
+                      reader.GetString(4),
+                      reader.IsDBNull(6) ? "" : reader.GetString(6),
                       Convert.ToInt32(reader.GetValue(5))));
         }
         return rows.GroupBy(x => (x.Table, x.Name, x.Kind, x.Target))
