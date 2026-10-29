@@ -66,8 +66,25 @@ module internal RewriteSchemaDependencies =
             Error(Unproven "MySQL index names need bounded simple ASCII identity proof.")
         elif same proposedName "PRIMARY" then
             Error(Invalid "The physical MySQL PRIMARY index name is reserved.")
-        elif owner.MayRetainUnmodeledFkIndexes then
-            Error(Unproven "A previously dropped/replaced MySQL FK index may survive: physical namespace absence is not proven.")
+        elif owner.MayRetainUnmodeledFkIndexes
+             && (owner.PossibleFkIndexNames.Count = 0
+                 || (owner.PossibleFkIndexNames |> Seq.exists (fun name ->
+                     not (asciiName name)))) then
+            // An unknown FK symbol (or a legacy unknown state) is NOT an
+            // enumerated physical namespace. Never treat it as absence.
+            Error(Unproven "Possible MySQL FK-support index names are not fully proven.")
+        elif owner.MayRetainUnmodeledFkIndexes
+             && (owner.PossibleFkIndexNames |> Seq.exists (same proposedName)) then
+            Error(Unproven "An old implicit MySQL FK-support index might still occupy this physical name.")
+        elif owner.MayRetainUnmodeledFkIndexes
+             && not (
+                 RewriteCatalogIdentifierProof.canProvePhysicalNames
+                     SqlAgentToolType.MySQL profile state owner.QualifiedName.DisplayName
+                 || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroCatalog
+                     profile state owner.QualifiedName
+                     (owner.Columns |> Seq.toList)
+                     (owner.Constraints |> Seq.toList)) then
+            Error(Unproven "Residual FK physical index names require declared server identifier semantics.")
         elif owner.Constraints.Count = 0 then
             // Existing standalone-index collisions are checked by the
             // caller using MySQL's case-insensitive index-name equality.
@@ -125,8 +142,14 @@ module internal RewriteSchemaDependencies =
                             (c.Kind = SqlCatalogConstraintKind.PrimaryKey
                              || c.Kind = SqlCatalogConstraintKind.Unique)
                             && startsWith prefix (c.Columns |> Seq.toList)))
-                        || (owner.Indexes |> Seq.exists (fun idx ->
-                            startsWith prefix (idx.Columns |> Seq.toList))))
+                        || ((owner.Indexes |> Seq.exists (fun idx ->
+                            startsWith prefix (idx.Columns |> Seq.toList)))
+                            // An explicit index that was previously proven
+                            // to replace this very FK's implicit index is
+                            // sufficient independent support. Otherwise we
+                            // cannot establish the original auto-index origin.
+                            && not (owner.PossibleFkIndexNames |> Seq.exists
+                                (fun name -> same name fk.Name))))
                 let covered =
                     foreignKeys |> List.filter (fun fk ->
                         startsWith (localColumns fk) members)
@@ -140,6 +163,13 @@ module internal RewriteSchemaDependencies =
                     elif covered.Length > 1 then
                         Error(Unproven "One new index may replace multiple implicit FK indexes; physical lineage is not proven.")
                     elif covered.IsEmpty then Ok StableImplicitFkSupport
+                    elif covered |> List.forall (fun fk ->
+                         owner.PossibleFkIndexNames |> Seq.exists (fun name ->
+                             same name fk.Name)) then
+                        // An older proven explicit index already covers this
+                        // FK. A second independently named explicit index
+                        // cannot remove that user-created physical index.
+                        Ok StableImplicitFkSupport
                     else Ok MayReplaceImplicitFkSupport
                 match supportProof with
                 | Error proof -> Error proof
@@ -152,7 +182,19 @@ module internal RewriteSchemaDependencies =
                             | SqlCatalogConstraintKind.Unique ->
                                 Some(NamedUniqueIndex c.Name)
                             | SqlCatalogConstraintKind.ForeignKey ->
-                                Some(NamedForeignKeySupportingIndex c.Name))
+                                // Same-name promotion is one physical index,
+                                // not two colliding indexes. The prior
+                                // replacement proof and matching ordered
+                                // prefix are mandatory for deduplication.
+                                let promoted =
+                                    owner.PossibleFkIndexNames
+                                    |> Seq.exists (fun name -> same name c.Name)
+                                    && (owner.Indexes |> Seq.exists (fun idx ->
+                                        same idx.Name c.Name
+                                        && startsWith (c.Columns |> Seq.toList)
+                                            (idx.Columns |> Seq.toList)))
+                                if promoted then None
+                                else Some(NamedForeignKeySupportingIndex c.Name))
                         |> Seq.toList
                     let all =
                         keyNames @

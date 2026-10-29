@@ -76,8 +76,8 @@ public sealed class SqlCoreMySqlFkAlternativeIndexProofTests
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, step.Status));
         var after = r.FinalCatalog.Tables.Single(t => t.Name == "child");
         Assert.Equal("ix_backup", Assert.Single(after.Indexes).Name);
-        Assert.Single(after.Constraints.Where(x =>
-            x.Kind == SqlCatalogConstraintKind.ForeignKey));
+        Assert.Single(after.Constraints,
+            x => x.Kind == SqlCatalogConstraintKind.ForeignKey);
         Assert.Equal(2, r.Statements[3].CatalogAfter.Tables
             .Single(t => t.Name == "child").Indexes.Count);
         Assert.Equal(SqlCatalogOperation.DropIndex,
