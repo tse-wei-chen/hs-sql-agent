@@ -143,6 +143,28 @@ Temporary table statements are not promoted to ordinary DDL proof,
 because the database's commit/rollback rules differ. Static inspection
 does not prove the session's autocommit mode or storage engine.
 
+## PostgreSQL ALTER TABLE RENAME [COLUMN] — typed Catalog lineage
+
+PostgreSQL `ALTER TABLE relation RENAME [COLUMN] old TO new` now uses the same
+closed F# `RenameColumn` operation as Oracle, with PostgreSQL-specific grammar.
+The static analyzer preserves column order, SQL type and nullability, and
+atomically rebinds standalone index columns and modeled local primary, unique
+and foreign-key column references. Historic immutable Catalog snapshots remain
+unchanged. The resulting `RenameColumn` Catalog change and statement effect
+describe **static schema evolution only**; the package neither connects to a
+database nor executes the DDL.
+
+Proof requires a closed, known Catalog and a proven target table. An absent or
+duplicate column is invalid. Inbound foreign-key references and dependent
+Views remain unproven until a complete, immutable cross-object lineage rewrite
+exists; unknown/open-world states do not mint a known change. Compound ALTER
+clauses, table rename, unsupported annotations and dialects without their own
+proof remain outside this subset. PostgreSQL and Oracle share a typed internal
+operation, **not** blanket dialect equivalence. Regression coverage includes
+both PostgreSQL spellings, safety cases, and 24 independent live PostgreSQL
+scripts; the live parity harness compares index **column lineage** as well as
+index names after each statement.
+
 ## PostgreSQL Self JOIN with per-instance Catalog provenance
 
 PostgreSQL `CREATE VIEW` now distinguishes **FROM relation instances**
