@@ -91,15 +91,17 @@ public sealed class SqlCoreMySqlForeignKeyCoveringIndexLiveParityTests
     }
 
     [Fact]
-    public async Task SameNameCoveringIndexMayBeReplacedByInnoDbButCatalogRemainsConservative()
+    public async Task SameNameCoveringIndexPromotesOneKnownExplicitIndexWithoutClaimingPhysicalAbsence()
     {
-        // The physical engine CAN replace its own implicit FK-support index
-        // under the same name, but SqlCore cannot establish its provenance
-        // from constraint metadata alone. Fail closed on this distinct case.
+        // InnoDB can promote its own implicit FK-support index under the
+        // same name. Prove the explicit key and FK, not the old physical
+        // implicit-index lifetime or any other index-name absence.
         var model = SqlCoreFacade.AnalyzeScript(Graph +
             "CREATE INDEX fk_child ON child(pid,note);", SqlAgentToolType.MySQL,
             SqlCatalogState.KnownEmpty(), Linux, TestContext.Current.CancellationToken);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, model.Statements[2].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, model.Statements[2].Status);
+        Assert.Equal("fk_child", Assert.Single(
+            model.Statements[2].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
         await WithDatabase(async (db, database) =>
         {
             await Execute(db, model.Statements[0].Syntax.Text);
