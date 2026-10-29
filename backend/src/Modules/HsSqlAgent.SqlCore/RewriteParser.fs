@@ -2835,9 +2835,25 @@ module internal RewriteParser =
         let parseAssignment () : Assignment =
             let targetColumn = identifier cursor
             let parts = Identifier.parts targetColumn
+            // Oracle allows target-qualified SET assignments, and real 26ai
+            // requires them when the FROM relation exposes the same column
+            // name (otherwise ORA-00918). Do not accept a FROM alias as an
+            // assignment destination, and do not change other dialects.
             if parts.Length <> 1 then
-                fail cursor.Current "UPDATE assignment columns must be unqualified"
-            let columnName = parts.Head.Value
+                let oracleIdentity (part: IdentifierPart) =
+                    if part.WasQuoted then part.Value
+                    else part.Value.ToUpperInvariant()
+                let targetQualifier =
+                    match targetAlias with
+                    | Some alias -> alias
+                    | None -> Identifier.parts target |> List.last
+                match parts with
+                | [ qualifier; _ ] when cursor.Dialect = SourceDialect.Oracle
+                                          && oracleIdentity qualifier = oracleIdentity targetQualifier ->
+                    ()
+                | _ ->
+                    fail cursor.Current "UPDATE assignment must name the unqualified target column or Oracle target qualifier"
+            let columnName = parts |> List.last |> fun part -> part.Value
             if not (seenAssignments.Add columnName) then
                 fail cursor.Current ("UPDATE assigns column '" + columnName + "' more than once")
             expectOperator "=" cursor
