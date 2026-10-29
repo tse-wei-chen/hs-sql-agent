@@ -19,7 +19,8 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCorePostgresLiveDdlParityTests
 {
     private sealed record Column(string Name, string DataType, bool Nullable);
-    private sealed record Table(string Name, Column[] Columns, string[] Indexes);
+    private sealed record Index(string Name, string[] Columns);
+    private sealed record Table(string Name, Column[] Columns, Index[] Indexes);
 
     private static readonly (string Name, string Script)[] Scenarios =
     [
@@ -40,18 +41,24 @@ public sealed class SqlCorePostgresLiveDdlParityTests
         ("create_drop_alter", "CREATE TABLE sessions (id INTEGER); CREATE TABLE tokens (id INTEGER, session_id INTEGER); ALTER TABLE sessions ADD COLUMN label TEXT; DROP TABLE tokens;"),
         ("column_drop_if_exists", "CREATE TABLE reports (id INTEGER, note TEXT); ALTER TABLE reports DROP COLUMN IF EXISTS missing; ALTER TABLE reports DROP COLUMN note;"),
         ("index_drop_then_column", "CREATE TABLE audit (id INTEGER, event TEXT); CREATE INDEX idx_audit_event ON audit(event); DROP INDEX idx_audit_event; ALTER TABLE audit DROP COLUMN event;"),
-        ("index_after_recreate", "CREATE TABLE sales (id INTEGER); DROP TABLE sales; CREATE TABLE sales (code TEXT); CREATE INDEX idx_sales_code ON sales(code);")
+        ("index_after_recreate", "CREATE TABLE sales (id INTEGER); DROP TABLE sales; CREATE TABLE sales (code TEXT); CREATE INDEX idx_sales_code ON sales(code);"),
+        ("rename_basic", "CREATE TABLE ren_a (id INTEGER NOT NULL, note TEXT); ALTER TABLE ren_a RENAME COLUMN note TO details;"),
+        ("rename_without_column", "CREATE TABLE ren_b (id INTEGER, note TEXT); ALTER TABLE ren_b RENAME note TO details;"),
+        ("rename_twice", "CREATE TABLE ren_c (id INTEGER, note TEXT); ALTER TABLE ren_c RENAME COLUMN note TO details; ALTER TABLE ren_c RENAME COLUMN details TO description;"),
+        ("rename_quoted", "CREATE TABLE \"ren_d\" (\"id\" INTEGER, \"note\" TEXT); ALTER TABLE \"ren_d\" RENAME COLUMN \"note\" TO \"details\";"),
+        ("rename_indexed", "CREATE TABLE ren_e (id INTEGER, note TEXT); CREATE INDEX ix_ren_e_note ON ren_e(id, note); ALTER TABLE ren_e RENAME COLUMN note TO details;"),
+        ("rename_index_then_drop", "CREATE TABLE ren_f (id INTEGER, note TEXT); CREATE INDEX ix_ren_f_note ON ren_f(note); ALTER TABLE ren_f RENAME COLUMN note TO details; DROP INDEX ix_ren_f_note; ALTER TABLE ren_f DROP COLUMN details;")
     ];
 
     public static IEnumerable<object[]> Cases =>
         Scenarios.Select(x => new object[] { x.Name });
 
     [Fact]
-    public void RegressionCorpusHasEighteenDistinctPersistentWorkflows()
+    public void RegressionCorpusHasTwentyFourDistinctPersistentWorkflows()
     {
-        Assert.Equal(18, Scenarios.Length);
-        Assert.Equal(18, Scenarios.Select(x => x.Name).Distinct().Count());
-        Assert.Equal(18, Scenarios.Select(x => x.Script).Distinct().Count());
+        Assert.Equal(24, Scenarios.Length);
+        Assert.Equal(24, Scenarios.Select(x => x.Name).Distinct().Count());
+        Assert.Equal(24, Scenarios.Select(x => x.Script).Distinct().Count());
         Assert.All(Scenarios, s => Assert.True(s.Script.Count(x => x == ';') >= 2));
     }
 
@@ -1006,18 +1013,31 @@ public sealed class SqlCorePostgresLiveDdlParityTests
                     columns.Add(new Column(rows.GetString(0), rows.GetString(1),
                         rows.GetString(2) == "YES"));
             }
-            var indexes = new List<string>();
+            var indexedColumns = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             await using (var cmd = new NpgsqlCommand(
-                "SELECT indexname FROM pg_catalog.pg_indexes " +
-                "WHERE schemaname = @schema AND tablename = @table ORDER BY indexname", db, tx))
+                "SELECT idx.relname, attribute.attname FROM pg_catalog.pg_class parent " +
+                "JOIN pg_catalog.pg_namespace ns ON ns.oid = parent.relnamespace " +
+                "JOIN pg_catalog.pg_index ix ON ix.indrelid = parent.oid " +
+                "JOIN pg_catalog.pg_class idx ON idx.oid = ix.indexrelid " +
+                "JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS key(attnum, position) ON TRUE " +
+                "JOIN pg_catalog.pg_attribute attribute ON attribute.attrelid = parent.oid " +
+                "AND attribute.attnum = key.attnum " +
+                "WHERE ns.nspname = @schema AND parent.relname = @table " +
+                "ORDER BY idx.relname, key.position", db, tx))
             {
                 cmd.Parameters.AddWithValue("schema", schema);
                 cmd.Parameters.AddWithValue("table", name);
                 await using var rows = await cmd.ExecuteReaderAsync(TestContext.Current.CancellationToken);
                 while (await rows.ReadAsync(TestContext.Current.CancellationToken))
-                    indexes.Add(rows.GetString(0));
+                {
+                    var indexName = rows.GetString(0);
+                    if (!indexedColumns.TryGetValue(indexName, out var names))
+                        indexedColumns.Add(indexName, names = new List<string>());
+                    names.Add(rows.GetString(1));
+                }
             }
-            tables.Add(new Table(name, columns.ToArray(), indexes.ToArray()));
+            tables.Add(new Table(name, columns.ToArray(), indexedColumns
+                .Select(kvp => new Index(kvp.Key, kvp.Value.ToArray())).ToArray()));
         }
         return tables;
     }
@@ -1045,7 +1065,13 @@ public sealed class SqlCorePostgresLiveDdlParityTests
                 Assert.Equal(expected.Nullable, actual.Nullable);
             }
             Assert.Equal(table.Indexes.Select(x => x.Name).Order(StringComparer.Ordinal),
-                physical.Indexes.Order(StringComparer.Ordinal));
+                physical.Indexes.Select(x => x.Name).Order(StringComparer.Ordinal));
+            foreach (var expectedIndex in table.Indexes)
+            {
+                var observed = Assert.Single(physical.Indexes.Where(index =>
+                    string.Equals(index.Name, expectedIndex.Name, StringComparison.Ordinal)));
+                Assert.Equal(expectedIndex.Columns, observed.Columns);
+            }
         }
     }
 }
