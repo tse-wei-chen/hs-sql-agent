@@ -277,6 +277,53 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL FK alternative-index proof and bounded residual-name lineage
+
+The Virtual Catalog now retains **the exact set of possibly surviving
+implicit InnoDB FK-supporting index names**, with immutable per-table
+history, rather than using only a blanket Boolean. This set is
+*possibly present*, **not** a claim that those physical indexes exist.
+The uncertain identity is preserved when a named FK is removed, when
+its implicit support index may be replaced by a covering secondary
+index, and through further column/index edits or schema-binding
+aliases. An unknown/unnamed implicit index is represented by an
+unprovable name and retains the fail-closed fence.
+
+The bounded MySQL proof checks that each new index's **physical
+case-insensitive name** is distinct from every possibly surviving
+implicit FK-support name, all primary/unique indexes and all known
+standalone indexes. It requires complete known Catalog, explicit
+provider identifier semantics and fully proven physical names.
+In MySQL `LOWER_CASE_TABLE_NAMES=0`, tables/columns remain in the
+strict lowercase identifier subset, but INDEX names may use any bounded
+simple ASCII lettercase: MySQL index names are case-insensitive on all
+platforms. Catalog rejects two physical index names equal after
+ASCII case folding rather than forcing index names to lowercase.
+If a previously proven explicit index already supports the FK,
+adding a second distinct explicit left-prefix supporting index
+cannot remove that user-declared index. Catalog retains only the
+known explicit additions and the original named FK constraint;
+no imaginary DROP INDEX effect is emitted.
+
+`DROP INDEX` is proven only when removing that tracked explicit
+index leaves a **different modeled physical PK, UNIQUE, or explicit
+index** whose ordered first columns cover *every* FK that depends
+on the removed index. A possibly retained InnoDB auto-index
+is **never** counted as an alternative, even if its name is known.
+The check is table-local, independent of current index-name lettercase
+and does not silently weaken the other five dialects.
+The final supporting explicit index continues to fail-closed.
+Following DROP FOREIGN KEY, the old implicit physical name remains
+possibly occupied; a different proven name can be added without
+pretending that name was deleted.
+
+Real MySQL 8 InnoDB differential tests independently verify the
+3-step cover → backup → safe DROP workflow, including same-name
+promotion, ordered physical keys from `information_schema.STATISTICS`,
+FK survival from `REFERENTIAL_CONSTRAINTS`, and the rejection of
+unsafe final-support DROP when the original implicit index disappeared.
+Static SqlCore still never executes SQL or grants permissions.
+
 ## MySQL same-name FK implicit-index promotion and independent multi-FK ownership
 
 An InnoDB implicit foreign-key support index may be promoted by declaring an
@@ -288,18 +335,20 @@ A same-name index that does **not** cover its own FK remains invalid; names
 matching a different FK, PRIMARY, UNIQUE, or ordinary index are collisions.
 The transition publishes one proven explicit `CreateIndex` Catalog change
 without asserting that an implicit physical index was removed, and retains
-the persistent uncertain-physical-lineage marker. Consequently a later
-`DROP INDEX` that might remove the last FK support and subsequent index
-namespace absence proofs remain fail-closed.
+the persistent uncertain-physical-lineage marker. A later
+`DROP INDEX` that might remove the last proven FK support remains
+fail-closed; distinct names and independently proven replacement
+support may now be analyzed using the bounded residual-name evidence.
 
 Multiple named FKs are only treated as **independently owned** support indexes
 if none of their ordered local key prefixes is a prefix of another and none
 is already supported by any modeled PK/UNIQUE/standalone index. A new index
 may be unrelated to every FK (stable) or replace **one** independently owned
 FK support index (possibly replaced); never multiple or overlapping FKs.
-Unnamed FKs, opaque server identifier settings, unknown index provenance,
-schema history after replacement, and all other five database dialects
-remain conservatively rejected.
+Unnamed FKs, opaque server identifier settings, unknown residual
+physical names, and all other five database dialects remain
+conservatively rejected. A prior replacement with known physical
+names does not, by itself, prevent subsequent distinct-name indexes.
 
 Static analysis does not connect to MySQL, authorize a change or execute SQL.
 Test-only disposable InnoDB databases compare real physical key columns and
@@ -320,25 +369,23 @@ It does **not** mint a physical DROP INDEX delta or assert that the implicit
 index survived or disappeared.
 
 A possible replacement sets an immutable table-local unknown-physical-history
-fence, reused from the previous FK-support lifecycle. Even after removing
-the FK, later index-name-absence proofs remain denied. Dropping a newly
-created index that is potentially the **last** FK-supporting index is also
-fail-closed; MySQL can reject it with ER_DROP_INDEX_FK (1553).
-The guarded proof requires one explicitly named FK, complete known Catalog,
-explicit MySQL identifier semantics, no preexisting PK/UNIQUE/secondary
-index supporting that FK, and no physical-name collision. A covering index
-reusing the implicit FK-support index's *same* name is **not** supported:
-real InnoDB may perform a special same-name replacement, but SqlCore does
-not have a proven provenance/effect contract for that case. Multi-FK,
-unknown physical origin, other database dialects, and uncertain Catalog
-remain rejected.
+fence, now refined with a bounded set of names that **may still be
+occupied**. Even after removing the FK, attempting to reuse one of those
+physical names remains fail-closed, while independently proven distinct
+names are allowed. Dropping an index that is potentially the **last**
+FK-supporting index is fail-closed (ER_DROP_INDEX_FK, 1553), unless an
+independent tracked PK/UNIQUE/explicit index supports every affected FK.
+The guarded proof requires complete known Catalog, explicit MySQL
+identifier semantics, no opaque physical-name collisions and an ordered
+left-prefix supporting index. The later same-name promotion and independent
+multi-FK extensions are documented above; overlapping shared FK prefixes,
+unknown physical index origins, and other dialects remain rejected.
 
 Independent MySQL 8 InnoDB tests verify that the new index's ordered
 members and the original FK constraint remain valid; the old implicit
-index's presence is observed, not guessed. Tests also verify that the real
-database may accept a same-name replacement while static analysis
-conservatively refuses it. No production SQL execution or authorization
-is introduced.
+index's presence is observed, not guessed. Same-name replacement is now
+accepted only under its typed provenance proof, not by inference from the
+SQL spelling alone. No production SQL execution or authorization is introduced.
 
 ## MySQL named FK supporting-index stability (bounded)
 

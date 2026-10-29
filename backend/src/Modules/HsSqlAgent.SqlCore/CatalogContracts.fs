@@ -101,7 +101,13 @@ type SqlCatalogTable internal (
     constraints: IReadOnlyList<SqlCatalogConstraint>,
     indexes: IReadOnlyList<SqlCatalogIndex>,
     identity: SqlCatalogQualifiedName,
-    mayRetainUnmodeledFkIndexes: bool) =
+    mayRetainUnmodeledFkIndexes: bool,
+    possibleFkIndexNames: IReadOnlyList<string>) =
+    new(name, knowledge, columns, constraints, indexes, identity,
+        mayRetainUnmodeledFkIndexes) =
+        SqlCatalogTable(name, knowledge, columns, constraints, indexes,
+                        identity, mayRetainUnmodeledFkIndexes,
+                        Array.AsReadOnly(Array.empty<string>))
     new(name, knowledge, columns, constraints, indexes, identity) =
         SqlCatalogTable(name, knowledge, columns, constraints, indexes,
                         identity, false)
@@ -128,6 +134,11 @@ type SqlCatalogTable internal (
     /// InnoDB removed its implicit supporting index. Immutable across DDL
     /// snapshots and preserved even when no current FOREIGN KEY remains.
     member internal _.MayRetainUnmodeledFkIndexes = mayRetainUnmodeledFkIndexes
+    /// Physical names that might remain after an auto-FK index replacement
+    /// or DROP FK. A nonempty list does NOT imply the indexes exist; names
+    /// can only be used to reject collisions. If the bool above is true
+    /// but this set is empty, the identity is completely unknown.
+    member internal _.PossibleFkIndexNames = possibleFkIndexNames
 
 /// Immutable ownership of columns used by one direct View source. Unlike
 /// a flat list of names, this proves which physical relation each column
