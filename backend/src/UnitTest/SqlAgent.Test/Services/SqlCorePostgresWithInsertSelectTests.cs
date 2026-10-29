@@ -36,7 +36,7 @@ public sealed class SqlCorePostgresWithInsertSelectTests
         var statement = Assert.Single(analysis.Statements);
         Assert.Equal(SqlScriptStatementKind.Mutation, statement.Syntax.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Syntax.Status);
-        Assert.True(statement.PotentialEffects.HasFlag(SqlEffectKind.WriteData));
+        Assert.True(statement.Effects.HasFlag(SqlEffectKind.WriteData));
     }
 
     [Fact]
