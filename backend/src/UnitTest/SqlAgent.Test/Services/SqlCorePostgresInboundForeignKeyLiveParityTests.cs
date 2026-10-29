@@ -83,8 +83,8 @@ public sealed class SqlCorePostgresInboundForeignKeyLiveParityTests
                 .SelectMany(table => table.Constraints
                     .Where(fk => fk.Kind == SqlCatalogConstraintKind.ForeignKey)
                     .Select(fk => new ForeignKey(
-                        table.QualifiedName.Parts[^1], fk.Name,
-                        fk.ReferencedIdentity.Parts[^1],
+                        table.QualifiedName!.Parts[^1], fk.Name,
+                        fk.ReferencedIdentity!.Parts[^1],
                         fk.Columns.ToArray(), fk.ReferencedColumns.ToArray())))
                 .OrderBy(x => x.Table, StringComparer.Ordinal)
                 .ThenBy(x => x.Name, StringComparer.Ordinal).ToArray();
