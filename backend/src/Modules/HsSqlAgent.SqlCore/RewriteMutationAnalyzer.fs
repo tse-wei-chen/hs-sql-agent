@@ -46,10 +46,14 @@ module internal RewriteMutationSourceMatchProof =
     type private Relation =
         { Position: int
           Qualifiers: Set<string>
+          Columns: Set<string>
+          NonNullColumns: Set<string>
           UniqueKeys: string list list }
 
+    // A literal NULL is a fixed value but does not provide non-NULL evidence.
+    // Ordinary equality is NULL-rejecting; NULL-safe equality is not.
     type private Operand =
-        | FixedLiteral
+        | FixedLiteral of isNonNull: bool
         | Field of relationIndex: int * columnName: string
 
     let private keyPart (part: IdentifierPart) =
@@ -85,28 +89,59 @@ module internal RewriteMutationSourceMatchProof =
             | _ -> None)
         |> Seq.toList
 
+    let private nonNullColumns (table: SqlCatalogTable) =
+        let declared =
+            table.Columns
+            |> Seq.choose (fun col ->
+                RewriteResourceBudget.checkpoint ()
+                if col.Nullable then None else Some col.Name)
+            |> Set.ofSeq
+        // PostgreSQL PRIMARY KEY columns are non-NULL regardless of whether
+        // the DDL column definition explicitly said NOT NULL.
+        let primary =
+            table.Constraints
+            |> Seq.filter (fun constraintInfo ->
+                RewriteResourceBudget.checkpoint ()
+                constraintInfo.Kind = SqlCatalogConstraintKind.PrimaryKey)
+            |> Seq.collect (fun constraintInfo -> constraintInfo.Columns)
+            |> Set.ofSeq
+        Set.union declared primary
+
     let private resolveField (relations: Relation list) expression =
         match Expr.unspan expression with
         | Column identifier
         | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
             let parts = Identifier.parts identifier
-            if parts.Length < 2 then None
-            else
-                let columnName = parts |> List.last |> keyPart
-                let qualifier =
-                    parts
-                    |> List.take (parts.Length - 1)
-                    |> List.map (keyPart >> escaped)
-                    |> String.concat "."
-                match relations |> List.filter (fun relation -> relation.Qualifiers.Contains qualifier) with
-                | [relation] -> Some(Field(relation.Position, columnName))
-                | _ -> None
-        | Literal _ -> Some FixedLiteral
+            let columnName = parts |> List.last |> keyPart
+            let matches =
+                if parts.Length = 1 then
+                    // Name validation has already proved lexical resolution.
+                    // Do not choose a source based on UNIQUE metadata: the
+                    // same unqualified field must exist on exactly one local
+                    // physical relation, regardless of its key status.
+                    relations |> List.filter (fun relation ->
+                        RewriteResourceBudget.checkpoint ()
+                        relation.Columns.Contains columnName)
+                else
+                    let qualifier =
+                        parts
+                        |> List.take (parts.Length - 1)
+                        |> List.map (keyPart >> escaped)
+                        |> String.concat "."
+                    relations |> List.filter (fun relation ->
+                        RewriteResourceBudget.checkpoint ()
+                        relation.Qualifiers.Contains qualifier)
+            match matches with
+            | [relation] when relation.Columns.Contains columnName ->
+                Some(Field(relation.Position, columnName))
+            | _ -> None
+        | Literal ScalarValue.Null -> Some(FixedLiteral false)
+        | Literal _ -> Some(FixedLiteral true)
         | _ -> None
 
     let private mandatoryEqualities (relations: Relation list) predicate =
         let pending = ResizeArray<Expr>()
-        let matched = ResizeArray<Operand * Operand>()
+        let matched = ResizeArray<BinaryOperator * Operand * Operand>()
         pending.Add predicate
         while pending.Count > 0 do
             RewriteResourceBudget.checkpoint ()
@@ -117,9 +152,11 @@ module internal RewriteMutationSourceMatchProof =
             | Binary(BinaryOperator.And, left, right) ->
                 pending.Add right
                 pending.Add left
-            | Binary(BinaryOperator.Equal, left, right) ->
+            | Binary(comparison, left, right)
+                when comparison = BinaryOperator.Equal
+                     || comparison = BinaryOperator.NotDistinctFrom ->
                 match resolveField relations left, resolveField relations right with
-                | Some a, Some b -> matched.Add(a, b)
+                | Some a, Some b -> matched.Add(comparison, a, b)
                 | _ -> ()
             | _ -> ()  // OR/NOT/IN/functions cannot make equality mandatory.
         matched |> Seq.toList
@@ -135,6 +172,8 @@ module internal RewriteMutationSourceMatchProof =
             | Some table ->
                 Some { Position = position
                        Qualifiers = sourceQualifiers name alias
+                       Columns = table.Columns |> Seq.map (fun col -> col.Name) |> Set.ofSeq
+                       NonNullColumns = nonNullColumns table
                        UniqueKeys = uniqueKeys table }
         let targetRelation = create 0 target targetAlias
         let readRelations =
@@ -148,6 +187,7 @@ module internal RewriteMutationSourceMatchProof =
             SqlMutationSourceMatchCardinality.Unverified
         else
             let all = Option.get targetRelation :: (readRelations |> List.choose id)
+            let relationByPosition = all |> List.toArray
             let equalities =
                 predicate
                 |> Option.map (mandatoryEqualities all)
@@ -156,16 +196,33 @@ module internal RewriteMutationSourceMatchProof =
             anchored.Add 0 |> ignore // A single target row is already fixed.
             let constrains source column =
                 equalities
-                |> List.exists (fun (left, right) ->
+                |> List.exists (fun (comparison, left, right) ->
                     let other =
                         match left, right with
                         | Field(index, name), value when index = source && name = column -> Some value
                         | value, Field(index, name) when index = source && name = column -> Some value
                         | _ -> None
-                    match other with
-                    | Some FixedLiteral -> true
-                    | Some(Field(index, _)) -> index <> source && anchored.Contains index
-                    | None -> false)
+                    let anchoredValue =
+                        match other with
+                        | Some(FixedLiteral _) -> true
+                        | Some(Field(index, _)) ->
+                            index <> source && anchored.Contains index
+                        | None -> false
+                    if not anchoredValue then false
+                    elif comparison = BinaryOperator.Equal then
+                        // Ordinary SQL '=' never matches NULL; nullable UNIQUE
+                        // keys still cannot match multiple NULL source rows.
+                        true
+                    else
+                        // IS NOT DISTINCT FROM can match many NULLs under a
+                        // nullable UNIQUE key. A positive proof requires one
+                        // non-NULL side, not just a unique key declaration.
+                        relationByPosition.[source].NonNullColumns.Contains column
+                        || match other with
+                           | Some(FixedLiteral true) -> true
+                           | Some(Field(index, name)) ->
+                               relationByPosition.[index].NonNullColumns.Contains name
+                           | _ -> false)
             // Each newly fixed unique-key source may anchor another source.
             // A cycle of as-yet-unfixed sources cannot establish cardinality.
             let mutable changed = true
