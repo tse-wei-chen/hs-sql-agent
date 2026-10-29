@@ -454,39 +454,31 @@ index's presence is observed, not guessed. Same-name replacement is now
 accepted only under its typed provenance proof, not by inference from the
 SQL spelling alone. No production SQL execution or authorization is introduced.
 
-## MySQL named FK supporting-index stability (bounded)
+## MySQL named FK supporting-index stability — original bounded foundation
 
-The MySQL 8 InnoDB DDL analyzer admits `CREATE INDEX` and
-`ALTER TABLE ADD INDEX|KEY` **only when the new secondary index cannot
-replace the supporting index of one explicitly named foreign key**. The
-source table must have a complete known Catalog, a declared and proven
-MySQL identifier mode, exactly one modeled named FK, and no other
-PK/UNIQUE/secondary index that may already support that FK. The new
-index's ordered left-prefix must not match that FK's ordered local
-columns. Its explicit name must not collide with the FK symbol's
-inferred implicit index name, the physical PRIMARY/UNIQUE keys, or an
-existing standalone index (simple ASCII case-insensitive comparison).
+The first InnoDB index namespace proof was deliberately limited to a
+single explicitly named FK and **disjoint** newly declared secondary
+indexes. That conservative foundation proved that a newly created index
+could not silently replace the FK-supporting auto-index and that the
+proposed physical name was distinct from PRIMARY, named UNIQUE, known
+standalone indexes, and the possibly present implicit FK-support name.
+The MySQL name comparisons are bounded ASCII and case-insensitive.
 
-This is an intentionally narrow, algebraic **non-replacement proof**,
-not a model of every InnoDB index rewrite. A covering index, multiple
-FKs that may share a support index, unnamed FKs, and unknown physical
-index origin remain fail-closed. InnoDB can silently remove its own
-FK-supporting index when a new covering index is created; such an
-operation must not mint a Known Catalog delta. On `DROP FOREIGN KEY`,
-the immutable table Catalog remembers that an unmodeled supporting
-index may survive, even when its FK constraint no longer exists.
-Subsequent additions cannot assume this physical name is free. Table
-replacement/disposal clears that history, but column or index edits
-cannot silently clear it. This marker is **not** executable SQL, a
-permission grant, or evidence of live server settings.
+The later typed FK-prefix and shared-support-group proofs documented
+**above** extend this original subset. A full-group covering index may
+now be admitted without making a physical-index existence claim; a
+separately proven alternative can then justify dropping the old
+explicit key. Partial shared-group replacement, unknown generated
+physical names, reuse of ambiguous implicit shared-FK names, and
+dropping the last proven support remain fail-closed.
 
-Tests cover exact F# Catalog deltas and fail-closed negative grammar;
-real MySQL InnoDB tests compare the entire child-side physical index
-dictionary from `information_schema.STATISTICS` before/after each
-disjoint index addition, independent drops, and duplicate-name errors.
-These tests run in disposable databases because MySQL DDL implicitly
-commits. Extending the subset to support FK-prefix covering-index
-replacement requires separate physical-lineage state and live parity.
+The immutable Catalog preserves potentially surviving implicit names
+across covering replacements and `DROP FOREIGN KEY`, rather than
+mistaking constraint removal for physical index removal. Disposable
+MySQL InnoDB parity tests compare real `information_schema.STATISTICS`
+and FK metadata after each supported DDL transition. MySQL DDL can
+implicitly commit. Static analysis does not execute SQL, grant
+permissions, or prove any live server setting.
 
 ## MySQL PRIMARY/UNIQUE and explicit secondary index namespace
 
