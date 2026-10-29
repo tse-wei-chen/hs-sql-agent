@@ -131,8 +131,8 @@ module internal RewriteSchemaAnalyzer =
         | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
                             dependencyMode: DropDependencyMode
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
-        /// Oracle-only physical column rename; index/constraint lineage is
-        /// checked and atomically rewritten by the Catalog analyzer.
+        /// Oracle and PostgreSQL physical column rename; index/constraint
+        /// lineage is checked and atomically rewritten by the Catalog analyzer.
         | RenameColumn of table: SqlCatalogQualifiedName * oldName: string * newName: string
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list * ifNotExists: bool
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
@@ -1038,9 +1038,16 @@ module internal RewriteSchemaAnalyzer =
                 && (word () = "ADD" || word () = "DROP")
                 && (tokenWord tokens.[index + 1] = "INDEX"
                     || tokenWord tokens.[index + 1] = "KEY")
-            if sourceDialect = SqlAgentToolType.Oracle && word () = "RENAME" then
+            if (sourceDialect = SqlAgentToolType.Oracle
+                || sourceDialect = SqlAgentToolType.Postgres)
+               && word () = "RENAME" then
                 expect "RENAME"
-                expect "COLUMN"
+                // Oracle requires COLUMN. PostgreSQL permits both
+                // RENAME COLUMN old TO new and RENAME old TO new.
+                if sourceDialect = SqlAgentToolType.Oracle then
+                    expect "COLUMN"
+                else
+                    accept "COLUMN" |> ignore
                 let oldName = namePart ()
                 expect "TO"
                 let newName = namePart ()
