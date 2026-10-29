@@ -47,10 +47,10 @@ public sealed class SqlCoreOracleInboundForeignKeyLiveParityTests
             "CONSTRAINT {C3} FOREIGN KEY(FIRST_ID) REFERENCES {T1}(ID), " +
             "CONSTRAINT {C4} FOREIGN KEY(OTHER_ID) REFERENCES {T2}(ID));" +
             "ALTER TABLE {T1} RENAME COLUMN ID TO CODE;"),
-        new("rename_index_with_inbound",
+        new("rename_local_then_remote",
             "CREATE TABLE {T1}(ID NUMBER NOT NULL, NOTE NUMBER, CONSTRAINT {C1} PRIMARY KEY(ID));" +
             "CREATE TABLE {T2}(PARENT_ID NUMBER, CONSTRAINT {C2} FOREIGN KEY(PARENT_ID) REFERENCES {T1}(ID));" +
-            "CREATE INDEX {I1} ON {T2}(PARENT_ID);" +
+            "ALTER TABLE {T2} RENAME COLUMN PARENT_ID TO PARENT_REF;" +
             "ALTER TABLE {T1} RENAME COLUMN ID TO CODE;")
     ];
 
@@ -73,7 +73,7 @@ public sealed class SqlCoreOracleInboundForeignKeyLiveParityTests
         var scenario = Scenarios.Single(s => s.Name == id);
         var prefix = "HSAFK_" + Guid.NewGuid().ToString("N")[..14].ToUpperInvariant();
         var sql = scenario.Sql;
-        foreach (var suffix in new[] { "T1", "T2", "T3", "C1", "C2", "C3", "C4", "I1" })
+        foreach (var suffix in new[] { "T1", "T2", "T3", "C1", "C2", "C3", "C4" })
             sql = sql.Replace("{" + suffix + "}", prefix + "_" + suffix,
                 StringComparison.Ordinal);
 
