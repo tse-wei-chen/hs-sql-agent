@@ -1743,7 +1743,7 @@ module internal RewriteScriptAnalyzer =
                     let namespaceProof =
                         if sourceDialect = SqlAgentToolType.MySQL then
                             RewriteSchemaDependencies.canCreateMySqlSecondaryIndex
-                                sourceProfile state table indexName
+                                sourceProfile state table indexName members
                         elif indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) then
                             RewriteSchemaDependencies.Unproven
                                 "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."

@@ -112,7 +112,21 @@ module internal RewriteCatalogModel =
         let cols = columns |> Seq.toArray |> Array.AsReadOnly
         let keys = constraints |> Seq.toArray |> Array.AsReadOnly
         let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
-        replace state name (Some(SqlCatalogTable(name.DisplayName, SqlCatalogKnowledge.Known, cols, keys, idxs, name)))
+        // DROP FOREIGN KEY is NOT DROP INDEX in MySQL. Preserve a physical
+        // index uncertainty fence when even one previously modeled FK exits
+        // the constraint set. No table-local index-name proof may erase it.
+        let residualFkIndex =
+            match lookup state name with
+            | None -> false
+            | Some prior ->
+                prior.MayRetainUnmodeledFkIndexes
+                || (prior.Constraints |> Seq.exists (fun old ->
+                    old.Kind = SqlCatalogConstraintKind.ForeignKey
+                    && not (keys |> Seq.exists (fun current ->
+                        current.Kind = SqlCatalogConstraintKind.ForeignKey
+                        && sameName current.Name old.Name))))
+        replace state name (Some(SqlCatalogTable(name.DisplayName,
+            SqlCatalogKnowledge.Known, cols, keys, idxs, name, residualFkIndex)))
 
     /// Atomically publish a PostgreSQL column rename across modeled physical
     /// tables, inbound/self-referencing FKs and directly bound View sources.
@@ -176,7 +190,8 @@ module internal RewriteCatalogModel =
                 if target || changedConstraints then
                     SqlCatalogTable(
                         table.Name, table.Knowledge, columns,
-                        Array.AsReadOnly(constraints), indexes, table.QualifiedName)
+                        Array.AsReadOnly(constraints), indexes,
+                        table.QualifiedName, table.MayRetainUnmodeledFkIndexes)
                 else table)
             |> Seq.toArray |> Array.AsReadOnly
         let rewrittenViews =
@@ -277,7 +292,13 @@ module internal RewriteCatalogModel =
                         |> Seq.toArray |> Array.AsReadOnly
                     SqlCatalogTable(
                         table.Name, table.Knowledge, table.Columns,
-                        remaining, table.Indexes, table.QualifiedName))
+                        remaining, table.Indexes, table.QualifiedName,
+                        table.MayRetainUnmodeledFkIndexes
+                        || (table.Constraints |> Seq.exists (fun old ->
+                            old.Kind = SqlCatalogConstraintKind.ForeignKey
+                            && not (remaining |> Seq.exists (fun current ->
+                                current.Kind = SqlCatalogConstraintKind.ForeignKey
+                                && sameName old.Name current.Name))))))
             |> Seq.toArray |> Array.AsReadOnly
         SqlCatalogState(state.IsClosedWorld, nextTables, state.Views)
 

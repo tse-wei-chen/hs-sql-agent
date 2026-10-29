@@ -100,7 +100,11 @@ type SqlCatalogTable internal (
     columns: IReadOnlyList<SqlCatalogColumn>,
     constraints: IReadOnlyList<SqlCatalogConstraint>,
     indexes: IReadOnlyList<SqlCatalogIndex>,
-    identity: SqlCatalogQualifiedName) =
+    identity: SqlCatalogQualifiedName,
+    mayRetainUnmodeledFkIndexes: bool) =
+    new(name, knowledge, columns, constraints, indexes, identity) =
+        SqlCatalogTable(name, knowledge, columns, constraints, indexes,
+                        identity, false)
     new(name, knowledge, columns) =
         SqlCatalogTable(name, knowledge, columns,
                         Array.AsReadOnly(Array.empty<SqlCatalogConstraint>),
@@ -120,6 +124,10 @@ type SqlCatalogTable internal (
     member _.Constraints = constraints
     /// Only standalone simple non-unique indexes, never implicit key indexes.
     member _.Indexes = indexes
+    /// Internal physical-state fence: DROP FOREIGN KEY does not prove that
+    /// InnoDB removed its implicit supporting index. Immutable across DDL
+    /// snapshots and preserved even when no current FOREIGN KEY remains.
+    member internal _.MayRetainUnmodeledFkIndexes = mayRetainUnmodeledFkIndexes
 
 /// Immutable ownership of columns used by one direct View source. Unlike
 /// a flat list of names, this proves which physical relation each column

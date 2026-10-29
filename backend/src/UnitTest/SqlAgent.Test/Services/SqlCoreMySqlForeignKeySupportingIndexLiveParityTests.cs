@@ -92,8 +92,8 @@ public sealed class SqlCoreMySqlForeignKeySupportingIndexLiveParityTests
                 // Physical-index presence after a DROP FOREIGN KEY is observed,
                 // never inferred from the absence of a Catalog FK constraint.
                 Assert.Contains(afterDrop, p => p.Name == "ix_note" && p.Column == "note");
-                Assert.Empty(model.FinalCatalog.Tables.Single(t => t.Name == "child")
-                    .Constraints.Where(c => c.Kind == SqlCatalogConstraintKind.ForeignKey));
+                Assert.DoesNotContain(model.FinalCatalog.Tables.Single(t => t.Name == "child")
+                    .Constraints, c => c.Kind == SqlCatalogConstraintKind.ForeignKey);
             }
         });
     }
