@@ -159,16 +159,35 @@ public sealed class SqlCoreRenameConstraintTests
     }
 
     [Fact]
-    public void RenamedPrimaryKeyRejectsKnownStandaloneIndexNamespaceCollision()
+    public void PrimaryKeyRenameRejectsProvenStandaloneIndexNameInSameSchema()
+    {
+        // Standalone CREATE INDEX must happen BEFORE the key-backed index:
+        // conservative existing index namespace proof blocks it otherwise.
+        var result = Analyze(
+            "CREATE TABLE app.unrelated(code INTEGER);" +
+            "CREATE INDEX index_collision ON app.unrelated(code);" +
+            "CREATE TABLE app.t(id INTEGER NOT NULL, CONSTRAINT pk_id PRIMARY KEY(id));" +
+            "ALTER TABLE app.t RENAME CONSTRAINT pk_id TO index_collision;");
+        Assert.All(result.Statements.Take(3), s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[3].Status);
+        Assert.Empty(result.Statements[3].Changes);
+        Assert.Same(result.Statements[3].CatalogBefore, result.Statements[3].CatalogAfter);
+    }
+
+    [Fact]
+    public void PrimaryKeyRenameRejectsOtherTableImplicitPrimaryKeyIndexName()
     {
         var result = Analyze(
             "CREATE TABLE app.t(id INTEGER NOT NULL, CONSTRAINT pk_id PRIMARY KEY(id));" +
-            "CREATE TABLE app.unrelated(code INTEGER);" +
-            "CREATE INDEX index_collision ON app.unrelated(code);" +
+            "CREATE TABLE app.other(code INTEGER NOT NULL, " +
+            "CONSTRAINT index_collision PRIMARY KEY(code));" +
             "ALTER TABLE app.t RENAME CONSTRAINT pk_id TO index_collision;");
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            c => c.Certainty == SqlCatalogKnowledge.Known);
+        Assert.All(result.Statements.Take(2), s =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, result.Statements[2].Status);
+        Assert.Empty(result.Statements[2].Changes);
+        Assert.Same(result.Statements[2].CatalogBefore, result.Statements[2].CatalogAfter);
     }
 
     [Fact]
