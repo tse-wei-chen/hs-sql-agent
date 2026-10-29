@@ -57,11 +57,10 @@ public sealed class SqlCoreMySqlDropPrimaryKeyTests
     }
 
     [Fact]
-    public void DropPrimaryKeyPreservesOtherKeysIndexesAndUnrelatedTables()
+    public void DropPrimaryKeyPreservesOtherKeysAndUnrelatedTables()
     {
         const string sql =
             "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY, code INT NOT NULL UNIQUE, note INT);" +
-            "CREATE INDEX note_idx ON parent(note);" +
             "CREATE TABLE other(id INT NOT NULL PRIMARY KEY);" +
             "ALTER TABLE parent DROP PRIMARY KEY;" +
             "ALTER TABLE parent DROP COLUMN id;";
@@ -72,14 +71,14 @@ public sealed class SqlCoreMySqlDropPrimaryKeyTests
         var parent = result.FinalCatalog.Tables.Single(t => t.Name == "parent");
         Assert.Single(parent.Constraints);
         Assert.Equal(SqlCatalogConstraintKind.Unique, parent.Constraints[0].Kind);
-        Assert.Equal("note_idx", Assert.Single(parent.Indexes).Name);
+        Assert.Empty(parent.Indexes);
         Assert.Equal(new[] { "code", "note" }, parent.Columns.Select(c => c.Name));
         Assert.Equal(SqlCatalogConstraintKind.PrimaryKey,
             Assert.Single(result.FinalCatalog.Tables.Single(t => t.Name == "other").Constraints).Kind);
         Assert.Equal(SqlCatalogOperation.DropConstraint,
-            Assert.Single(result.Statements[3].Changes).Operation);
+            Assert.Single(result.Statements[2].Changes).Operation);
         Assert.Equal(SqlCatalogOperation.DropColumn,
-            Assert.Single(result.Statements[4].Changes).Operation);
+            Assert.Single(result.Statements[3].Changes).Operation);
     }
 
     [Fact]

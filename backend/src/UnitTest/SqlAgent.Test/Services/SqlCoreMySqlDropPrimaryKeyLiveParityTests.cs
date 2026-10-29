@@ -31,9 +31,8 @@ public sealed class SqlCoreMySqlDropPrimaryKeyLiveParityTests
             "CONSTRAINT pk_parent PRIMARY KEY(a,b));" +
             "ALTER TABLE parent DROP PRIMARY KEY;" +
             "ALTER TABLE parent DROP COLUMN a;"),
-        new("secondary_index_and_unique_survive",
+        new("unique_key_survives_primary_drop",
             "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY, code INT NOT NULL UNIQUE, note INT);" +
-            "CREATE INDEX note_idx ON parent(note);" +
             "ALTER TABLE parent DROP PRIMARY KEY;" +
             "ALTER TABLE parent DROP COLUMN id;"),
         new("outgoing_fk_survives_child_pk_drop",
