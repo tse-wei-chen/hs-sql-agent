@@ -50,7 +50,7 @@ public sealed class SqlCoreOracleInboundForeignKeyLiveParityTests
         new("rename_index_with_inbound",
             "CREATE TABLE {T1}(ID NUMBER NOT NULL, NOTE NUMBER, CONSTRAINT {C1} PRIMARY KEY(ID));" +
             "CREATE TABLE {T2}(PARENT_ID NUMBER, CONSTRAINT {C2} FOREIGN KEY(PARENT_ID) REFERENCES {T1}(ID));" +
-            "CREATE INDEX {I1} ON {T1}(NOTE,ID);" +
+            "CREATE INDEX {I1} ON {T2}(PARENT_ID);" +
             "ALTER TABLE {T1} RENAME COLUMN ID TO CODE;")
     ];
 
@@ -99,7 +99,7 @@ public sealed class SqlCoreOracleInboundForeignKeyLiveParityTests
                     .SelectMany(table => table.Constraints
                         .Where(c => c.Kind == SqlCatalogConstraintKind.ForeignKey)
                         .Select(c => new ForeignKey(
-                            table.QualifiedName.Parts[^1], c.Name,
+                            table.QualifiedName!.Parts[^1], c.Name,
                             c.ReferencedIdentity!.Parts[^1],
                             c.Columns.ToArray(), c.ReferencedColumns.ToArray())))
                     .OrderBy(fk => fk.Table, StringComparer.Ordinal)
