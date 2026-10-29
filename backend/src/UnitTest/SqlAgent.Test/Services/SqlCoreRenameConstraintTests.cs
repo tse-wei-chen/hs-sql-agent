@@ -39,14 +39,16 @@ public sealed class SqlCoreRenameConstraintTests
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
         Assert.Equal("RenameConstraint", Assert.Single(result.Statements[2].Changes).Operation.ToString());
         var prior = result.Statements[2].CatalogBefore;
-        Assert.Equal("pk_parent", prior.Tables.Single(t => t.Name == schema + "parent")
+        var parentName = dialect == SqlAgentToolType.Oracle ? "PARENT" : schema + "parent";
+        var childName = dialect == SqlAgentToolType.Oracle ? "CHILD" : schema + "child";
+        Assert.Equal(dialect == SqlAgentToolType.Oracle ? "PK_PARENT" : "pk_parent", prior.Tables.Single(t => t.Name == parentName)
             .Constraints.Single().Name);
-        var parent = result.FinalCatalog.Tables.Single(t => t.Name == schema + "parent");
-        Assert.Equal("pk_new", Assert.Single(parent.Constraints).Name);
+        var parent = result.FinalCatalog.Tables.Single(t => t.Name == parentName);
+        Assert.Equal(dialect == SqlAgentToolType.Oracle ? "PK_NEW" : "pk_new", Assert.Single(parent.Constraints).Name);
         Assert.Equal(SqlCatalogConstraintKind.PrimaryKey, parent.Constraints.Single().Kind);
         Assert.Equal(new[] { dialect == SqlAgentToolType.Oracle ? "ID" : "id" },
             parent.Constraints.Single().Columns.ToArray());
-        var child = result.FinalCatalog.Tables.Single(t => t.Name == schema + "child");
+        var child = result.FinalCatalog.Tables.Single(t => t.Name == childName);
         Assert.Equal(dialect == SqlAgentToolType.Oracle ? "FK_CHILD" : "fk_child",
             Assert.Single(child.Constraints).Name);
         Assert.Equal(parent.QualifiedName!.Key,
@@ -73,7 +75,8 @@ public sealed class SqlCoreRenameConstraintTests
         Assert.All(result.Statements, s =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
         Assert.Single(result.Statements[2].Changes);
-        Assert.Empty(result.FinalCatalog.Tables.Where(t => t.Name == schema + "parent"));
+        var parentName = dialect == SqlAgentToolType.Oracle ? "PARENT" : schema + "parent";
+        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name == parentName);
         Assert.Empty(Assert.Single(result.FinalCatalog.Tables).Constraints);
     }
 
