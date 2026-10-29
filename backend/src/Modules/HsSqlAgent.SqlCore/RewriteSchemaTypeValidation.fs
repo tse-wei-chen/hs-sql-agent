@@ -25,7 +25,9 @@ module internal RewriteSchemaTypeValidation =
 
     type private Catalog =
         { Dialect: SqlAgentToolType
-          Tables: Map<string, (string * SqlSchemaValueKind) list> }
+          // Mutation targets are proven only against physical tables.
+          Tables: Map<string, (string * SqlSchemaValueKind) list>
+          ReadRelations: Map<string, (string * SqlSchemaValueKind) list> }
 
     let private keyPart dialect (part: IdentifierPart) =
         match dialect with
@@ -78,7 +80,7 @@ module internal RewriteSchemaTypeValidation =
                      catalogPart dialect column.Name, column.Kind)
                  |> Seq.toList))
             |> Map.ofSeq
-        { Dialect = dialect; Tables = tables }
+        { Dialect = dialect; Tables = tables; ReadRelations = tables }
 
     let private sourceKey catalog name alias =
         let full = keyIdentifier catalog.Dialect name
@@ -101,6 +103,13 @@ module internal RewriteSchemaTypeValidation =
     let private namedSource catalog name alias =
         let columns =
             Map.tryFind (keyIdentifier catalog.Dialect name) catalog.Tables
+            |> Option.defaultValue []
+            |> List.map (fun (name, kind) -> name, Some kind)
+        columnsSource (sourceKey catalog name alias) columns
+
+    let private readableNamedSource catalog name alias =
+        let columns =
+            Map.tryFind (keyIdentifier catalog.Dialect name) catalog.ReadRelations
             |> Option.defaultValue []
             |> List.map (fun (name, kind) -> name, Some kind)
         columnsSource (sourceKey catalog name alias) columns
@@ -604,7 +613,7 @@ module internal RewriteSchemaTypeValidation =
 
         and tableSource catalog ctes parent table =
             match table with
-            | NamedTable(name, alias) -> namedSource catalog name alias
+            | NamedTable(name, alias) -> readableNamedSource catalog name alias
             | CteTable(name, alias) -> cteSource catalog name alias ctes
             | DerivedTable(query, alias) ->
                 queryTypes catalog ctes None query
@@ -1013,18 +1022,27 @@ module internal RewriteSchemaTypeValidation =
                          |> List.exists (fun prefix -> value.StartsWith(prefix, StringComparison.Ordinal)) ->
                 SqlSchemaValueKind.Text
             | _ -> SqlSchemaValueKind.Unknown
-        // Match the Query-only view name binding using the view's own
-        // projected type families. Do not leak its source-table fields or
-        // promote unproven expression types to a known family.
-        let relations =
+        let physical =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                table.QualifiedName.BinderKey,
+                (table.Columns
+                 |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
+                 |> Seq.toList))
+            |> Map.ofSeq
+        // Reuse proven View output family metadata solely for read scopes.
+        // Assignment targets continue to consult the physical-only map.
+        let readable =
             seq {
-                for table in state.Tables do
+                yield! Map.toSeq physical
+                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
                     RewriteResourceBudget.checkpoint ()
-                    yield table.QualifiedName.BinderKey,
-                          (table.Columns
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns
                            |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
                            |> Seq.toList)
-                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                for view in RewriteMutationAnalyzer.readableViews dialect state bound do
                     RewriteResourceBudget.checkpoint ()
                     yield view.QualifiedName.BinderKey,
                           (view.Columns
@@ -1032,6 +1050,7 @@ module internal RewriteSchemaTypeValidation =
                            |> Seq.toList)
             }
             |> Map.ofSeq
-        let virtualCatalog : Catalog = { Dialect = dialect; Tables = relations }
+        let virtualCatalog : Catalog =
+            { Dialect = dialect; Tables = physical; ReadRelations = readable }
         (createValidation ()) virtualCatalog (Bound.value bound)
         bound
