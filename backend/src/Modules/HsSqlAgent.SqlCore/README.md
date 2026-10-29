@@ -190,6 +190,32 @@ report `Unverified` for joined mutations unless their own provider
 contract is proved. As before, cardinality evidence never authorizes
 execution or upgrades DML approvals, runtime certainty or effect coverage.
 
+### Oracle 26: conservatively proven direct-join NUMBER keys
+
+Oracle 26+ native `UPDATE ... FROM` and `DELETE ... FROM` have a
+provider-local static source-row cardinality proof only after full
+Catalog name/type validation and an **explicit** Oracle 26+ source
+profile. The proof admits physical PRIMARY KEY and UNIQUE constraints
+whose complete key is modeled as **bare `NUMBER`**. Every participating
+key/bridge/target expression must likewise resolve to a bare `NUMBER`
+column, or a signed 32-bit integer literal. The existing bounded
+mandatory `=` closure proves individual composite key components and
+multi-source chains. Oracle unquoted identifiers are folded to
+uppercase; quoted identifiers retain their exact case.
+
+This is **not** a promise about execution: Oracle's direct-join
+`UPDATE` can raise ORA-30926 when multiple source rows would update
+the same target, whereas direct-join `DELETE` may delete the target
+once even when the join has duplicate matches. `ProvenAtMostOne`
+states only that the modeled physical key constraints bound the source
+combination count per fixed target row. It does not attest to actual
+server data, runtime triggers, exception absence or SQL authorization.
+No inference is made for older/unspecified Oracle versions, other
+numeric precision/scale declarations, string/floating coercions,
+arbitrary expressions, OR, incomplete keys or View outputs. PostgreSQL
+and SQL Server retain their independent proof semantics; the remaining
+three providers stay unverified for joined mutations.
+
 ## Mutation source relations versus physical write targets
 
 In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,

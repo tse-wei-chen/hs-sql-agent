@@ -145,7 +145,7 @@ module internal RewriteCatalogBinding =
                             RewriteSchemaTypeValidation.verifyVirtual sourceDialect catalogForBinding namesChecked)
                         |> ignore
                         verified (RewriteMutationSourceMatchProof.classify
-                                      sourceDialect catalogForBinding bound)
+                                      sourceDialect profile catalogForBinding bound)
             with
             | :? SqlCompilationException as ex
                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
