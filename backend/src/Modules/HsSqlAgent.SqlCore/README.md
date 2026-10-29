@@ -70,6 +70,25 @@ A source capability profile may also be supplied to both options types,
 e.g. for version-gated Oracle grammar. Provider/profile mismatches still fail;
 option objects never imply successful binding, authorization or SQL execution.
 
+## PostgreSQL DQL over proven Virtual Catalog views
+
+After a fully modeled PostgreSQL `CREATE VIEW`, `AnalyzeScript` can bind
+subsequent `SELECT` statements to the view's declared output names and
+type families, including direct reads, aliases, wildcard projections, CTEs,
+JOINs and derived queries. Binding reads `SqlCatalogState.Views` without
+changing or impersonating the physical `Tables` Catalog. Invalid or
+ambiguous columns and demonstrably incompatible typed predicates remain
+fail-closed, and dropping a View invalidates later references. An open or
+incomplete Catalog still cannot prove any of these names.
+
+This is **static DQL analysis only**, initially for PostgreSQL's proven View
+subset. Other dialects do not inherit this capability. Query
+`CatalogBinding = Verified` still means only static name/type evidence;
+`Status = PartiallyAnalyzed` and `EffectCoverage = Partial` deliberately
+remain unchanged. It does not authorize SQL execution or establish runtime
+function effects. Views are never treated as physical INSERT/UPDATE/DELETE
+targets by this feature.
+
 ## SQL Server GO comments in static scripts
 
 The SQL Server Script Frontend recognizes a standalone client-side `GO` separator

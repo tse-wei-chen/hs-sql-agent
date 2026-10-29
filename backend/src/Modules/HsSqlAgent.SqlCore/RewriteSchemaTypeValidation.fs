@@ -1013,15 +1013,25 @@ module internal RewriteSchemaTypeValidation =
                          |> List.exists (fun prefix -> value.StartsWith(prefix, StringComparison.Ordinal)) ->
                 SqlSchemaValueKind.Text
             | _ -> SqlSchemaValueKind.Unknown
-        let tables =
-            state.Tables
-            |> Seq.map (fun table ->
-                RewriteResourceBudget.checkpoint ()
-                table.QualifiedName.BinderKey,
-                (table.Columns
-                 |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
-                 |> Seq.toList))
+        // Match the Query-only view name binding using the view's own
+        // projected type families. Do not leak its source-table fields or
+        // promote unproven expression types to a known family.
+        let relations =
+            seq {
+                for table in state.Tables do
+                    RewriteResourceBudget.checkpoint ()
+                    yield table.QualifiedName.BinderKey,
+                          (table.Columns
+                           |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
+                           |> Seq.toList)
+                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns
+                           |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
+                           |> Seq.toList)
+            }
             |> Map.ofSeq
-        let virtualCatalog : Catalog = { Dialect = dialect; Tables = tables }
+        let virtualCatalog : Catalog = { Dialect = dialect; Tables = relations }
         (createValidation ()) virtualCatalog (Bound.value bound)
         bound
