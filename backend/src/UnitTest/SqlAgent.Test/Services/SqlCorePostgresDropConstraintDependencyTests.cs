@@ -158,8 +158,10 @@ public sealed class SqlCorePostgresDropConstraintDependencyTests
             "ALTER TABLE app.missing DROP CONSTRAINT IF EXISTS unknown CASCADE;");
         var step = Assert.Single(result.Statements);
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, step.Status);
-        Assert.Empty(step.Changes);
+        Assert.DoesNotContain(step.Changes, c =>
+            c.Certainty == SqlCatalogKnowledge.Known);
         Assert.Empty(result.FinalCatalog.Tables);
+        Assert.False(result.FinalCatalog.IsClosedWorld);
     }
 
     [Fact]
