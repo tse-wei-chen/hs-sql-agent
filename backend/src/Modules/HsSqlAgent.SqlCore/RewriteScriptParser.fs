@@ -50,6 +50,7 @@ module internal RewriteScriptParser =
             | _ -> Schema
         | "ALTER" when second = "PROCEDURE" || second = "PROC"
                          || second = "FUNCTION" || second = "TRIGGER" -> Procedural
+        | "RECREATE" when sourceDialect = SqlAgentToolType.Firebird && second = "TABLE" -> Schema
         | "ALTER" | "DROP" | "TRUNCATE" | "RENAME" -> Schema
         | "GRANT" | "REVOKE" | "DENY" -> Security
         | "BEGIN" when sourceDialect = SqlAgentToolType.MsSqlServer

@@ -559,6 +559,8 @@ module internal RewriteScriptAnalyzer =
         let resolvedOperation = function
             | Create(name, columns, constraints, conditional) ->
                 Create(resolve name, columns, List.map resolveConstraint constraints, conditional)
+            | Recreate(name, columns, constraints) ->
+                Recreate(resolve name, columns, List.map resolveConstraint constraints)
             | CreateView(view, sources, projection, join, predicate, mode, header) ->
                 CreateView(resolve view,
                            (sources |> List.map (fun item ->
@@ -589,7 +591,8 @@ module internal RewriteScriptAnalyzer =
             match parsed with
             | Recognized operation ->
                 match operation with
-                | Create(name, _, constraints, _) ->
+                | Create(name, _, constraints, _)
+                | Recreate(name, _, constraints) ->
                     name :: (constraints |> List.choose (fun c ->
                         if isNull c.ReferencedIdentity then None
                         else Some c.ReferencedIdentity))
@@ -623,6 +626,7 @@ module internal RewriteScriptAnalyzer =
 
         let referencedTableName = function
             | Create(name, _, _, _)
+            | Recreate(name, _, _)
             | CreateView(name, _, _, _, _, _, _)
             | DropView(name, _, _)
             | Drop(name, _)
@@ -699,6 +703,54 @@ module internal RewriteScriptAnalyzer =
                     "Source dialect DDL is outside the statically proven TABLE subset; catalog facts are invalidated."
             SqlStatementAnalysisStatus.Unsupported, SqlCatalogKnowledge.Unknown,
             unknown, [changed syntax "*" SqlCatalogOperation.Indeterminate SqlCatalogKnowledge.Unknown], [error]
+        | Recognized (Recreate(name, columns, constraints)) ->
+            // Firebird RECREATE must not be modeled as two independent
+            // statements: all preconditions are checked over the existing
+            // immutable Catalog before publishing one replacement state.
+            if sourceDialect <> SqlAgentToolType.Firebird
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Firebird RECREATE TABLE requires a complete known Catalog."
+            elif RewriteCatalogModel.lookupView state name |> Option.isSome then
+                fail ("RECREATE TABLE " + name.DisplayName +
+                      " names an existing View, not a table.")
+            else
+                let present = RewriteCatalogModel.lookup state name
+                let blockers =
+                    if present.IsNone then RewriteSchemaDependencies.Proven
+                    elif not (RewriteCatalogModel.dependentViews
+                                  state (Set.singleton name.Key)).IsEmpty then
+                        RewriteSchemaDependencies.Invalid
+                            ("RECREATE TABLE " + name.DisplayName +
+                             " is blocked by dependent Views.")
+                    else
+                        RewriteSchemaDependencies.canDropTable state name
+                match blockers with
+                | RewriteSchemaDependencies.Invalid message -> fail message
+                | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+                | RewriteSchemaDependencies.Proven ->
+                    // Validate the new definition against the staged
+                    // dropped table, so stale key/index facts never survive.
+                    let withoutOld = RewriteCatalogModel.dropKnown state name
+                    match RewriteSchemaDependencies.validateCreate
+                              sourceDialect sourceProfile withoutOld name columns constraints with
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
+                    | RewriteSchemaDependencies.Proven ->
+                        let next =
+                            RewriteCatalogModel.knownTableWithConstraints
+                                withoutOld name columns constraints
+                        let dropped =
+                            if present.IsSome then
+                                [changedExact syntax name SqlCatalogOperation.DropTable
+                                    SqlCatalogKnowledge.Known]
+                            else []
+                        let created =
+                            changedExact syntax name SqlCatalogOperation.CreateTable
+                                SqlCatalogKnowledge.Known
+                        SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                        next, dropped @ [created], ([]: SqlDiagnostic list)
         | Recognized (Create(name, _, _, ifNotExists)) when
             RewriteCatalogModel.lookupView state name |> Option.isSome ->
             // PostgreSQL Views and tables are relation-kind siblings.

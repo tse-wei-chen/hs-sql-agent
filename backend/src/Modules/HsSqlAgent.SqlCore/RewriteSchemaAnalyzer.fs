@@ -112,6 +112,10 @@ module internal RewriteSchemaAnalyzer =
     type DdlOperation =
         | Create of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
                     constraints: SqlCatalogConstraint list * ifNotExists: bool
+        /// Firebird RECREATE TABLE is one atomic replace, not a DROP
+        /// followed by a separately authorized CREATE statement.
+        | Recreate of table: SqlCatalogQualifiedName * columns: SqlCatalogColumn list *
+                      constraints: SqlCatalogConstraint list
         /// A fully parsed direct-source SELECT projection (no opaque SQL string).
         | CreateView of view: SqlCatalogQualifiedName * sources: ViewFromSource list *
                         projection: ViewProjection * joins: ViewJoinEdge list *
@@ -418,16 +422,20 @@ module internal RewriteSchemaAnalyzer =
                 expect "EXISTS"
                 true
             else false
-        let parseCreate () =
-            expect "CREATE"
+        let parseCreate recreate =
+            if recreate then
+                expect "RECREATE"
+                if sourceDialect <> SqlAgentToolType.Firebird then raise OutsideSubset
+            else expect "CREATE"
             let viewMode =
-                if accept "OR" then
+                if recreate then CreateOnly
+                elif accept "OR" then
                     // Do not generalize OR REPLACE to unrelated DDL families.
                     if not (accept "REPLACE") then raise OutsideSubset
                     CreateOrReplace
                 else CreateOnly
             if accept "VIEW" then
-                if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
+                if recreate || sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
                 let view = qualifiedName ()
                 let viewHeaderPart () =
                     match (current ()).Kind with
@@ -736,6 +744,7 @@ module internal RewriteSchemaAnalyzer =
             elif viewMode = CreateOrReplace then
                 raise OutsideSubset
             elif accept "INDEX" then
+                if recreate then raise OutsideSubset
                 // SQLite alone has a proven conditional index-name capability.
                 let conditional =
                     if sourceDialect = SqlAgentToolType.Sqlite then ifNotExists ()
@@ -765,7 +774,7 @@ module internal RewriteSchemaAnalyzer =
                 Recognized(CreateIndex(table, indexName, names, conditional))
             else
                 if not (accept "TABLE") then raise OutsideSubset
-                let conditional = ifNotExists ()
+                let conditional = if recreate then false else ifNotExists ()
                 let table = qualifiedName ()
                 expectSymbol '('
                 let columns = ResizeArray<SqlCatalogColumn>()
@@ -851,6 +860,7 @@ module internal RewriteSchemaAnalyzer =
                 elif (members |> Seq.groupBy (fun x -> x.Name)
                       |> Seq.exists (fun (_, items) -> Seq.length items > 1)) then
                     Invalid "CREATE TABLE contains duplicate column names."
+                else if recreate then Recognized(Recreate(table, members, deps))
                 else Recognized(Create(table, members, deps, conditional))
         let parseDrop () =
             expect "DROP"
@@ -1108,7 +1118,8 @@ module internal RewriteSchemaAnalyzer =
 
         try
             match word () with
-            | "CREATE" -> parseCreate ()
+            | "CREATE" -> parseCreate false
+            | "RECREATE" -> parseCreate true
             | "DROP" -> parseDrop ()
             | "ALTER" -> parseAlter ()
             | _ -> Unsupported

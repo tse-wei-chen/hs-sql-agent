@@ -39,16 +39,24 @@ public sealed class SqlCoreFirebirdLiveDdlParityTests
         new("index_drop_then_column", "CREATE TABLE {T1}(ID INTEGER, LABEL VARCHAR(32)); CREATE INDEX {I1} ON {T1}(LABEL); DROP INDEX {I1}; ALTER TABLE {T1} DROP LABEL;"),
         new("create_drop_other", "CREATE TABLE {T1}(ID INTEGER); CREATE TABLE {T2}(ID INTEGER, CODE VARCHAR(32)); ALTER TABLE {T2} ADD QUANTITY SMALLINT; DROP TABLE {T1};"),
         new("nullable_shape", "CREATE TABLE {T1}(ID INTEGER NOT NULL, LABEL VARCHAR(32)); ALTER TABLE {T1} ADD QUANTITY SMALLINT;"),
+        new("recreate_absent", "RECREATE TABLE {T1}(ID INTEGER); ALTER TABLE {T1} ADD LABEL VARCHAR(32);"),
+        new("recreate_replace_columns", "CREATE TABLE {T1}(ID INTEGER, OLD_LABEL VARCHAR(32)); RECREATE TABLE {T1}(NEW_ID INTEGER, STATE VARCHAR(32));"),
+        new("recreate_removes_old_index", "CREATE TABLE {T1}(ID INTEGER, LABEL VARCHAR(32)); CREATE INDEX {I1} ON {T1}(LABEL); RECREATE TABLE {T1}(ID INTEGER);"),
+        new("recreate_allows_index_name_reuse", "CREATE TABLE {T1}(ID INTEGER, LABEL VARCHAR(32)); CREATE INDEX {I1} ON {T1}(LABEL); RECREATE TABLE {T1}(ID INTEGER, STATUS VARCHAR(32)); CREATE INDEX {I1} ON {T1}(STATUS);"),
+        new("recreate_repeated", "RECREATE TABLE {T1}(ID INTEGER); RECREATE TABLE {T1}(CODE VARCHAR(32)); RECREATE TABLE {T1}(STATE SMALLINT);"),
+        new("recreate_quoted", "CREATE TABLE \"{T1}\"(\"ID\" INTEGER, \"NOTE\" VARCHAR(32)); RECREATE TABLE \"{T1}\"(\"NEW_ID\" INTEGER);"),
+        new("recreate_after_add", "CREATE TABLE {T1}(ID INTEGER); ALTER TABLE {T1} ADD LABEL VARCHAR(32); RECREATE TABLE {T1}(VALUE_ID INTEGER);"),
+        new("recreate_after_drop", "CREATE TABLE {T1}(ID INTEGER); DROP TABLE {T1}; RECREATE TABLE {T1}(NEW_ID INTEGER NOT NULL);"),
     ];
 
     public static IEnumerable<object[]> Cases => Scenarios.Select(x => new object[] { x.Name });
 
     [Fact]
-    public void AcceptanceCorpusContainsFourteenDistinctMultiStatementFirebirdWorkflows()
+    public void AcceptanceCorpusContainsTwentyTwoDistinctMultiStatementFirebirdWorkflows()
     {
-        Assert.Equal(14, Scenarios.Length);
-        Assert.Equal(14, Scenarios.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(14, Scenarios.Select(x => x.Template).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(22, Scenarios.Length);
+        Assert.Equal(22, Scenarios.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(22, Scenarios.Select(x => x.Template).Distinct(StringComparer.Ordinal).Count());
         Assert.All(Scenarios, x => Assert.True(x.Template.Count(c => c == ';') >= 2, x.Name));
     }
 
