@@ -108,10 +108,9 @@ module internal RewriteCatalogModel =
             |> Seq.toArray |> Array.AsReadOnly
         SqlCatalogState(state.IsClosedWorld, state.Tables, next)
 
-    let replaceTable state name columns constraints indexes =
+    let replaceTable state name columns (constraints: seq<SqlCatalogConstraint>) indexes =
         let cols = columns |> Seq.toArray |> Array.AsReadOnly
-        let keys : System.Collections.Generic.IReadOnlyList<SqlCatalogConstraint> =
-            constraints |> Seq.toArray |> Array.AsReadOnly
+        let keys = constraints |> Seq.toArray |> Array.AsReadOnly
         let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
         // DROP FOREIGN KEY is NOT DROP INDEX in MySQL. Preserve a physical
         // index uncertainty fence when even one previously modeled FK exits
