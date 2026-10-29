@@ -34,6 +34,10 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
         ("conditional_drop", "CREATE TABLE users(id INT); DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS users;"),
         ("index_kept", "CREATE TABLE events(id INT, state NVARCHAR(64)); CREATE INDEX idx_events_state ON events(state);"),
         ("index_removed", "CREATE TABLE events(id INT, state NVARCHAR(64)); CREATE INDEX idx_events_state ON events(state); DROP INDEX idx_events_state ON events;"),
+        ("conditional_index_removed", "CREATE TABLE orders(id INT, state NVARCHAR(64)); CREATE INDEX ix_orders_state ON orders(state); DROP INDEX IF EXISTS ix_orders_state ON orders;"),
+        ("conditional_index_noop", "CREATE TABLE orders(id INT); DROP INDEX IF EXISTS ix_missing ON orders; DROP INDEX IF EXISTS ix_missing ON orders;"),
+        ("conditional_index_wrong_owner_noop", "CREATE TABLE orders(id INT); CREATE TABLE events(id INT); CREATE INDEX ix_shared ON orders(id); DROP INDEX IF EXISTS ix_shared ON events;"),
+        ("conditional_index_drop_then_noop", "CREATE TABLE orders(id INT); CREATE INDEX ix_id ON orders(id); DROP INDEX IF EXISTS ix_id ON orders; DROP INDEX IF EXISTS ix_id ON orders;"),
         ("two_indexes", "CREATE TABLE locations(id INT, city NVARCHAR(64), region NVARCHAR(64)); CREATE INDEX idx_locations_city ON locations(city); CREATE INDEX idx_locations_region ON locations(region);"),
         ("index_table_drop", "CREATE TABLE jobs(id INT, status NVARCHAR(64)); CREATE INDEX idx_jobs_status ON jobs(status); DROP TABLE jobs;"),
         ("quoted_simple", "CREATE TABLE [order_items]([id] INT NOT NULL, [label] NVARCHAR(64)); ALTER TABLE [order_items] ADD [amount] INT;"),
@@ -48,11 +52,11 @@ public sealed class SqlCoreSqlServerLiveDdlParityTests
         Scenarios.Select(x => new object[] { x.Id });
 
     [Fact]
-    public void CorpusContainsSeventeenNonidenticalSqlServerWorkflows()
+    public void CorpusContainsTwentyOneNonidenticalSqlServerWorkflows()
     {
-        Assert.Equal(17, Scenarios.Length);
-        Assert.Equal(17, Scenarios.Select(x => x.Id).Distinct().Count());
-        Assert.Equal(17, Scenarios.Select(x => x.Sql).Distinct().Count());
+        Assert.Equal(21, Scenarios.Length);
+        Assert.Equal(21, Scenarios.Select(x => x.Id).Distinct().Count());
+        Assert.Equal(21, Scenarios.Select(x => x.Sql).Distinct().Count());
         Assert.All(Scenarios, x => Assert.True(x.Sql.Count(c => c == ';') >= 2));
     }
 
