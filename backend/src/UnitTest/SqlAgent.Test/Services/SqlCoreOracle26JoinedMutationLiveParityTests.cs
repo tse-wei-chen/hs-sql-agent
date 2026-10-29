@@ -29,7 +29,8 @@ public sealed class SqlCoreOracle26JoinedMutationLiveParityTests
         string Mutation,
         SqlMutationSourceMatchCardinality MatchProof,
         string ExpectedRows,
-        int? OracleError = null);
+        int? OracleError = null,
+        bool ExpectRejected = false);
 
     private const string TargetDdl =
         "CREATE TABLE {T}(ID NUMBER NOT NULL PRIMARY KEY, PAYLOAD NUMBER, BUCKET NUMBER)";
@@ -49,7 +50,7 @@ public sealed class SqlCoreOracle26JoinedMutationLiveParityTests
         new("pk_update", PrimarySource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)",
              "INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (3,303,3)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
             SqlMutationSourceMatchCardinality.ProvenAtMostOne, "1:101,2:20"),
         new("pk_delete", PrimarySource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)"], [],
@@ -57,17 +58,24 @@ public sealed class SqlCoreOracle26JoinedMutationLiveParityTests
             SqlMutationSourceMatchCardinality.ProvenAtMostOne, "2:20"),
         new("no_match_pk_update", PrimarySource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (3,303,3)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
             SqlMutationSourceMatchCardinality.ProvenAtMostOne, "1:10,2:20"),
         new("nonunique_single_update", NonUniqueSource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
             SqlMutationSourceMatchCardinality.Unverified, "1:101,2:20"),
         new("duplicate_update_ora30926", NonUniqueSource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)",
              "INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,202,1)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
             SqlMutationSourceMatchCardinality.Unverified, "1:10,2:20", 30926),
+        // Physical Oracle emits ORA-00918 when an unqualified UPDATE SET
+        // target is also an accessible FROM column. Catalog name-binding
+        // must reject that ambiguity before claiming proof.
+        new("ambiguous_assignment_ora918", PrimarySource, null,
+            ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)"], [],
+            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
+            SqlMutationSourceMatchCardinality.Unverified, "1:10,2:20", 918, true),
         new("duplicate_delete_once", NonUniqueSource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)",
              "INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,202,1)"], [],
@@ -76,23 +84,23 @@ public sealed class SqlCoreOracle26JoinedMutationLiveParityTests
         new("composite_unique_update", CompositeSource, null,
             ["INSERT INTO {S}(K1,K2,PAYLOAD) VALUES (1,7,101)",
              "INSERT INTO {S}(K1,K2,PAYLOAD) VALUES (1,8,102)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.K1 AND s.K2 = 7",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.K1 AND s.K2 = 7",
             SqlMutationSourceMatchCardinality.ProvenAtMostOne, "1:101,2:20"),
         new("two_unique_sources_bridge", PrimarySource, OtherSource,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)"],
             ["INSERT INTO {M}(ID,BRIDGE) VALUES (1,1)"],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s, {M} m " +
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s, {M} m " +
             "WHERE {T}.ID = s.BRIDGE AND s.BRIDGE = s.ID AND s.ID = m.BRIDGE AND m.BRIDGE = m.ID",
             SqlMutationSourceMatchCardinality.ProvenAtMostOne, "1:101,2:20"),
         new("nullable_unique_nulls_do_not_match", NullableUniqueSource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (NULL,111,1)",
              "INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (NULL,222,1)",
              "INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE {T}.ID = s.ID",
             SqlMutationSourceMatchCardinality.ProvenAtMostOne, "1:101,2:20"),
         new("unanchored_single_source", PrimarySource, null,
             ["INSERT INTO {S}(ID,PAYLOAD,BRIDGE) VALUES (1,101,1)"], [],
-            "UPDATE {T} SET PAYLOAD = s.PAYLOAD FROM {S} s WHERE s.ID = s.BRIDGE",
+            "UPDATE {T} SET {T}.PAYLOAD = s.PAYLOAD FROM {S} s WHERE s.ID = s.BRIDGE",
             SqlMutationSourceMatchCardinality.Unverified, "1:101,2:101")
     ];
 
@@ -100,10 +108,10 @@ public sealed class SqlCoreOracle26JoinedMutationLiveParityTests
         Scenarios.Select(s => new object[] { s.Name });
 
     [Fact]
-    public void ParityCorpusHasTenIndependentPhysicalScenarios()
+    public void ParityCorpusHasElevenIndependentPhysicalScenarios()
     {
-        Assert.Equal(10, Scenarios.Length);
-        Assert.Equal(10, Scenarios.Select(s => s.Name).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(11, Scenarios.Length);
+        Assert.Equal(11, Scenarios.Select(s => s.Name).Distinct(StringComparer.Ordinal).Count());
         Assert.Contains(Scenarios, s => s.OracleError == 30926);
         Assert.Contains(Scenarios, s => s.Name == "duplicate_delete_once");
         Assert.Contains(Scenarios, s => s.MatchProof == SqlMutationSourceMatchCardinality.ProvenAtMostOne);
@@ -156,11 +164,23 @@ public sealed class SqlCoreOracle26JoinedMutationLiveParityTests
             mutation + ";", SqlAgentToolType.Oracle,
             schema.FinalCatalog, profile, TestContext.Current.CancellationToken);
         var statement = Assert.Single(analyzed.Statements);
-        Assert.Empty(statement.Diagnostics);
-        Assert.Equal(SqlCatalogBindingStatus.Verified, statement.CatalogBinding);
-        Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, statement.Status);
-        Assert.Equal(scenario.MatchProof, statement.SourceMatchCardinality);
-        Assert.Equal(SqlEffectCoverage.Partial, statement.EffectCoverage);
+        if (scenario.ExpectRejected)
+        {
+            Assert.Equal(SqlCatalogBindingStatus.Rejected, statement.CatalogBinding);
+            Assert.Equal(SqlStatementAnalysisStatus.Invalid, statement.Status);
+            Assert.Contains(statement.Diagnostics,
+                d => d.Code == "SQL_SCHEMA_UPDATE_ASSIGNMENT_AMBIGUOUS");
+            Assert.Equal(SqlMutationSourceMatchCardinality.Unverified,
+                statement.SourceMatchCardinality);
+        }
+        else
+        {
+            Assert.Empty(statement.Diagnostics);
+            Assert.Equal(SqlCatalogBindingStatus.Verified, statement.CatalogBinding);
+            Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, statement.Status);
+            Assert.Equal(scenario.MatchProof, statement.SourceMatchCardinality);
+            Assert.Equal(SqlEffectCoverage.Partial, statement.EffectCoverage);
+        }
         Assert.Empty(statement.Changes);
         Assert.Same(schema.FinalCatalog, statement.CatalogAfter);
 
