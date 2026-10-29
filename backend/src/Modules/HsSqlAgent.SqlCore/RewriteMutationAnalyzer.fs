@@ -144,7 +144,7 @@ module internal RewriteMutationSourceMatchProof =
                 match source with
                 | NamedTable(name, alias) -> create (index + 1) name alias
                 | CteTable _ | DerivedTable _ | LateralDerivedTable _ -> None)
-        if targetRelation.IsNone || readRelations |> List.exists Option.isNone then
+        if targetRelation.IsNone || (readRelations |> List.exists Option.isNone) then
             SqlMutationSourceMatchCardinality.Unverified
         else
             let all = Option.get targetRelation :: (readRelations |> List.choose id)
@@ -152,8 +152,8 @@ module internal RewriteMutationSourceMatchProof =
                 predicate
                 |> Option.map (mandatoryEqualities all)
                 |> Option.defaultValue []
-            let fixed = HashSet<int>()
-            fixed.Add 0 |> ignore // A single target row is already fixed.
+            let anchored = HashSet<int>()
+            anchored.Add 0 |> ignore // A single target row is already fixed.
             let constrains source column =
                 equalities
                 |> List.exists (fun (left, right) ->
@@ -164,7 +164,7 @@ module internal RewriteMutationSourceMatchProof =
                         | _ -> None
                     match other with
                     | Some FixedLiteral -> true
-                    | Some(Field(index, _)) -> index <> source && fixed.Contains index
+                    | Some(Field(index, _)) -> index <> source && anchored.Contains index
                     | None -> false)
             // Each newly fixed unique-key source may anchor another source.
             // A cycle of as-yet-unfixed sources cannot establish cardinality.
@@ -173,13 +173,13 @@ module internal RewriteMutationSourceMatchProof =
                 changed <- false
                 for relation in List.tail all do
                     RewriteResourceBudget.checkpoint ()
-                    if not (fixed.Contains relation.Position)
+                    if not (anchored.Contains relation.Position)
                        && (relation.UniqueKeys
                            |> List.exists (fun key ->
                                key |> List.forall (constrains relation.Position))) then
-                        fixed.Add relation.Position |> ignore
+                        anchored.Add relation.Position |> ignore
                         changed <- true
-            if fixed.Count = all.Length then
+            if anchored.Count = all.Length then
                 SqlMutationSourceMatchCardinality.ProvenAtMostOne
             else SqlMutationSourceMatchCardinality.Unverified
 
