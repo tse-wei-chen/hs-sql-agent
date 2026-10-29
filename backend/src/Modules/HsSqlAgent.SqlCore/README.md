@@ -260,6 +260,36 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL same-name FK implicit-index promotion and independent multi-FK ownership
+
+An InnoDB implicit foreign-key support index may be promoted by declaring an
+explicit left-prefix covering index **with the very same name**. SqlCore
+proves that transition only if the full known closed Catalog, declared MySQL
+physical identifier contract, the named FK's exact ordered local prefix,
+and absence of competing PK/UNIQUE/secondary support indexes are all proven.
+A same-name index that does **not** cover its own FK remains invalid; names
+matching a different FK, PRIMARY, UNIQUE, or ordinary index are collisions.
+The transition publishes one proven explicit `CreateIndex` Catalog change
+without asserting that an implicit physical index was removed, and retains
+the persistent uncertain-physical-lineage marker. Consequently a later
+`DROP INDEX` that might remove the last FK support and subsequent index
+namespace absence proofs remain fail-closed.
+
+Multiple named FKs are only treated as **independently owned** support indexes
+if none of their ordered local key prefixes is a prefix of another and none
+is already supported by any modeled PK/UNIQUE/standalone index. A new index
+may be unrelated to every FK (stable) or replace **one** independently owned
+FK support index (possibly replaced); never multiple or overlapping FKs.
+Unnamed FKs, opaque server identifier settings, unknown index provenance,
+schema history after replacement, and all other five database dialects
+remain conservatively rejected.
+
+Static analysis does not connect to MySQL, authorize a change or execute SQL.
+Test-only disposable InnoDB databases compare real physical key columns and
+FK metadata from `information_schema.STATISTICS` /
+`REFERENTIAL_CONSTRAINTS` across both same-name and independent multiple-FK
+workflows. No guessed physical DROP INDEX deltas are minted.
+
 ## MySQL FK prefix-covering index — typed uncertain physical replacement
 
 InnoDB allows an explicitly named secondary index whose ordered **left prefix**

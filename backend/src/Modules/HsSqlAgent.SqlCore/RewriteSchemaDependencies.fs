@@ -87,10 +87,11 @@ module internal RewriteSchemaDependencies =
                      && String.IsNullOrWhiteSpace c.Name) then
                 Error(Unproven "MySQL generated UNIQUE index names are not represented by the Catalog.")
             else
-                // A covering index can replace the single tracked implicit
-                // FK-support index. We can prove the explicit index and FK
-                // semantics, but MUST retain uncertainty about the physical
-                // implicit index, whose removal is engine-dependent.
+                // A named FK created on a complete MySQL Catalog may own
+                // an implicit physical supporting index. Two FKs have
+                // independent lineage ONLY if their ordered local prefixes
+                // are incomparable: shared/prefix-related keys may reuse
+                // the same physical index and cannot be proven statically.
                 let foreignKeys =
                     owner.Constraints
                     |> Seq.filter (fun c ->
@@ -101,38 +102,45 @@ module internal RewriteSchemaDependencies =
                     && List.forall2 (fun left right ->
                         String.Equals(left, right, StringComparison.Ordinal))
                             prefix (candidate |> List.take prefix.Length)
+                let localColumns (fk: SqlCatalogConstraint) =
+                    fk.Columns |> Seq.toList
+                let overlaps =
+                    foreignKeys
+                    |> List.mapi (fun i fk ->
+                        foreignKeys
+                        |> List.skip (i + 1)
+                        |> List.exists (fun other ->
+                            startsWith (localColumns fk) (localColumns other)
+                            || startsWith (localColumns other) (localColumns fk)))
+                    |> List.exists id
+                let invalidNames =
+                    foreignKeys |> List.exists (fun fk ->
+                        String.IsNullOrWhiteSpace fk.Name
+                        || not (asciiName fk.Name)
+                        || fk.Columns.Count = 0)
+                let competingSupport =
+                    foreignKeys |> List.exists (fun fk ->
+                        let prefix = localColumns fk
+                        (owner.Constraints |> Seq.exists (fun c ->
+                            (c.Kind = SqlCatalogConstraintKind.PrimaryKey
+                             || c.Kind = SqlCatalogConstraintKind.Unique)
+                            && startsWith prefix (c.Columns |> Seq.toList)))
+                        || (owner.Indexes |> Seq.exists (fun idx ->
+                            startsWith prefix (idx.Columns |> Seq.toList))))
+                let covered =
+                    foreignKeys |> List.filter (fun fk ->
+                        startsWith (localColumns fk) members)
                 let supportProof =
-                    match foreignKeys with
-                    | [] -> Ok StableImplicitFkSupport
-                    | [fk] ->
-                        let cols = fk.Columns |> Seq.toList
-                        let implicitName = fk.Name
-                        if String.IsNullOrWhiteSpace implicitName
-                           || not (asciiName implicitName) then
-                            Error(Unproven "Unnamed or non-ASCII FK support indexes have no physical name proof.")
-                        elif startsWith cols members then
-                            // Keep checking possible competing parent/local
-                            // support keys before accepting this transition.
-                            if owner.Constraints |> Seq.exists (fun key ->
-                                (key.Kind = SqlCatalogConstraintKind.PrimaryKey
-                                 || key.Kind = SqlCatalogConstraintKind.Unique)
-                                && startsWith cols (key.Columns |> Seq.toList)) then
-                                Error(Unproven "An existing PRIMARY/UNIQUE key may already support the FK.")
-                            elif owner.Indexes |> Seq.exists (fun idx ->
-                                startsWith cols (idx.Columns |> Seq.toList)) then
-                                Error(Unproven "An existing explicit index may already support the FK.")
-                            else Ok MayReplaceImplicitFkSupport
-                        elif owner.Constraints |> Seq.exists (fun key ->
-                            (key.Kind = SqlCatalogConstraintKind.PrimaryKey
-                             || key.Kind = SqlCatalogConstraintKind.Unique)
-                            && startsWith cols (key.Columns |> Seq.toList)) then
-                            Error(Unproven "An existing key may already support this FK, so implicit index origin is unproven.")
-                        elif owner.Indexes |> Seq.exists (fun idx ->
-                            startsWith cols (idx.Columns |> Seq.toList)) then
-                            Error(Unproven "An existing explicit index may already support this FK, so implicit index origin is unproven.")
-                        else Ok StableImplicitFkSupport
-                    | _ ->
-                        Error(Unproven "Multiple MySQL FKs may share an implicit support index; physical lineage is not proven.")
+                    if invalidNames then
+                        Error(Unproven "Unnamed or non-ASCII FK supporting indexes have no physical name proof.")
+                    elif overlaps then
+                        Error(Unproven "Foreign keys sharing an ordered left prefix may share one InnoDB support index.")
+                    elif competingSupport then
+                        Error(Unproven "An existing PRIMARY/UNIQUE/standalone index may already support a foreign key.")
+                    elif covered.Length > 1 then
+                        Error(Unproven "One new index may replace multiple implicit FK indexes; physical lineage is not proven.")
+                    elif covered.IsEmpty then Ok StableImplicitFkSupport
+                    else Ok MayReplaceImplicitFkSupport
                 match supportProof with
                 | Error proof -> Error proof
                 | Ok transition ->
@@ -156,10 +164,26 @@ module internal RewriteSchemaDependencies =
                         Error(Unproven "Physical PRIMARY/UNIQUE/FK index identity is not a bounded simple ASCII name.")
                     elif canonical.Length <> (canonical |> List.distinct |> List.length) then
                         Error(Invalid "The known MySQL key/index namespace contains colliding physical names.")
-                    elif rendered |> List.exists (same proposedName) then
-                        Error(Invalid ("CREATE INDEX '" + proposedName +
-                                 "' collides with a MySQL PRIMARY/UNIQUE/FK-support/standalone physical index."))
-                    else Ok transition
+                    else
+                        let collisions =
+                            all |> List.filter (fun identity ->
+                                same (physicalMySqlIndexName identity) proposedName)
+                        // MySQL can promote its OWN implicitly created
+                        // FK-supporting index to an explicit covering index
+                        // with the same name. No cross-FK or ordinary index
+                        // collision is safe to reinterpret this way.
+                        let ownFkPromotion =
+                            match collisions, transition with
+                            | [NamedForeignKeySupportingIndex name],
+                              MayReplaceImplicitFkSupport ->
+                                covered |> List.exists (fun fk ->
+                                    same fk.Name name
+                                    && startsWith (localColumns fk) members)
+                            | _ -> false
+                        if not collisions.IsEmpty && not ownFkPromotion then
+                            Error(Invalid ("CREATE INDEX '" + proposedName +
+                                  "' collides with a MySQL PRIMARY/UNIQUE/FK-support/standalone physical index."))
+                        else Ok transition
     let validateCreate dialect (profile: SqlProviderCapabilityProfile | null) (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
                        (columns: SqlCatalogColumn list)
                        (constraints: SqlCatalogConstraint list) =
