@@ -88,8 +88,8 @@ public sealed class SqlCoreMySqlAlterFkGraphTransitionTests
         Assert.Empty(r.Diagnostics);
         Assert.All(r.Statements, s => Assert.Equal(SqlStatementAnalysisStatus.Analyzed, s.Status));
         var after = r.FinalCatalog.Tables.Single(t => t.Name == "child");
-        Assert.Equal("fk_short", Assert.Single(after.Constraints
-            .Where(x => x.Kind == SqlCatalogConstraintKind.ForeignKey)).Name);
+        Assert.Equal("fk_short", Assert.Single(after.Constraints,
+            x => x.Kind == SqlCatalogConstraintKind.ForeignKey).Name);
         Assert.Equal("ix_backup", Assert.Single(after.Indexes).Name);
         Assert.Equal(SqlCatalogOperation.DropIndex, Assert.Single(r.Statements[^1].Changes).Operation);
     }
