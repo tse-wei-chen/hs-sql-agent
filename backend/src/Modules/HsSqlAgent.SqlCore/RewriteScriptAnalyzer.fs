@@ -592,6 +592,8 @@ module internal RewriteScriptAnalyzer =
                 DropConstraint(resolve name, constraintName, conditional, mode)
             | DropForeignKeys(name, symbols, columns) ->
                 DropForeignKeys(resolve name, symbols, columns)
+            | DropForeignKeysAndAddIndex(name, symbols, indexName, columns) ->
+                DropForeignKeysAndAddIndex(resolve name, symbols, indexName, columns)
             | DropPrimaryKey name -> DropPrimaryKey(resolve name)
         // Inspect raw AST parts before qualifying them; a converted two-part
         // name must never hide an unsupported one-part lookup.
@@ -619,6 +621,7 @@ module internal RewriteScriptAnalyzer =
                 | CreateIndex(name, _, _, _)
                 | DropConstraint(name, _, _, _)
                 | DropForeignKeys(name, _, _)
+                | DropForeignKeysAndAddIndex(name, _, _, _)
                 | DropPrimaryKey name -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
@@ -649,6 +652,7 @@ module internal RewriteScriptAnalyzer =
             | AddConstraint(name, _)
             | DropConstraint(name, _, _, _)
             | DropForeignKeys(name, _, _)
+            | DropForeignKeysAndAddIndex(name, _, _, _)
             | DropPrimaryKey name -> Some name
             | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _
@@ -2259,6 +2263,108 @@ module internal RewriteScriptAnalyzer =
                           " does not exist in the known Catalog.")
                 | _ ->
                     dependencyUnproven "MySQL FK ALTER requires a proven table owner."
+        | Recognized (DropForeignKeysAndAddIndex(tableName, symbols, indexName, members)) ->
+            // One native MySQL ALTER has one all-or-nothing physical effect.
+            // First prove the exact FK graph removal against the ORIGINAL
+            // Catalog, then prove the new index using the updated graph.
+            // Never publish the intermediate Catalog or a partial delta.
+            if sourceDialect <> SqlAgentToolType.MySQL
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven
+                    "Atomic MySQL DROP FOREIGN KEY + ADD INDEX requires a complete known Catalog."
+            else
+                match RewriteCatalogModel.lookup state tableName with
+                | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
+                    let namesKnown =
+                        RewriteCatalogIdentifierProof.canProvePhysicalNames
+                            sourceDialect sourceProfile state tableName.DisplayName
+                        || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroCatalog
+                            sourceProfile state tableName
+                            (owner.Columns |> Seq.toList)
+                            (owner.Constraints |> Seq.toList)
+                    let same left right =
+                        String.Equals(left, right, StringComparison.Ordinal)
+                    let wrongKind =
+                        symbols |> List.tryFind (fun symbol ->
+                            owner.Constraints |> Seq.exists (fun c ->
+                                c.Kind <> SqlCatalogConstraintKind.ForeignKey
+                                && same c.Name symbol))
+                    let missing =
+                        symbols |> List.tryFind (fun symbol ->
+                            not (owner.Constraints |> Seq.exists (fun c ->
+                                c.Kind = SqlCatalogConstraintKind.ForeignKey
+                                && same c.Name symbol)))
+                    if not namesKnown then
+                        dependencyUnproven
+                            "Atomic MySQL FK/index ALTER requires proven physical identifier semantics."
+                    elif symbols.IsEmpty || symbols <> List.distinct symbols then
+                        fail "Atomic MySQL ALTER contains empty or duplicate FOREIGN KEY symbols."
+                    elif members.IsEmpty || members <> List.distinct members then
+                        fail "Atomic MySQL ALTER contains empty or duplicate INDEX columns."
+                    elif members |> List.exists (fun col ->
+                        not (owner.Columns |> Seq.exists (fun known ->
+                            same known.Name col))) then
+                        fail "Atomic MySQL ALTER ADD INDEX references an absent column."
+                    elif wrongKind.IsSome then
+                        fail ("DROP FOREIGN KEY '" + wrongKind.Value +
+                              "' names a non-foreign-key constraint.")
+                    elif missing.IsSome then
+                        fail ("DROP FOREIGN KEY '" + missing.Value +
+                              "' does not exist in the known Catalog.")
+                    elif owner.Indexes |> Seq.exists (fun idx ->
+                        String.Equals(idx.Name, indexName,
+                            StringComparison.OrdinalIgnoreCase)) then
+                        fail ("Atomic MySQL ALTER ADD INDEX '" + indexName +
+                              "' collides with a known standalone index.")
+                    else
+                        let keptConstraints =
+                            owner.Constraints |> Seq.filter (fun c ->
+                                not (c.Kind = SqlCatalogConstraintKind.ForeignKey
+                                     && (symbols |> List.exists (same c.Name))))
+                        let afterDrop =
+                            RewriteCatalogModel.withConstraints
+                                state tableName keptConstraints
+                        match RewriteCatalogModel.lookup afterDrop tableName with
+                        | None ->
+                            dependencyUnproven "Atomic MySQL FK index owner disappeared."
+                        | Some nextOwner ->
+                            match RewriteSchemaDependencies.canCreateMySqlSecondaryIndex
+                                    sourceProfile afterDrop nextOwner indexName members with
+                            | Error (RewriteSchemaDependencies.Invalid message) ->
+                                fail message
+                            | Error (RewriteSchemaDependencies.Unproven message) ->
+                                dependencyUnproven message
+                            | Error RewriteSchemaDependencies.Proven ->
+                                dependencyUnproven "Unexpected physical index proof."
+                            | Ok transition ->
+                                let idx =
+                                    SqlCatalogIndex(indexName,
+                                        Array.AsReadOnly(List.toArray members))
+                                let kept = seq { yield! nextOwner.Indexes; yield idx }
+                                let updated =
+                                    if transition =
+                                       RewriteSchemaDependencies.MayReplaceImplicitFkSupport then
+                                        RewriteCatalogModel.withIndexesAndUnprovenFkReplacement
+                                            afterDrop tableName kept
+                                    else
+                                        RewriteCatalogModel.withIndexes
+                                            afterDrop tableName kept
+                                let changes =
+                                    (symbols |> List.map (fun symbol ->
+                                        changedConstraintExact syntax tableName symbol))
+                                    @ [changedExact syntax tableName
+                                           SqlCatalogOperation.CreateIndex
+                                           SqlCatalogKnowledge.Known]
+                                SqlStatementAnalysisStatus.Analyzed,
+                                SqlCatalogKnowledge.Known, updated, changes,
+                                ([]: SqlDiagnostic list)
+                | _ when RewriteCatalogModel.isKnownAbsent state tableName ->
+                    fail ("ALTER TABLE " + tableName.DisplayName +
+                          " does not exist in the known Catalog.")
+                | _ ->
+                    dependencyUnproven "Atomic MySQL FK/index ALTER requires a proven table owner."
         | Recognized (AddConstraint(tableName, newConstraint)) ->
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
