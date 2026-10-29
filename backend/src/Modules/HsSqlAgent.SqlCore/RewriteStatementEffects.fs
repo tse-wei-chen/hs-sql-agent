@@ -28,6 +28,7 @@ module internal RewriteStatementEffects =
         | SqlCatalogOperation.DropTable -> SqlStatementEffectOperation.DropTable
         | SqlCatalogOperation.AddColumn -> SqlStatementEffectOperation.AddColumn
         | SqlCatalogOperation.DropColumn -> SqlStatementEffectOperation.DropColumn
+        | SqlCatalogOperation.RenameColumn -> SqlStatementEffectOperation.RenameColumn
         | SqlCatalogOperation.CreateIndex -> SqlStatementEffectOperation.CreateIndex
         | SqlCatalogOperation.DropIndex -> SqlStatementEffectOperation.DropIndex
         | SqlCatalogOperation.AddConstraint -> SqlStatementEffectOperation.AddConstraint

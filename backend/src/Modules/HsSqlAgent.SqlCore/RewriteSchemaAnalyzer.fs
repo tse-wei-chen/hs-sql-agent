@@ -131,6 +131,9 @@ module internal RewriteSchemaAnalyzer =
         | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
                             dependencyMode: DropDependencyMode
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
+        /// Oracle-only physical column rename; index/constraint lineage is
+        /// checked and atomically rewritten by the Catalog analyzer.
+        | RenameColumn of table: SqlCatalogQualifiedName * oldName: string * newName: string
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list * ifNotExists: bool
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
         /// Exact PostgreSQL index relation identity, never the owning table.
@@ -956,7 +959,18 @@ module internal RewriteSchemaAnalyzer =
             expect "ALTER"
             if not (accept "TABLE") then raise OutsideSubset
             let table = qualifiedName ()
-            let constraintDefinition constraintName =
+            let oracleRename =
+                sourceDialect = SqlAgentToolType.Oracle
+                && accept "RENAME"
+            if oracleRename then
+                expect "COLUMN"
+                let oldName = namePart ()
+                expect "TO"
+                let newName = namePart ()
+                endOfStatement ()
+                Recognized(RenameColumn(table, oldName, newName))
+            else
+                let constraintDefinition constraintName =
                 let make kind cols (target: SqlCatalogQualifiedName) targetCols =
                     SqlCatalogConstraint(
                         constraintName, kind, Array.AsReadOnly(List.toArray cols),
