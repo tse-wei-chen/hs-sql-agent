@@ -576,6 +576,8 @@ module internal RewriteScriptAnalyzer =
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
             | RenameColumn(name, oldName, newName) ->
                 RenameColumn(resolve name, oldName, newName)
+            | RenameConstraint(name, oldName, newName) ->
+                RenameConstraint(resolve name, oldName, newName)
             | CreateIndex(name, indexName, cols, conditional) ->
                 CreateIndex(resolve name, indexName, cols, conditional)
             | DropIndex(indexName, target, conditional) ->
@@ -610,6 +612,7 @@ module internal RewriteScriptAnalyzer =
                 | Drop(name, _)
                 | AlterColumns(name, _)
                 | RenameColumn(name, _, _)
+                | RenameConstraint(name, _, _)
                 | CreateIndex(name, _, _, _)
                 | DropConstraint(name, _, _, _) -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
@@ -636,6 +639,7 @@ module internal RewriteScriptAnalyzer =
             | Drop(name, _)
             | AlterColumns(name, _)
             | RenameColumn(name, _, _)
+            | RenameConstraint(name, _, _)
             | CreateIndex(name, _, _, _)
             | AddConstraint(name, _)
             | DropConstraint(name, _, _, _) -> Some name
@@ -2152,6 +2156,95 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ -> dependencyUnproven "Constraint owner is not a proven table."
+        | Recognized (RenameConstraint(name, oldName, newName)) ->
+            // A named-constraint rename cannot be proved using only its
+            // visible string: PostgreSQL also renames a PK/UNIQUE backing
+            // index; Oracle constraint names are schema-global.
+            let same a b = String.Equals(a, b, StringComparison.Ordinal)
+            let providerSupported =
+                sourceDialect = SqlAgentToolType.Postgres
+                || sourceDialect = SqlAgentToolType.Oracle
+            if not providerSupported
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Constraint rename requires a complete known provider Catalog."
+            else
+                match RewriteCatalogModel.lookup state name with
+                | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
+                    match owner.Constraints |> Seq.tryFind (fun c -> same c.Name oldName) with
+                    | None -> fail ("RENAME CONSTRAINT '" + oldName +
+                                    "' does not exist on table '" + name.DisplayName + "'.")
+                    | Some _ when same oldName newName ->
+                        fail "RENAME CONSTRAINT target must differ from the old name."
+                    | Some target ->
+                        let localCollision =
+                            owner.Constraints |> Seq.exists (fun c -> same c.Name newName)
+                        let oracleGlobalCollision =
+                            sourceDialect = SqlAgentToolType.Oracle
+                            && (state.Tables |> Seq.exists (fun table ->
+                                table.Constraints |> Seq.exists (fun c ->
+                                    same c.Name newName)))
+                        // For PostgreSQL, PK/UNIQUE owns an index with the
+                        // constraint's name. Indexes/tables/views share a
+                        // schema relation namespace. Unqualified owners can
+                        // overlap any explicit schema: do not infer search_path.
+                        let samePossibleIndexSchema (other: SqlCatalogQualifiedName) =
+                            name.Parts.Count <> 2
+                            || other.Parts.Count <> 2
+                            || same name.Parts[0] other.Parts[0]
+                        let indexBacked =
+                            target.Kind = SqlCatalogConstraintKind.PrimaryKey
+                            || target.Kind = SqlCatalogConstraintKind.Unique
+                        let indexOwners =
+                            state.Tables
+                            |> Seq.filter (fun t ->
+                                samePossibleIndexSchema t.QualifiedName)
+                            |> Seq.toList
+                        let ambiguousImplicitIndex =
+                            sourceDialect = SqlAgentToolType.Postgres && indexBacked
+                            && (indexOwners |> List.exists (fun t ->
+                                t.Constraints |> Seq.exists (fun c ->
+                                    (c.Kind = SqlCatalogConstraintKind.PrimaryKey
+                                     || c.Kind = SqlCatalogConstraintKind.Unique)
+                                    && String.IsNullOrWhiteSpace c.Name)))
+                        let postgresIndexCollision =
+                            sourceDialect = SqlAgentToolType.Postgres && indexBacked
+                            && ((indexOwners |> List.exists (fun t ->
+                                    same t.QualifiedName.Parts[t.QualifiedName.Parts.Count - 1]
+                                        newName
+                                    || (t.Indexes |> Seq.exists (fun idx ->
+                                        same idx.Name newName))
+                                    || (t.Constraints |> Seq.exists (fun c ->
+                                        (c.Kind = SqlCatalogConstraintKind.PrimaryKey
+                                         || c.Kind = SqlCatalogConstraintKind.Unique)
+                                        && same c.Name newName))))
+                                || (state.Views |> Seq.exists (fun v ->
+                                    samePossibleIndexSchema v.QualifiedName
+                                    && same v.QualifiedName.Parts[v.QualifiedName.Parts.Count - 1]
+                                        newName)))
+                        if localCollision || oracleGlobalCollision || postgresIndexCollision then
+                            fail ("RENAME CONSTRAINT target '" + newName +
+                                  "' collides with a proven provider constraint/index namespace.")
+                        elif ambiguousImplicitIndex then
+                            dependencyUnproven
+                                "Unnamed PK/UNIQUE backing indexes make the target name namespace unproven."
+                        else
+                            let updated =
+                                RewriteCatalogModel.renameKnownConstraint
+                                    state name oldName newName
+                            let delta =
+                                SqlCatalogChange(
+                                    name.DisplayName, SqlCatalogOperation.RenameConstraint,
+                                    SqlCatalogKnowledge.Known, syntax.Span,
+                                    null, name, newName)
+                            SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                            updated, [delta], ([]: SqlDiagnostic list)
+                | _ when RewriteCatalogModel.isKnownAbsent state name ->
+                    fail ("ALTER TABLE " + name.DisplayName +
+                          " does not exist in the known Catalog.")
+                | _ ->
+                    dependencyUnproven "Constraint owner is not a proven known table."
         | Recognized (RenameColumn(name, oldName, newName)) ->
             // Oracle and PostgreSQL retarget physical indexes and modeled
             // local constraints on rename. Preserve typed dependency
