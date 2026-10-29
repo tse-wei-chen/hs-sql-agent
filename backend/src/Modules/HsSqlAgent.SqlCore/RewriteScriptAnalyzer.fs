@@ -2115,15 +2115,6 @@ module internal RewriteScriptAnalyzer =
                         fail ("ALTER TABLE " + name.DisplayName +
                               " target column " + newName + " already exists.")
                     elif sourceDialect = SqlAgentToolType.Oracle
-                         && (RewriteCatalogModel.inboundForeignKeys state name
-                             |> Seq.exists (fun (_, fk) ->
-                                 fk.ReferencedColumns |> Seq.exists (fun col ->
-                                     same col oldName))) then
-                        // Oracle's cross-table rename remains unproven.
-                        // PostgreSQL instead uses one atomic, typed Catalog
-                        // rewrite of every proven inbound/self FK reference.
-                        dependencyUnproven "Oracle inbound foreign keys require cross-table rename lineage proof."
-                    elif sourceDialect = SqlAgentToolType.Oracle
                          && not (RewriteCatalogModel.dependentViews
                                       state (Set.singleton name.Key)).IsEmpty then
                         // Oracle dependent View validity is not yet proven.
@@ -2131,32 +2122,13 @@ module internal RewriteScriptAnalyzer =
                         // while retargeting only directly owned source columns.
                         dependencyUnproven "Oracle View dependency invalidation after column rename is unproven."
                     else
-                        let renamed value = if same value oldName then newName else value
-                        let updatedColumns =
-                            owner.Columns |> Seq.map (fun col ->
-                                SqlCatalogColumn(renamed col.Name, col.TypeName, col.Nullable))
-                        let updatedIndexes =
-                            owner.Indexes |> Seq.map (fun (indexInfo: SqlCatalogIndex) ->
-                                SqlCatalogIndex(
-                                    indexInfo.Name,
-                                    Array.AsReadOnly(
-                                        indexInfo.Columns
-                                        |> Seq.map renamed
-                                        |> Seq.toArray)))
-                        let updatedConstraints =
-                            owner.Constraints |> Seq.map (fun (c: SqlCatalogConstraint) ->
-                                SqlCatalogConstraint(
-                                    c.Name, c.Kind,
-                                    Array.AsReadOnly(
-                                        c.Columns |> Seq.map renamed |> Seq.toArray),
-                                    c.ReferencedIdentity, c.ReferencedColumns))
+                        // Both providers atomically retarget modeled indexes,
+                        // keys and exact inbound/self-FK referenced columns.
+                        // Oracle's prior dependent-View invalidation guard
+                        // prevents it from inheriting PostgreSQL View proof.
                         let updated =
-                            if sourceDialect = SqlAgentToolType.Postgres then
-                                RewriteCatalogModel.renameColumnWithProvenDependents
-                                    state name oldName newName
-                            else
-                                RewriteCatalogModel.replaceTable
-                                    state name updatedColumns updatedConstraints updatedIndexes
+                            RewriteCatalogModel.renameColumnWithProvenDependents
+                                state name oldName newName
                         SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
                         updated,
                         [changedColumnExact syntax name newName SqlCatalogOperation.RenameColumn],
