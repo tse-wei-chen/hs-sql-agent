@@ -127,7 +127,7 @@ module internal RewriteSchemaAnalyzer =
         | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
                             dependencyMode: DropDependencyMode
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
-        | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list
+        | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list * ifNotExists: bool
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
         /// Exact PostgreSQL index relation identity, never the owning table.
         | DropQualifiedIndex of identity: SqlCatalogQualifiedName * ifExists: bool
@@ -736,6 +736,10 @@ module internal RewriteSchemaAnalyzer =
             elif viewMode = CreateOrReplace then
                 raise OutsideSubset
             elif accept "INDEX" then
+                // SQLite alone has a proven conditional index-name capability.
+                let conditional =
+                    if sourceDialect = SqlAgentToolType.Sqlite then ifNotExists ()
+                    else false
                 let indexName = namePart ()
                 expect "ON"
                 let table = qualifiedName ()
@@ -758,7 +762,7 @@ module internal RewriteSchemaAnalyzer =
                     expectSymbol ')'
                     cols |> Seq.toList
                 endOfStatement ()
-                Recognized(CreateIndex(table, indexName, names))
+                Recognized(CreateIndex(table, indexName, names, conditional))
             else
                 if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifNotExists ()

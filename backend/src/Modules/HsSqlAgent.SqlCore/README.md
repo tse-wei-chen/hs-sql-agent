@@ -829,6 +829,23 @@ fail-closed.
 Only closed-world, fully known virtual Catalogs can mint exact index
 changes. This is static SQL analysis, not server-side schema attestation.
 
+## SQLite conditional CREATE INDEX proof
+
+The SQLite-only static Catalog analyzer supports `CREATE INDEX IF NOT
+EXISTS name ON table(column[, ...])` in a proven unqualified database
+namespace. The target must be a known table. If a standalone index with
+the name exists on **any** known table, SQLite performs an exact no-op,
+even when the supplied indexed columns or target table differ. Otherwise,
+only proven physical-column indexes produce a Known CreateIndex delta.
+
+An existing **table** (or known View) with the index name is a wrong-kind
+collision, never a conditional no-op. Unknown Catalogs, implicit indexes
+from constraints, attached/qualified database namespaces, partial/index
+expressions, unique-index syntax and unresolved targets cannot mint Known
+Catalog changes. Other five dialects retain their own capability gates.
+SQLite in-memory differential parity checks actual index ownership after
+each statement; `AnalyzeScript` never runs the SQL.
+
 ## Table-local index namespace proof
 
 `CREATE INDEX` compares existing standalone indexes and the possible

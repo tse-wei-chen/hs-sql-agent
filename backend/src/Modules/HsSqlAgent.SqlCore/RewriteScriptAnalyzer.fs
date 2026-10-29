@@ -572,7 +572,8 @@ module internal RewriteScriptAnalyzer =
             | DropTableBatch(names, conditional, mode) ->
                 DropTableBatch(List.map resolve names, conditional, mode)
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
-            | CreateIndex(name, indexName, cols) -> CreateIndex(resolve name, indexName, cols)
+            | CreateIndex(name, indexName, cols, conditional) ->
+                CreateIndex(resolve name, indexName, cols, conditional)
             | DropIndex(indexName, target, conditional) ->
                 DropIndex(indexName, Option.map resolve target, conditional)
             | DropQualifiedIndex(indexIdentity, conditional) ->
@@ -602,7 +603,7 @@ module internal RewriteScriptAnalyzer =
                      else [constraintInfo.ReferencedIdentity])
                 | Drop(name, _)
                 | AlterColumns(name, _)
-                | CreateIndex(name, _, _)
+                | CreateIndex(name, _, _, _)
                 | DropConstraint(name, _) -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
@@ -626,7 +627,7 @@ module internal RewriteScriptAnalyzer =
             | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
-            | CreateIndex(name, _, _)
+            | CreateIndex(name, _, _, _)
             | AddConstraint(name, _)
             | DropConstraint(name, _) -> Some name
             | DropIndex(_, target, _) -> target
@@ -1596,7 +1597,16 @@ module internal RewriteScriptAnalyzer =
             | _ when RewriteCatalogModel.isKnownAbsent state name ->
                 fail ("DROP TABLE " + name.DisplayName + " does not exist in the known catalog.")
             | _ -> partial name SqlCatalogOperation.DropTable
-        | Recognized (CreateIndex(tableName, indexName, members)) ->
+        | Recognized (CreateIndex(tableName, _, _, true))
+            when sourceDialect = SqlAgentToolType.Sqlite
+                 && (tableName.Parts.Count <> 1
+                     || (state.Tables |> Seq.exists (fun table ->
+                         table.QualifiedName.Parts.Count <> 1))
+                     || (state.Views |> Seq.exists (fun view ->
+                         view.QualifiedName.Parts.Count <> 1))) ->
+            // Attached databases are not modeled as independent index namespaces.
+            dependencyUnproven "SQLite conditional index requires a proven unqualified database namespace."
+        | Recognized (CreateIndex(tableName, indexName, members, conditional)) ->
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known
                               && state.IsClosedWorld ->
@@ -1625,13 +1635,15 @@ module internal RewriteScriptAnalyzer =
                 // PostgreSQL indexes also conflict with ordinary tables
                 // named the same within the target schema.
                 let relationOwner =
-                    if sourceDialect = SqlAgentToolType.Postgres then
+                    if sourceDialect = SqlAgentToolType.Postgres
+                       || sourceDialect = SqlAgentToolType.Sqlite then
                         indexNamespace |> Seq.tryFind (fun owner ->
                             String.Equals(relationName owner.QualifiedName, indexName,
                                           StringComparison.Ordinal))
                     else None
                 let viewOwner =
-                    if sourceDialect = SqlAgentToolType.Postgres then
+                    if sourceDialect = SqlAgentToolType.Postgres
+                       || sourceDialect = SqlAgentToolType.Sqlite then
                         state.Views |> Seq.tryFind (fun view ->
                             possiblySameIndexSchema tableName view.QualifiedName
                             && String.Equals(relationName view.QualifiedName, indexName,
@@ -1640,6 +1652,12 @@ module internal RewriteScriptAnalyzer =
                 match indexOwner, relationOwner, viewOwner with
                 | Some owner, _, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
                     dependencyUnproven "Index owner has no proven schema; index name collision cannot be resolved."
+                | Some _, None, None
+                    when conditional && sourceDialect = SqlAgentToolType.Sqlite ->
+                    // SQLite IF NOT EXISTS checks the index-name namespace,
+                    // not the declared indexed columns or their owning table.
+                    // Lookup of a known target table has already succeeded.
+                    noChange
                 | Some _, _, _ ->
                     fail ("CREATE INDEX '" + indexName + "' already exists in the known Catalog.")
                 | None, Some owner, _ when ambiguousIndexSchema tableName owner.QualifiedName ->
