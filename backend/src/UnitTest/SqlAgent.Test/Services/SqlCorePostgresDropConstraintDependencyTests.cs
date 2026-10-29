@@ -173,6 +173,22 @@ public sealed class SqlCorePostgresDropConstraintDependencyTests
     }
 
     [Fact]
+    public void AmbiguousDuplicateParentKeysCannotGuessWhichFkIndexToCascade()
+    {
+        var result = Analyze(
+            "CREATE TABLE app.parent(id INTEGER NOT NULL, " +
+            "CONSTRAINT pk_parent PRIMARY KEY(id), CONSTRAINT uq_same UNIQUE(id));" +
+            "CREATE TABLE app.child(pid INTEGER, " +
+            "CONSTRAINT fk_child FOREIGN KEY(pid) REFERENCES app.parent(id));" +
+            "ALTER TABLE app.parent DROP CONSTRAINT pk_parent CASCADE;");
+        var step = result.Statements[2];
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, step.Status);
+        Assert.Empty(step.Changes.Where(c =>
+            c.Certainty == SqlCatalogKnowledge.Known));
+        Assert.NotEqual(SqlCatalogKnowledge.Known, step.Certainty);
+    }
+
+    [Fact]
     public void ViewOnParentTableSurvivesDroppingOnlyPrimaryKeyAndInboundForeignKeys()
     {
         var result = Analyze(
