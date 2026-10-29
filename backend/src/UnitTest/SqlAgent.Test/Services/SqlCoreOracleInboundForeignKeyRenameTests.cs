@@ -40,7 +40,7 @@ public sealed class SqlCoreOracleInboundForeignKeyRenameTests
         Assert.Equal("PARENT_KEY", Assert.Single(fk.ReferencedColumns));
         Assert.Equal("PARENT_ID", Assert.Single(fk.Columns));
         Assert.Equal("FK_CHILD", fk.Name);
-        Assert.Equal(parent.QualifiedName.Key, fk.ReferencedIdentity!.Key);
+        Assert.Equal(parent.QualifiedName!.Key, fk.ReferencedIdentity!.Key);
         Assert.True(result.FinalCatalog.IsClosedWorld);
         Assert.NotSame(before.Tables.Single(t => t.Name == "CHILD"), child);
     }
