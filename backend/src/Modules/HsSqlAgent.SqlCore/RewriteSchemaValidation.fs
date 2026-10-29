@@ -17,7 +17,8 @@ module internal RewriteSchemaValidation =
           // Only physical relation identities are valid mutation targets.
           Tables: Map<string, string list>
           // Query and mutation input relations may include proven Views.
-          ReadRelations: Map<string, string list> }
+          ReadRelations: Map<string, string list>
+          ProvenInsertColumnOrder: bool }
     type private Source = { Qualifiers: string list; Columns: string list }
     // Unqualified row shape follows JOIN USING coalescing; qualified sources stay separate.
     type private Scope =
@@ -84,7 +85,8 @@ module internal RewriteSchemaValidation =
             if (columns |> List.distinct |> List.length) <> columns.Length then
                 invalidArg "schemaSnapshot" ("Schema columns collide in table '" + name + "'."))
         let physical = Map.ofList tables
-        { Dialect = dialect; Tables = physical; ReadRelations = physical }
+        { Dialect = dialect; Tables = physical; ReadRelations = physical
+          ProvenInsertColumnOrder = false }
 
     let private physicalTable catalog name =
         match Map.tryFind (keyIdentifier catalog.Dialect name) catalog.Tables with
@@ -691,15 +693,29 @@ module internal RewriteSchemaValidation =
                     if countColumn target (keyPart catalog.Dialect name) <> 1 then
                         reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
                             "INSERT column '" + name.Value + "' is not in the target table."))
+                // The target role is always physical. Explicit column lists
+                // are already checked by the parser; only Virtual Catalog
+                // DDL can prove the order of an omitted column list.
+                let layout =
+                    RewriteInsertTargetLayout.select
+                        (insert.Columns |> List.map (keyPart catalog.Dialect))
+                        target.Columns catalog.ProvenInsertColumnOrder
+                let checkWidth width =
+                    match layout with
+                    | ProvenTargets columns when width <> columns.Length ->
+                        reject "SQL_SCHEMA_SHAPE_UNPROVABLE" doc.Span (
+                            "INSERT source width differs from its proven target-column layout.")
+                    | _ -> ()
                 match insert.Input with
                 | Values rows ->
-                    rows |> NonEmpty.iter (NonEmpty.iter (
-                        expression catalog emptyCtes emptyScope Span.unknown))
+                    rows |> NonEmpty.iter (fun row ->
+                        let values = NonEmpty.toList row
+                        values |> List.iter (
+                            expression catalog emptyCtes emptyScope Span.unknown)
+                        checkWidth values.Length)
                 | QuerySource query ->
                     let projected = queryColumns catalog emptyCtes None query
-                    if not insert.Columns.IsEmpty && projected.Length <> insert.Columns.Length then
-                        reject "SQL_SCHEMA_SHAPE_UNPROVABLE" doc.Span (
-                            "INSERT target-column count and SELECT projection width differ in strict snapshot mode.")
+                    checkWidth projected.Length
                 | DefaultValues -> ()
                 if insert.Conflict.IsSome then
                     reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
@@ -769,6 +785,7 @@ module internal RewriteSchemaValidation =
         let catalog =
             { Dialect = dialect
               Tables = Map.ofList physical
-              ReadRelations = Map.ofList readable }
+              ReadRelations = Map.ofList readable
+              ProvenInsertColumnOrder = true }
         (createValidation ()) catalog (Bound.value bound)
         bound

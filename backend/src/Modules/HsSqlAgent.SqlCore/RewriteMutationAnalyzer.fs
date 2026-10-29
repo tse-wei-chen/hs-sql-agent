@@ -17,3 +17,19 @@ module internal RewriteMutationAnalyzer =
             when dialect = SqlAgentToolType.Postgres ->
             state.Views :> seq<SqlCatalogView>
         | _ -> Seq.empty
+
+/// A strict AST INSERT can identify positional write targets only when
+/// explicit names were given, or the ordered physical DDL projection itself
+/// was proved by the in-memory Virtual Catalog. Generic snapshots expose
+/// column sets, NOT sufficient physical ordinal provenance.
+type internal InsertTargetLayout<'column> =
+    | ProvenTargets of 'column list
+    | UnprovenImplicitOrder
+
+module internal RewriteInsertTargetLayout =
+    let select (explicitColumns: 'column list) (physicalColumns: 'column list)
+               implicitOrderProven =
+        match explicitColumns with
+        | _ :: _ -> ProvenTargets explicitColumns
+        | [] when implicitOrderProven -> ProvenTargets physicalColumns
+        | [] -> UnprovenImplicitOrder
