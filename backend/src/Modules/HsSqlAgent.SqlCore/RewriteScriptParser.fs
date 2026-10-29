@@ -161,7 +161,10 @@ module internal RewriteScriptParser =
                 |> List.toArray
             let result = ResizeArray<SqlScriptStatementSyntax>()
             let diagnostics = ResizeArray<SqlDiagnostic>()
+            // Visible batch ordinals exclude empty physical GO segments.
+            // Only a segment that emitted at least one statement advances the index.
             let mutable batch = 0
+            let mutable batchHasStatements = false
             let mutable start = -1
             let mutable nesting = 0
             let mutable opaque = false
@@ -245,6 +248,7 @@ module internal RewriteScriptParser =
                             SqlDiagnosticSpan(absoluteStart, length),
                             text,
                             Option.defaultValue Unchecked.defaultof<SqlDiagnostic> diagnostic))
+                    batchHasStatements <- true
                 start <- -1
                 nesting <- 0
                 opaque <- false
@@ -255,7 +259,11 @@ module internal RewriteScriptParser =
                     let token = tokens.[index]
                     if nesting = 0 && isGoSeparator token then
                         emit index
-                        batch <- batch + 1
+                        // An empty GO segment is not an analyzable batch;
+                        // trailing and adjacent GO cannot create phantom counts.
+                        if batchHasStatements then
+                            batch <- batch + 1
+                            batchHasStatements <- false
                     else
                         if start < 0 then
                             match token.Kind with
@@ -276,5 +284,5 @@ module internal RewriteScriptParser =
                 Array.AsReadOnly(result.ToArray())
             let errors : IReadOnlyList<SqlDiagnostic> =
                 Array.AsReadOnly(diagnostics.ToArray())
-            let batchCount = if result.Count = 0 then 0 else batch + 1
+            let batchCount = batch + (if batchHasStatements then 1 else 0)
             SqlScriptParseResult(batchCount, statements, errors))
