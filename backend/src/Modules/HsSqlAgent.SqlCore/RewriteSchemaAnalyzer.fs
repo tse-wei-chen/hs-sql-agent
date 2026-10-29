@@ -1012,8 +1012,33 @@ module internal RewriteSchemaAnalyzer =
                 actions.Add(parseOne ())
                 while symbol ',' do actions.Add(parseOne ())
                 actions |> Seq.toList
-            if word () = "ADD" && index + 1 < tokens.Length
-               && tokenWord tokens.[index + 1] = "CONSTRAINT" then
+            // MySQL ALTER TABLE has a native secondary-index lifecycle
+            // that is equivalent to CREATE/DROP INDEX ... ON table. Parse
+            // each source spelling into the existing closed DDL union, never
+            // a separate opaque ALTER or Catalog-mutation escape hatch.
+            // Restrict this proof to one physical-column index operation:
+            // composite ALTER, implicit/unnamed/unique/expression indexes,
+            // per-index options, and other provider spellings fail-closed.
+            let mysqlIndexAction =
+                sourceDialect = SqlAgentToolType.MySQL
+                && index + 1 < tokens.Length
+                && (word () = "ADD" || word () = "DROP")
+                && (tokenWord tokens.[index + 1] = "INDEX"
+                    || tokenWord tokens.[index + 1] = "KEY")
+            if mysqlIndexAction then
+                let adding = accept "ADD"
+                if not adding then expect "DROP"
+                if not (accept "INDEX" || accept "KEY") then raise OutsideSubset
+                let indexName = namePart ()
+                if adding then
+                    let columns = columnNames ()
+                    endOfStatement ()
+                    Recognized(CreateIndex(table, indexName, columns, false))
+                else
+                    endOfStatement ()
+                    Recognized(DropIndex(indexName, Some table, false))
+            elif word () = "ADD" && index + 1 < tokens.Length
+                 && tokenWord tokens.[index + 1] = "CONSTRAINT" then
                 constraintAction ()
             elif word () = "DROP" && index + 1 < tokens.Length
                  && tokenWord tokens.[index + 1] = "CONSTRAINT" then
