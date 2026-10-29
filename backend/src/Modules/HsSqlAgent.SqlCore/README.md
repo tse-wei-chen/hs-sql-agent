@@ -70,6 +70,17 @@ A source capability profile may also be supplied to both options types,
 e.g. for version-gated Oracle grammar. Provider/profile mismatches still fail;
 option objects never imply successful binding, authorization or SQL execution.
 
+## SQL Server GO comments in static scripts
+
+The SQL Server Script Frontend recognizes a standalone client-side `GO` separator
+even with trailing `-- comment`, inline `/* comment */`, or a leading
+same-line block comment. This preserves source spans and ordered batch indices.
+Only whitespace and fully closed same-line SQL comments may surround `GO`;
+a T-SQL statement on the same line is **not** a separator. `GO 2` repetition
+remains outside the modeled subset, and none of the other five dialects
+inherits this SQL Server-specific behavior. Parsing never sends `GO` to a
+database or confers compiler authorization.
+
 ## Cooperative cancellation for static SQL scripts
 
 `ParseScript` and `AnalyzeScript` have `CancellationToken` overloads so an

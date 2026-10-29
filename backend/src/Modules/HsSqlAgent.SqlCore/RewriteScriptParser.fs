@@ -106,9 +106,9 @@ module internal RewriteScriptParser =
                  && first = "EXECUTE" && word tokens (start + 1) = "BLOCK"))
         | _ -> false
 
-    /// GO is a SQL Server client-side batch separator ONLY on a line by itself.
-    /// A token inside a quoted literal/comment is not an Identifier, so cannot
-    /// be confused with GO. Repetition-count forms are not silently accepted.
+    /// GO is a SQL Server client-side batch separator only when the remainder
+    /// of its line contains lexical trivia (whitespace or SQL comments).
+    /// SQL text, repetition counts, and GO in other dialects are never separators.
     let private isSqlServerGoLine (sql: string) (token: Token) dialect =
         if dialect <> SqlAgentToolType.MsSqlServer then false
         else
@@ -121,8 +121,35 @@ module internal RewriteScriptParser =
                 let afterToken = token.Start + token.Length
                 let nextNewline = sql.IndexOf('\n', afterToken)
                 let lineEnd = if nextNewline < 0 then sql.Length else nextNewline
-                String.IsNullOrWhiteSpace(sql.Substring(lineStart, token.Start - lineStart))
-                && String.IsNullOrWhiteSpace(sql.Substring(afterToken, lineEnd - afterToken))
+
+                // Scan only this source line, never recursing with its length.
+                // Comments must close on the separator's line: an unproven
+                // multiline suffix is not silently accepted as a GO command.
+                let triviaOnly fromInclusive toExclusive =
+                    let mutable cursor = fromInclusive
+                    let mutable valid = true
+                    while valid && cursor < toExclusive do
+                        if Char.IsWhiteSpace(sql.[cursor]) then
+                            cursor <- cursor + 1
+                        elif cursor + 1 < toExclusive
+                             && sql.[cursor] = '-'
+                             && sql.[cursor + 1] = '-' then
+                            cursor <- toExclusive
+                        elif cursor + 1 < toExclusive
+                             && sql.[cursor] = '/'
+                             && sql.[cursor + 1] = '*' then
+                            let closeAt =
+                                sql.IndexOf("*/", cursor + 2,
+                                            toExclusive - (cursor + 2),
+                                            StringComparison.Ordinal)
+                            if closeAt < 0 then valid <- false
+                            else cursor <- closeAt + 2
+                        else
+                            valid <- false
+                    valid
+
+                triviaOnly lineStart token.Start
+                && triviaOnly afterToken lineEnd
             | _ -> false
 
     let private invalidDiagnostic (ex: SqlParseException) absoluteStart statementLength =

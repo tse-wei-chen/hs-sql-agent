@@ -18,7 +18,9 @@ public sealed class SqlCoreSqlServerGoCommentTests
     [InlineData("SELECT 1\n/* leading comment */ GO -- trailing comment\nSELECT 2")]
     public void SqlServer_GoLineWithCommentsStillSeparatesBatches(string sql)
     {
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql,
+            new SqlScriptParseOptions(SqlAgentToolType.MsSqlServer,
+                TestContext.Current.CancellationToken));
 
         Assert.Equal(2, parsed.BatchCount);
         Assert.Equal(2, parsed.Statements.Count);
@@ -41,7 +43,9 @@ public sealed class SqlCoreSqlServerGoCommentTests
     [InlineData("SELECT 1\nGO 2 -- repetition is not supported\nSELECT 2")]
     public void SqlServer_GoFollowedBySqlOrRepetitionIsNotASilentSeparator(string sql)
     {
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql,
+            new SqlScriptParseOptions(SqlAgentToolType.MsSqlServer,
+                TestContext.Current.CancellationToken));
 
         Assert.Equal(1, parsed.BatchCount);
         Assert.DoesNotContain(parsed.Statements, s => s.BatchIndex != 0);
@@ -61,7 +65,8 @@ public sealed class SqlCoreSqlServerGoCommentTests
                      SqlAgentToolType.Firebird
                  })
         {
-            var parsed = SqlCoreFacade.ParseScript(sql, dialect);
+            var parsed = SqlCoreFacade.ParseScript(sql,
+                new SqlScriptParseOptions(dialect, TestContext.Current.CancellationToken));
             Assert.Equal(1, parsed.BatchCount);
             Assert.DoesNotContain(parsed.Statements, statement => statement.BatchIndex != 0);
         }
