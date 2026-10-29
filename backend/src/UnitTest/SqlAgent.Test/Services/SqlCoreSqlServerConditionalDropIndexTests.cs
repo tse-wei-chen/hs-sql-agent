@@ -174,7 +174,8 @@ public sealed class SqlCoreSqlServerConditionalDropIndexTests
             "DROP INDEX IF EXISTS ix_missing ON orders;";
         var result = SqlCoreFacade.AnalyzeScript(sql, provider,
             SqlCatalogState.KnownEmpty(),
-            new SqlProviderCapabilityProfile(provider, new Version(16, 0)));
+            new SqlProviderCapabilityProfile(provider, new Version(16, 0)),
+            TestContext.Current.CancellationToken);
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
     }
 }
