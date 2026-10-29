@@ -70,6 +70,25 @@ A source capability profile may also be supplied to both options types,
 e.g. for version-gated Oracle grammar. Provider/profile mismatches still fail;
 option objects never imply successful binding, authorization or SQL execution.
 
+## INSERT target shape and positional type evidence
+
+Strict F# Mutation analysis checks the number of values in **every** VALUES
+row and the projected width of INSERT ... SELECT against the proven target
+columns. Explicit column-list cardinality and duplicate-target syntax remain
+the existing strict Parser's responsibility. For INSERT statements **without**
+a target column list, only an ordered, completely known, closed-world Virtual
+Catalog produced by the static DDL analyzer can provide a proven physical
+column order. That evidence also enables positional numeric/text/etc. type
+family mismatch detection, including INSERT ... SELECT from a previously
+proved PostgreSQL View.
+
+A generic `SqlSchemaSnapshot` does **not** carry trustworthy physical
+column-order provenance. The analyzer therefore never invents implicit
+positional type evidence from a snapshot. SQLite still has dynamic affinity:
+static column names/shape may be checked but fixed type families are not
+asserted. Parser and catalog diagnostics do not authorize INSERT execution,
+and an unknown/open Catalog remains unverified.
+
 ## Mutation source relations versus physical write targets
 
 In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,

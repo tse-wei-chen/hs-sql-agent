@@ -27,7 +27,8 @@ module internal RewriteSchemaTypeValidation =
         { Dialect: SqlAgentToolType
           // Mutation targets are proven only against physical tables.
           Tables: Map<string, (string * SqlSchemaValueKind) list>
-          ReadRelations: Map<string, (string * SqlSchemaValueKind) list> }
+          ReadRelations: Map<string, (string * SqlSchemaValueKind) list>
+          ProvenInsertColumnOrder: bool }
 
     let private keyPart dialect (part: IdentifierPart) =
         match dialect with
@@ -80,7 +81,8 @@ module internal RewriteSchemaTypeValidation =
                      catalogPart dialect column.Name, column.Kind)
                  |> Seq.toList))
             |> Map.ofSeq
-        { Dialect = dialect; Tables = tables; ReadRelations = tables }
+        { Dialect = dialect; Tables = tables; ReadRelations = tables
+          ProvenInsertColumnOrder = false }
 
     let private sourceKey catalog name alias =
         let full = keyIdentifier catalog.Dialect name
@@ -942,29 +944,39 @@ module internal RewriteSchemaTypeValidation =
             | QueryStatement query -> queryTypes catalog ctes None query |> ignore
             | InsertStatement insert ->
                 let target = namedSource catalog insert.Target None
+                // In a strict Virtual Catalog, DDL proved the physical
+                // column order. Generic runtime snapshots provide only a
+                // set of columns and must not gain implicit type evidence.
+                let layout =
+                    RewriteInsertTargetLayout.select
+                        (insert.Columns |> List.map (keyPart catalog.Dialect))
+                        target.Columns catalog.ProvenInsertColumnOrder
+                let targetColumns =
+                    match layout with
+                    | ProvenTargets columns -> columns
+                    | UnprovenImplicitOrder -> []
                 let columnTypes =
-                    insert.Columns
-                    |> List.map (fun item ->
-                        Map.tryFind (keyPart catalog.Dialect item) target.Kinds
-                        |> Option.bind typeKnown)
+                    targetColumns
+                    |> List.map (fun name ->
+                        Map.tryFind name target.Kinds |> Option.bind typeKnown)
                 match insert.Input with
                 | Values rows ->
                     rows |> NonEmpty.iter (fun row ->
                         let values = NonEmpty.toList row
                         values |> List.iter (inspect root)
+                        // Shape validation precedes this type check.
                         if values.Length = columnTypes.Length then
-                            List.zip insert.Columns (List.zip columnTypes values)
-                            |> List.iter (fun (target, (targetKind, value)) ->
+                            List.zip targetColumns (List.zip columnTypes values)
+                            |> List.iter (fun (targetName, (targetKind, value)) ->
                                 let valueKind = expression catalog ctes root Span.unknown value
                                 if knownFamilyMismatch targetKind valueKind then
                                     compatibleWith (expressionSpanOr document.Span value)
                                         targetKind valueKind "INSERT assignment"
-                                        [ targetOrigin target.Value targetKind
+                                        [ targetOrigin targetName targetKind
                                           expressionOrigin catalog root value ]))
                 | QuerySource query ->
                     let projections = queryTypes catalog ctes None query |> List.map snd
-                    // Implicit target-column order is not proven by the portable snapshot.
-                    if not insert.Columns.IsEmpty && projections.Length = columnTypes.Length then
+                    if not targetColumns.IsEmpty && projections.Length = columnTypes.Length then
                         List.zip columnTypes projections
                         |> List.iter (fun (targetKind, projectedKind) ->
                             compatible document.Span targetKind projectedKind "INSERT SELECT assignment")
@@ -1051,6 +1063,7 @@ module internal RewriteSchemaTypeValidation =
             }
             |> Map.ofSeq
         let virtualCatalog : Catalog =
-            { Dialect = dialect; Tables = physical; ReadRelations = readable }
+            { Dialect = dialect; Tables = physical; ReadRelations = readable
+              ProvenInsertColumnOrder = true }
         (createValidation ()) virtualCatalog (Bound.value bound)
         bound
