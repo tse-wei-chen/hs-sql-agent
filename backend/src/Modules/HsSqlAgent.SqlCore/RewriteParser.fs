@@ -2903,6 +2903,70 @@ module internal RewriteParser =
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
           Returning = if output.IsEmpty then parseReturning cursor else output }
 
+    /// Identify a statement-level PostgreSQL CTE followed by INSERT without
+    /// altering the existing stack-safe WITH SELECT query scheduler. Never
+    /// inspect SQL text or count keywords inside nested CTE Query bodies.
+    let private hasPostgresWithInsertHead (cursor: Cursor) =
+        let mutable offset = 1
+        let mutable depth = 0
+        let mutable decided = false
+        let mutable isInsert = false
+        while not decided do
+            RewriteResourceBudget.checkpoint ()
+            let token = cursor.Peek(offset)
+            match token.Kind with
+            | End -> decided <- true
+            | Symbol '(' -> depth <- depth + 1
+            | Symbol ')' -> depth <- max 0 (depth - 1)
+            | Keyword "INSERT" when depth = 0 ->
+                isInsert <- true
+                decided <- true
+            | Keyword "SELECT" | Keyword "UPDATE" | Keyword "DELETE"
+            | Keyword "MERGE" when depth = 0 -> decided <- true
+            | _ -> ()
+            offset <- offset + 1
+        isInsert
+
+    /// Read-only statement CTEs feeding INSERT ... SELECT have the same
+    /// observable QuerySource graph as INSERT ... WITH ... SELECT for the
+    /// admitted restricted grammar. The existing PostgreSQL renderer emits
+    /// QuerySource CTEs *before* INSERT, restoring original SQL scope.
+    /// Every nested Query is parsed by the same strict source parser.
+    let private parsePostgresWithInsert (cursor: Cursor) =
+        let pending = ResizeArray<unit -> unit>()
+        let mutable ctes: Cte list = []
+        let mutable completed = false
+        parseCtes cursor
+            (fun resume -> pending.Add(fun () -> resume (parseQuery cursor)))
+            (fun values ->
+                ctes <- values
+                completed <- true)
+        while pending.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let last = pending.Count - 1
+            let action = pending.[last]
+            pending.RemoveAt(last)
+            action ()
+        if not completed || ctes.IsEmpty then
+            fail cursor.Current "WITH INSERT requires one or more read-only CTEs"
+        if ctes |> List.exists (fun cte -> cte.RecursiveScope) then
+            fail cursor.Current "Recursive statement-level CTE INSERT is not yet proven"
+        let insert = parseInsert cursor
+        match insert.Input with
+        | QuerySource query
+            when query.Head.Ctes.IsEmpty
+                 && insert.Conflict.IsNone
+                 && insert.Returning.IsEmpty ->
+            InsertStatement
+                { insert with
+                    Input =
+                        QuerySource
+                            { query with
+                                Head = { query.Head with Ctes = ctes } } }
+        | _ ->
+            fail cursor.Current
+                "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without RETURNING or conflict clauses"
+
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let tokens = RewriteLexer.tokenizeWith semantics.Lexical sql
@@ -2910,6 +2974,9 @@ module internal RewriteParser =
         let start = cursor.Current.Start
         let statement =
             match cursor.Current.Kind with
+            | Keyword "WITH" when dialect = SourceDialect.PostgreSql
+                                  && hasPostgresWithInsertHead cursor ->
+                parsePostgresWithInsert cursor
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)
             | Keyword "INSERT" -> InsertStatement(parseInsert cursor)
             | Keyword "UPDATE" when isKeyword "OR" (cursor.Peek 1) && isKeyword "INSERT" (cursor.Peek 2) ->
