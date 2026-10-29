@@ -155,15 +155,28 @@ describe **static schema evolution only**; the package neither connects to a
 database nor executes the DDL.
 
 Proof requires a closed, known Catalog and a proven target table. An absent or
-duplicate column is invalid. Inbound foreign-key references and dependent
-Views remain unproven until a complete, immutable cross-object lineage rewrite
-exists; unknown/open-world states do not mint a known change. Compound ALTER
-clauses, table rename, unsupported annotations and dialects without their own
-proof remain outside this subset. PostgreSQL and Oracle share a typed internal
-operation, **not** blanket dialect equivalence. Regression coverage includes
-both PostgreSQL spellings, safety cases, and 24 independent live PostgreSQL
-scripts; the live parity harness compares index **column lineage** as well as
-index names after each statement.
+duplicate column is invalid. PostgreSQL **inbound and self-referencing FOREIGN
+KEY** constraints now follow a column rename through exact referenced-table
+identity and ordered physical-column bindings. All affected tables, including
+several child relations and composite FKs, are projected from the SAME
+pre-rename immutable snapshot and published as one Catalog state. Child-local
+columns, foreign-key names, unaffected constraints and historical snapshots
+are preserved; downstream DROP COLUMN checks see the updated relationship.
+This is static schema analysis, not a command to execute DDL or a proof that
+server-side locks/privileges are available.
+
+Known dependent Views are still unproven rather than silently retaining stale
+source-column bindings; unknown/open-world states do not mint known changes.
+Oracle's inbound-FK rename remains fail-closed until independently proven.
+Compound ALTER clauses, table rename, unmodeled objects, unsupported
+annotations and dialects without their own proof remain outside this subset.
+PostgreSQL and Oracle share a typed internal operation, **not** blanket dialect
+equivalence. Regression coverage includes both PostgreSQL spellings, 24
+independent general live-DDL scripts with index-column lineage checks, and
+four additional real PostgreSQL FK workflows. The latter compare modeled FK
+owner/target identities, ordered local/ref columns and constraint names
+against physical `pg_constraint.conkey/confkey` after **every** statement,
+including self-FK and multi-child cases.
 
 ## PostgreSQL Self JOIN with per-instance Catalog provenance
 
