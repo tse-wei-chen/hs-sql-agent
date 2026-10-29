@@ -148,6 +148,48 @@ after schema/name binding. Ambiguous fields, `OR`, View-derived keys and
 unanchored sources never gain an at-most-one proof. All classifications stay
 read-only evidence and never authorize SQL execution.
 
+### Transitive mandatory equality closure (PostgreSQL joined Mutation)
+
+`SourceMatchCardinality` can now follow an **iterative**, resource-budgeted
+equality graph from each source UNIQUE/PRIMARY key column to a literal,
+the fixed target row, or an already proven single-match source. This
+recognizes chains such as `d.id = s.bridge AND s.bridge = s.unique_id`,
+multi-source key propagation, and independently constrained composite
+keys without treating a non-key intermediate column as unique.
+
+Only required `AND` equalities enter the graph. `OR`, `NOT`, opaque
+expressions, unknown Catalog relations, views and unanchored cycles do
+not supply new proof. Every traversed `IS NOT DISTINCT FROM` retains
+NULL-aware semantics: a nullable UNIQUE key needs a proven non-NULL
+column/literal along the chain **or** a mandatory ordinary `=` edge
+(which itself excludes NULL matches). Nullable-only null-safe paths,
+including ones comparing NULL to NULL, remain `Unverified`.
+This is non-executable static evidence, not DML authorization, row-count
+prediction, effect certainty or a live-server uniqueness attestation.
+
+### SQL Server: exact INT match cardinality (opt-in catalog identity)
+
+SQL Server's native `UPDATE ... FROM` and `DELETE ... FROM` now receive
+a **restricted**, non-executable `ProvenAtMostOne` source-match analysis
+when full Virtual Catalog name/type validation has already succeeded
+under an explicit ASCII-safe `CATALOG_COLLATION` provider profile.
+The typed proof reuses mandatory equality closure but permits **only
+ordinary `=` with exact INT source/target/intermediate columns or
+32-bit integer literals**. Every modeled physical UNIQUE/PRIMARY KEY
+component must be INT and constrained by an anchored mandatory equality
+path. No floating-point, BIGINT, text-collation or implicit conversion
+can be borrowed to certify a unique match. No cross-provider inference
+from the SQL Server comparison behavior is performed.
+
+Unmodeled catalog collations, missing profiles, unknown table state,
+unanchored sources, partial composite keys, OR predicates and
+incompatible type families remain `Unverified` or are rejected by
+the existing binding validator. PostgreSQL preserves its separate
+NULL-aware proof; SQLite, Oracle, Firebird and MySQL continue to
+report `Unverified` for joined mutations unless their own provider
+contract is proved. As before, cardinality evidence never authorizes
+execution or upgrades DML approvals, runtime certainty or effect coverage.
+
 ## Mutation source relations versus physical write targets
 
 In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,
