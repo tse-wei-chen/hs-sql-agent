@@ -79,16 +79,16 @@ public sealed class SqlCorePostgresRenameColumnTests
     }
 
     [Fact]
-    public void InboundForeignKeyAndDependentViewRemainUnproven()
+    public void InboundForeignKeyIsRetargetedButDependentViewRemainsUnproven()
     {
         var inbound = Analyze(
             "CREATE TABLE parents (id INTEGER NOT NULL, CONSTRAINT pk_parent PRIMARY KEY(id));" +
             "CREATE TABLE children (parent_id INTEGER, CONSTRAINT fk_child " +
             "FOREIGN KEY(parent_id) REFERENCES parents(id));" +
             "ALTER TABLE parents RENAME COLUMN id TO new_id;");
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, inbound.Statements[2].Status);
-        Assert.DoesNotContain(inbound.Statements[2].Changes,
-            c => c.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, inbound.Statements[2].Status);
+        Assert.Equal("new_id", Assert.Single(inbound.FinalCatalog.Tables
+            .Single(t => t.Name == "children").Constraints.Single().ReferencedColumns));
 
         var view = Analyze(
             "CREATE TABLE public.items (id INTEGER, name TEXT);" +
