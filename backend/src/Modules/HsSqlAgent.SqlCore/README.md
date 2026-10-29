@@ -306,7 +306,11 @@ same-line block comment. This preserves source spans and ordered batch indices.
 Only whitespace and fully closed same-line SQL comments may surround `GO`;
 a T-SQL statement on the same line is **not** a separator. Physical lines
 follow the SQL Lexer contract: **LF, CRLF, and CR-only** scripts preserve
-identical batch order and absolute source spans. Incremental GO-line scanning
+identical batch order and absolute source spans. `BatchCount` counts only
+**nonempty, analyzable batches**, while statement `BatchIndex` is a dense,
+zero-based index into those batches; leading, adjacent and trailing `GO` lines
+never create phantom batches or gaps. A script containing only separators,
+whitespace and comments reports zero batches. Incremental GO-line scanning
 avoids quadratic repeated line searches and charges scanning to the existing
 ScriptDispatch resource budget. `GO 2` repetition
 remains outside the modeled subset, and none of the other five dialects
