@@ -151,6 +151,13 @@ module internal RewriteSchemaAnalyzer =
         /// Order is intentionally constrained and represented as closed facts.
         | DropForeignKeys of table: SqlCatalogQualifiedName *
                              names: string list * columns: string list
+        /// One native MySQL ALTER, one atomic schema effect: named FK drops
+        /// followed by exactly ONE explicit named secondary index addition.
+        /// Physical index-name/provenance is checked after the FK graph delta;
+        /// neither stage may publish a partial known Catalog update.
+        | DropForeignKeysAndAddIndex of table: SqlCatalogQualifiedName *
+                                        names: string list * indexName: string *
+                                        indexColumns: string list
         /// MySQL physical PRIMARY key/index, not a generic named constraint.
         | DropPrimaryKey of table: SqlCatalogQualifiedName
 
@@ -1053,22 +1060,41 @@ module internal RewriteSchemaAnalyzer =
                 let names = ResizeArray<string>()
                 let columns = ResizeArray<string>()
                 let mutable droppingColumns = false
+                let mutable addedIndex: (string * string list) option = None
                 let clause () =
                     RewriteResourceBudget.checkpoint ()
-                    expect "DROP"
-                    if accept "FOREIGN" then
-                        if droppingColumns then raise OutsideSubset
-                        expect "KEY"
-                        names.Add(namePart ())
-                    else
-                        droppingColumns <- true
-                        accept "COLUMN" |> ignore
-                        columns.Add(namePart ())
+                    if accept "DROP" then
+                        // An index addition must be the LAST ALTER member;
+                        // do not reorder SQL that changes real physical DDL.
+                        if addedIndex.IsSome then raise OutsideSubset
+                        if accept "FOREIGN" then
+                            if droppingColumns then raise OutsideSubset
+                            expect "KEY"
+                            names.Add(namePart ())
+                        else
+                            droppingColumns <- true
+                            accept "COLUMN" |> ignore
+                            columns.Add(namePart ())
+                    elif accept "ADD" then
+                        if droppingColumns || names.Count = 0
+                           || addedIndex.IsSome then raise OutsideSubset
+                        if not (accept "INDEX" || accept "KEY") then
+                            raise OutsideSubset
+                        let indexName = namePart ()
+                        let members = columnNames ()
+                        addedIndex <- Some(indexName, members)
+                    else raise OutsideSubset
                 clause ()
                 while symbol ',' do clause ()
                 endOfStatement ()
                 if names.Count = 0 then raise OutsideSubset
-                Recognized(DropForeignKeys(table, names |> Seq.toList, columns |> Seq.toList))
+                match addedIndex with
+                | Some(indexName, members) ->
+                    Recognized(DropForeignKeysAndAddIndex(
+                        table, names |> Seq.toList, indexName, members))
+                | None ->
+                    Recognized(DropForeignKeys(
+                        table, names |> Seq.toList, columns |> Seq.toList))
             // MySQL ALTER TABLE has a native secondary-index lifecycle
             // that is equivalent to CREATE/DROP INDEX ... ON table. Parse
             // each source spelling into the existing closed DDL union, never

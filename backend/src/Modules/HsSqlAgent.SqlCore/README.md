@@ -323,7 +323,20 @@ FK+View and wildcard dependencies.
 
 `ALTER TABLE ... DROP FOREIGN KEY fk_symbol` and the existing proven
 multi-symbol DROP grammar update the immutable Virtual Catalog in statement
-order. Every subsequent `CREATE INDEX`, `ALTER ADD INDEX|KEY` or
+order. The bounded **single-statement atomic** form
+`ALTER TABLE child DROP FOREIGN KEY fk_old, ADD INDEX ix_new(cols)`
+is also recognized, including multiple preceding named FK drops and
+one final named non-UNIQUE `ADD KEY|INDEX` clause. Both actions are
+validated against the same original known table, with the index checked
+against the *resulting* FK dependency graph and possible residual
+physical names before **any** Catalog effect is published. It produces
+one immutable Catalog transition with ordered `DropConstraint` and
+`CreateIndex` evidence, never a speculative partial-success state.
+Reusing a possibly surviving FK-index name, duplicate FK symbols,
+missing indexed columns, mixed clause order, multiple new indexes and
+mixed DROP COLUMN are rejected unless a separate atomic proof exists.
+
+Every subsequent `CREATE INDEX`, `ALTER ADD INDEX|KEY` or
 `DROP INDEX` recomputes FK left-prefix connected components from the
 **remaining** named constraints, not from a stale CREATE TABLE graph.
 Dropping a shorter or longer member can split or shrink a shared-prefix
