@@ -163,7 +163,7 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionTests
     }
 
     [Fact]
-    public void TwoForeignKeysWithOverlappingPrefixesRemainUnproven()
+    public void SharedFkPrefixGroupAllowsUnrelatedIndexButStillKnowsBothConstraints()
     {
         const string sql =
             "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY, second_id INT NOT NULL, " +
@@ -173,10 +173,15 @@ public sealed class SqlCoreMySqlFkIndexLineageExpansionTests
             "CONSTRAINT fk_two FOREIGN KEY(p1,p2) REFERENCES parent(id,second_id));" +
             "CREATE INDEX ix_note ON child(note);";
         var result = Analyze(sql);
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[^1].Status);
-        Assert.DoesNotContain(result.Statements[^1].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Empty(result.Diagnostics);
+        Assert.All(result.Statements, step =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, step.Status));
+        var child = result.FinalCatalog.Tables.Single(t => t.Name == "child");
+        Assert.Equal("ix_note", Assert.Single(child.Indexes).Name);
+        Assert.Equal(2, child.Constraints.Count(c =>
+            c.Kind == SqlCatalogConstraintKind.ForeignKey));
+        Assert.Equal(SqlCatalogOperation.CreateIndex,
+            Assert.Single(result.Statements[^1].Changes).Operation);
     }
 
     [Fact]
