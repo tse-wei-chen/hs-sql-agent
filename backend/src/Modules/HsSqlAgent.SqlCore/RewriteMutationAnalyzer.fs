@@ -48,6 +48,7 @@ module internal RewriteMutationSourceMatchProof =
           Qualifiers: Set<string>
           Columns: Set<string>
           NonNullColumns: Set<string>
+          ExactIntColumns: Set<string>
           UniqueKeys: string list list }
 
     // A literal NULL is a fixed value but does not provide non-NULL evidence.
@@ -56,36 +57,57 @@ module internal RewriteMutationSourceMatchProof =
         | FixedLiteral of isNonNull: bool
         | Field of relationIndex: int * columnName: string
 
-    let private keyPart (part: IdentifierPart) =
-        if part.WasQuoted then part.Value else part.Value.ToLowerInvariant()
+    let private keyPart dialect (part: IdentifierPart) =
+        match dialect with
+        | SqlAgentToolType.MsSqlServer ->
+            // This proof is invoked *only after* identifier validation has
+            // verified an explicitly declared ASCII-safe catalog collation.
+            part.Value.ToUpperInvariant()
+        | _ ->
+            if part.WasQuoted then part.Value else part.Value.ToLowerInvariant()
 
     let private escaped (part: string) =
         part.Replace("\\", "\\\\").Replace(".", "\\.")
 
-    let private identifierKey identifier =
+    let private identifierKey dialect identifier =
         Identifier.parts identifier
-        |> List.map (keyPart >> escaped)
+        |> List.map (keyPart dialect >> escaped)
         |> String.concat "."
 
-    let private sourceQualifiers name alias =
+    let private sourceQualifiers dialect name alias =
         match alias with
-        | Some value -> Set.singleton (keyPart value |> escaped)
+        | Some value -> Set.singleton (keyPart dialect value |> escaped)
         | None ->
-            let full = identifierKey name
-            let tail = Identifier.parts name |> List.last |> keyPart |> escaped
+            let full = identifierKey dialect name
+            let tail = Identifier.parts name |> List.last |> keyPart dialect |> escaped
             Set.ofList [full; tail]
 
-    let private uniqueKeys (table: SqlCatalogTable) =
+    let private exactIntColumns (table: SqlCatalogTable) =
+        table.Columns
+        |> Seq.choose (fun column ->
+            RewriteResourceBudget.checkpoint ()
+            if String.Equals(column.TypeName, "INT", StringComparison.OrdinalIgnoreCase) then
+                Some column.Name
+            else None)
+        |> Set.ofSeq
+
+    let private uniqueKeys dialect (table: SqlCatalogTable) =
+        // SQL Server compares unlike types using its precedence/conversion
+        // rules. An equality to REAL/FLOAT/VARCHAR/BIGINT can collapse values
+        // that are distinct in a physical unique index. Admit only exact INT
+        // keys in that provider; PostgreSQL keeps its existing proof model.
+        let safeInt = exactIntColumns table
         table.Constraints
         |> Seq.choose (fun item ->
             RewriteResourceBudget.checkpoint ()
             match item.Kind with
             | SqlCatalogConstraintKind.PrimaryKey
             | SqlCatalogConstraintKind.Unique when item.Columns.Count > 0 ->
-                item.Columns
-                |> Seq.map (fun name -> name)
-                |> Seq.toList
-                |> Some
+                let columns = item.Columns |> Seq.toList
+                if dialect <> SqlAgentToolType.MsSqlServer
+                   || columns |> List.forall safeInt.Contains then
+                    Some columns
+                else None
             | _ -> None)
         |> Seq.toList
 
@@ -107,12 +129,12 @@ module internal RewriteMutationSourceMatchProof =
             |> Set.ofSeq
         Set.union declared primary
 
-    let private resolveField (relations: Relation list) expression =
+    let private resolveField dialect (relations: Relation list) expression =
         match Expr.unspan expression with
         | Column identifier
         | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
             let parts = Identifier.parts identifier
-            let columnName = parts |> List.last |> keyPart
+            let columnName = parts |> List.last |> keyPart dialect
             let matches =
                 if parts.Length = 1 then
                     // Name validation has already proved lexical resolution.
@@ -126,20 +148,29 @@ module internal RewriteMutationSourceMatchProof =
                     let qualifier =
                         parts
                         |> List.take (parts.Length - 1)
-                        |> List.map (keyPart >> escaped)
+                        |> List.map (keyPart dialect >> escaped)
                         |> String.concat "."
                     relations |> List.filter (fun relation ->
                         RewriteResourceBudget.checkpoint ()
                         relation.Qualifiers.Contains qualifier)
             match matches with
-            | [relation] when relation.Columns.Contains columnName ->
+            | [relation] when relation.Columns.Contains columnName
+                              && (dialect <> SqlAgentToolType.MsSqlServer
+                                  || relation.ExactIntColumns.Contains columnName) ->
                 Some(Field(relation.Position, columnName))
             | _ -> None
-        | Literal ScalarValue.Null -> Some(FixedLiteral false)
-        | Literal _ -> Some(FixedLiteral true)
+        | Literal ScalarValue.Null when dialect <> SqlAgentToolType.MsSqlServer ->
+            Some(FixedLiteral false)
+        | Literal(ScalarValue.Integer value) when dialect = SqlAgentToolType.MsSqlServer ->
+            if value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue then
+                Some(FixedLiteral true)
+            else None
+        | Literal _ when dialect <> SqlAgentToolType.MsSqlServer ->
+            Some(FixedLiteral true)
+        | _ -> None
         | _ -> None
 
-    let private mandatoryEqualities (relations: Relation list) predicate =
+    let private mandatoryEqualities dialect (relations: Relation list) predicate =
         let pending = ResizeArray<Expr>()
         let matched = ResizeArray<BinaryOperator * Operand * Operand>()
         pending.Add predicate
@@ -154,27 +185,30 @@ module internal RewriteMutationSourceMatchProof =
                 pending.Add left
             | Binary(comparison, left, right)
                 when comparison = BinaryOperator.Equal
-                     || comparison = BinaryOperator.NotDistinctFrom ->
-                match resolveField relations left, resolveField relations right with
+                     || (dialect = SqlAgentToolType.Postgres
+                         && comparison = BinaryOperator.NotDistinctFrom) ->
+                match resolveField dialect relations left,
+                      resolveField dialect relations right with
                 | Some a, Some b -> matched.Add(comparison, a, b)
                 | _ -> ()
             | _ -> ()  // OR/NOT/IN/functions cannot make equality mandatory.
         matched |> Seq.toList
 
-    let private proof (state: SqlCatalogState) target targetAlias sources predicate =
+    let private proof dialect (state: SqlCatalogState) target targetAlias sources predicate =
         let tableByIdentity =
             state.Tables
             |> Seq.map (fun table -> table.QualifiedName.BinderKey, table)
             |> Map.ofSeq
         let create position name alias =
-            match Map.tryFind (identifierKey name) tableByIdentity with
+            match Map.tryFind (identifierKey dialect name) tableByIdentity with
             | None -> None
             | Some table ->
                 Some { Position = position
-                       Qualifiers = sourceQualifiers name alias
+                       Qualifiers = sourceQualifiers dialect name alias
                        Columns = table.Columns |> Seq.map (fun col -> col.Name) |> Set.ofSeq
                        NonNullColumns = nonNullColumns table
-                       UniqueKeys = uniqueKeys table }
+                       ExactIntColumns = exactIntColumns table
+                       UniqueKeys = uniqueKeys dialect table }
         let targetRelation = create 0 target targetAlias
         let readRelations =
             sources
@@ -190,7 +224,7 @@ module internal RewriteMutationSourceMatchProof =
             let relationByPosition = all |> List.toArray
             let equalities =
                 predicate
-                |> Option.map (mandatoryEqualities all)
+                |> Option.map (mandatoryEqualities dialect all)
                 |> Option.defaultValue []
             let anchored = HashSet<int>()
             anchored.Add 0 |> ignore // A single target row is already fixed.
@@ -271,16 +305,20 @@ module internal RewriteMutationSourceMatchProof =
                 SqlMutationSourceMatchCardinality.ProvenAtMostOne
             else SqlMutationSourceMatchCardinality.Unverified
 
-    /// Only validated PostgreSQL AST + a complete known Virtual Catalog can
-    /// supply this proof. The caller must establish name/type validation FIRST.
+    /// Name/type proof and a closed Virtual Catalog must be established FIRST.
+    /// SQL Server additionally requires an explicit trusted ASCII-safe
+    /// identifier collation (checked by RewriteCatalogBinding) and strict
+    /// INT-only comparison graph; no data collation/coercion is inferred.
     let classify dialect (state: SqlCatalogState) (bound: BoundSql) =
         match (Bound.value bound).Statement with
         | UpdateStatement update when not update.From.IsEmpty ->
-            if dialect = SqlAgentToolType.Postgres && state.IsClosedWorld then
-                proof state update.Target update.TargetAlias update.From update.Where
+            if (dialect = SqlAgentToolType.Postgres
+                || dialect = SqlAgentToolType.MsSqlServer) && state.IsClosedWorld then
+                proof dialect state update.Target update.TargetAlias update.From update.Where
             else SqlMutationSourceMatchCardinality.Unverified
         | DeleteStatement delete when not delete.Using.IsEmpty ->
-            if dialect = SqlAgentToolType.Postgres && state.IsClosedWorld then
-                proof state delete.Target delete.TargetAlias delete.Using delete.Where
+            if (dialect = SqlAgentToolType.Postgres
+                || dialect = SqlAgentToolType.MsSqlServer) && state.IsClosedWorld then
+                proof dialect state delete.Target delete.TargetAlias delete.Using delete.Where
             else SqlMutationSourceMatchCardinality.Unverified
         | _ -> SqlMutationSourceMatchCardinality.NotApplicable
