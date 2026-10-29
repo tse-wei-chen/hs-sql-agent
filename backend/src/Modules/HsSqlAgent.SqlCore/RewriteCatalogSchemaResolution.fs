@@ -96,7 +96,8 @@ module internal RewriteCatalogSchemaResolution =
                     if name.Parts.Count = 2 && samePart name.Parts[0] schema then
                         let alias = partName [| name.Parts[1] |]
                         Some(SqlCatalogTable(alias.DisplayName, table.Knowledge,
-                             table.Columns, table.Constraints, table.Indexes, alias))
+                             table.Columns, table.Constraints, table.Indexes, alias,
+                             table.MayRetainUnmodeledFkIndexes))
                     else None)
             SqlCatalogState(
                 state.IsClosedWorld,
