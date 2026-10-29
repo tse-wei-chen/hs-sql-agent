@@ -12,7 +12,12 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// It never queries a database or falls back to the compatibility AST.
 module internal RewriteSchemaValidation =
 
-    type private Catalog = { Dialect: SqlAgentToolType; Tables: Map<string, string list> }
+    type private Catalog =
+        { Dialect: SqlAgentToolType
+          // Only physical relation identities are valid mutation targets.
+          Tables: Map<string, string list>
+          // Query and mutation input relations may include proven Views.
+          ReadRelations: Map<string, string list> }
     type private Source = { Qualifiers: string list; Columns: string list }
     // Unqualified row shape follows JOIN USING coalescing; qualified sources stay separate.
     type private Scope =
@@ -78,7 +83,8 @@ module internal RewriteSchemaValidation =
         tables |> List.iter (fun (name, columns) ->
             if (columns |> List.distinct |> List.length) <> columns.Length then
                 invalidArg "schemaSnapshot" ("Schema columns collide in table '" + name + "'."))
-        { Dialect = dialect; Tables = Map.ofList tables }
+        let physical = Map.ofList tables
+        { Dialect = dialect; Tables = physical; ReadRelations = physical }
 
     let private physicalTable catalog name =
         match Map.tryFind (keyIdentifier catalog.Dialect name) catalog.Tables with
@@ -86,6 +92,13 @@ module internal RewriteSchemaValidation =
         | None ->
             reject "SQL_SCHEMA_TABLE_NOT_FOUND" Span.unknown (
                 "Schema does not contain physical table '" + Identifier.text name + "'.")
+
+    let private readableTable catalog name =
+        match Map.tryFind (keyIdentifier catalog.Dialect name) catalog.ReadRelations with
+        | Some columns -> columns
+        | None ->
+            reject "SQL_SCHEMA_TABLE_NOT_FOUND" Span.unknown (
+                "Schema does not contain readable relation '" + Identifier.text name + "'.")
 
     let private namedSource dialect name alias columns =
         let full = keyIdentifier dialect name
@@ -350,7 +363,7 @@ module internal RewriteSchemaValidation =
         and source catalog ctes parent value =
             match value with
             | NamedTable(name, alias) ->
-                namedSource catalog.Dialect name alias (physicalTable catalog name)
+                namedSource catalog.Dialect name alias (readableTable catalog name)
             | CteTable(name, alias) ->
                 match Map.tryFind (keyIdentifier catalog.Dialect name) ctes with
                 | Some columns -> namedSource catalog.Dialect name alias columns
@@ -727,23 +740,35 @@ module internal RewriteSchemaValidation =
         if not state.IsClosedWorld
            || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
             invalidArg "state" "Strict catalog binding requires a complete known closed-world catalog."
-        // DQL may read a proven PostgreSQL View by its DECLARED output columns,
-        // not by the columns of its physical sources. This local name map is
-        // never published as a physical Catalog or passed to DML validators.
-        let relations =
+        let physical =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                table.QualifiedName.BinderKey,
+                (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
+            |> Seq.toList
+        // The read map is permitted to contain proven View OUTPUT columns.
+        // The write map above intentionally does not: a View cannot become
+        // a physical INSERT/UPDATE/DELETE target through this feature.
+        let readable =
             seq {
-                for table in state.Tables do
-                    RewriteResourceBudget.checkpoint ()
-                    yield table.QualifiedName.BinderKey,
-                          (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+                yield! physical
                 for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+                for view in RewriteMutationAnalyzer.readableViews dialect state bound do
                     RewriteResourceBudget.checkpoint ()
                     yield view.QualifiedName.BinderKey,
                           (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
             }
             |> Seq.toList
-        if relations.Length <> (relations |> List.map fst |> List.distinct |> List.length) then
+        if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
+           || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
             invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
-        let catalog = { Dialect = dialect; Tables = Map.ofList relations }
+        let catalog =
+            { Dialect = dialect
+              Tables = Map.ofList physical
+              ReadRelations = Map.ofList readable }
         (createValidation ()) catalog (Bound.value bound)
         bound

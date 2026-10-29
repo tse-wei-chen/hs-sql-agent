@@ -70,6 +70,25 @@ A source capability profile may also be supplied to both options types,
 e.g. for version-gated Oracle grammar. Provider/profile mismatches still fail;
 option objects never imply successful binding, authorization or SQL execution.
 
+## Mutation source relations versus physical write targets
+
+In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,
+`UPDATE ... FROM`, `DELETE ... USING` and subqueries in DML can read the
+declared output columns/type families of a **proven** Virtual Catalog View.
+The strict F# binder constructs two separate relation maps: read sources
+(which can include proven Views) and physical write targets (tables only).
+This prevents a View used as a source from becoming an INSERT, UPDATE or
+DELETE target through catalog name/type validation. Missing and ambiguous
+read-source columns and proven type-family mismatches fail closed. A removed
+View, an unknown/open Catalog, or an unproven dialect retains the existing
+refusal/uncertainty behavior.
+
+This is **static Mutation analysis** rather than permission to update a View
+or an executable SQL compiler feature. `CatalogBinding = Verified` does not
+mean execution or policy approval. Analysis remains `PartiallyAnalyzed`
+and effect coverage remains `Partial`; SQL Server/MySQL/SQLite/Oracle/
+Firebird do not inherit PostgreSQL-only View semantics.
+
 ## PostgreSQL DQL over proven Virtual Catalog views
 
 After a fully modeled PostgreSQL `CREATE VIEW`, `AnalyzeScript` can bind
