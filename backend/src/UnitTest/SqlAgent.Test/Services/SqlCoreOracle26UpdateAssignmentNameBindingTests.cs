@@ -94,7 +94,11 @@ public sealed class SqlCoreOracle26UpdateAssignmentNameBindingTests
             parsed, SqlAgentToolType.Oracle,
             new SqlPlanValidationContext("oracle26-qualified-assignment-parity"),
             targetProfile: profile);
-        Assert.Contains("dest.payload", command.Sql, StringComparison.OrdinalIgnoreCase);
+        // Oracle renders unquoted names in its canonical uppercase, quoted form.
+        // Target qualification must survive compilation; dropping it would
+        // reintroduce the real ORA-00918 ambiguity caught by live parity.
+        Assert.Contains(" SET \"DEST\".\"PAYLOAD\" = ", command.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain(" SET \"PAYLOAD\" = ", command.Sql, StringComparison.Ordinal);
         Assert.Contains(" FROM ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("lookup", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
