@@ -174,7 +174,7 @@ public sealed class SqlCorePostgresInboundForeignKeyRenameTests
     }
 
     [Fact]
-    public void ExistingViewDependencyRemainsFailClosedEvenWithForeignKey()
+    public void ExistingViewAndForeignKeyDependenciesRewriteAtomically()
     {
         var result = Analyze(
             "CREATE TABLE public.parent (id INTEGER NOT NULL, " +
@@ -183,9 +183,16 @@ public sealed class SqlCorePostgresInboundForeignKeyRenameTests
             "CONSTRAINT fk_child FOREIGN KEY(pid) REFERENCES public.parent(id));" +
             "CREATE VIEW public.v AS SELECT id FROM public.parent;" +
             "ALTER TABLE public.parent RENAME COLUMN id TO newid;");
-        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[3].Status);
-        Assert.DoesNotContain(result.Statements[3].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Empty(result.Diagnostics);
+        Assert.All(result.Statements, stmt =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, stmt.Status));
+        Assert.Equal("id", Assert.Single(result.Statements[3].CatalogBefore
+            .Views.Single().SourceColumns));
+        Assert.Equal("newid", Assert.Single(result.FinalCatalog.Views.Single().SourceColumns));
+        Assert.Equal("id", Assert.Single(result.FinalCatalog.Views.Single().Columns).Name);
+        Assert.Equal("newid", Assert.Single(result.FinalCatalog.Tables
+            .Single(t => t.Name == "public.child").Constraints.Single().ReferencedColumns));
+        Assert.Equal(SqlCatalogOperation.RenameColumn,
+            Assert.Single(result.Statements[3].Changes).Operation);
     }
 }
