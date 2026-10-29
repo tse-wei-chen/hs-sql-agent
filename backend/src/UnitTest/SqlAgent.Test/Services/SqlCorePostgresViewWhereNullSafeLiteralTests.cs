@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
@@ -45,7 +44,7 @@ public sealed class SqlCorePostgresViewWhereNullSafeLiteralTests
             Assert.Single(result.Statements[2].Changes).Operation);
         var view = Assert.Single(result.FinalCatalog.Views);
         Assert.Equal(new[] { "id", column }, view.SourceColumns);
-        Assert.Equal("app.orders", Assert.Single(view.Dependencies).DisplayName);
+        Assert.Equal("app.orders", Assert.Single(view.Dependencies)!.DisplayName);
     }
 
     [Theory]
@@ -75,7 +74,7 @@ public sealed class SqlCorePostgresViewWhereNullSafeLiteralTests
             Assert.Single(result.Statements[3].Changes).Operation);
         var view = Assert.Single(result.FinalCatalog.Views);
         Assert.Equal(new[] { "id", "status" }, view.SourceColumns);
-        Assert.Equal("app.other", Assert.Single(view.Dependencies).DisplayName);
+        Assert.Equal("app.other", Assert.Single(view.Dependencies)!.DisplayName);
 
         var oldDrop = Analyze(setup + "ALTER TABLE app.orders DROP COLUMN qty;");
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, oldDrop.Statements[4].Status);
