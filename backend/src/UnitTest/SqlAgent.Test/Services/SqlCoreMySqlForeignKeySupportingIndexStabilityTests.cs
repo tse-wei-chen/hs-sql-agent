@@ -88,10 +88,11 @@ public sealed class SqlCoreMySqlForeignKeySupportingIndexStabilityTests
         Assert.Equal("ix_cover", Assert.Single(
             step.CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
         Assert.Empty(r.Statements[1].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes);
-        // The old auto-FK support index may or may not survive.
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
-        Assert.DoesNotContain(r.Statements[3].Changes,
-            x => x.Certainty == SqlCatalogKnowledge.Known);
+        // The old auto-FK index may survive, but ix_after is a distinct
+        // physical name and is provably safe.
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
+        Assert.Equal(2, r.FinalCatalog.Tables
+            .Single(t => t.Name == "child").Indexes.Count);
     }
 
     [Theory]
@@ -117,9 +118,14 @@ public sealed class SqlCoreMySqlForeignKeySupportingIndexStabilityTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[2].Status);
         Assert.Equal(SqlCatalogOperation.DropConstraint,
             Assert.Single(r.Statements[2].Changes).Operation);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
-        Assert.DoesNotContain(r.Statements[3].Changes,
-            x => x.Certainty == SqlCatalogKnowledge.Known);
+        if (statement.Contains("ix_after", StringComparison.Ordinal))
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
+        else
+        {
+            Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
+            Assert.DoesNotContain(r.Statements[3].Changes,
+                x => x.Certainty == SqlCatalogKnowledge.Known);
+        }
         Assert.True(r.Statements[2].CatalogAfter.IsClosedWorld);
     }
 
@@ -134,7 +140,9 @@ public sealed class SqlCoreMySqlForeignKeySupportingIndexStabilityTests
         Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
         var after = r.Statements[3].CatalogAfter.Tables.Single(t => t.Name == "child");
         Assert.Equal("ix_note", Assert.Single(after.Indexes).Name);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, r.Statements[4].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, r.Statements[4].Status);
+        Assert.Equal(2, r.FinalCatalog.Tables
+            .Single(t => t.Name == "child").Indexes.Count);
     }
 
     [Fact]

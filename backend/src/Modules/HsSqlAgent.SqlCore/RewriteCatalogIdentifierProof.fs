@@ -123,8 +123,19 @@ module internal RewriteCatalogIdentifierProof =
             && lowerIdentity t.QualifiedName
             && (t.Columns |> Seq.forall (fun col -> lowercase col.Name))
             && (t.Constraints |> Seq.forall lowerConstraint)
+            // MySQL index names are case-insensitive even with
+            // LOWER_CASE_TABLE_NAMES=0. Never apply the table-name
+            // lowercase requirement to physical INDEX names; instead
+            // prove bounded ASCII and reject case-folding collisions.
             && (t.Indexes |> Seq.forall (fun idx ->
-                lowercase idx.Name && (idx.Columns |> Seq.forall lowercase)))))
+                isSimpleAsciiIdentifier idx.Name
+                && idx.Name.Length <= 64
+                && (idx.Columns |> Seq.forall lowercase)))
+            && (let indexNames =
+                    t.Indexes
+                    |> Seq.map (fun idx -> idx.Name.ToUpperInvariant())
+                    |> Seq.toList
+                indexNames.Length = (indexNames |> List.distinct).Length)))
         && lowerIdentity name
         && (columns |> List.forall (fun col -> lowercase col.Name))
         && (constraints |> List.forall lowerConstraint)

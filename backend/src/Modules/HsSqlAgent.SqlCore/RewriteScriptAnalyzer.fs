@@ -2072,18 +2072,6 @@ module internal RewriteScriptAnalyzer =
                                     StringComparison.OrdinalIgnoreCase
                                 else StringComparison.Ordinal))))
                     |> Seq.toList
-                let mayRemoveMySqlFkSupport (owner: SqlCatalogTable) =
-                    owner.Constraints |> Seq.exists (fun fk ->
-                        fk.Kind = SqlCatalogConstraintKind.ForeignKey
-                        && (owner.Indexes |> Seq.exists (fun idx ->
-                            let fkCols = fk.Columns |> Seq.toList
-                            let indexCols = idx.Columns |> Seq.toList
-                            String.Equals(idx.Name, indexName,
-                                StringComparison.OrdinalIgnoreCase)
-                            && fkCols.Length <= indexCols.Length
-                            && List.forall2
-                                (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
-                                fkCols (indexCols |> List.take fkCols.Length))))
                 match owners with
                 | [owner] when sourceDialect = SqlAgentToolType.Postgres
                                && Option.isNone target
@@ -2095,12 +2083,20 @@ module internal RewriteScriptAnalyzer =
                     // prove that unqualified DROP INDEX resolves there:
                     // actual search_path could point elsewhere.
                     dependencyUnproven "Unqualified DROP INDEX requires a proven search_path for its qualified Catalog owner."
-                | [owner] when sourceDialect = SqlAgentToolType.MySQL
-                               && mayRemoveMySqlFkSupport owner ->
-                    // After auto replacement the explicit index might be
-                    // the ONLY remaining physical FK-supporting index.
-                    // MySQL rejects dropping that key with ER_DROP_INDEX_FK.
-                    dependencyUnproven "MySQL DROP INDEX may remove the final foreign-key supporting index."
+                | [owner] when sourceDialect = SqlAgentToolType.MySQL ->
+                    match RewriteSchemaDependencies.canDropMySqlTrackedIndex
+                            state owner indexName with
+                    | RewriteSchemaDependencies.Invalid message -> fail message
+                    | RewriteSchemaDependencies.Unproven message ->
+                        dependencyUnproven message
+                    | RewriteSchemaDependencies.Proven ->
+                        let remaining =
+                            owner.Indexes |> Seq.filter (fun idx ->
+                                not (String.Equals(idx.Name, indexName,
+                                    StringComparison.OrdinalIgnoreCase)))
+                        RewriteCatalogModel.withIndexes
+                            state owner.QualifiedName remaining
+                        |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
                 | [owner] ->
                     let remaining =
                         owner.Indexes |> Seq.filter (fun idx ->

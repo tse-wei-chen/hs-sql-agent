@@ -112,21 +112,36 @@ module internal RewriteCatalogModel =
         let cols = columns |> Seq.toArray |> Array.AsReadOnly
         let keys = constraints |> Seq.toArray |> Array.AsReadOnly
         let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
-        // DROP FOREIGN KEY is NOT DROP INDEX in MySQL. Preserve a physical
-        // index uncertainty fence when even one previously modeled FK exits
-        // the constraint set. No table-local index-name proof may erase it.
-        let residualFkIndex =
-            match lookup state name with
-            | None -> false
-            | Some prior ->
-                prior.MayRetainUnmodeledFkIndexes
-                || (prior.Constraints |> Seq.exists (fun old ->
-                    old.Kind = SqlCatalogConstraintKind.ForeignKey
-                    && not (keys |> Seq.exists (fun current ->
-                        current.Kind = SqlCatalogConstraintKind.ForeignKey
-                        && sameName current.Name old.Name))))
+        // Immutable uncertainty *names*: neither DROP FK nor adding a new
+        // supporting index proves that InnoDB removed its auto index.
+        // Empty name is a sentinel for unprovable FK physical identity.
+        let prior = lookup state name
+        let removedFkNames =
+            match prior with
+            | None -> Seq.empty
+            | Some old ->
+                old.Constraints
+                |> Seq.filter (fun c ->
+                    c.Kind = SqlCatalogConstraintKind.ForeignKey
+                    && not (keys |> Seq.exists (fun next ->
+                        next.Kind = SqlCatalogConstraintKind.ForeignKey
+                        && sameName next.Name c.Name)))
+                |> Seq.map (fun c -> if isNull c.Name then "" else c.Name)
+        let possibleNames =
+            seq {
+                match prior with
+                | Some old -> yield! old.PossibleFkIndexNames
+                | None -> ()
+                yield! removedFkNames
+            }
+            |> Seq.distinct
+            |> Seq.toArray |> Array.AsReadOnly
+        let residual =
+            (prior |> Option.exists (fun old -> old.MayRetainUnmodeledFkIndexes))
+            || possibleNames.Count > 0
         replace state name (Some(SqlCatalogTable(name.DisplayName,
-            SqlCatalogKnowledge.Known, cols, keys, idxs, name, residualFkIndex)))
+            SqlCatalogKnowledge.Known, cols, keys, idxs, name, residual,
+            possibleNames)))
 
     /// Atomically publish a PostgreSQL column rename across modeled physical
     /// tables, inbound/self-referencing FKs and directly bound View sources.
@@ -191,7 +206,8 @@ module internal RewriteCatalogModel =
                     SqlCatalogTable(
                         table.Name, table.Knowledge, columns,
                         Array.AsReadOnly(constraints), indexes,
-                        table.QualifiedName, table.MayRetainUnmodeledFkIndexes)
+                        table.QualifiedName, table.MayRetainUnmodeledFkIndexes,
+                        table.PossibleFkIndexNames)
                 else table)
             |> Seq.toArray |> Array.AsReadOnly
         let rewrittenViews =
@@ -290,15 +306,24 @@ module internal RewriteCatalogModel =
                             not (dropped |> List.exists (fun name ->
                                 sameName name c.Name)))
                         |> Seq.toArray |> Array.AsReadOnly
-                    SqlCatalogTable(
-                        table.Name, table.Knowledge, table.Columns,
-                        remaining, table.Indexes, table.QualifiedName,
-                        table.MayRetainUnmodeledFkIndexes
-                        || (table.Constraints |> Seq.exists (fun old ->
+                    let droppedNames =
+                        table.Constraints
+                        |> Seq.filter (fun old ->
                             old.Kind = SqlCatalogConstraintKind.ForeignKey
                             && not (remaining |> Seq.exists (fun current ->
                                 current.Kind = SqlCatalogConstraintKind.ForeignKey
-                                && sameName old.Name current.Name))))))
+                                && sameName old.Name current.Name)))
+                        |> Seq.map (fun c ->
+                            if isNull c.Name then "" else c.Name)
+                    let possible =
+                        Seq.append table.PossibleFkIndexNames droppedNames
+                        |> Seq.distinct
+                        |> Seq.toArray |> Array.AsReadOnly
+                    SqlCatalogTable(
+                        table.Name, table.Knowledge, table.Columns,
+                        remaining, table.Indexes, table.QualifiedName,
+                        table.MayRetainUnmodeledFkIndexes || possible.Count > 0,
+                        possible))
             |> Seq.toArray |> Array.AsReadOnly
         SqlCatalogState(state.IsClosedWorld, nextTables, state.Views)
 
@@ -315,10 +340,26 @@ module internal RewriteCatalogModel =
         let updated = withIndexes state name indexes
         match lookup updated name with
         | Some table ->
+            let newIndex = table.Indexes |> Seq.last
+            let newMembers = newIndex.Columns |> Seq.toList
+            let coveredNames =
+                table.Constraints
+                |> Seq.filter (fun fk ->
+                    let key = fk.Columns |> Seq.toList
+                    fk.Kind = SqlCatalogConstraintKind.ForeignKey
+                    && key.Length <= newMembers.Length
+                    && List.forall2
+                        (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
+                        key (newMembers |> List.take key.Length))
+                |> Seq.map (fun fk -> if isNull fk.Name then "" else fk.Name)
+            let possible =
+                Seq.append table.PossibleFkIndexNames coveredNames
+                |> Seq.distinct
+                |> Seq.toArray |> Array.AsReadOnly
             replace updated name
                 (Some(SqlCatalogTable(
                     table.Name, table.Knowledge, table.Columns, table.Constraints,
-                    table.Indexes, table.QualifiedName, true)))
+                    table.Indexes, table.QualifiedName, true, possible)))
         | None -> invalidArg "name" "Table not found."
 
     let inboundForeignKeys (state: SqlCatalogState) targetTable =
