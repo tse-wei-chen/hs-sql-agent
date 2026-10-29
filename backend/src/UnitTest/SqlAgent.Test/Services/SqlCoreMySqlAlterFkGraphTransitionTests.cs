@@ -109,7 +109,8 @@ public sealed class SqlCoreMySqlAlterFkGraphTransitionTests
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, step.Status);
         Assert.Contains(step.Diagnostics, d => d.Code == "SQL_SCHEMA_DEPENDENCY_UNPROVEN");
         Assert.DoesNotContain(step.Changes, c => c.Certainty == SqlCatalogKnowledge.Known);
-        Assert.Empty(step.CatalogBefore.Tables.Single(t => t.Name == "child").Constraints);
+        Assert.DoesNotContain(step.CatalogBefore.Tables.Single(t => t.Name == "child")
+            .Constraints, c => c.Kind == SqlCatalogConstraintKind.ForeignKey);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
 
@@ -134,6 +135,24 @@ public sealed class SqlCoreMySqlAlterFkGraphTransitionTests
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, r.Statements[2].Status);
         Assert.Empty(r.Statements[2].Changes);
         Assert.Same(r.Statements[2].CatalogBefore, r.Statements[2].CatalogAfter);
+    }
+
+    [Fact]
+    public void CrossTableForeignKeySymbolCollisionStillFailsSchemaWide()
+    {
+        const string sql =
+            "CREATE TABLE parent(id INT NOT NULL PRIMARY KEY);" +
+            "CREATE TABLE child_a(id INT NOT NULL PRIMARY KEY, pid INT, " +
+            "CONSTRAINT fk_global FOREIGN KEY(pid) REFERENCES parent(id));" +
+            "CREATE TABLE child_b(id INT NOT NULL PRIMARY KEY, pid INT);" +
+            "ALTER TABLE child_b ADD CONSTRAINT fk_global " +
+            "FOREIGN KEY(pid) REFERENCES parent(id);";
+        var r = Analyze(sql);
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, r.Statements[3].Status);
+        Assert.Empty(r.Statements[3].Changes);
+        Assert.Same(r.Statements[3].CatalogBefore, r.Statements[3].CatalogAfter);
+        Assert.DoesNotContain(r.FinalCatalog.Tables.Single(t => t.Name == "child_b")
+            .Constraints, c => c.Kind == SqlCatalogConstraintKind.ForeignKey);
     }
 
     [Theory]
