@@ -106,51 +106,36 @@ module internal RewriteScriptParser =
                  && first = "EXECUTE" && word tokens (start + 1) = "BLOCK"))
         | _ -> false
 
-    /// GO is a SQL Server client-side batch separator only when the remainder
-    /// of its line contains lexical trivia (whitespace or SQL comments).
-    /// SQL text, repetition counts, and GO in other dialects are never separators.
-    let private isSqlServerGoLine (sql: string) (token: Token) dialect =
-        if dialect <> SqlAgentToolType.MsSqlServer then false
-        else
-            match token.Kind with
-            | Identifier(value, false) when String.Equals(value, "GO", StringComparison.OrdinalIgnoreCase) ->
-                let previousNewline =
-                    if token.Start = 0 then -1
-                    else sql.LastIndexOf('\n', token.Start - 1)
-                let lineStart = previousNewline + 1
-                let afterToken = token.Start + token.Length
-                let nextNewline = sql.IndexOf('\n', afterToken)
-                let lineEnd = if nextNewline < 0 then sql.Length else nextNewline
+    /// GO is SQL Server's client-side batch separator only when its physical
+    /// line contains trivia on both sides. CR and LF terminate physical lines,
+    /// matching RewriteLexer, and naturally covering CRLF scripts.
+    let private goLineTriviaOnly (sql: string) fromInclusive toExclusive =
+        let mutable cursor = fromInclusive
+        let mutable valid = true
+        while valid && cursor < toExclusive do
+            if Char.IsWhiteSpace(sql.[cursor]) then
+                cursor <- cursor + 1
+            elif cursor + 1 < toExclusive
+                 && sql.[cursor] = '-'
+                 && sql.[cursor + 1] = '-' then
+                cursor <- toExclusive
+            elif cursor + 1 < toExclusive
+                 && sql.[cursor] = '/'
+                 && sql.[cursor + 1] = '*' then
+                // Only comments closed before this physical line ends count.
+                let closeAt =
+                    sql.IndexOf("*/", cursor + 2,
+                                toExclusive - (cursor + 2),
+                                StringComparison.Ordinal)
+                if closeAt < 0 then valid <- false
+                else cursor <- closeAt + 2
+            else
+                valid <- false
+        valid
 
-                // Scan only this source line, never recursing with its length.
-                // Comments must close on the separator's line: an unproven
-                // multiline suffix is not silently accepted as a GO command.
-                let triviaOnly fromInclusive toExclusive =
-                    let mutable cursor = fromInclusive
-                    let mutable valid = true
-                    while valid && cursor < toExclusive do
-                        if Char.IsWhiteSpace(sql.[cursor]) then
-                            cursor <- cursor + 1
-                        elif cursor + 1 < toExclusive
-                             && sql.[cursor] = '-'
-                             && sql.[cursor + 1] = '-' then
-                            cursor <- toExclusive
-                        elif cursor + 1 < toExclusive
-                             && sql.[cursor] = '/'
-                             && sql.[cursor + 1] = '*' then
-                            let closeAt =
-                                sql.IndexOf("*/", cursor + 2,
-                                            toExclusive - (cursor + 2),
-                                            StringComparison.Ordinal)
-                            if closeAt < 0 then valid <- false
-                            else cursor <- closeAt + 2
-                        else
-                            valid <- false
-                    valid
-
-                triviaOnly lineStart token.Start
-                && triviaOnly afterToken lineEnd
-            | _ -> false
+    let private isSqlServerGoLine (sql: string) (token: Token) lineStart lineEnd =
+        goLineTriviaOnly sql lineStart token.Start
+        && goLineTriviaOnly sql (token.Start + token.Length) lineEnd
 
     let private invalidDiagnostic (ex: SqlParseException) absoluteStart statementLength =
         match ex.Diagnostic with
@@ -181,6 +166,40 @@ module internal RewriteScriptParser =
             let mutable nesting = 0
             let mutable opaque = false
             let mutable index = 0
+
+            // Line boundaries are cached across ascending GO candidates. A
+            // previous LastIndexOf/IndexOf pair per GO token could rescan the
+            // same physical line quadratically for a long identifier list.
+            // This is lazy for scripts without GO and for other dialects.
+            let goLineBreaks = [| '\r'; '\n' |]
+            let mutable goLineStart = 0
+            let mutable goLineEnd = -1
+            let mutable goLinePrefixValid = true
+
+            let isGoSeparator (token: Token) =
+                match token.Kind with
+                | Identifier(value, false)
+                    when sourceDialect = SqlAgentToolType.MsSqlServer
+                         && String.Equals(value, "GO", StringComparison.OrdinalIgnoreCase) ->
+                    while goLineEnd < token.Start do
+                        goLineStart <- goLineEnd + 1
+                        let nextLineBreak = sql.IndexOfAny(goLineBreaks, goLineStart)
+                        goLineEnd <-
+                            if nextLineBreak < 0 then sql.Length else nextLineBreak
+                        goLinePrefixValid <- true
+                        // Include the scanned source in the existing per-attempt
+                        // ScriptDispatch work budget; never bypass stage limits.
+                        RewriteResourceBudget.charge (int64 (goLineEnd - goLineStart))
+
+                    // A second GO token on the same line cannot be standalone,
+                    // no matter how much trivia precedes or follows it.
+                    let isolated =
+                        goLinePrefixValid
+                        && isSqlServerGoLine sql token goLineStart goLineEnd
+                    goLinePrefixValid <- false
+                    isolated
+                | _ -> false
+
             // End is a sentinel, never part of a source statement.
             let tokenCount = tokens.Length - 1
 
@@ -234,7 +253,7 @@ module internal RewriteScriptParser =
                 while index < tokenCount do
                     RewriteResourceBudget.checkpoint ()
                     let token = tokens.[index]
-                    if nesting = 0 && isSqlServerGoLine sql token sourceDialect then
+                    if nesting = 0 && isGoSeparator token then
                         emit index
                         batch <- batch + 1
                     else

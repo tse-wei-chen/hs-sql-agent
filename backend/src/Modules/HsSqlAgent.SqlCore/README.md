@@ -304,7 +304,11 @@ The SQL Server Script Frontend recognizes a standalone client-side `GO` separato
 even with trailing `-- comment`, inline `/* comment */`, or a leading
 same-line block comment. This preserves source spans and ordered batch indices.
 Only whitespace and fully closed same-line SQL comments may surround `GO`;
-a T-SQL statement on the same line is **not** a separator. `GO 2` repetition
+a T-SQL statement on the same line is **not** a separator. Physical lines
+follow the SQL Lexer contract: **LF, CRLF, and CR-only** scripts preserve
+identical batch order and absolute source spans. Incremental GO-line scanning
+avoids quadratic repeated line searches and charges scanning to the existing
+ScriptDispatch resource budget. `GO 2` repetition
 remains outside the modeled subset, and none of the other five dialects
 inherits this SQL Server-specific behavior. Parsing never sends `GO` to a
 database or confers compiler authorization.
