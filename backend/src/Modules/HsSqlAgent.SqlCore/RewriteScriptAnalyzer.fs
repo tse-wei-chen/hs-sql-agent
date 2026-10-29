@@ -586,7 +586,8 @@ module internal RewriteScriptAnalyzer =
                 DropIndexBatch(identities, conditional)
             | AddConstraint(name, constraintInfo) ->
                 AddConstraint(resolve name, resolveConstraint constraintInfo)
-            | DropConstraint(name, constraintName) -> DropConstraint(resolve name, constraintName)
+            | DropConstraint(name, constraintName, conditional, mode) ->
+                DropConstraint(resolve name, constraintName, conditional, mode)
         // Inspect raw AST parts before qualifying them; a converted two-part
         // name must never hide an unsupported one-part lookup.
         let rawNames =
@@ -610,7 +611,7 @@ module internal RewriteScriptAnalyzer =
                 | AlterColumns(name, _)
                 | RenameColumn(name, _, _)
                 | CreateIndex(name, _, _, _)
-                | DropConstraint(name, _) -> [name]
+                | DropConstraint(name, _, _, _) -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
                 | DropIndexBatch(identities, _) -> identities
@@ -637,7 +638,7 @@ module internal RewriteScriptAnalyzer =
             | RenameColumn(name, _, _)
             | CreateIndex(name, _, _, _)
             | AddConstraint(name, _)
-            | DropConstraint(name, _) -> Some name
+            | DropConstraint(name, _, _, _) -> Some name
             | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _
             | DropIndexBatch _
@@ -2070,13 +2071,74 @@ module internal RewriteScriptAnalyzer =
                 | RewriteSchemaDependencies.Invalid message -> fail message
                 | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ -> dependencyUnproven "Cannot establish the table's known constraint set."
-        | Recognized (DropConstraint(tableName, constraintName)) ->
+        | Recognized (DropConstraint(tableName, constraintName, conditional, mode)) ->
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
                 match table.Constraints |> Seq.tryFind (fun item ->
                     String.Equals(item.Name, constraintName, StringComparison.Ordinal)) with
+                | None when conditional
+                            && sourceDialect = SqlAgentToolType.Postgres
+                            && state.IsClosedWorld
+                            && (state.Tables |> Seq.forall (fun t ->
+                                t.Knowledge = SqlCatalogKnowledge.Known)) ->
+                    // A missing constraint is a true PostgreSQL no-op,
+                    // not a speculative DropConstraint effect.
+                    noChange
+                | None when conditional ->
+                    dependencyUnproven "DROP CONSTRAINT IF EXISTS requires a complete known Catalog."
                 | None ->
                     fail ("DROP CONSTRAINT '" + constraintName + "' does not exist.")
+                | Some target when mode = Cascade
+                                   && sourceDialect = SqlAgentToolType.Postgres ->
+                    if not state.IsClosedWorld
+                       || (state.Tables |> Seq.exists (fun t ->
+                           t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                        dependencyUnproven "DROP CONSTRAINT CASCADE requires a complete known Catalog."
+                    else
+                        let inbound =
+                            if target.Kind = SqlCatalogConstraintKind.PrimaryKey
+                               || target.Kind = SqlCatalogConstraintKind.Unique then
+                                RewriteCatalogModel.inboundForeignKeys state tableName
+                                |> Seq.filter (fun (_, fk) ->
+                                    fk.ReferencedColumns.Count = target.Columns.Count
+                                    && Seq.forall2
+                                        (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
+                                        fk.ReferencedColumns target.Columns)
+                                |> Seq.toList
+                            else []
+                        let ambiguousParentKey =
+                            not inbound.IsEmpty
+                            && (table.Constraints
+                                |> Seq.filter (fun key ->
+                                    (key.Kind = SqlCatalogConstraintKind.PrimaryKey
+                                     || key.Kind = SqlCatalogConstraintKind.Unique)
+                                    && key.Columns.Count = target.Columns.Count
+                                    && Seq.forall2
+                                        (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
+                                        key.Columns target.Columns)
+                                |> Seq.length) > 1
+                        if ambiguousParentKey then
+                            dependencyUnproven
+                                "Multiple same-column parent keys make the exact referenced FK constraint unproven."
+                        else
+                            // Resolve the entire set against ONE pre-drop
+                            // Catalog before publishing any state changes.
+                            let removals =
+                                (tableName, constraintName)
+                                :: (inbound |> List.map (fun (owner, fk) ->
+                                    owner.QualifiedName, fk.Name))
+                            if removals |> List.exists (fun (_, name) ->
+                                String.IsNullOrWhiteSpace name) then
+                                dependencyUnproven "Cascade cannot name an unmodeled inbound FK constraint."
+                            else
+                                let next =
+                                    RewriteCatalogModel.dropProvenConstraintsAtomically
+                                        state removals
+                                let changes =
+                                    removals |> List.map (fun (owner, key) ->
+                                        changedConstraintExact syntax owner key)
+                                SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                                next, changes, ([]: SqlDiagnostic list)
                 | Some target ->
                     match RewriteSchemaDependencies.canDropConstraint state tableName target with
                     | RewriteSchemaDependencies.Proven ->

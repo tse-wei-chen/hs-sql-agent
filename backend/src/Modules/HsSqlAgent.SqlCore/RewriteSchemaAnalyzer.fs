@@ -141,7 +141,8 @@ module internal RewriteSchemaAnalyzer =
         /// One PostgreSQL statement, one atomic multi-index Catalog proof.
         | DropIndexBatch of identities: SqlCatalogQualifiedName list * ifExists: bool
         | AddConstraint of table: SqlCatalogQualifiedName * constraintInfo: SqlCatalogConstraint
-        | DropConstraint of table: SqlCatalogQualifiedName * name: string
+        | DropConstraint of table: SqlCatalogQualifiedName * name: string *
+                            ifExists: bool * dependencyMode: DropDependencyMode
 
     type DdlSyntax =
         | Recognized of DdlOperation
@@ -992,9 +993,22 @@ module internal RewriteSchemaAnalyzer =
                         Recognized(AddConstraint(table, result))
                     elif accept "DROP" then
                         expect "CONSTRAINT"
+                        let conditional =
+                            if sourceDialect = SqlAgentToolType.Postgres
+                               && accept "IF" then
+                                expect "EXISTS"
+                                true
+                            else false
                         let name = namePart ()
+                        let mode =
+                            if sourceDialect = SqlAgentToolType.Postgres then
+                                if accept "CASCADE" then Cascade
+                                else
+                                    accept "RESTRICT" |> ignore
+                                    Restrict
+                            else Restrict
                         endOfStatement ()
-                        Recognized(DropConstraint(table, name))
+                        Recognized(DropConstraint(table, name, conditional, mode))
                     else raise OutsideSubset
             let addAction () =
                 // ADD has already been consumed. Only proven nullable column

@@ -229,6 +229,37 @@ module internal RewriteCatalogModel =
         | Some table -> replaceTable state name table.Columns constraints table.Indexes
         | None -> invalidArg "name" "Table not found."
 
+    /// PostgreSQL DROP CONSTRAINT CASCADE: remove the target key and only
+    /// provably dependent inbound/self foreign keys in one immutable state.
+    /// The proof planner resolves every (owner, constraint name) against the
+    /// original Catalog before calling this operation.
+    let dropProvenConstraintsAtomically
+            (state: SqlCatalogState)
+            (targets: (SqlCatalogQualifiedName * string) list) =
+        let nextTables =
+            state.Tables
+            |> Seq.map (fun (table: SqlCatalogTable) ->
+                RewriteResourceBudget.checkpoint ()
+                let dropped =
+                    targets
+                    |> List.choose (fun (owner, constraintName) ->
+                        if sameIdentity owner table.QualifiedName then
+                            Some constraintName
+                        else None)
+                if dropped.IsEmpty then table
+                else
+                    let remaining =
+                        table.Constraints
+                        |> Seq.filter (fun c ->
+                            not (dropped |> List.exists (fun name ->
+                                sameName name c.Name)))
+                        |> Seq.toArray |> Array.AsReadOnly
+                    SqlCatalogTable(
+                        table.Name, table.Knowledge, table.Columns,
+                        remaining, table.Indexes, table.QualifiedName))
+            |> Seq.toArray |> Array.AsReadOnly
+        SqlCatalogState(state.IsClosedWorld, nextTables, state.Views)
+
     let withIndexes state name indexes =
         match lookup state name with
         | Some table -> replaceTable state name table.Columns table.Constraints indexes
