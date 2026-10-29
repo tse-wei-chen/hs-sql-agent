@@ -78,13 +78,20 @@ public sealed class SqlCoreMySqlForeignKeySupportingIndexStabilityTests
     [InlineData("CREATE INDEX ix_cover ON child(pid)")]
     [InlineData("CREATE INDEX ix_cover ON child(pid,note)")]
     [InlineData("ALTER TABLE child ADD KEY ix_cover(pid,note)")]
-    public void IndexCoveringForeignKeyPrefixRemainsUnprovenDueToImplicitReplacement(string statement)
+    public void IndexCoveringForeignKeyPrefixTracksProvenIndexAndUnprovenImplicitReplacement(string statement)
     {
-        var r = Analyze(Graph + statement + ";");
+        var r = Analyze(Graph + statement + ";" +
+            "CREATE INDEX ix_after ON child(note);");
         var step = r.Statements[2];
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, step.Status);
-        Assert.DoesNotContain(step.Changes, x => x.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, step.Status);
+        Assert.Equal(SqlCatalogOperation.CreateIndex, Assert.Single(step.Changes).Operation);
+        Assert.Equal("ix_cover", Assert.Single(
+            step.CatalogAfter.Tables.Single(t => t.Name == "child").Indexes).Name);
         Assert.Empty(r.Statements[1].CatalogAfter.Tables.Single(t => t.Name == "child").Indexes);
+        // The old auto-FK support index may or may not survive.
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, r.Statements[3].Status);
+        Assert.DoesNotContain(r.Statements[3].Changes,
+            x => x.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Theory]

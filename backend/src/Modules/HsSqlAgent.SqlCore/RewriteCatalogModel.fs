@@ -307,6 +307,20 @@ module internal RewriteCatalogModel =
         | Some table -> replaceTable state name table.Columns table.Constraints indexes
         | None -> invalidArg "name" "Table not found."
 
+    /// A newly declared left-prefix covering index can silently replace an
+    /// InnoDB implicit support index. Publish the proven standalone index
+    /// while retaining the old physical name as UNKNOWN, not as a DROP.
+    /// This immutable marker survives later constraints/index updates.
+    let withIndexesAndUnprovenFkReplacement state name indexes =
+        let updated = withIndexes state name indexes
+        match lookup updated name with
+        | Some table ->
+            replace updated name
+                (Some(SqlCatalogTable(
+                    table.Name, table.Knowledge, table.Columns, table.Constraints,
+                    table.Indexes, table.QualifiedName, true)))
+        | None -> invalidArg "name" "Table not found."
+
     let inboundForeignKeys (state: SqlCatalogState) targetTable =
         state.Tables
         |> Seq.collect (fun table ->

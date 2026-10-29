@@ -1745,13 +1745,15 @@ module internal RewriteScriptAnalyzer =
                             RewriteSchemaDependencies.canCreateMySqlSecondaryIndex
                                 sourceProfile state table indexName members
                         elif indexNamespace |> Seq.exists (fun t -> t.Constraints.Count > 0) then
-                            RewriteSchemaDependencies.Unproven
-                                "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven."
-                        else RewriteSchemaDependencies.Proven
+                            Error(RewriteSchemaDependencies.Unproven
+                                "Implicit constraint-backed index names are not modeled; index namespace uniqueness cannot be proven.")
+                        else Ok RewriteSchemaDependencies.StableImplicitFkSupport
                     match namespaceProof with
-                    | RewriteSchemaDependencies.Invalid message -> fail message
-                    | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
-                    | RewriteSchemaDependencies.Proven ->
+                    | Error (RewriteSchemaDependencies.Invalid message) -> fail message
+                    | Error (RewriteSchemaDependencies.Unproven message) -> dependencyUnproven message
+                    | Error RewriteSchemaDependencies.Proven ->
+                        dependencyUnproven "An unexpected physical index proof cannot be applied."
+                    | Ok physicalTransition ->
                         if members.IsEmpty || List.distinct members <> members then
                             fail "CREATE INDEX has duplicate or empty column members."
                         elif members |> List.exists (fun memberName ->
@@ -1760,9 +1762,16 @@ module internal RewriteScriptAnalyzer =
                             fail "CREATE INDEX references an absent column."
                         else
                             let idx = SqlCatalogIndex(indexName, Array.AsReadOnly(List.toArray members))
+                            let kept =
+                                seq { yield! table.Indexes; yield idx }
                             let updated =
-                                RewriteCatalogModel.withIndexes state tableName
-                                    (seq { yield! table.Indexes; yield idx })
+                                if sourceDialect = SqlAgentToolType.MySQL
+                                   && physicalTransition =
+                                        RewriteSchemaDependencies.MayReplaceImplicitFkSupport then
+                                    RewriteCatalogModel.withIndexesAndUnprovenFkReplacement
+                                        state tableName kept
+                                else
+                                    RewriteCatalogModel.withIndexes state tableName kept
                             exact tableName SqlCatalogOperation.CreateIndex updated
             | _ -> dependencyUnproven "Index target is not a proven table in a closed Catalog."
         | Recognized (DropIndexBatch(identities, conditional)) ->
@@ -2058,8 +2067,23 @@ module internal RewriteScriptAnalyzer =
                             | None -> true
                         matchesScope && matchesTarget
                         && (t.Indexes |> Seq.exists (fun idx ->
-                            String.Equals(idx.Name, indexName, StringComparison.Ordinal))))
+                            String.Equals(idx.Name, indexName,
+                                if sourceDialect = SqlAgentToolType.MySQL then
+                                    StringComparison.OrdinalIgnoreCase
+                                else StringComparison.Ordinal))))
                     |> Seq.toList
+                let mayRemoveMySqlFkSupport (owner: SqlCatalogTable) =
+                    owner.Constraints |> Seq.exists (fun fk ->
+                        fk.Kind = SqlCatalogConstraintKind.ForeignKey
+                        && (owner.Indexes |> Seq.exists (fun idx ->
+                            let fkCols = fk.Columns |> Seq.toList
+                            let indexCols = idx.Columns |> Seq.toList
+                            String.Equals(idx.Name, indexName,
+                                StringComparison.OrdinalIgnoreCase)
+                            && fkCols.Length <= indexCols.Length
+                            && List.forall2
+                                (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
+                                fkCols (indexCols |> List.take fkCols.Length))))
                 match owners with
                 | [owner] when sourceDialect = SqlAgentToolType.Postgres
                                && Option.isNone target
@@ -2071,10 +2095,19 @@ module internal RewriteScriptAnalyzer =
                     // prove that unqualified DROP INDEX resolves there:
                     // actual search_path could point elsewhere.
                     dependencyUnproven "Unqualified DROP INDEX requires a proven search_path for its qualified Catalog owner."
+                | [owner] when sourceDialect = SqlAgentToolType.MySQL
+                               && mayRemoveMySqlFkSupport owner ->
+                    // After auto replacement the explicit index might be
+                    // the ONLY remaining physical FK-supporting index.
+                    // MySQL rejects dropping that key with ER_DROP_INDEX_FK.
+                    dependencyUnproven "MySQL DROP INDEX may remove the final foreign-key supporting index."
                 | [owner] ->
                     let remaining =
                         owner.Indexes |> Seq.filter (fun idx ->
-                            not (String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
+                            not (String.Equals(idx.Name, indexName,
+                                if sourceDialect = SqlAgentToolType.MySQL then
+                                    StringComparison.OrdinalIgnoreCase
+                                else StringComparison.Ordinal)))
                     RewriteCatalogModel.withIndexes state owner.QualifiedName remaining
                     |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
                 | [] ->

@@ -93,7 +93,6 @@ public sealed class SqlCoreMySqlKeyIndexNamespaceTests
 
     [Theory]
     [InlineData("CREATE TABLE orders(id INT, note INT, UNIQUE(id));")]
-    [InlineData("CREATE TABLE orders(id INT NOT NULL PRIMARY KEY, note INT, CONSTRAINT fk_self FOREIGN KEY(note) REFERENCES orders(id));")]
     public void UnknownGeneratedIndexIdentityNeverBecomesAnExplicitIndexProof(string create)
     {
         // Both setup forms have non-proven physical names or FK auto-index
@@ -102,6 +101,24 @@ public sealed class SqlCoreMySqlKeyIndexNamespaceTests
         Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[^1].Status);
         Assert.DoesNotContain(result.Statements[^1].Changes,
             x => x.Certainty == SqlCatalogKnowledge.Known);
+    }
+
+    [Fact]
+    public void NamedSelfForeignKeyCoveringIndexIsProvenButItsPhysicalReplacementRemainsUnknown()
+    {
+        const string sql =
+            "CREATE TABLE orders(id INT NOT NULL PRIMARY KEY, note INT, " +
+            "CONSTRAINT fk_self FOREIGN KEY(note) REFERENCES orders(id));" +
+            "CREATE INDEX ix_note ON orders(note);" +
+            "CREATE INDEX ix_other ON orders(id);";
+        var result = Analyze(sql);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[0].Status);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[1].Status);
+        Assert.Equal("ix_note", Assert.Single(
+            result.Statements[1].CatalogAfter.Tables.Single().Indexes).Name);
+        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.DoesNotContain(result.Statements[2].Changes,
+            delta => delta.Certainty == SqlCatalogKnowledge.Known);
     }
 
     [Fact]

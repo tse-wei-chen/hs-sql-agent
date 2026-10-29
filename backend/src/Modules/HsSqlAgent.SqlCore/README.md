@@ -241,6 +241,39 @@ PostgreSQL View workflows. The View oracle examines
 after **every** DDL statement: direct, aliased, chained, JOIN/WHERE,
 FK+View and wildcard dependencies.
 
+## MySQL FK prefix-covering index — typed uncertain physical replacement
+
+InnoDB allows an explicitly named secondary index whose ordered **left prefix**
+matches a single proven FK's local columns. This secondary index can **replace**
+the implicit FK-supporting index, but MySQL does not guarantee that the old
+physical index is always dropped. The F# SQL analyzer therefore returns a
+closed `MySqlPhysicalIndexTransition`: either
+`StableImplicitFkSupport` or `MayReplaceImplicitFkSupport`.
+The latter proves only the new standalone index and unchanged FK constraint.
+It does **not** mint a physical DROP INDEX delta or assert that the implicit
+index survived or disappeared.
+
+A possible replacement sets an immutable table-local unknown-physical-history
+fence, reused from the previous FK-support lifecycle. Even after removing
+the FK, later index-name-absence proofs remain denied. Dropping a newly
+created index that is potentially the **last** FK-supporting index is also
+fail-closed; MySQL can reject it with ER_DROP_INDEX_FK (1553).
+The guarded proof requires one explicitly named FK, complete known Catalog,
+explicit MySQL identifier semantics, no preexisting PK/UNIQUE/secondary
+index supporting that FK, and no physical-name collision. A covering index
+reusing the implicit FK-support index's *same* name is **not** supported:
+real InnoDB may perform a special same-name replacement, but SqlCore does
+not have a proven provenance/effect contract for that case. Multi-FK,
+unknown physical origin, other database dialects, and uncertain Catalog
+remain rejected.
+
+Independent MySQL 8 InnoDB tests verify that the new index's ordered
+members and the original FK constraint remain valid; the old implicit
+index's presence is observed, not guessed. Tests also verify that the real
+database may accept a same-name replacement while static analysis
+conservatively refuses it. No production SQL execution or authorization
+is introduced.
+
 ## MySQL named FK supporting-index stability (bounded)
 
 The MySQL 8 InnoDB DDL analyzer admits `CREATE INDEX` and
