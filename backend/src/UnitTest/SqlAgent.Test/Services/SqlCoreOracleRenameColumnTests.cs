@@ -91,16 +91,22 @@ public sealed class SqlCoreOracleRenameColumnTests
     }
 
     [Fact]
-    public void InboundForeignKeyCannotBeSilentlyLeftReferringToOldColumn()
+    public void InboundForeignKeyRewritesExactReferencedColumnLineage()
     {
         var result = Analyze(
             "CREATE TABLE parent (id NUMBER NOT NULL PRIMARY KEY);" +
             "CREATE TABLE child (id NUMBER, parent_id NUMBER, " +
             "CONSTRAINT fk_child FOREIGN KEY(parent_id) REFERENCES parent(id));" +
             "ALTER TABLE parent RENAME COLUMN id TO code;");
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.DoesNotContain(result.Statements[2].Changes,
-            x => x.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.Equal(SqlCatalogOperation.RenameColumn, Assert.Single(result.Statements[2].Changes).Operation);
+        Assert.Equal("ID", Assert.Single(result.Statements[2].CatalogBefore.Tables
+            .Single(t => t.Name == "CHILD").Constraints.Single().ReferencedColumns));
+        Assert.Equal("CODE", Assert.Single(result.FinalCatalog.Tables
+            .Single(t => t.Name == "CHILD").Constraints.Single().ReferencedColumns));
+        Assert.Equal("PARENT_ID", Assert.Single(result.FinalCatalog.Tables
+            .Single(t => t.Name == "CHILD").Constraints.Single().Columns));
     }
 
     [Fact]

@@ -152,16 +152,21 @@ public sealed class SqlCorePostgresInboundForeignKeyRenameTests
     }
 
     [Fact]
-    public void OracleInboundForeignKeysStillFailClosed()
+    public void OracleUsesItsOwnProvenInboundForeignKeyLineageWithoutViewSemantics()
     {
         var result = Analyze(
             "CREATE TABLE parent (id NUMBER NOT NULL, CONSTRAINT pk_parent PRIMARY KEY(id));" +
             "CREATE TABLE child (pid NUMBER, CONSTRAINT fk_child FOREIGN KEY(pid) REFERENCES parent(id));" +
             "ALTER TABLE parent RENAME COLUMN id TO newid;",
             SqlAgentToolType.Oracle);
-        Assert.NotEqual(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
-        Assert.DoesNotContain(result.Statements[2].Changes,
-            change => change.Certainty == SqlCatalogKnowledge.Known);
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, result.Statements[2].Status);
+        Assert.Equal("ID", Assert.Single(result.Statements[2].CatalogBefore.Tables.Single(t =>
+            t.Name == "CHILD").Constraints.Single().ReferencedColumns));
+        Assert.Equal("NEWID", Assert.Single(result.FinalCatalog.Tables.Single(t =>
+            t.Name == "CHILD").Constraints.Single().ReferencedColumns));
+        Assert.Equal("PID", Assert.Single(result.FinalCatalog.Tables.Single(t =>
+            t.Name == "CHILD").Constraints.Single().Columns));
     }
 
     [Fact]
