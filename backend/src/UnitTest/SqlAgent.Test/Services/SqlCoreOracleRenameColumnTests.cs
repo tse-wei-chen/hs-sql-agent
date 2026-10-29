@@ -29,8 +29,8 @@ public sealed class SqlCoreOracleRenameColumnTests
         Assert.Empty(result.Diagnostics);
         Assert.All(result.Statements, x =>
             Assert.Equal(SqlStatementAnalysisStatus.Analyzed, x.Status));
-        Assert.Equal(SqlCatalogOperation.RenameColumn,
-            Assert.Single(result.Statements[1].Changes).Operation);
+        Assert.Equal("RenameColumn",
+            Assert.Single(result.Statements[1].Changes).Operation.ToString());
         var oldTable = Assert.Single(result.Statements[1].CatalogBefore.Tables);
         var next = Assert.Single(result.FinalCatalog.Tables);
         Assert.Equal(new[] { "ID", "NOTE" }, oldTable.Columns.Select(x => x.Name));
