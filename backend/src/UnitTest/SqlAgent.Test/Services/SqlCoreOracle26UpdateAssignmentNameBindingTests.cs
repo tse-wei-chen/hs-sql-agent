@@ -82,4 +82,47 @@ public sealed class SqlCoreOracle26UpdateAssignmentNameBindingTests
         Assert.Equal(SqlCatalogBindingStatus.Verified, statement.CatalogBinding);
         Assert.Empty(statement.Diagnostics);
     }
+    [Theory]
+    [InlineData("UPDATE dest SET dest.payload = l.payload FROM lookup l WHERE dest.id = l.id")]
+    [InlineData("UPDATE dest SET dest.payload = 1 FROM lookup l WHERE dest.id = l.id")]
+    public void Oracle26TargetQualifiedAssignmentsCompileAndRenderNatively(string sql)
+    {
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Oracle, ServerVersion: new Version(26, 0));
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Oracle, profile);
+        var command = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, SqlAgentToolType.Oracle,
+            new SqlPlanValidationContext("oracle26-qualified-assignment-parity"),
+            targetProfile: profile);
+        Assert.Contains("dest.payload", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" FROM ", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lookup", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("UPDATE dest SET l.payload = 1 FROM lookup l WHERE dest.id = l.id")]
+    [InlineData("UPDATE dest SET wrong.payload = 1 FROM lookup l WHERE dest.id = l.id")]
+    [InlineData("UPDATE dest SET dest.payload = 1, payload = 2 FROM lookup l WHERE dest.id = l.id")]
+    public void Oracle26SourceOrDuplicateQualifiedAssignmentCannotPassParser(string sql)
+    {
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Oracle, ServerVersion: new Version(26, 0));
+        Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Oracle, profile));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void OtherProvidersDoNotAcquireOracleQualifiedAssignmentGrammar(SqlAgentToolType provider)
+    {
+        Assert.Throws<SqlParseException>(() =>
+            CoreSqlTextParser.ParseDml(
+                "UPDATE users SET users.name = 1 WHERE users.id = 1",
+                provider));
+    }
+
 }
