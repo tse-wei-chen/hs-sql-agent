@@ -2093,7 +2093,7 @@ module internal RewriteScriptAnalyzer =
                                        && (Seq.forall2
                                            (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
                                            fk.Columns
-                                           (idx.Columns |> Seq.take fk.Columns.Count))))) ->
+                                           (idx.Columns |> Seq.take fk.Columns.Count)))))) ->
                     // After auto replacement the explicit index might be
                     // the ONLY remaining physical FK-supporting index.
                     // MySQL rejects dropping that key with ER_DROP_INDEX_FK.
@@ -2101,7 +2101,10 @@ module internal RewriteScriptAnalyzer =
                 | [owner] ->
                     let remaining =
                         owner.Indexes |> Seq.filter (fun idx ->
-                            not (String.Equals(idx.Name, indexName, StringComparison.Ordinal)))
+                            not (String.Equals(idx.Name, indexName,
+                                if sourceDialect = SqlAgentToolType.MySQL then
+                                    StringComparison.OrdinalIgnoreCase
+                                else StringComparison.Ordinal)))
                     RewriteCatalogModel.withIndexes state owner.QualifiedName remaining
                     |> exact owner.QualifiedName SqlCatalogOperation.DropIndex
                 | [] ->
