@@ -138,6 +138,12 @@ module internal RewriteSchemaValidation =
                 | None -> active.Sources
                 | Some name ->
                     active.Sources |> List.filter (hasQualifier name)
+            // A qualifier must denote exactly ONE source before looking up
+            // its column. It cannot acquire uniqueness merely because only
+            // one of two same-named sources happens to contain that field.
+            if qualifier.IsSome && matchingSources.Length > 1 then
+                reject "SQL_SCHEMA_QUALIFIER_UNPROVABLE" span (
+                    "Table/alias qualifier identifies multiple relations in the current schema scope.")
             let hits =
                 match qualifier with
                 | None -> active.Unqualified |> List.sumBy (fun name ->
