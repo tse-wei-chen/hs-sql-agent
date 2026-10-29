@@ -70,6 +70,32 @@ A source capability profile may also be supplied to both options types,
 e.g. for version-gated Oracle grammar. Provider/profile mismatches still fail;
 option objects never imply successful binding, authorization or SQL execution.
 
+## Opt-in cooperative compiler cancellation (P6)
+
+The CLR-facing `SqlCoreFacade` exposes cancellation-token overloads for
+`CompileQuery`, `CompileDml`, `TryCompileQuery` and `TryCompileDml` on
+their basic SQL-text entry points, plus parsed-statement Query/DML compilation.
+Existing overloads and return types remain unchanged. The token applies to
+the same strict, synchronous F# Parse → Bind → Normalize → Validate → Policy →
+Render pipeline and its resource-budget checkpoints. No new compiler,
+database connection, SQL executor, or authorization path is introduced.
+
+```csharp
+using var cts = new CancellationTokenSource();
+var compiled = SqlCoreFacade.CompileQuery(
+    "SELECT 1", SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
+    new SqlPlanValidationContext("cancellation-example"),
+    new SqlExecutionPlanPolicy(), cts.Token);
+```
+
+Pre-cancelled requests and cancellation observed during compilation throw
+`OperationCanceledException` (including the `TryCompile...` overloads):
+cancellation is **not** a SQL failure diagnostic or a successful command.
+An active token preserves existing SQL parameterization, policy and evidence.
+Cancellation is cooperative at compiler checkpoints; it does not stop an
+already-running database command. Each call restores its previous ambient
+token scope so later independent requests are unaffected.
+
 ## INSERT target shape and positional type evidence
 
 Strict F# Mutation analysis checks the number of values in **every** VALUES
