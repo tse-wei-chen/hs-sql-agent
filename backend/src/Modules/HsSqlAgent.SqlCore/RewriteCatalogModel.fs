@@ -114,6 +114,68 @@ module internal RewriteCatalogModel =
         let idxs = indexes |> Seq.toArray |> Array.AsReadOnly
         replace state name (Some(SqlCatalogTable(name.DisplayName, SqlCatalogKnowledge.Known, cols, keys, idxs, name)))
 
+    /// Atomically publish a PostgreSQL column rename and all structurally
+    /// proven inbound/self-referencing FK edges. Every new table is derived
+    /// from the SAME pre-rename snapshot; no intermediate Catalog is visible.
+    /// Caller must first prove a closed, known Catalog and exclude Views.
+    let renameColumnWithInboundForeignKeys
+            (state: SqlCatalogState) (name: SqlCatalogQualifiedName)
+            (oldName: string) (newName: string) =
+        let renamed value = if sameName value oldName then newName else value
+        let renameColumns (values: System.Collections.Generic.IReadOnlyList<string>) =
+            values |> Seq.map renamed |> Seq.toArray |> Array.AsReadOnly
+        let result =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                let target = sameIdentity table.QualifiedName name
+                let columns =
+                    if target then
+                        table.Columns
+                        |> Seq.map (fun col ->
+                            SqlCatalogColumn(renamed col.Name, col.TypeName, col.Nullable))
+                        |> Seq.toArray |> Array.AsReadOnly
+                    else table.Columns
+                let indexes =
+                    if target then
+                        table.Indexes
+                        |> Seq.map (fun index ->
+                            SqlCatalogIndex(index.Name, renameColumns index.Columns))
+                        |> Seq.toArray |> Array.AsReadOnly
+                    else table.Indexes
+                let mutable changedConstraints = false
+                let constraints =
+                    table.Constraints
+                    |> Seq.map (fun c ->
+                        RewriteResourceBudget.checkpoint ()
+                        // A self-FK is both local and inbound. Preserve its
+                        // physical target identity and constraint name.
+                        let localChange = target &&
+                            (c.Columns |> Seq.exists (sameName oldName))
+                        let inboundChange =
+                            c.Kind = SqlCatalogConstraintKind.ForeignKey
+                            && not (isNull c.ReferencedIdentity)
+                            && sameIdentity c.ReferencedIdentity name
+                            && (c.ReferencedColumns |> Seq.exists (sameName oldName))
+                        if localChange || inboundChange then
+                            changedConstraints <- true
+                            SqlCatalogConstraint(
+                                c.Name, c.Kind,
+                                (if localChange then renameColumns c.Columns else c.Columns),
+                                c.ReferencedIdentity,
+                                (if inboundChange then
+                                     renameColumns c.ReferencedColumns
+                                 else c.ReferencedColumns))
+                        else c)
+                    |> Seq.toArray
+                if target || changedConstraints then
+                    SqlCatalogTable(
+                        table.Name, table.Knowledge, columns,
+                        Array.AsReadOnly(constraints), indexes, table.QualifiedName)
+                else table)
+            |> Seq.toArray |> Array.AsReadOnly
+        SqlCatalogState(state.IsClosedWorld, result, state.Views)
+
     let knownTableWithConstraints state name columns constraints =
         replaceTable state name columns constraints Seq.empty
 
