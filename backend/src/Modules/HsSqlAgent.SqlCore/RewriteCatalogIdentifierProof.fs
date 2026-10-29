@@ -91,6 +91,43 @@ module internal RewriteCatalogIdentifierProof =
         | FoldAscii -> isAsciiSql sql && safeCatalog state
         | Unproven -> false
 
+    /// MySQL on Linux with lower_case_table_names=0 uses case-sensitive
+    /// TABLE names but case-insensitive COLUMN names. An exact ASCII-lowercase
+    /// subset makes both comparisons agree, without treating "0" as the
+    /// existing FoldAscii provider-wide mode or inventing collation metadata.
+    /// This is ONLY an explicit FK Catalog structural-proof premise.
+    let canProveMySqlLowercaseZeroForeignKeys
+            (profile: SqlProviderCapabilityProfile | null)
+            (state: SqlCatalogState)
+            (name: SqlCatalogQualifiedName)
+            (columns: SqlCatalogColumn list)
+            (constraints: SqlCatalogConstraint list) =
+        let lowercase (part: string) =
+            isSimpleAsciiIdentifier part
+            && String.Equals(part, part.ToLowerInvariant(), StringComparison.Ordinal)
+        let lowerIdentity (identity: SqlCatalogQualifiedName) =
+            not (isNull identity)
+            && (identity.Parts |> Seq.forall lowercase)
+        let lowerConstraint (c: SqlCatalogConstraint) =
+            (isNull c.Name || lowercase c.Name)
+            && (c.Columns |> Seq.forall lowercase)
+            && (c.ReferencedColumns |> Seq.forall lowercase)
+            && (isNull c.ReferencedIdentity || lowerIdentity c.ReferencedIdentity)
+        not (isNull profile)
+        && profile.Provider = SqlAgentToolType.MySQL
+        && profile.GetSessionSetting("LOWER_CASE_TABLE_NAMES") = "0"
+        && state.IsClosedWorld
+        && (state.Tables |> Seq.forall (fun t ->
+            t.Knowledge = SqlCatalogKnowledge.Known
+            && lowerIdentity t.QualifiedName
+            && (t.Columns |> Seq.forall (fun col -> lowercase col.Name))
+            && (t.Constraints |> Seq.forall lowerConstraint)
+            && (t.Indexes |> Seq.forall (fun idx ->
+                lowercase idx.Name && (idx.Columns |> Seq.forall lowercase)))))
+        && lowerIdentity name
+        && (columns |> List.forall (fun col -> lowercase col.Name))
+        && (constraints |> List.forall lowerConstraint)
+
     /// Multi-part names are supported only when each part independently
     /// meets the ASCII-safe canonicalization contract. The component boundary
     /// is never recovered by splitting a flattened display string.

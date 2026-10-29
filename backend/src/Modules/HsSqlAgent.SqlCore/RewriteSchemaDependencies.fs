@@ -29,7 +29,10 @@ module internal RewriteSchemaDependencies =
             Unproven "Existing Catalog is incomplete; referenced key dependencies cannot be proven."
         elif constraints |> List.exists (fun d ->
             d.Kind = SqlCatalogConstraintKind.ForeignKey)
-             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name.DisplayName) then
+             && not (RewriteCatalogIdentifierProof.canProvePhysicalNames dialect profile state name.DisplayName
+                     || (dialect = SqlAgentToolType.MySQL
+                         && RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroForeignKeys
+                             profile state name columns constraints)) then
             Unproven "Foreign-key table resolution needs a proven provider identifier case/collation contract."
         else
             let mutable error: DependencyProof option = None
@@ -39,6 +42,22 @@ module internal RewriteSchemaDependencies =
                 if String.IsNullOrEmpty(d.Name) then None else Some d.Name)
             if (named |> List.distinct).Length <> named.Length then
                 reject "CREATE TABLE contains duplicate constraint names."
+            // MySQL InnoDB FK symbols are unique per schema, not per child
+            // table. The physical engine rejects duplicates across children.
+            if dialect = SqlAgentToolType.MySQL then
+                let knownForeignNames =
+                    state.Tables
+                    |> Seq.collect (fun table -> table.Constraints)
+                    |> Seq.filter (fun c ->
+                        c.Kind = SqlCatalogConstraintKind.ForeignKey
+                        && not (String.IsNullOrWhiteSpace c.Name))
+                    |> Seq.map (fun c -> c.Name)
+                    |> Set.ofSeq
+                if constraints |> List.exists (fun c ->
+                    c.Kind = SqlCatalogConstraintKind.ForeignKey
+                    && not (String.IsNullOrWhiteSpace c.Name)
+                    && Set.contains c.Name knownForeignNames) then
+                    reject "MySQL FOREIGN KEY constraint symbol already exists in the known schema."
             if constraints |> List.filter (fun d ->
                 d.Kind = SqlCatalogConstraintKind.PrimaryKey) |> List.length > 1 then
                 reject "CREATE TABLE can define only one PRIMARY KEY."

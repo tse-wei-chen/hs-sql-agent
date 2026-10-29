@@ -590,6 +590,8 @@ module internal RewriteScriptAnalyzer =
                 AddConstraint(resolve name, resolveConstraint constraintInfo)
             | DropConstraint(name, constraintName, conditional, mode) ->
                 DropConstraint(resolve name, constraintName, conditional, mode)
+            | DropForeignKeys(name, symbols, columns) ->
+                DropForeignKeys(resolve name, symbols, columns)
         // Inspect raw AST parts before qualifying them; a converted two-part
         // name must never hide an unsupported one-part lookup.
         let rawNames =
@@ -614,7 +616,8 @@ module internal RewriteScriptAnalyzer =
                 | RenameColumn(name, _, _)
                 | RenameConstraint(name, _, _)
                 | CreateIndex(name, _, _, _)
-                | DropConstraint(name, _, _, _) -> [name]
+                | DropConstraint(name, _, _, _)
+                | DropForeignKeys(name, _, _) -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
                 | DropQualifiedIndex(indexIdentity, _) -> [indexIdentity]
                 | DropIndexBatch(identities, _) -> identities
@@ -642,7 +645,8 @@ module internal RewriteScriptAnalyzer =
             | RenameConstraint(name, _, _)
             | CreateIndex(name, _, _, _)
             | AddConstraint(name, _)
-            | DropConstraint(name, _, _, _) -> Some name
+            | DropConstraint(name, _, _, _)
+            | DropForeignKeys(name, _, _) -> Some name
             | DropIndex(_, target, _) -> target
             | DropQualifiedIndex _
             | DropIndexBatch _
@@ -2062,6 +2066,100 @@ module internal RewriteScriptAnalyzer =
                         ("DROP INDEX '" + indexName +
                          "' is not a tracked standalone index; implicit constraint indexes cannot be ruled out.")
                 | _ -> dependencyUnproven "Index name resolves to more than one modeled owner."
+        | Recognized (DropForeignKeys(tableName, symbols, columns)) ->
+            // MySQL uses native DROP FOREIGN KEY, not DROP CONSTRAINT.
+            // All requested names and local columns must resolve against
+            // the original complete Catalog before ANY effect is published.
+            if sourceDialect <> SqlAgentToolType.MySQL
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun t ->
+                   t.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "MySQL FK ALTER requires a complete known provider Catalog."
+            else
+                match RewriteCatalogModel.lookup state tableName with
+                | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
+                    let knownNames =
+                        RewriteCatalogIdentifierProof.canProvePhysicalNames
+                            sourceDialect sourceProfile state tableName.DisplayName
+                        || RewriteCatalogIdentifierProof.canProveMySqlLowercaseZeroForeignKeys
+                            sourceProfile state tableName
+                            (owner.Columns |> Seq.toList)
+                            (owner.Constraints |> Seq.toList)
+                    if not knownNames then
+                        dependencyUnproven
+                            "MySQL FK symbol ownership needs a declared, proven table/column identifier contract."
+                    elif symbols.IsEmpty || symbols <> List.distinct symbols
+                         || columns <> List.distinct columns then
+                        fail "MySQL FOREIGN KEY/COLUMN drop contains empty or duplicate members."
+                    elif columns.Length >= owner.Columns.Count then
+                        fail "MySQL DROP FOREIGN KEY/COLUMN cannot drop every physical table column."
+                    else
+                        let same left right =
+                            String.Equals(left, right, StringComparison.Ordinal)
+                        let missingFk =
+                            symbols |> List.tryFind (fun symbol ->
+                                not (owner.Constraints |> Seq.exists (fun c ->
+                                    c.Kind = SqlCatalogConstraintKind.ForeignKey
+                                    && same c.Name symbol)))
+                        let wrongKind =
+                            symbols |> List.tryFind (fun symbol ->
+                                owner.Constraints |> Seq.exists (fun c ->
+                                    c.Kind <> SqlCatalogConstraintKind.ForeignKey
+                                    && same c.Name symbol))
+                        let missingColumn =
+                            columns |> List.tryFind (fun column ->
+                                not (owner.Columns |> Seq.exists (fun c ->
+                                    same c.Name column)))
+                        match wrongKind, missingFk, missingColumn with
+                        | Some symbol, _, _ ->
+                            fail ("DROP FOREIGN KEY '" + symbol +
+                                  "' names a non-foreign-key constraint.")
+                        | _, Some symbol, _ ->
+                            fail ("DROP FOREIGN KEY '" + symbol +
+                                  "' does not exist in the known table.")
+                        | _, _, Some column ->
+                            fail ("DROP COLUMN '" + column +
+                                  "' does not exist in the known table.")
+                        | _ ->
+                            let remaining =
+                                owner.Constraints |> Seq.filter (fun c ->
+                                    not (c.Kind = SqlCatalogConstraintKind.ForeignKey
+                                         && (symbols |> List.exists (same c.Name))))
+                            let afterFk =
+                                RewriteCatalogModel.withConstraints state tableName remaining
+                            let blocker =
+                                columns |> List.tryPick (fun column ->
+                                    RewriteResourceBudget.checkpoint ()
+                                    match RewriteSchemaDependencies.canDropColumn
+                                            afterFk tableName column with
+                                    | RewriteSchemaDependencies.Proven -> None
+                                    | result -> Some result)
+                            match blocker with
+                            | Some (RewriteSchemaDependencies.Invalid message) -> fail message
+                            | Some (RewriteSchemaDependencies.Unproven message) ->
+                                dependencyUnproven message
+                            | _ ->
+                                let next =
+                                    if columns.IsEmpty then afterFk
+                                    else
+                                        let kept =
+                                            owner.Columns |> Seq.filter (fun c ->
+                                                not (columns |> List.exists (same c.Name)))
+                                        RewriteCatalogModel.knownTable
+                                            afterFk tableName kept
+                                let changes =
+                                    (symbols |> List.map (fun symbol ->
+                                        changedConstraintExact syntax tableName symbol))
+                                    @ (columns |> List.map (fun column ->
+                                        changedColumnExact syntax tableName column
+                                            SqlCatalogOperation.DropColumn))
+                                SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                                next, changes, ([]: SqlDiagnostic list)
+                | _ when RewriteCatalogModel.isKnownAbsent state tableName ->
+                    fail ("ALTER TABLE " + tableName.DisplayName +
+                          " does not exist in the known Catalog.")
+                | _ ->
+                    dependencyUnproven "MySQL FK ALTER requires a proven table owner."
         | Recognized (AddConstraint(tableName, newConstraint)) ->
             match RewriteCatalogModel.lookup state tableName with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
