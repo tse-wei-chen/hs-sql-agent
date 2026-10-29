@@ -131,6 +131,23 @@ unvalidated statement or other SQL provider remains unverified. No SQL
 execution permission, mutation approval, transaction assurance, or effect
 coverage is upgraded by this property.
 
+### Nullable UNIQUE and PostgreSQL null-safe key equality
+
+Joined Mutation source-match evidence distinguishes ordinary `=` from
+PostgreSQL `IS NOT DISTINCT FROM`. Ordinary equality is NULL-rejecting,
+so a nullable physical UNIQUE key can still bound matches. A NULL-safe
+comparison is accepted only when the key column is provably non-NULL
+(`NOT NULL` or physical PRIMARY KEY), or the compared fixed literal or
+already anchored physical column is provably non-NULL. A nullable UNIQUE key
+compared NULL-safely to a nullable target column or `NULL` remains
+`Unverified`: PostgreSQL permits duplicate NULLs in ordinary UNIQUE keys.
+Every column of a composite key must satisfy its own comparison proof.
+
+A uniquely resolvable **unqualified** local source column is also eligible
+after schema/name binding. Ambiguous fields, `OR`, View-derived keys and
+unanchored sources never gain an at-most-one proof. All classifications stay
+read-only evidence and never authorize SQL execution.
+
 ## Mutation source relations versus physical write targets
 
 In static PostgreSQL `AnalyzeScript` analysis, `INSERT ... SELECT`,
