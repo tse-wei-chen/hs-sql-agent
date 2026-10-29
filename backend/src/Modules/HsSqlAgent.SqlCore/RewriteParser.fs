@@ -2903,29 +2903,57 @@ module internal RewriteParser =
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
           Returning = if output.IsEmpty then parseReturning cursor else output }
 
-    /// Identify a statement-level PostgreSQL CTE followed by INSERT without
-    /// altering the existing stack-safe WITH SELECT query scheduler. Never
-    /// inspect SQL text or count keywords inside nested CTE Query bodies.
+    /// Route a PostgreSQL WITH statement only after all complete CTE headers.
+    /// A CTE name or output alias may itself be a contextual INSERT keyword.
+    /// This is a bounded lexical preflight; parseCtes remains the sole owner
+    /// of actual grammar validation and Query construction.
     let private hasPostgresWithInsertHead (cursor: Cursor) =
-        let mutable offset = 1
-        let mutable depth = 0
-        let mutable decided = false
-        let mutable isInsert = false
-        while not decided do
+        let mutable offset = 1 // The first WITH has not been consumed.
+        let mutable invalid = false
+        let peek () = cursor.Peek(offset)
+        let consume () =
             RewriteResourceBudget.checkpoint ()
-            let token = cursor.Peek(offset)
-            match token.Kind with
-            | End -> decided <- true
-            | Symbol '(' -> depth <- depth + 1
-            | Symbol ')' -> depth <- max 0 (depth - 1)
-            | Keyword "INSERT" when depth = 0 ->
-                isInsert <- true
-                decided <- true
-            | Keyword "SELECT" | Keyword "UPDATE" | Keyword "DELETE"
-            | Keyword "MERGE" when depth = 0 -> decided <- true
-            | _ -> ()
+            let token = peek ()
             offset <- offset + 1
-        isInsert
+            token
+
+        let skipParenthesized () =
+            if not (isSymbol '(' (peek ())) then
+                invalid <- true
+            else
+                let mutable depth = 0
+                let mutable completed = false
+                while not invalid && not completed do
+                    match (consume ()).Kind with
+                    | Symbol '(' -> depth <- depth + 1
+                    | Symbol ')' ->
+                        depth <- depth - 1
+                        if depth = 0 then completed <- true
+                    | End -> invalid <- true
+                    | _ -> ()
+
+        if isKeyword "RECURSIVE" (peek ()) then
+            consume () |> ignore
+
+        let mutable foundHead = false
+        while not invalid && not foundHead do
+            // The full parser validates the name spelling, alias list and
+            // AS clause. This scanner only locates the physical CTE body.
+            match (consume ()).Kind with
+            | End -> invalid <- true
+            | _ -> ()
+            if not invalid && isSymbol '(' (peek ()) then
+                skipParenthesized ()
+            if not invalid && isKeyword "AS" (peek ()) then
+                consume () |> ignore
+            else
+                invalid <- true
+            if not invalid then skipParenthesized ()
+            if not invalid && isSymbol ',' (peek ()) then
+                consume () |> ignore
+            else
+                foundHead <- true
+        not invalid && isKeyword "INSERT" (peek ())
 
     /// Read-only statement CTEs feeding INSERT ... SELECT have the same
     /// observable QuerySource graph as INSERT ... WITH ... SELECT for the
