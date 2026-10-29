@@ -188,6 +188,13 @@ module internal RewriteSchemaTypeValidation =
                         RewriteResourceBudget.checkpoint ()
                         Map.tryFind column source.Kinds |> Option.map typeKnown)
             match hits with
+            // A repeated qualifier invalidates type provenance regardless
+            // of how many candidate relations contain this particular field.
+            // Name validation already rejects this first; keep a second
+            // closed evidence fence if family inference is reused later.
+            | _ when qualifier.IsSome && sources.Length > 1 ->
+                result <- AmbiguousName depth
+                doneWalking <- true
             | [ Some kind ] ->
                 result <- ProvenKind(depth,kind)
                 doneWalking <- true
