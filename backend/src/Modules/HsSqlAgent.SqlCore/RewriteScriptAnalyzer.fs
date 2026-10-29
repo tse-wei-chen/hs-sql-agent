@@ -2091,14 +2091,15 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ -> dependencyUnproven "Constraint owner is not a proven table."
         | Recognized (RenameColumn(name, oldName, newName)) ->
-            // Oracle automatically retargets physical indexes and modeled
+            // Oracle and PostgreSQL retarget physical indexes and modeled
             // local constraints on rename. Preserve typed dependency
             // lineage, not just the visible column header.
-            if sourceDialect <> SqlAgentToolType.Oracle
+            if (sourceDialect <> SqlAgentToolType.Oracle
+                && sourceDialect <> SqlAgentToolType.Postgres)
                || not state.IsClosedWorld
                || (state.Tables |> Seq.exists (fun item ->
                    item.Knowledge <> SqlCatalogKnowledge.Known)) then
-                dependencyUnproven "Oracle column rename requires a closed, known Catalog."
+                dependencyUnproven "Column rename requires a closed, known Catalog."
             else
                 match RewriteCatalogModel.lookup state name with
                 | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
@@ -2117,7 +2118,7 @@ module internal RewriteScriptAnalyzer =
                           |> Seq.exists (fun (_, fk) ->
                               fk.ReferencedColumns |> Seq.exists (fun col ->
                                   same col oldName))) then
-                        // Oracle updates other tables' FK references, too.
+                        // PostgreSQL and Oracle update other tables' FK references, too.
                         // Until a cross-table immutable rewrite is proven,
                         // do not publish a stale dependent Catalog.
                         dependencyUnproven "Inbound foreign keys require cross-table rename lineage proof."
@@ -2155,7 +2156,7 @@ module internal RewriteScriptAnalyzer =
                     fail ("ALTER TABLE " + name.DisplayName +
                           " does not exist in the known Catalog.")
                 | _ ->
-                    dependencyUnproven "Oracle rename target table is not proven known."
+                    dependencyUnproven "Column rename target table is not proven known."
         | Recognized (AlterColumns(name, actions)) ->
             match RewriteCatalogModel.lookup state name with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
