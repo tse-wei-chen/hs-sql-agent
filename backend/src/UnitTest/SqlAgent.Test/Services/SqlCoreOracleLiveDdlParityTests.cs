@@ -20,7 +20,8 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreOracleLiveDdlParityTests
 {
     private sealed record Column(string Name, string Type, bool Nullable);
-    private sealed record Table(string Name, Column[] Columns, string[] Indexes);
+    private sealed record Index(string Name, string[] Columns);
+    private sealed record Table(string Name, Column[] Columns, Index[] Indexes);
     private sealed record Scenario(string Name, string Template);
 
     private static readonly Scenario[] Scenarios =
@@ -41,17 +42,26 @@ public sealed class SqlCoreOracleLiveDdlParityTests
         new("nullable_columns", "CREATE TABLE {T1}(ID NUMBER NOT NULL, LABEL VARCHAR2(32)); ALTER TABLE {T1} ADD (QTY NUMBER);"),
         new("quoted_simple", "CREATE TABLE \"{T1}\"(\"ID\" NUMBER NOT NULL, \"LABEL\" VARCHAR2(32)); ALTER TABLE \"{T1}\" ADD (\"QTY\" NUMBER);"),
         new("explicit_rollback_after_ddl", "CREATE TABLE {T1}(ID NUMBER); ROLLBACK;"),
-        new("explicit_commit_after_ddl", "CREATE TABLE {T1}(ID NUMBER); COMMIT;")
+        new("explicit_commit_after_ddl", "CREATE TABLE {T1}(ID NUMBER); COMMIT;"),
+        new("rename_simple", "CREATE TABLE {T1}(ID NUMBER, NOTE VARCHAR2(32)); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS;"),
+        new("rename_not_null", "CREATE TABLE {T1}(ID NUMBER NOT NULL, STATE VARCHAR2(32)); ALTER TABLE {T1} RENAME COLUMN ID TO CODE;"),
+        new("rename_indexed", "CREATE TABLE {T1}(ID NUMBER, NOTE VARCHAR2(32)); CREATE INDEX {I1} ON {T1}(ID, NOTE); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS;"),
+        new("rename_index_then_drop", "CREATE TABLE {T1}(ID NUMBER, NOTE VARCHAR2(32)); CREATE INDEX {I1} ON {T1}(NOTE); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS; DROP INDEX {I1}; ALTER TABLE {T1} DROP COLUMN DETAILS;"),
+        new("rename_after_add", "CREATE TABLE {T1}(ID NUMBER); ALTER TABLE {T1} ADD (NOTE VARCHAR2(32)); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS;"),
+        new("rename_twice", "CREATE TABLE {T1}(ID NUMBER, NOTE VARCHAR2(32)); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS; ALTER TABLE {T1} RENAME COLUMN DETAILS TO DESCRIPTION;"),
+        new("rename_quoted", "CREATE TABLE \"{T1}\"(\"ID\" NUMBER, \"NOTE\" VARCHAR2(32)); ALTER TABLE \"{T1}\" RENAME COLUMN \"NOTE\" TO \"DETAILS\";"),
+        new("rename_other_table_unchanged", "CREATE TABLE {T1}(ID NUMBER, NOTE VARCHAR2(32)); CREATE TABLE {T2}(ID NUMBER, NOTE VARCHAR2(32)); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS;"),
+        new("rename_then_index_new_column", "CREATE TABLE {T1}(ID NUMBER, NOTE VARCHAR2(32)); ALTER TABLE {T1} RENAME COLUMN NOTE TO DETAILS; CREATE INDEX {I1} ON {T1}(DETAILS);")
     ];
 
     public static IEnumerable<object[]> Cases => Scenarios.Select(x => new object[] { x.Name });
 
     [Fact]
-    public void CorpusContainsSeventeenDistinctMultiStatementOracleWorkflows()
+    public void CorpusContainsTwentySixDistinctMultiStatementOracleWorkflows()
     {
-        Assert.Equal(17, Scenarios.Length);
-        Assert.Equal(17, Scenarios.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(17, Scenarios.Select(x => x.Template).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(26, Scenarios.Length);
+        Assert.Equal(26, Scenarios.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(26, Scenarios.Select(x => x.Template).Distinct(StringComparer.Ordinal).Count());
         Assert.All(Scenarios, s => Assert.True(s.Template.Count(x => x == ';') >= 2, s.Name));
     }
 
@@ -228,16 +238,27 @@ public sealed class SqlCoreOracleLiveDdlParityTests
                 }
             }
 
-            var indexes = new List<string>();
+            // Validate *indexed physical column lineage*, not just index names:
+            // Oracle updates USER_IND_COLUMNS automatically after RENAME COLUMN.
+            var indexMap = new Dictionary<string, List<string>>(StringComparer.Ordinal);
             using (var cmd = new OracleCommand(
-                "SELECT INDEX_NAME FROM USER_INDEXES " +
-                "WHERE TABLE_NAME = :tableName ORDER BY INDEX_NAME", db))
+                "SELECT c.INDEX_NAME, c.COLUMN_NAME FROM USER_IND_COLUMNS c " +
+                "JOIN USER_INDEXES i ON i.INDEX_NAME = c.INDEX_NAME " +
+                "WHERE i.TABLE_NAME = :tableName ORDER BY c.INDEX_NAME, c.COLUMN_POSITION", db))
             {
                 cmd.Parameters.Add("tableName", OracleDbType.Varchar2).Value = name;
                 using var reader = cmd.ExecuteReader();
-                while (reader.Read()) indexes.Add(reader.GetString(0));
+                while (reader.Read())
+                {
+                    var indexName = reader.GetString(0);
+                    if (!indexMap.TryGetValue(indexName, out var members))
+                        indexMap[indexName] = members = new List<string>();
+                    members.Add(reader.GetString(1));
+                }
             }
-            result.Add(new Table(name, columns.ToArray(), indexes.ToArray()));
+            var indexes = indexMap.Select(pair =>
+                new Index(pair.Key, pair.Value.ToArray())).ToArray();
+            result.Add(new Table(name, columns.ToArray(), indexes));
         }
         return result;
     }
@@ -265,7 +286,13 @@ public sealed class SqlCoreOracleLiveDdlParityTests
                 Assert.Equal(expected.Nullable, actual.Nullable);
             }
             Assert.Equal(table.Indexes.Select(x => x.Name).Order(StringComparer.Ordinal),
-                physical.Indexes.Order(StringComparer.Ordinal));
+                physical.Indexes.Select(x => x.Name).Order(StringComparer.Ordinal));
+            foreach (var index in table.Indexes)
+            {
+                var actualIndex = Assert.Single(physical.Indexes, x =>
+                    string.Equals(x.Name, index.Name, StringComparison.Ordinal));
+                Assert.Equal(index.Columns, actualIndex.Columns);
+            }
         }
     }
 }

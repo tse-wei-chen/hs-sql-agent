@@ -854,6 +854,28 @@ PRIMARY/UNIQUE-backed index identity is not claimed as standalone.
 The real MySQL DDL differential corpus checks all **25** scripts after
 every statement; the analyzer itself never executes SQL.
 
+## Oracle RENAME COLUMN typed Catalog lineage proof
+
+Oracle `ALTER TABLE table RENAME COLUMN old_name TO new_name` is a
+closed F# `RenameColumn` operation with one exact `RenameColumn`
+Catalog/effect tag, not an opaque string transform. Against a
+closed-world, known table, the analyzer preserves physical column
+position, type and nullability; it updates every modeled standalone
+index's ordered physical-column list and local PRIMARY KEY / UNIQUE /
+FOREIGN KEY column list in **one immutable Catalog replacement**.
+Previous snapshots retain their original column/index references.
+
+Unknown tables/Catalogs and unmodeled objects are never promoted to
+known facts. Inbound foreign keys on the renamed referenced column
+are refused until cross-table reference rewriting is proved, and known
+View dependencies are refused because Oracle can invalidate dependent
+objects. Duplicate/new-name collisions, absent old columns, composite
+ALTER forms and other provider grammars remain fail-closed.
+
+The real Oracle DDL differential corpus has **26** unique scripts. It
+now compares both physical columns and **USER_IND_COLUMNS ordered index
+lineage** after every statement; the analyzer does not execute SQL.
+
 ## Firebird RECREATE TABLE atomic static Catalog proof
 
 Firebird 5 supports `RECREATE TABLE table (column definitions...)` as

@@ -59,6 +59,7 @@ type SqlStatementEffectOperation =
     | CreateView = 31
     | DropView = 32
     | ReplaceView = 33
+    | RenameColumn = 34
 
 /// Static potential effect. ObjectName and Dependencies are diagnostic names,
 /// not trusted resolved identities. Only Catalog operations can have ObjectIdentity.

@@ -131,6 +131,9 @@ module internal RewriteSchemaAnalyzer =
         | DropTableBatch of tables: SqlCatalogQualifiedName list * ifExists: bool *
                             dependencyMode: DropDependencyMode
         | AlterColumns of table: SqlCatalogQualifiedName * actions: AlterColumnAction list
+        /// Oracle-only physical column rename; index/constraint lineage is
+        /// checked and atomically rewritten by the Catalog analyzer.
+        | RenameColumn of table: SqlCatalogQualifiedName * oldName: string * newName: string
         | CreateIndex of table: SqlCatalogQualifiedName * name: string * columns: string list * ifNotExists: bool
         | DropIndex of name: string * table: SqlCatalogQualifiedName option * ifExists: bool
         /// Exact PostgreSQL index relation identity, never the owning table.
@@ -1035,7 +1038,15 @@ module internal RewriteSchemaAnalyzer =
                 && (word () = "ADD" || word () = "DROP")
                 && (tokenWord tokens.[index + 1] = "INDEX"
                     || tokenWord tokens.[index + 1] = "KEY")
-            if mysqlIndexAction then
+            if sourceDialect = SqlAgentToolType.Oracle && word () = "RENAME" then
+                expect "RENAME"
+                expect "COLUMN"
+                let oldName = namePart ()
+                expect "TO"
+                let newName = namePart ()
+                endOfStatement ()
+                Recognized(RenameColumn(table, oldName, newName))
+            elif mysqlIndexAction then
                 let adding = accept "ADD"
                 if not adding then expect "DROP"
                 if not (accept "INDEX" || accept "KEY") then raise OutsideSubset

@@ -574,6 +574,8 @@ module internal RewriteScriptAnalyzer =
             | DropTableBatch(names, conditional, mode) ->
                 DropTableBatch(List.map resolve names, conditional, mode)
             | AlterColumns(name, actions) -> AlterColumns(resolve name, actions)
+            | RenameColumn(name, oldName, newName) ->
+                RenameColumn(resolve name, oldName, newName)
             | CreateIndex(name, indexName, cols, conditional) ->
                 CreateIndex(resolve name, indexName, cols, conditional)
             | DropIndex(indexName, target, conditional) ->
@@ -606,6 +608,7 @@ module internal RewriteScriptAnalyzer =
                      else [constraintInfo.ReferencedIdentity])
                 | Drop(name, _)
                 | AlterColumns(name, _)
+                | RenameColumn(name, _, _)
                 | CreateIndex(name, _, _, _)
                 | DropConstraint(name, _) -> [name]
                 | DropIndex(_, target, _) -> Option.toList target
@@ -631,6 +634,7 @@ module internal RewriteScriptAnalyzer =
             | DropView(name, _, _)
             | Drop(name, _)
             | AlterColumns(name, _)
+            | RenameColumn(name, _, _)
             | CreateIndex(name, _, _, _)
             | AddConstraint(name, _)
             | DropConstraint(name, _) -> Some name
@@ -2086,6 +2090,72 @@ module internal RewriteScriptAnalyzer =
                     | RewriteSchemaDependencies.Invalid message -> fail message
                     | RewriteSchemaDependencies.Unproven message -> dependencyUnproven message
             | _ -> dependencyUnproven "Constraint owner is not a proven table."
+        | Recognized (RenameColumn(name, oldName, newName)) ->
+            // Oracle automatically retargets physical indexes and modeled
+            // local constraints on rename. Preserve typed dependency
+            // lineage, not just the visible column header.
+            if sourceDialect <> SqlAgentToolType.Oracle
+               || not state.IsClosedWorld
+               || (state.Tables |> Seq.exists (fun item ->
+                   item.Knowledge <> SqlCatalogKnowledge.Known)) then
+                dependencyUnproven "Oracle column rename requires a closed, known Catalog."
+            else
+                match RewriteCatalogModel.lookup state name with
+                | Some owner when owner.Knowledge = SqlCatalogKnowledge.Known ->
+                    let same left right =
+                        String.Equals(left, right, StringComparison.Ordinal)
+                    let hasColumn columnName =
+                        owner.Columns |> Seq.exists (fun col ->
+                            same col.Name columnName)
+                    if not (hasColumn oldName) then
+                        fail ("ALTER TABLE " + name.DisplayName +
+                              " column " + oldName + " does not exist.")
+                    elif hasColumn newName then
+                        fail ("ALTER TABLE " + name.DisplayName +
+                              " target column " + newName + " already exists.")
+                    elif (RewriteCatalogModel.inboundForeignKeys state name
+                          |> Seq.exists (fun (_, fk) ->
+                              fk.ReferencedColumns |> Seq.exists (fun col ->
+                                  same col oldName))) then
+                        // Oracle updates other tables' FK references, too.
+                        // Until a cross-table immutable rewrite is proven,
+                        // do not publish a stale dependent Catalog.
+                        dependencyUnproven "Inbound foreign keys require cross-table rename lineage proof."
+                    elif not (RewriteCatalogModel.dependentViews
+                                  state (Set.singleton name.Key)).IsEmpty then
+                        dependencyUnproven "View dependency invalidation after column rename is unproven."
+                    else
+                        let renamed value = if same value oldName then newName else value
+                        let updatedColumns =
+                            owner.Columns |> Seq.map (fun col ->
+                                SqlCatalogColumn(renamed col.Name, col.TypeName, col.Nullable))
+                        let updatedIndexes =
+                            owner.Indexes |> Seq.map (fun (indexInfo: SqlCatalogIndex) ->
+                                SqlCatalogIndex(
+                                    indexInfo.Name,
+                                    Array.AsReadOnly(
+                                        indexInfo.Columns
+                                        |> Seq.map renamed
+                                        |> Seq.toArray)))
+                        let updatedConstraints =
+                            owner.Constraints |> Seq.map (fun (c: SqlCatalogConstraint) ->
+                                SqlCatalogConstraint(
+                                    c.Name, c.Kind,
+                                    Array.AsReadOnly(
+                                        c.Columns |> Seq.map renamed |> Seq.toArray),
+                                    c.ReferencedIdentity, c.ReferencedColumns))
+                        let updated =
+                            RewriteCatalogModel.replaceTable
+                                state name updatedColumns updatedConstraints updatedIndexes
+                        SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known,
+                        updated,
+                        [changedColumnExact syntax name newName SqlCatalogOperation.RenameColumn],
+                        ([]: SqlDiagnostic list)
+                | _ when RewriteCatalogModel.isKnownAbsent state name ->
+                    fail ("ALTER TABLE " + name.DisplayName +
+                          " does not exist in the known Catalog.")
+                | _ ->
+                    dependencyUnproven "Oracle rename target table is not proven known."
         | Recognized (AlterColumns(name, actions)) ->
             match RewriteCatalogModel.lookup state name with
             | Some table when table.Knowledge = SqlCatalogKnowledge.Known ->
