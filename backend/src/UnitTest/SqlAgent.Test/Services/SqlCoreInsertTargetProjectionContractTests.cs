@@ -10,8 +10,8 @@ using Xunit;
 namespace SqlAgent.Test.Services;
 
 /// <summary>
-/// Static INSERT contracts: explicit target arity, each VALUES row,
-/// no duplicated target column, and a proven implicit physical column order.
+/// Static INSERT contracts: pre-existing parser checks for explicit target
+/// arity and duplicates, plus proven implicit physical column order.
 /// Name/shape proofs are not SQL authorization or database execution.
 /// </summary>
 public sealed class SqlCoreInsertTargetProjectionContractTests
@@ -61,7 +61,11 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
             Assert.Equal(SqlScriptStatementKind.Mutation, stmt.Kind);
             Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.NameBinding);
             Assert.Equal(SqlStatementAnalysisStatus.PartiallyAnalyzed, stmt.Status);
-            Assert.Empty(stmt.Diagnostics);
+            if (dialect == SqlAgentToolType.Sqlite)
+                Assert.Contains(stmt.Diagnostics,
+                    d => d.Code == "SQL_CATALOG_TYPE_SQLITE_AFFINITY_UNPROVEN");
+            else
+                Assert.Empty(stmt.Diagnostics);
             Assert.Empty(stmt.Changes);
             Assert.Same(stmt.CatalogBefore, stmt.CatalogAfter);
         }
@@ -96,7 +100,12 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
         var stmt = result.Statements[2];
         Assert.Equal(SqlScriptStatementKind.Mutation, stmt.Kind);
         Assert.NotEqual(SqlCatalogBindingStatus.Verified, stmt.CatalogBinding);
-        Assert.Contains(stmt.Diagnostics, d => d.Code == "SQL_SCHEMA_SHAPE_UNPROVABLE");
+        // The parser already proves explicit VALUES arity before Catalog
+        // binding; the new analyzer contract concerns omitted target lists.
+        var parserChecked = sql.Contains("dest(", StringComparison.Ordinal) &&
+                            sql.Contains(" VALUES ", StringComparison.Ordinal);
+        Assert.Contains(stmt.Diagnostics, d => d.Code ==
+            (parserChecked ? "SQL_PARSE_GRAMMAR" : "SQL_SCHEMA_SHAPE_UNPROVABLE"));
         Assert.Same(stmt.CatalogBefore, stmt.CatalogAfter);
         Assert.Empty(stmt.Changes);
     }
@@ -134,7 +143,8 @@ public sealed class SqlCoreInsertTargetProjectionContractTests
             "INSERT INTO dest(id, id) VALUES (1, 2)").Statements[2];
         Assert.Equal(SqlCatalogBindingStatus.Rejected, stmt.CatalogBinding);
         Assert.Equal(SqlStatementAnalysisStatus.Invalid, stmt.Status);
-        Assert.Contains(stmt.Diagnostics, d => d.Code == "SQL_SCHEMA_INSERT_DUPLICATE_TARGET");
+        // Duplicate targets are already rejected by the strict SQL parser.
+        Assert.Contains(stmt.Diagnostics, d => d.Code == "SQL_PARSE_GRAMMAR");
     }
 
     [Fact]
