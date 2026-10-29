@@ -341,15 +341,16 @@ module internal RewriteCatalogModel =
         match lookup updated name with
         | Some table ->
             let newIndex = table.Indexes |> Seq.last
+            let newMembers = newIndex.Columns |> Seq.toList
             let coveredNames =
                 table.Constraints
                 |> Seq.filter (fun fk ->
+                    let key = fk.Columns |> Seq.toList
                     fk.Kind = SqlCatalogConstraintKind.ForeignKey
-                    && fk.Columns.Count <= newIndex.Columns.Count
-                    && (Seq.forall2
+                    && key.Length <= newMembers.Length
+                    && List.forall2
                         (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
-                        fk.Columns
-                        (newIndex.Columns |> Seq.take fk.Columns.Count)))
+                        key (newMembers |> List.take key.Length))
                 |> Seq.map (fun fk -> if isNull fk.Name then "" else fk.Name)
             let possible =
                 Seq.append table.PossibleFkIndexNames coveredNames
