@@ -277,6 +277,11 @@ case-insensitive name** is distinct from every possibly surviving
 implicit FK-support name, all primary/unique indexes and all known
 standalone indexes. It requires complete known Catalog, explicit
 provider identifier semantics and fully proven physical names.
+In MySQL `LOWER_CASE_TABLE_NAMES=0`, tables/columns remain in the
+strict lowercase identifier subset, but INDEX names may use any bounded
+simple ASCII lettercase: MySQL index names are case-insensitive on all
+platforms. Catalog rejects two physical index names equal after
+ASCII case folding rather than forcing index names to lowercase.
 If a previously proven explicit index already supports the FK,
 adding a second distinct explicit left-prefix supporting index
 cannot remove that user-declared index. Catalog retains only the
