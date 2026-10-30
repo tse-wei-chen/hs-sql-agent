@@ -30,6 +30,30 @@ type SqlCapabilityMatrix private () =
             | null -> false
             | version -> version.CompareTo(minimum) >= 0
 
+    /// Keep the already-large ForProvider stack frame stable for 256 KiB
+    /// stress-test threads: provider-specific APPLY evaluation is separate.
+    static member private ApplyCapability(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile | null) =
+        let status, detail =
+            match provider with
+            | SqlAgentToolType.MsSqlServer ->
+                match profile with
+                | null -> SqlCapabilityStatus.Supported, "SQL Server native CROSS/OUTER APPLY on correlated derived SELECT; collection/TVF forms are not modeled."
+                | p when isNull p.ServerVersion || p.ServerVersion.CompareTo(Version(9,0)) >= 0 ->
+                    SqlCapabilityStatus.Supported, "SQL Server native CROSS/OUTER APPLY on correlated derived SELECT; collection/TVF forms are not modeled."
+                | p ->
+                    SqlCapabilityStatus.Rejected, "SQL Server APPLY requires ServerVersion 9.0+; declared " + string p.ServerVersion + "."
+            | SqlAgentToolType.Oracle ->
+                match profile with
+                | null -> SqlCapabilityStatus.Rejected, "Oracle APPLY requires explicit ServerVersion 12.1+."
+                | p when isNull p.ServerVersion ->
+                    SqlCapabilityStatus.Rejected, "Oracle APPLY requires explicit ServerVersion 12.1+."
+                | p when p.ServerVersion.CompareTo(SqlApplyJoinCapabilityRules.OracleMinimumVersion) >= 0 ->
+                    SqlCapabilityStatus.Supported, "Oracle 12.1+ native CROSS/OUTER APPLY requires independently proven source and target versions."
+                | p -> SqlCapabilityStatus.Rejected, "Oracle APPLY requires ServerVersion 12.1+; declared " + string p.ServerVersion + "."
+            | _ ->
+                SqlCapabilityStatus.Rejected, "SQL capability 'select.apply_join' has no proven native syntax for " + string provider + "."
+        SqlCapabilityMatrix.Capability("select.apply_join", "query", status, detail)
+
     static member ForProvider(provider: SqlAgentToolType) =
         SqlCapabilityMatrix.ForProvider(provider, null)
 
@@ -381,25 +405,6 @@ type SqlCapabilityMatrix private () =
                 "SQL capability 'select.lateral_derived' has no proven native support for "
                 + string provider + "."
 
-        let applyStatus, applyDetail =
-            match provider with
-            | SqlAgentToolType.MsSqlServer ->
-                match profileServerVersion with
-                | Some version when version.CompareTo(Version(9,0)) < 0 ->
-                    rejected, "SQL Server APPLY requires ServerVersion 9.0+; declared " + string version + "."
-                | _ ->
-                    supported, "SQL Server CROSS/OUTER APPLY support a typed correlated derived query. Table-valued functions and collection sources remain fail-closed; native-only emission."
-            | SqlAgentToolType.Oracle ->
-                match profileServerVersion with
-                | Some version when version.CompareTo(SqlApplyJoinCapabilityRules.OracleMinimumVersion) >= 0 ->
-                    supported, "Oracle 12.1+ CROSS/OUTER APPLY use typed correlated derived queries; independent source and target runtime profiles, native-only emission."
-                | Some version ->
-                    rejected, "Oracle APPLY requires ServerVersion 12.1+; declared " + string version + "."
-                | None ->
-                    rejected, "Oracle APPLY requires explicit ServerVersion 12.1+; undeclared runtime versions remain fail-closed."
-            | _ ->
-                rejected, "SQL capability 'select.apply_join' has no proven native syntax for " + string provider + "."
-
         let capabilities : SqlCapability list =
             [
                 cap("provider.target_profile","provider",supported,
@@ -408,7 +413,7 @@ type SqlCapabilityMatrix private () =
                     "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent and version-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Raw SQL Server || source spelling remains fail-closed, including SQL Server 2025, until the Core source parser has an explicit T-SQL 17.x precedence/grammar contract. Raw SQLite RIGHT/FULL OUTER JOIN requires source ServerVersion 3.39+, raw SQLite ON CONFLICT UPSERT requires source ServerVersion 3.24+, raw SQLite RETURNING requires source ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires source ServerVersion 5.0+. Absent or unrelated modes and versions remain fail-closed rather than guessing runtime semantics.")
                 cap("provider.unique_key_metadata","provider",supported,
                     "Provider metadata readers inventory PRIMARY and UNIQUE conflict sources across PostgreSQL, MySQL, SQLite, SQL Server, Oracle, and Firebird. Simple enforced full-column keys are distinguishable from partial, expression/computed, prefix, disabled/invalid, or otherwise richer key shapes, and richer enforced keys remain visible instead of being filtered out. This metadata is an assurance prerequisite only; it does not by itself authorize a SQL lowering.")
-                cap("select.apply_join","query",applyStatus,applyDetail)
+                SqlCapabilityMatrix.ApplyCapability(provider, profile)
                 cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
                 cap("select.distinct_on","query",(if provider = SqlAgentToolType.Postgres then supported else rejected),
                     if provider = SqlAgentToolType.Postgres then
