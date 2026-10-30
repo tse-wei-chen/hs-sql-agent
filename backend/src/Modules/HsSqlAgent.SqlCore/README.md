@@ -309,7 +309,18 @@ strict catalog/type proofs, parameterization and physical-only effects.
 The SQLite source and target version must be 3.8.3+ for the WITH syntax.
 Recursive or data-modifying CTEs, write-target aliases that lack a
 native proof, and cross-provider WITH UPDATE lowering remain fail-closed.
-SQLite UPDATE FROM cardinality proof is out of this feature's scope.
+SQLite UPDATE FROM is admitted only when the single FROM source is a
+read-only statement-level CTE **structurally proven at most one row**:
+a tableless SELECT or an ordered chain of CTEs that each reads only one
+earlier proven singleton CTE. The proof examines the bound closed AST and
+rejects set operations (including UNION ALL), JOINs, physical tables,
+derived sources, recursive CTEs, nested CTEs and multiple FROM entries.
+This protects SQLite's provider-specific arbitrary-row selection when
+a target matches multiple source rows. SQLite 3.33+ source and target
+UPDATE FROM capability and the existing bounded mutation/allowlist and
+schema/type policies remain mandatory. This compiler-local cardinality
+gate does not upgrade the independent public SourceMatchCardinality
+analysis or authorize execution.
 
 ## SQLite statement-level WITH DELETE (native, strict source subset)
 
