@@ -9,7 +9,7 @@ namespace SqlAgent.Test.Services;
 
 /// <summary>
 /// Independent Firebird 5 database and ADO.NET driver assurance for the
-/// bound-text -> NUMERIC(precision,scale) -> INT128 execution path.
+/// BigInteger -> INT128 -> NUMERIC(precision,0) execution path.
 /// This is an actual database readback, not only SQL string verification.
 /// </summary>
 public sealed class SqlCoreFirebirdInt128ExactNumericLiveParityTests
@@ -19,13 +19,8 @@ public sealed class SqlCoreFirebirdInt128ExactNumericLiveParityTests
         yield return [new string('9', 38), new string('9', 38), 38, 0];
         yield return ["12345678901234567890123456789012345678",
             "12345678901234567890123456789012345678", 38, 0];
-        yield return ["1e-29", "0." + new string('0', 28) + "1", 29, 29];
-        yield return ["-0.12345678901234567890123456789",
-            "-0.12345678901234567890123456789", 29, 29];
-        yield return ["-1.00000000000000000000000000001",
-            "-1.00000000000000000000000000001", 30, 29];
         yield return ["1e+30", "1" + new string('0', 30), 31, 0];
-        yield return ["-1e-37", "-0." + new string('0', 36) + "1", 37, 37];
+        yield return ["-1e+30", "-1" + new string('0', 30), 31, 0];
     }
 
     [Theory]
@@ -52,7 +47,10 @@ public sealed class SqlCoreFirebirdInt128ExactNumericLiveParityTests
         Assert.Contains($"NUMERIC({precision},{scale})", compiled.Sql,
             StringComparison.OrdinalIgnoreCase);
         var binding = Assert.Single(compiled.Parameters);
-        Assert.Equal(expected, Assert.IsType<string>(binding.Value));
+        Assert.Equal(expected,
+            Assert.IsType<System.Numerics.BigInteger>(binding.Value).ToString(
+                System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Contains("AS INT128)", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DECFLOAT", compiled.Sql, StringComparison.OrdinalIgnoreCase);
 
         var token = TestContext.Current.CancellationToken;
