@@ -3166,3 +3166,44 @@ gate. Manually executing generated SQL outside the approved transaction does
 not satisfy the host security contract. Live SQL Server tests compare actual
 UPDATE/DELETE row effects, while negative dialect/shape matrices preserve
 existing refusal behavior.
+
+
+## Automatic Host discovery of SQL Server CTE source-key proof (#466 stage 3)
+
+The default `TypedDmlRuntime` already opens a runtime-version-verified
+provider connection before planning an UPDATE/DELETE and supplies it to
+`DmlPlanFactory.CreateWithMetadataConnectionAsync`. For native SQL Server
+2005+ only, the Host can now *automatically* identify the previously supported
+physical-read CTE proof subset **without asking the caller to manufacture a
+`SqlServerCteUniqueKeyAssurance`**.
+
+The Host first inspects the parsed, physically resolved CLR mutation: exactly
+one nonrecursive read-only CTE selecting a single physical source key, with
+one CTE source and a mandatory ordinary equality between that projected key
+and the fully qualified target key. Unsupported projections, unions, joins,
+non-INT columns, OR, casts, missing versions, cross-provider mutations,
+multiple sources and ambiguous names are never automatically attested.
+
+Automatic discovery requires the existing open metadata connection, strict
+row-set identity and a positive per-statement `maxAffectedRows`. It uses
+`VerifyLiveForJoinedMutation` to read real SQL Server metadata and mint
+an opaque source-unique-INT/target-INT proof; it cannot use caller-provided
+Virtual Catalog entries as authority. If the Host also has an immutable
+schema snapshot, the proof must be compatible with it. Otherwise, the
+discovery helper constructs only a **narrow proof-local two-table key witness**,
+not a fake full-table schema snapshot: no ordinary schema-freshness
+assurance is bypassed or claimed.
+
+The F# compiler *independently* validates the CTE and refuses non-modeled
+graphs; the existing compiled-command and approval fingerprints bind the
+proof identity. Before executing the mutation, `DmlCoordinator` and the
+atomic-batch coordinator still call `IsCurrent` with the **actual write
+connection and transaction**, holding physical locks until commit or rollback.
+No extra MCP tools, SQL execution drivers in SqlCore, relaxed DML defaults,
+or new SQL capability for the other five databases are introduced.
+
+The manual `WithSqlServerCteUniqueKeyAssurance` path remains available for
+custom hosts; the overload without an already-open metadata connection
+continues to fail closed on physical-source CTE DML. SQL Server 2022 live
+tests cover UPDATE/DELETE, direct/aliased projections, Host approval and
+commit, absent connection/row cap, and unsafe CTE grammar.

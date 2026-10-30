@@ -448,6 +448,24 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.Equal("id", automaticallyMinted.SourceKeyColumn);
             Assert.Equal(plan.MutationCommand.Sql, autoPlan.MutationCommand.Sql);
             DmlCoordinator.ValidatePlan(autoPlan);
+
+            // No preopened physical metadata connection: no live proof.
+            await Assert.ThrowsAsync<SqlCompilationException>(() =>
+                new DmlPlanFactory(metadata.Object).CreateAsync(
+                    "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 5, cancellationToken: token,
+                    targetProfile: profile));
+            // No positive row cap: automatic evidence may not authorize an
+            // unbounded Host write, even if the index itself is unique.
+            await Assert.ThrowsAsync<SqlCompilationException>(() =>
+                new DmlPlanFactory(metadata.Object).CreateWithMetadataConnectionAsync(
+                    db, "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 0, cancellationToken: token,
+                    targetProfile: profile));
             plan = autoPlan;
 
             var coordinator = new DmlCoordinator(new LiveSqlServerConnectionFactory());
@@ -544,9 +562,10 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                     new DatabaseColumnMetadata("dbo", target, "id", "int", true, 1),
                     new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
                 ]);
-            var parsedForAuto = CoreSqlTextParser.ParseDml(
-                sql, SqlAgentToolType.MsSqlServer, profile);
-            await Assert.ThrowsAnyAsync<Exception>(async () =>
+            var autoError = await Record.ExceptionAsync(async () =>
+            {
+                var parsedForAuto = CoreSqlTextParser.ParseDml(
+                    sql, SqlAgentToolType.MsSqlServer, profile);
                 await new DmlPlanFactory(metadata.Object)
                     .CreateWithMetadataConnectionAsync(
                         db, "metadata-test", parsedForAuto, SqlAgentToolType.MsSqlServer,
@@ -555,7 +574,12 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                                 { "dbo." + target, "dbo." + source }),
                         new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
                         maxAffectedRows: 5, cancellationToken: ct,
-                        targetProfile: profile));
+                        targetProfile: profile);
+            });
+            Assert.NotNull(autoError);
+            Assert.True(autoError is SqlCompilationException or SqlParseException
+                or InvalidOperationException or UnauthorizedAccessException,
+                $"Unexpected Host rejection category: {autoError.GetType().Name}: {autoError.Message}");
         }
         finally
         {
