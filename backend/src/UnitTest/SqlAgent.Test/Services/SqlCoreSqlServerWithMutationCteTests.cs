@@ -136,7 +136,6 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
     [Theory]
     [InlineData("WITH RECURSIVE picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' WHERE id = 7")]
     [InlineData("WITH picked AS (DELETE FROM users) DELETE FROM users WHERE id = 7")]
-    [InlineData("WITH picked AS (SELECT 7 AS id) INSERT INTO users(id) SELECT id FROM picked")]
     public void UnsupportedCteMutationShapesStayFailClosed(string sql)
     {
         var script = SqlCoreFacade.ParseScript(sql,

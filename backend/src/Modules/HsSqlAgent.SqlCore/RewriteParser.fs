@@ -3027,9 +3027,9 @@ module internal RewriteParser =
             | _ -> None
 
     /// Read-only statement CTEs feeding INSERT SELECT retain the typed
-    /// QuerySource graph, independently proven for PostgreSQL and SQLite.
-    /// Both renderers emit the CTEs *before* INSERT; Mutation policy remains
-    /// the same and no opaque SQL text is ever spliced into the AST.
+    /// QuerySource graph, proven for PostgreSQL, SQLite and SQL Server.
+    /// All three renderers emit the CTEs *before* INSERT; Mutation policy
+    /// remains unchanged and no opaque SQL text is spliced into the AST.
     let private parseReadOnlyStatementCtes (cursor: Cursor) =
         let pending = ResizeArray<unit -> unit>()
         let mutable ctes: Cte list = []
@@ -3064,8 +3064,12 @@ module internal RewriteParser =
         | _ -> ()
 
     let private parseReadOnlyWithInsert (cursor: Cursor) =
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requireSourceParseCapability cursor.Current cursor.SourceSqlServerWithMutationCte
         let ctes = parseReadOnlyStatementCtes cursor
         let insert = parseInsert cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes insert.Target
         // SQLite's INSERT SELECT with a FROM and an UPSERT clause is
         // ambiguous without an explicit SELECT WHERE (even WHERE true).
         // Reject rather than inserting a predicate or assuming PostgreSQL
@@ -3153,7 +3157,8 @@ module internal RewriteParser =
                                    || dialect = SourceDialect.SqlServer ->
                 match readOnlyWithMutationHead cursor with
                 | Some "INSERT" when dialect = SourceDialect.PostgreSql
-                                       || dialect = SourceDialect.SQLite ->
+                                       || dialect = SourceDialect.SQLite
+                                       || dialect = SourceDialect.SqlServer ->
                     parseReadOnlyWithInsert cursor
                 | Some "UPDATE" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite

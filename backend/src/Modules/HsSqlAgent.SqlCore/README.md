@@ -2823,3 +2823,29 @@ cross-provider lowering remain fail-closed until independently proved.
 `ParseScript` and `AnalyzeScript` do not connect to any database.
 The SQL Server service CI runs native-vs-compiled row parity for UPDATE
 and DELETE; no driver is added to SqlCore itself.
+
+## Native SQL Server read-only WITH INSERT SELECT
+
+SQL Server (2005 / ServerVersion 9.0+) now accepts native top-level
+`WITH cte AS (SELECT ...) INSERT INTO table(columns) SELECT ... FROM cte`
+using the existing closed `Insert(QuerySource)` AST and mutation compiler.
+Multiple nonrecursive CTEs, explicit CTE output aliases and
+`OUTPUT INSERTED.column` reuse the proven INSERT renderer. The CTE is
+emitted before `INSERT INTO`; this is *not* MySQL's `INSERT INTO ...
+WITH ... SELECT` source grammar.
+
+The SQL Server source profile rejects explicitly declared versions
+older than 9.0. When SQL Server is the compilation target, its target
+profile also rejects explicitly declared versions below 9.0, even for
+a different source dialect. Missing versions retain existing compatibility
+behavior. SQL Server target compilation also rejects an unqualified
+physical INSERT target that has the same name as a statement-level CTE;
+CTE-updatable write-through lineage has not been separately proved.
+
+Physical reads within CTE definitions and the physical INSERT target
+remain independently allowlisted, with source spans, typed semantic
+validation, parameterized literals and static effects preserved.
+Statement-level `WITH INSERT ... VALUES` / `DEFAULT VALUES`, recursive
+and data-modifying CTEs, nested input CTEs, and any unproved cross-dialect
+semantics remain fail-closed. Real SQL Server 2022 native/compiled row
+parity and OUTPUT parity are gated in the dedicated SQL Server CI job.
