@@ -7,6 +7,7 @@ using SqlAgent.Service.Core.Execution;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using Microsoft.Data.SqlClient;
+using Moq;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -397,22 +398,37 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("picked", compiled.Sql, StringComparison.OrdinalIgnoreCase);
 
-            var match = SqlCoreFacade.CompileQuery(
-                cte + "SELECT dbo.[" + target + "].id FROM dbo.[" + target + "] CROSS JOIN picked WHERE dbo."
-                    + target + ".id = picked." + output,
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                new SqlPlanValidationContext(policy, allowed),
-                new SqlExecutionPlanPolicy(), profile, profile);
-            var fingerprintPolicy = policy + "|live-sqlserver-cte-int=" + proof.ProofIdentity;
-            var plan = new ValidatedDmlPlan(
-                update ? DmlOperation.Update : DmlOperation.Delete,
-                "dbo." + target, compiled, match,
-                ImmutableArray.Create("id"), DmlRowIdentityAssurance.Strict,
-                DmlFingerprintService.ComputePlanFingerprint(compiled, fingerprintPolicy),
-                policy, TimeSpan.FromMinutes(5), MaxAffectedRows: 5)
-            {
-                SqlServerCteUniqueKeyAssurance = proof
-            };
+            // Use the production CLR Host plan factory, not a test-created
+            // ValidatedDmlPlan: physical target resolution, CTE lexical scope,
+            // match query, proof propagation and compiler fingerprint must
+            // all be preserved across the actual assembly boundary.
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("metadata-test",
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("metadata-test", "dbo",
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([target]);
+            metadata.Setup(x => x.GetColumnsAsync("metadata-test", "dbo", target,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([
+                    new DatabaseColumnMetadata("dbo", target, "id", "int", true, 1),
+                    new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
+                ]);
+            var plan = await new DmlPlanFactory(metadata.Object).CreateAsync(
+                "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
+                context, new DmlCompilationPolicy(),
+                DmlRowIdentityAssurance.Strict, maxAffectedRows: 5,
+                targetProfile: profile, cancellationToken: token);
+            Assert.Same(proof, plan.SqlServerCteUniqueKeyAssurance);
+            Assert.NotNull(plan.MatchQueryCommand);
+            Assert.StartsWith("WITH ", plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("WITH ", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(compiled.Sql, plan.MutationCommand.Sql);
+            DmlCoordinator.ValidatePlan(plan);
+            Assert.Throws<InvalidOperationException>(() =>
+                DmlCoordinator.ValidatePlan(
+                    plan with { SqlServerCteUniqueKeyAssurance = legacySourceOnlyProof }));
             var coordinator = new DmlCoordinator(new LiveSqlServerConnectionFactory());
             var version = db.ServerVersion.Trim();
             var preview = await coordinator.PreviewAsync(
