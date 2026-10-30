@@ -194,11 +194,8 @@ public sealed class SqlCoreSqliteWithDeleteTests
 
     private static SqlCoreTryResult<CompiledSqlCommand> TryCompile(string sql, IEnumerable<string> tables)
     {
-        var profile = SqliteProfile();
         return SqlCoreFacade.TryCompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
             new SqlPlanValidationContext("sqlite-cte-delete-denied",
-                new HashSet<string>(tables, StringComparer.OrdinalIgnoreCase)),
-            new DmlCompilationPolicy(), profile, profile,
-            new DmlConflictTargetAssurance(ImmutableArray<string>.Empty));
+                new HashSet<string>(tables, StringComparer.OrdinalIgnoreCase)));
     }
 }
