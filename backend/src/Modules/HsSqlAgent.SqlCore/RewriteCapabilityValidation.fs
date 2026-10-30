@@ -54,6 +54,24 @@ module internal RewriteCapabilityValidation =
                 raise (SqlCompilationException(
                     "SQL capability 'numeric.exact_literal' cannot preserve this value "
                     + "as Oracle NUMBER: maximum precision 38 and portable scale 38."))
+        | FirebirdRuntime, ScalarValue.ExactNumeric number ->
+            // Firebird fixed-point NUMERIC(p,s) uses the INT128 exact
+            // backing storage for 19..38 digits in dialect 3. DECFLOAT(34)
+            // is NOT an equivalent fallback because it can round.
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as Firebird NUMERIC: maximum precision 38 and scale 38."))
+            | Some(_, precision, _) when precision > 18 ->
+                match proofs.FirebirdExtendedDecimal with
+                | ProvenCapability -> ()
+                | RejectedCapability _ ->
+                    raise (SqlCompilationException(
+                        "SQL capability 'numeric.decimal_extended' requires an explicit Firebird "
+                        + "ServerVersion 4.0+ target profile to prove INT128-backed NUMERIC."))
+            | Some _ -> ()
+
         | _, ScalarValue.ExactNumeric _ ->
             raise (SqlCompilationException(
                 "SQL capability 'numeric.exact_literal' requires a proven exact "
