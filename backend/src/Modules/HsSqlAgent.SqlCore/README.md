@@ -285,6 +285,40 @@ rounding, or stable format conversion. Both remain fail-closed until
 independent live target tests establish the intended exact-value
 contract; Oracle's NUMBER proof cannot be reused as Firebird proof.
 
+## P6: Firebird 4+ INT128 fixed-point exact numeric target
+
+The private F# `ExactNumeric` value now has a versioned Firebird target
+path for **`NUMERIC(p,s)`**, with precision and scale each <=38 and
+`s <= p`. A proof of `numeric.decimal_extended` (explicit Firebird
+ServerVersion 4.0+ target profile) is mandatory when `p > 18`. A
+missing target profile or Firebird 3 rejects those values, even when a
+newer engine might happen to be deployed. The source SQL dialect for
+non-CLR-representable exact literals is still PostgreSQL, not Firebird.
+
+The validated coefficient/exponent is normalized to a fixed decimal
+string and the smallest exact `NUMERIC(p,s)` shape; the target proof
+rejects out-of-range values **before rendering**. Firebird receives a
+bound string parameter with `CAST(parameter AS NUMERIC(p,s))`. Numeric
+source text is never concatenated into the SQL statement, and CLR
+`decimal`/`double` conversion is prohibited. This is intended for
+Firebird SQL Dialect 3, where precision 19..38 is backed by `INT128`.
+
+`DECFLOAT(34)` is **not** a fallback: its 34 significant digits cannot
+prove exact preservation of arbitrary 35..38-digit fixed numbers.
+Operations, expressions or drivers that implicitly coerce the result
+to DECFLOAT require separate evidence. The renderer does not claim
+that all downstream arithmetic is lossless, only that the literal
+binding and explicit NUMERIC CAST preserve the value.
+
+A CI-specific, **read-only** differential gate executes the generated
+SQL with the actual Firebird .NET provider against the pinned Firebird
+5.0.4 engine. It compares stringified database results to exact numeric
+expectations without trying to read an INT128 through CLR `decimal`.
+The `sqlagent-firebird-ddl-parity` job now includes this gate.
+Missing `TEST_FIREBIRD_CONNECTION` remains a hard failure in CI.
+Other five target contracts and Firebird source lexical fail-closed
+behavior are unchanged; SQLite exact numeric remains unsupported.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
