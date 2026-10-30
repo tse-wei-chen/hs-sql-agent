@@ -33,7 +33,15 @@ public sealed record ValidatedDmlPlan(
     int MaxAffectedRows = 0,
     DmlApprovalMode ApprovalMode = DmlApprovalMode.RowSetMutation,
     ImmutableArray<ImmutableDictionary<string, object?>> InsertRows = default,
-    SqlSchemaSnapshot? SchemaSnapshot = null);
+    SqlSchemaSnapshot? SchemaSnapshot = null)
+{
+    /// <summary>
+    /// An optional live, provider-minted SQL Server INT source-key proof. A
+    /// plan carrying this proof must be re-attested on the actual commit
+    /// connection and transaction. It does not authorize unproven CTE DML.
+    /// </summary>
+    public SqlServerCteUniqueKeyAssurance? SqlServerCteUniqueKeyAssurance { get; init; }
+}
 
 public sealed record DmlPreview(
     DmlOperation Operation,
