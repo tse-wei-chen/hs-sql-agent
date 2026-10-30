@@ -3,7 +3,10 @@ using System.Data;
 using System.Data.Common;
 using HsSqlAgent.SqlCore.Core.Ast;
 using HsSqlAgent.SqlCore.Core.Compilation;
+using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
+using HsSqlAgent.SqlCore.SqlParsing;
 
 namespace SqlAgent.Service.Core.Execution;
 
