@@ -1461,10 +1461,25 @@ module internal RewriteRenderer =
                         string provider, "; this provider does not use the modeled WITH RECURSIVE syntax contract.")))
             let result = RenderBuffer(ctx, "WITH ")
             if recursiveScope then result.Append("RECURSIVE ") |> ignore
+
+            // CTE output names are part of its schema, not optional cosmetic
+            // aliases. Dropping them silently changes column identity for
+            // SELECT, INSERT, UPDATE and DELETE consumers across providers.
+            let appendCteHeader (cte: Cte) =
+                result.Append(renderAlias ctx cte.Name) |> ignore
+                if not cte.ColumnAliases.IsEmpty then
+                    result.Append('(') |> ignore
+                    cte.ColumnAliases
+                    |> List.iteri (fun index name ->
+                        if index > 0 then result.Append(", ") |> ignore
+                        result.Append(renderAlias ctx name) |> ignore)
+                    result.Append(')') |> ignore
+                result.Append(" AS (") |> ignore
+
             ctes
             |> List.iteri (fun index cte ->
                 if index > 0 then result.Append(", ") |> ignore
-                result.Append(renderAlias ctx cte.Name).Append(" AS (") |> ignore
+                appendCteHeader cte
 
                 // Streaming one-CTE nesting is crucial: each nested CTE body
                 // used to render to a complete string before its parent,
@@ -1479,9 +1494,8 @@ module internal RewriteRenderer =
                     | [ innerCte ] when not innerCte.RecursiveScope
                                         && current.SetOperations.IsEmpty
                                         && not (hasTail current) ->
-                        result.Append("WITH ")
-                              .Append(renderAlias ctx innerCte.Name)
-                              .Append(" AS (") |> ignore
+                        result.Append("WITH ") |> ignore
+                        appendCteHeader innerCte
                         nested.Add(current)
                         current <- innerCte.Query
                     | _ -> walking <- false
