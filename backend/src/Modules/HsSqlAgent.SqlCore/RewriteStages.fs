@@ -481,6 +481,47 @@ module internal RewriteStages =
             | [ source ] -> isSingletonCteSource source
             | _ -> false)
 
+    /// A closed, provider-local cardinality proof for native SQL Server
+    /// CTE-prefixed joined UPDATE/DELETE. A CTE rooted in SELECT without
+    /// FROM has at most one row; a SELECT over exactly one earlier proven
+    /// singleton CTE cannot increase row count. No physical table, derived
+    /// relation, JOIN, grouping, or set branch can acquire this proof by
+    /// being named as a CTE. Proof consumes bound CteTable nodes, not raw
+    /// names, so column aliases and quoted references follow Binder scope.
+    let private sqlServerSingletonCteSource (ctes: Cte list) (sources: TableSource list) =
+        let singleton = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let seen = System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let mutable uniqueNames = true
+        let isProvenSource source =
+            match source with
+            | CteTable(identifier, _) ->
+                match Identifier.parts identifier with
+                | [ name ] -> singleton.Contains name.Value
+                | _ -> false
+            | NamedTable _ | DerivedTable _ | LateralDerivedTable _ -> false
+
+        for cte in ctes do
+            RewriteResourceBudget.checkpoint ()
+            if not (seen.Add cte.Name.Value) then uniqueNames <- false
+            let query = cte.Query
+            if not cte.RecursiveScope
+               && query.SetOperations.IsEmpty
+               && query.Head.Ctes.IsEmpty
+               && query.Head.Joins.IsEmpty
+               && query.Head.GroupBy.IsEmpty
+               && query.Head.Having.IsNone
+               && not query.FetchWithTies
+               && (query.Head.From.IsNone
+                   || Option.exists isProvenSource query.Head.From) then
+                singleton.Add cte.Name.Value |> ignore
+            else
+                singleton.Remove cte.Name.Value |> ignore
+
+        uniqueNames
+        && (match sources with
+            | [ source ] -> isProvenSource source
+            | _ -> false)
+
     /// A caller-declared Catalog is NOT a runtime key assurance. Only a
     /// separate, metadata-verified, schema-bound proof may permit this one
     /// physical-source native SQLite UPDATE FROM shape.
@@ -600,9 +641,10 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "Statement-level WITH UPDATE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
                 if nativeSqlServer then
-                    if not update.From.IsEmpty then
+                    if not update.From.IsEmpty
+                       && not (sqlServerSingletonCteSource update.Ctes update.From) then
                         raise (SqlCompilationException(
-                            "SQL capability 'sqlserver.with_update.from' is not proven for CTE-prefixed SQL Server UPDATE."))
+                            "SQL capability 'sqlserver.with_update.from' requires an at-most-one-row read-only CTE source for every target row; unproven joined cardinality remains fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
                         let error =
                             if side = "source" then
@@ -670,9 +712,10 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "Statement-level WITH DELETE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
                 if nativeSqlServer then
-                    if not delete.Using.IsEmpty then
+                    if not delete.Using.IsEmpty
+                       && not (sqlServerSingletonCteSource delete.Ctes delete.Using) then
                         raise (SqlCompilationException(
-                            "SQL capability 'sqlserver.with_delete.from' is not proven for CTE-prefixed SQL Server DELETE."))
+                            "SQL capability 'sqlserver.with_delete.from' requires an at-most-one-row read-only CTE source for every target row; unproven joined cardinality remains fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
                         let error =
                             if side = "source" then
