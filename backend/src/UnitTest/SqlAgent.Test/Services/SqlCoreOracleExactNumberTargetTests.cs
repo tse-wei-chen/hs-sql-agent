@@ -106,10 +106,10 @@ public sealed class SqlCoreOracleExactNumberTargetTests
     }
 
     [Theory]
-    [InlineData(4, "123456789012345678901234567890")]
-    [InlineData(5, "12345678901234567890123456789012345")]
-    [InlineData(4, "1e-37")]
-    public void FirebirdVersionProofAloneCannotAuthorizeUnprovenInt128OrDecfloat(
+    [InlineData(4, "1e-39")]
+    [InlineData(5, "1e-1000")]
+    [InlineData(4, "999999999999999999999999999999999999999")]
+    public void FirebirdVersionProofAloneCannotAuthorizeUnrepresentableExactValueOrDecfloat(
         int major, string value)
     {
         var profile = new SqlProviderCapabilityProfile(
