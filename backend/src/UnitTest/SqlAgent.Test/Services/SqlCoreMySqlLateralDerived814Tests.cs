@@ -92,8 +92,13 @@ public sealed class SqlCoreMySqlLateralDerived814Tests
     [InlineData("SELECT u.id FROM users u JOIN LATERAL users q ON TRUE")]
     public void InvalidLateralJoinShapesFailClosed(string sql)
     {
-        Assert.Throws<SqlParseException>(() =>
+        // Unsupported FULL JOIN may fail earlier at source capability
+        // validation (SqlCompilationException); RIGHT JOIN LATERAL is
+        // rejected by the lateral grammar (SqlParseException).
+        var error = Record.Exception(() =>
             CoreSqlTextParser.ParseQuery(sql, SqlAgentToolType.MySQL, Profile(8, 0, 14)));
+        Assert.NotNull(error);
+        Assert.True(error is SqlParseException or SqlCompilationException, error.ToString());
     }
 
     [Fact]
