@@ -67,6 +67,8 @@ type WindowFrameBoundKind =
 namespace HsSqlAgent.SqlCore.Core.Compilation
 
 open System
+open System.Data
+open System.Data.Common
 open System.Collections.Immutable
 open HsSqlAgent.SqlCore.Enums
 
@@ -727,31 +729,159 @@ type SqlSchemaSnapshot(provider: SqlAgentToolType, version: string, tables: IEnu
         |> Convert.ToHexString
         |> fun digest -> digest.ToLowerInvariant()
 
+/// Snapshot-bound evidence minted from actual SQLite PRAGMA metadata.
+/// Caller must reuse an unchanged live schema through execution; the
+/// compiler has no connection and cannot prove absence of later DDL.
+[<Sealed>]
+type SqliteUpdateFromKeyAssurance private (
+    schemaSha256: string,
+    targetTable: string,
+    targetPrimaryKey: string,
+    sourceTable: string,
+    sourcePrimaryKey: string,
+    schemaVersion: int) =
+
+    member _.SchemaSha256 = schemaSha256
+    member _.TargetTable = targetTable
+    member _.TargetPrimaryKey = targetPrimaryKey
+    member _.SourceTable = sourceTable
+    member _.SourcePrimaryKey = sourcePrimaryKey
+    member _.DatabaseSchemaVersion = schemaVersion
+
+    /// The signature binds the attested PK metadata to compiler evidence,
+    /// independent of parameter values or SQL text.
+    member _.ProofIdentity =
+        String.Join("|", [| "sqlite-live-pk-v1"; schemaSha256; targetTable; targetPrimaryKey;
+                            sourceTable; sourcePrimaryKey; string schemaVersion |])
+
+    static member VerifyLive(
+        connection: DbConnection, snapshot: SqlSchemaSnapshot,
+        targetTable: string, targetPrimaryKey: string,
+        sourceTable: string, sourcePrimaryKey: string) =
+
+        ArgumentNullException.ThrowIfNull(connection)
+        ArgumentNullException.ThrowIfNull(snapshot)
+        if connection.State <> ConnectionState.Open then
+            invalidArg "connection" "SQLite metadata assurance requires an open connection."
+        if snapshot.Provider <> SqlAgentToolType.Sqlite then
+            invalidArg "snapshot" "SQLite metadata assurance requires a SQLite schema snapshot."
+
+        let identifier name value =
+            let ascii c =
+                (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                || (c >= '0' && c <= '9') || c = '_'
+            if String.IsNullOrEmpty value
+               || not ((value.[0] >= 'A' && value.[0] <= 'Z')
+                       || (value.[0] >= 'a' && value.[0] <= 'z') || value.[0] = '_')
+               || not (value |> Seq.forall ascii) then
+                invalidArg name "SQLite live PK evidence supports only simple ASCII identifiers."
+            value
+
+        let target = identifier "targetTable" targetTable
+        let targetPk = identifier "targetPrimaryKey" targetPrimaryKey
+        let source = identifier "sourceTable" sourceTable
+        let sourcePk = identifier "sourcePrimaryKey" sourcePrimaryKey
+        if String.Equals(target, source, StringComparison.OrdinalIgnoreCase) then
+            invalidArg "sourceTable" "Self-joined SQLite PK assurance is outside the proven subset."
+
+        let ensureSnapshot table key =
+            let found =
+                snapshot.Tables
+                |> Seq.filter (fun item ->
+                    String.Equals(item.Name, table, StringComparison.OrdinalIgnoreCase))
+                |> Seq.toList
+            match found with
+            | [tableInfo] ->
+                let cols =
+                    tableInfo.TypedColumns
+                    |> Seq.filter (fun column ->
+                        String.Equals(column.Name, key, StringComparison.OrdinalIgnoreCase)
+                        && column.Kind = SqlSchemaValueKind.Numeric)
+                    |> Seq.length
+                if cols <> 1 then
+                    invalidArg "snapshot" "Live SQLite INTEGER PK must have a matching Numeric schema column."
+            | _ -> invalidArg "snapshot" "Live SQLite PK table must exist exactly once in snapshot."
+
+        let scalar sql =
+            use command = connection.CreateCommand()
+            command.CommandText <- sql
+            command.ExecuteScalar()
+
+        let version = Convert.ToString(scalar "SELECT sqlite_version()")
+        if String.IsNullOrWhiteSpace(version)
+           || Version.Parse(version).CompareTo(Version(3, 33, 0)) < 0 then
+            invalidArg "connection" "SQLite 3.33+ is required for UPDATE FROM."
+
+        let verifyPrimaryKey table key =
+            use columns = connection.CreateCommand()
+            columns.CommandText <- "PRAGMA table_info(" + table + ")"
+            use reader = columns.ExecuteReader()
+            let mutable pkCount = 0
+            let mutable isExactIntegerPk = false
+            while reader.Read() do
+                let ordinal = Convert.ToInt32(reader.GetValue(5))
+                if ordinal > 0 then
+                    pkCount <- pkCount + 1
+                    if ordinal = 1
+                       && String.Equals(reader.GetString(1), key, StringComparison.OrdinalIgnoreCase)
+                       && String.Equals(reader.GetString(2), "INTEGER", StringComparison.OrdinalIgnoreCase) then
+                        isExactIntegerPk <- true
+            if pkCount <> 1 || not isExactIntegerPk then
+                invalidArg "connection" "SQLite PK assurance requires one exact INTEGER PRIMARY KEY column."
+            // A rowid alias has no separate PK index. An ordinary indexed
+            // PRIMARY KEY (including INTEGER PRIMARY KEY DESC / WITHOUT
+            // ROWID) does not meet this contract.
+            use indexes = connection.CreateCommand()
+            indexes.CommandText <- "PRAGMA index_list(" + table + ")"
+            use indexReader = indexes.ExecuteReader()
+            while indexReader.Read() do
+                if String.Equals(indexReader.GetString(3), "pk", StringComparison.OrdinalIgnoreCase) then
+                    invalidArg "connection" "SQLite PK assurance needs a rowid-alias INTEGER PRIMARY KEY."
+
+        ensureSnapshot target targetPk
+        ensureSnapshot source sourcePk
+        verifyPrimaryKey target targetPk
+        verifyPrimaryKey source sourcePk
+        let schemaVersion = Convert.ToInt32(scalar "PRAGMA schema_version")
+        SqliteUpdateFromKeyAssurance(
+            snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
+
 [<Sealed>]
 type SqlPlanValidationContext private (
     policyVersion: string,
     allowedTables: IReadOnlySet<string> | null,
     dmlResultRowAssurance: DmlResultRowAssurance | null,
-    schemaSnapshot: SqlSchemaSnapshot | null) =
+    schemaSnapshot: SqlSchemaSnapshot | null,
+    sqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance | null) =
 
     new(policyVersion: string) =
-        SqlPlanValidationContext(policyVersion, null, null, null)
+        SqlPlanValidationContext(policyVersion, null, null, null, null)
 
     new(policyVersion: string, allowedTables: IReadOnlySet<string> | null) =
-        SqlPlanValidationContext(policyVersion, allowedTables, null, null)
+        SqlPlanValidationContext(policyVersion, allowedTables, null, null, null)
 
     member _.PolicyVersion = policyVersion
     member _.AllowedTables = allowedTables
     member _.DmlResultRowAssurance = dmlResultRowAssurance
     member _.SchemaSnapshot = schemaSnapshot
+    member _.SqliteUpdateFromKeyAssurance = sqliteUpdateFromKeyAssurance
 
     member _.WithDmlResultRowAssurance(assurance: DmlResultRowAssurance) =
         ArgumentNullException.ThrowIfNull(assurance)
-        SqlPlanValidationContext(policyVersion, allowedTables, assurance, schemaSnapshot)
+        SqlPlanValidationContext(policyVersion, allowedTables, assurance, schemaSnapshot,
+                                 sqliteUpdateFromKeyAssurance)
 
     member _.WithSchemaSnapshot(snapshot: SqlSchemaSnapshot) =
         ArgumentNullException.ThrowIfNull(snapshot)
-        SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance, snapshot)
+        SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance, snapshot,
+                                 sqliteUpdateFromKeyAssurance)
+
+    member _.WithSqliteUpdateFromKeyAssurance(assurance: SqliteUpdateFromKeyAssurance) =
+        ArgumentNullException.ThrowIfNull(assurance)
+        if isNull schemaSnapshot then
+            invalidOp "SQLite live PK assurance requires a schema snapshot first."
+        SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance,
+                                 schemaSnapshot, assurance)
 
 [<Sealed>]
 type SqlExecutionPlanPolicy(queryMaxRows: int) =
