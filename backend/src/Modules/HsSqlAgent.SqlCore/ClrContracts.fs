@@ -874,6 +874,7 @@ type SqlServerCteUniqueKeyAssurance private (
     targetTable: string,
     sourceTable: string,
     sourceKeyColumn: string,
+    targetKeyColumn: string option,
     databaseId: int,
     sourceObjectId: int,
     targetObjectId: int,
@@ -885,6 +886,8 @@ type SqlServerCteUniqueKeyAssurance private (
     member _.TargetTable = targetTable
     member _.SourceTable = sourceTable
     member _.SourceKeyColumn = sourceKeyColumn
+    /// Only the more restrictive joined-mutation proof carries an exact target INT key.
+    member _.TargetKeyColumn = targetKeyColumn |> Option.toObj
     member _.DatabaseId = databaseId
     member _.UniqueIndexName = uniqueIndexName
     member _.ProofIdentity =
@@ -892,6 +895,9 @@ type SqlServerCteUniqueKeyAssurance private (
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumn;
             string uniqueIndexId; uniqueIndexName; metadataDigest |])
+        + (match targetKeyColumn with
+           | Some value -> "|target-int-key=" + value
+           | None -> "")
 
     /// Binding a proof to a key also requires an exact schema.table scope.
     /// Restricted ASCII identifiers avoid provider-specific collation and
@@ -1000,7 +1006,8 @@ type SqlServerCteUniqueKeyAssurance private (
     static member private Attest
         (connection: DbConnection, tx: DbTransaction | null,
          snapshot: SqlSchemaSnapshot, targetTable: string,
-         sourceTable: string, sourceKey: string, pin: bool) =
+         sourceTable: string, sourceKey: string,
+         targetKey: string option, pin: bool) =
         if connection.State <> ConnectionState.Open then
             invalidArg "connection" "SQL Server live key proof requires an open connection."
         if snapshot.Provider <> SqlAgentToolType.MsSqlServer then
@@ -1035,6 +1042,26 @@ type SqlServerCteUniqueKeyAssurance private (
             connection, tx, sourceTable, digest)
         let targetId = SqlServerCteUniqueKeyAssurance.Metadata(
             connection, tx, targetTable, digest)
+        // SQL Server can implicitly promote distinct INTs to the same REAL
+        // value. Only a physically attested, noncomputed INT target operand
+        // may be used to prove one source match per target row.
+        match targetKey with
+        | None -> ()
+        | Some key ->
+            use typeCommand = SqlServerCteUniqueKeyAssurance.Command connection tx (
+                """SELECT c.name, typ.name, c.is_computed
+                   FROM sys.columns c
+                   JOIN sys.types typ ON typ.user_type_id = c.user_type_id
+                   WHERE c.object_id = @objectId AND c.name = @key""")
+            SqlServerCteUniqueKeyAssurance.Bind typeCommand "@objectId" (box targetId)
+            SqlServerCteUniqueKeyAssurance.Bind typeCommand "@key" key
+            use targetTypes = typeCommand.ExecuteReader()
+            if not (targetTypes.Read())
+               || not (StringComparer.Ordinal.Equals(targetTypes.GetString(0), key))
+               || not (StringComparer.OrdinalIgnoreCase.Equals(targetTypes.GetString(1), "int"))
+               || targetTypes.GetBoolean(2)
+               || targetTypes.Read() then
+                invalidOp "SQL Server joined CTE key proof requires an exact noncomputed INT target comparison column."
         use indexCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx (
                 """SELECT i.index_id, i.name, c.name, typ.name
@@ -1081,9 +1108,31 @@ type SqlServerCteUniqueKeyAssurance private (
             invalidArg "sourceTable" "Self-joined live SQL Server key proof is outside the first verified subset."
         let dbId, sourceId, targetId, indexId, indexName, digest =
             SqlServerCteUniqueKeyAssurance.Attest(
-                connection, null, snapshot, targetTable, sourceTable, sourceKeyColumn, false)
+                connection, null, snapshot, targetTable, sourceTable, sourceKeyColumn, None, false)
         SqlServerCteUniqueKeyAssurance(
-            snapshot, targetTable, sourceTable, sourceKeyColumn,
+            snapshot, targetTable, sourceTable, sourceKeyColumn, None,
+            dbId, sourceId, targetId, indexId, indexName, digest)
+
+    /// Only this API may mint compilation evidence for physical-read CTE
+    /// UPDATE/DELETE. Both INT equality operands are checked on the live DB.
+    static member VerifyLiveForJoinedMutation
+        (connection: DbConnection, snapshot: SqlSchemaSnapshot,
+         targetTable: string, targetKeyColumn: string,
+         sourceTable: string, sourceKeyColumn: string) =
+        ArgumentNullException.ThrowIfNull connection
+        ArgumentNullException.ThrowIfNull snapshot
+        SqlServerCteUniqueKeyAssurance.Parts "targetTable" targetTable |> ignore
+        SqlServerCteUniqueKeyAssurance.Parts "sourceTable" sourceTable |> ignore
+        SqlServerCteUniqueKeyAssurance.Name "targetKeyColumn" targetKeyColumn |> ignore
+        SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
+        if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
+            invalidArg "sourceTable" "Self-joined SQL Server key proof is not modeled."
+        let dbId, sourceId, targetId, indexId, indexName, digest =
+            SqlServerCteUniqueKeyAssurance.Attest(
+                connection, null, snapshot, targetTable, sourceTable,
+                sourceKeyColumn, Some targetKeyColumn, false)
+        SqlServerCteUniqueKeyAssurance(
+            snapshot, targetTable, sourceTable, sourceKeyColumn, Some targetKeyColumn,
             dbId, sourceId, targetId, indexId, indexName, digest)
 
     /// The caller MUST invoke this on the actual DML transaction/connection
@@ -1097,7 +1146,7 @@ type SqlServerCteUniqueKeyAssurance private (
                 let dbId, sourceId, targetId, indexId, indexName, digest =
                     SqlServerCteUniqueKeyAssurance.Attest(
                         connection, transaction, pinnedSnapshot,
-                        targetTable, sourceTable, sourceKeyColumn, true)
+                        targetTable, sourceTable, sourceKeyColumn, targetKeyColumn, true)
                 dbId = databaseId && sourceId = sourceObjectId
                 && targetId = targetObjectId && indexId = uniqueIndexId
                 && StringComparer.Ordinal.Equals(indexName, uniqueIndexName)
@@ -1113,36 +1162,49 @@ type SqlPlanValidationContext private (
     allowedTables: IReadOnlySet<string> | null,
     dmlResultRowAssurance: DmlResultRowAssurance | null,
     schemaSnapshot: SqlSchemaSnapshot | null,
-    sqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance | null) =
+    sqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance | null,
+    sqlServerCteUniqueKeyAssurance: SqlServerCteUniqueKeyAssurance | null) =
 
     new(policyVersion: string) =
-        SqlPlanValidationContext(policyVersion, null, null, null, null)
+        SqlPlanValidationContext(policyVersion, null, null, null, null, null)
 
     new(policyVersion: string, allowedTables: IReadOnlySet<string> | null) =
-        SqlPlanValidationContext(policyVersion, allowedTables, null, null, null)
+        SqlPlanValidationContext(policyVersion, allowedTables, null, null, null, null)
 
     member _.PolicyVersion = policyVersion
     member _.AllowedTables = allowedTables
     member _.DmlResultRowAssurance = dmlResultRowAssurance
     member _.SchemaSnapshot = schemaSnapshot
     member _.SqliteUpdateFromKeyAssurance = sqliteUpdateFromKeyAssurance
+    member _.SqlServerCteUniqueKeyAssurance = sqlServerCteUniqueKeyAssurance
 
     member _.WithDmlResultRowAssurance(assurance: DmlResultRowAssurance) =
         ArgumentNullException.ThrowIfNull(assurance)
         SqlPlanValidationContext(policyVersion, allowedTables, assurance, schemaSnapshot,
-                                 sqliteUpdateFromKeyAssurance)
+                                 sqliteUpdateFromKeyAssurance, sqlServerCteUniqueKeyAssurance)
 
     member _.WithSchemaSnapshot(snapshot: SqlSchemaSnapshot) =
         ArgumentNullException.ThrowIfNull(snapshot)
         SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance, snapshot,
-                                 sqliteUpdateFromKeyAssurance)
+                                 sqliteUpdateFromKeyAssurance, sqlServerCteUniqueKeyAssurance)
 
     member _.WithSqliteUpdateFromKeyAssurance(assurance: SqliteUpdateFromKeyAssurance) =
         ArgumentNullException.ThrowIfNull(assurance)
         if isNull schemaSnapshot then
             invalidOp "SQLite live PK assurance requires a schema snapshot first."
         SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance,
-                                 schemaSnapshot, assurance)
+                                 schemaSnapshot, assurance, sqlServerCteUniqueKeyAssurance)
+
+    member _.WithSqlServerCteUniqueKeyAssurance(assurance: SqlServerCteUniqueKeyAssurance) =
+        ArgumentNullException.ThrowIfNull(assurance)
+        match schemaSnapshot with
+        | null -> ()
+        | snapshot when snapshot.Provider <> SqlAgentToolType.MsSqlServer
+                        || not (StringComparer.Ordinal.Equals(snapshot.Sha256, assurance.SchemaSha256)) ->
+            invalidArg "assurance" "SQL Server CTE live proof must match the declared schema snapshot."
+        | _ -> ()
+        SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance,
+                                 schemaSnapshot, sqliteUpdateFromKeyAssurance, assurance)
 
 [<Sealed>]
 type SqlExecutionPlanPolicy(queryMaxRows: int) =
