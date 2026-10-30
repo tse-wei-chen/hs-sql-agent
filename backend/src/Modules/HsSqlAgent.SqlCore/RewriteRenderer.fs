@@ -461,19 +461,24 @@ module internal RewriteRenderer =
                     capabilityError ctx.Provider "numeric.exact_literal"
                     + " Exact value exceeds the Oracle NUMBER precision/scale envelope."))
         | Firebird, ScalarValue.ExactNumeric number ->
-            // Only the target capability stage can attest INT128 for
-            // NUMERIC precision >18 (Firebird 4+). No DECFLOAT fallback:
-            // its 34 significant digits could silently round the value.
-            // Bound fixed-point text is passed to the server without CLR
-            // decimal/double conversion or SQL text interpolation.
-            match ExactNumeric.tryBoundedDecimal 38 38 number with
-            | Some(text, precision, scale) ->
-                "CAST(" + ctx.Bind(box text) + " AS NUMERIC("
-                + string precision + "," + string scale + "))"
-            | None ->
+            // The real Firebird ADO.NET provider converts string-valued
+            // NUMERIC parameters through CLR Decimal, which can round or
+            // overflow even when the server supports INT128. Bind a typed
+            // BigInteger directly to an explicit INT128 input instead.
+            // Fractional values remain unsupported until a verified
+            // scaled-INT128 parameter representation is available.
+            match ExactNumeric.tryBoundedDecimal 38 0 number with
+            | Some(text, precision, 0) ->
+                let exactInteger =
+                    System.Numerics.BigInteger.Parse(
+                        text, Globalization.NumberStyles.AllowLeadingSign,
+                        Globalization.CultureInfo.InvariantCulture)
+                "CAST(CAST(" + ctx.Bind(box exactInteger) + " AS INT128) AS NUMERIC("
+                + string precision + ",0))"
+            | _ ->
                 raise (SqlCompilationException(
                     capabilityError ctx.Provider "numeric.exact_literal"
-                    + " Exact value exceeds the Firebird NUMERIC(38,38) envelope."))
+                    + " Firebird INT128 bindings require exact scale-0 integers, <=38 digits."))
         | (MySql | SqlServer), ScalarValue.ExactNumeric number ->
             // A derived DECIMAL(p,s) must fit *every* nonzero digit, including
             // fractional-leading zeroes and exponent shifts. A plain-decimal
