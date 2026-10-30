@@ -394,6 +394,14 @@ module internal RewriteCompatibilityAstAdapter =
 
         and joinOf join =
             match join with
+            | Join.ApplyJoin(kind, source) ->
+                HsSqlAgent.SqlCore.Core.Ast.JoinSource(
+                    (match kind with
+                     | ApplyKind.CrossApply -> "CROSS APPLY"
+                     | ApplyKind.OuterApply -> "OUTER APPLY"),
+                    tableSourceOf source,
+                    Unchecked.defaultof<_>,
+                    unknown)
             | Join.CrossJoin source ->
                 HsSqlAgent.SqlCore.Core.Ast.JoinSource(
                     "CROSS",

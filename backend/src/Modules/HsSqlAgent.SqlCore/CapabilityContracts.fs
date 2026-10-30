@@ -927,6 +927,40 @@ module internal SqlFetchWithTiesCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider targetProfile "target"
 
+/// APPLY is a dedicated Join case, not a rewritten ON TRUE JOIN.
+module internal SqlApplyJoinCapabilityRules =
+    let OracleMinimumVersion = Version(12,1)
+
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+        match provider with
+        | SqlAgentToolType.MsSqlServer ->
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when p.ServerVersion.CompareTo(Version(9,0)) < 0 ->
+                "SQL capability 'select.apply_join' requires SQL Server " + side
+                + " ServerVersion 9.0+; declared version is " + string p.ServerVersion + "."
+            | _ -> null
+        | SqlAgentToolType.Oracle ->
+            match profile with
+            | null -> "SQL capability 'select.apply_join' requires explicit Oracle " + side + " ServerVersion 12.1+."
+            | p when isNull p.ServerVersion ->
+                "SQL capability 'select.apply_join' requires explicit Oracle " + side + " ServerVersion 12.1+."
+            | p when p.ServerVersion.CompareTo(OracleMinimumVersion) < 0 ->
+                "SQL capability 'select.apply_join' requires Oracle " + side
+                + " ServerVersion 12.1+; declared version is " + string p.ServerVersion + "."
+            | _ -> null
+        | _ -> "SQL capability 'select.apply_join' is not supported by " + side
+               + " provider " + string provider + "; provider-specific APPLY syntax remains fail-closed."
+
+    let SourceValidationError(provider, profile) = validationError provider profile "source"
+    let TargetValidationError(provider, profile) = validationError provider profile "target"
+
+    let TargetSyntaxValidationError provider =
+        match provider with
+        | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Oracle -> null
+        | _ -> "SQL capability 'select.apply_join' is not supported by target provider " + string provider + "."
+
 module internal SqlLateralDerivedTableCapabilityRules =
     let PostgresMinimumVersion = Version(9,3)
     let MySqlMinimumVersion = Version(8,0,14)

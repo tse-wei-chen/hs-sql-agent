@@ -412,6 +412,20 @@ CTEs, MySQL multi-table DELETE / DELETE USING, RETURNING and cross-provider
 WITH DELETE lowering remain unproven and denied. Real MySQL 8 tests compare
 native and compiled affected rows and unchanged records.
 
+## Native CROSS APPLY / OUTER APPLY (SQL Server + Oracle)
+
+`ApplyJoin(CrossApply | OuterApply, DerivedTable)` is a distinct closed F#
+Join case. The shared parser, heap scheduler and scope-aware Binder
+allow the derived SELECT to reference preceding FROM sources. Native
+CROSS APPLY removes unmatched source rows; OUTER APPLY preserves each
+unmatched left row with NULLs in the derived columns. SQL Server 2005+
+and Oracle 12.1+ are supported natively. Oracle requires independent,
+explicit source and target ServerVersion >= 12.1. Unsupported source
+dialects, cross-provider transformations, APPLY with ON/USING, explicitly
+LATERAL right operands, TVF and collection sources remain fail-closed.
+Native-vs-compiled SQL Server 2022 and Oracle 26ai tests compare all
+result rows and unmatched NULLs using parameterized generated queries.
+
 ## Oracle 12.1+ LATERAL inline-view query sources
 
 Oracle Database 12c+ native LATERAL inline views reuse the closed F#

@@ -170,6 +170,7 @@ module internal CoreModel =
         | And | Or
 
     type JoinKind = Inner | Left | Right | Full | Cross
+    type ApplyKind = CrossApply | OuterApply
     type OnJoinKind = Inner | Left | Right | Full
     type NullOrdering = Default | NullsFirst | NullsLast
     type SetOperator = Union | UnionAll | Intersect | IntersectAll | Except | ExceptAll
@@ -517,15 +518,18 @@ module internal CoreModel =
 
     and Join =
         | CrossJoin of TableSource
+        | ApplyJoin of ApplyKind * TableSource
         | NaturalJoin of OnJoinKind * TableSource
         | OnJoin of OnJoinKind * TableSource * Expr
         | UsingJoin of OnJoinKind * TableSource * NonEmpty<IdentifierPart>
         member this.Kind =
             match this with
-            | CrossJoin _ -> JoinKind.Cross
+            | CrossJoin _
+            | ApplyJoin(ApplyKind.CrossApply, _) -> JoinKind.Cross
             | NaturalJoin(OnJoinKind.Inner, _)
             | OnJoin(OnJoinKind.Inner, _, _)
             | UsingJoin(OnJoinKind.Inner, _, _) -> JoinKind.Inner
+            | ApplyJoin(ApplyKind.OuterApply, _)
             | NaturalJoin(OnJoinKind.Left, _)
             | OnJoin(OnJoinKind.Left, _, _)
             | UsingJoin(OnJoinKind.Left, _, _) -> JoinKind.Left
@@ -538,18 +542,21 @@ module internal CoreModel =
         member this.Source =
             match this with
             | CrossJoin source
+            | ApplyJoin(_, source)
             | NaturalJoin(_, source)
             | OnJoin(_, source, _)
             | UsingJoin(_, source, _) -> source
         member this.Predicate =
             match this with
             | CrossJoin _
+            | ApplyJoin _
             | NaturalJoin _
             | UsingJoin _ -> None
             | OnJoin(_, _, predicate) -> Some predicate
         member this.UsingColumns =
             match this with
             | UsingJoin(_, _, columns) -> Some(NonEmpty.toList columns)
+            | ApplyJoin _
             | CrossJoin _
             | NaturalJoin _
             | OnJoin _ -> None

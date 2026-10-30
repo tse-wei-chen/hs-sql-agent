@@ -276,6 +276,7 @@ module internal RewriteAstTraversal =
                         push (ExprNode predicate)
                         push (SourceNode source)
                     | CrossJoin source
+                    | ApplyJoin(_, source)
                     | NaturalJoin(_, source)
                     | UsingJoin(_, source, _) -> push (SourceNode source)
                 select.Having |> Option.iter (fun value -> push (ExprNode value))
@@ -798,8 +799,8 @@ module internal RewriteAstTraversal =
                 | OnJoin(_, source, predicate) ->
                     pushExpr predicate
                     pushSource source
-                | CrossJoin source | NaturalJoin(_, source)
-                | UsingJoin(_, source, _) -> pushSource source
+                | CrossJoin source | ApplyJoin(_, source)
+                | NaturalJoin(_, source) | UsingJoin(_, source, _) -> pushSource source
             | ExitGraphJoin join ->
                 let mapped =
                     match join with
@@ -807,6 +808,7 @@ module internal RewriteAstTraversal =
                         let predicate = popExpr ()
                         OnJoin(kind, popSource (), predicate)
                     | CrossJoin _ -> CrossJoin(popSource ())
+                    | ApplyJoin(kind, _) -> ApplyJoin(kind, popSource ())
                     | NaturalJoin(kind, _) -> NaturalJoin(kind, popSource ())
                     | UsingJoin(kind, _, columns) -> UsingJoin(kind, popSource (), columns)
                 joins.Add mapped
