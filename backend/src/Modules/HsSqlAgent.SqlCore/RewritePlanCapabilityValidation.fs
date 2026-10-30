@@ -736,12 +736,26 @@ module internal RewritePlanCapabilityValidation =
         match insert.Input with
         | DefaultValues ->
             raise (SqlCompilationException("Unsupported INSERT source for conflict handling."))
-        | QuerySource _ ->
+        | QuerySource query ->
             match targetRuntime with
             | PostgreSqlRuntime -> ()
+            | SQLiteRuntime when proofs.SourceProvider = SqlAgentToolType.Sqlite ->
+                // SourceVersion (>=3.24) and target capability proofs are
+                // validated separately. SQLite's ON after a SELECT FROM is
+                // ambiguous unless the SELECT has an explicit WHERE; never
+                // infer that predicate, and never borrow PostgreSQL's
+                // DO UPDATE cardinality assurance for this provider.
+                match conflict.Action with
+                | DoNothing when query.Head.From.IsNone || query.Head.Where.IsSome -> ()
+                | DoNothing ->
+                    raise (SqlCompilationException(
+                        "SQLite INSERT SELECT with ON CONFLICT requires a SELECT WHERE whenever FROM is present."))
+                | UpdateProposedValues _ ->
+                    raise (SqlCompilationException(
+                        "SQLite INSERT SELECT ON CONFLICT DO UPDATE has no proven source-row cardinality lowering and remains fail-closed."))
             | _ ->
                 raise (SqlCompilationException(
-                    "INSERT ... SELECT conflict handling is currently proven only for PostgreSQL targets; other targets remain fail-closed."))
+                    "INSERT ... SELECT conflict handling is proven only for PostgreSQL targets and native SQLite DO NOTHING; other targets remain fail-closed."))
         | Values _ -> ()
 
         validateConflictTargetColumns insert conflict

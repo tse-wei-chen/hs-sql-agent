@@ -123,6 +123,24 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
         Assert.NotEmpty(parsed.Diagnostics);
     }
 
+    [Fact]
+    public void SqliteCteInsertSelectConflictUpdateRemainsDeniedEvenWithSourceUniquenessAssurance()
+    {
+        const string sql =
+            "WITH input_rows AS (SELECT 7 AS id) " +
+            "INSERT INTO users(id) SELECT id FROM input_rows WHERE id > 0 " +
+            "ON CONFLICT(id) DO UPDATE SET id = EXCLUDED.id";
+        var profile = SqliteProfile();
+        var explicitAssurance = new DmlConflictTargetAssurance(ImmutableArray<string>.Empty)
+            .WithSourceRowsUniqueByInsertColumns(new[] { "id" });
+        var error = Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
+            sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
+            new SqlPlanValidationContext("sqlite-cte-do-update-denied",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }),
+            new DmlCompilationPolicy(), profile, profile, explicitAssurance));
+        Assert.Contains("SQLite INSERT SELECT", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static SqlProviderCapabilityProfile SqliteProfile() =>
         new(SqlAgentToolType.Sqlite, new Version(3, 35));
 
