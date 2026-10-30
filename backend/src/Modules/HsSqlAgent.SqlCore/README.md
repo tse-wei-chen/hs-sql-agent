@@ -2933,3 +2933,35 @@ CTE scans of physical tables; accepting those for execution requires an
 independent metadata-backed live schema / freshness assurance at the
 execution boundary. The six-dialect existing source and target capability
 contracts remain unchanged.
+
+
+## SQL Server live unfiltered INT unique-key assurance (metadata foundation)
+
+`SqlServerCteUniqueKeyAssurance.VerifyLive(DbConnection, SqlSchemaSnapshot,
+targetTable, sourceTable, sourceKeyColumn)` is a provider-driver-free public
+contract. It only mints evidence from an *open actual SQL Server connection*,
+using parameterized `sys.tables`, `sys.columns`, `sys.indexes` and
+`sys.index_columns` reads. The source requires an enabled, unfiltered,
+non-hypothetical, non-computed, nonnullable single-column `INT`
+primary/UNIQUE index (clustered or nonclustered). Both physical
+`schema.table` identities and typed source key must be present in the
+immutable SQL Server snapshot. The proof binds the database and object IDs,
+physical index, exact schema snapshot SHA256 and a deterministic digest
+of both tables' column/index metadata. Inputs are restricted to simple
+ASCII schema/table/key identifiers in this initial attestation contract.
+
+`IsCurrent(DbConnection, DbTransaction)` must run on the **actual DML
+transaction and connection**, not a detached connection. It acquires SQL
+Server `TABLOCK, HOLDLOCK` on both physical tables, preventing DDL's
+Sch-M lock while the write transaction is in progress, then re-reads
+physical metadata and rejects any mismatch, dropped uniqueness,
+removed index, renamed/replaced table or wrong transaction. This can
+block concurrent DML and is intended only for explicit strict mode.
+
+**This foundation does not authorize CTE joined mutations by itself.**
+`CompileDml` intentionally retains its current conservative singleton
+CTE restriction. A follow-up must bind the live proof to typed CTE key
+lineage, compile evidence and mandatory commit-time `IsCurrent` checking
+before physical-table CTE joined UPDATE/DELETE can be enabled in runtime
+hosts. A caller-supplied Virtual Catalog, snapshot digest or
+unverified unique index name is never a live execution guarantee.
