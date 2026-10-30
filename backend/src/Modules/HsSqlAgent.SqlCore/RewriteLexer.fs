@@ -12,6 +12,7 @@ module internal RewriteLexer =
         | StringLiteral of string
         | IntegerLiteral of int64
         | DecimalLiteral of decimal
+        | ExactNumericLiteral of string
         | Keyword of string
         | Symbol of char
         | Operator of string
@@ -46,7 +47,8 @@ module internal RewriteLexer =
           OracleQuotedString: bool
           HashPrefixedIdentifier: bool
           ScriptMySqlAccountSeparator: bool
-          ScriptDeferUnclosedGrouping: bool }
+          ScriptDeferUnclosedGrouping: bool
+          PostgresExactNumeric: bool }
 
     module LexicalSemantics =
         let standard =
@@ -61,7 +63,8 @@ module internal RewriteLexer =
               OracleQuotedString = false
               HashPrefixedIdentifier = false
               ScriptMySqlAccountSeparator = false
-              ScriptDeferUnclosedGrouping = false }
+              ScriptDeferUnclosedGrouping = false
+              PostgresExactNumeric = false }
 
         let mysql ansiQuotes noBackslashEscapes =
             { standard with
@@ -289,6 +292,24 @@ module internal RewriteLexer =
                 digits.ToString(first, last - first),
                 power - fractionalDigits + int64 (digits.Length - last)
 
+        // First provider-specific exact numeric proof: PostgreSQL NUMERIC.
+        // The tuple is a normalized coefficient and power-of-ten, so neither
+        // a long source exponent nor leading/trailing zeros can escape the
+        // deliberately conservative 1000-digit/scale acceptance envelope.
+        // Other source dialects retain their existing fail-closed semantics.
+        let tryExactNumeric (text: string) start finish =
+            if not semantics.PostgresExactNumeric || text.Length > 4096 then false
+            else
+                let coefficient, exponent = normalizedNumeric text
+                let significant = int64 coefficient.Length
+                let integerDigits = max 0L (significant + exponent)
+                let fractionDigits = max 0L (-exponent)
+                let totalDigits = integerDigits + fractionDigits
+                if totalDigits > 1000L then false
+                else
+                    add (ExactNumericLiteral text) start finish
+                    true
+
         // SQL numeric magnitudes are bounded by the canonical DecimalLiteral
         // model. Never leak CLR overflow or silently round/underflow
         // representable SQL syntax into a DIFFERENT numeric value.
@@ -298,21 +319,24 @@ module internal RewriteLexer =
             RewriteResourceBudget.charge (int64 text.Length)
             match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
             | true, value ->
-                // G29 round-trips the entire CLR Decimal value with invariant
-                // formatting; canonical comparison removes only insignificant
-                // decimal zeroes, preserving arbitrary source exponent form.
+                // G29 round-trips the CLR Decimal value. If the actual SQL
+                // numeric differs, never accept the rounded/underflowed value.
+                // PostgreSQL alone may instead create an opaque exact token.
                 let rendered = value.ToString("G29", CultureInfo.InvariantCulture)
                 if normalizedNumeric text <> normalizedNumeric rendered then
-                    lexicalError
-                        "SQL_LEXICAL_NUMERIC_PRECISION_LOSS"
-                        "Numeric literal cannot be represented exactly by the supported Decimal model."
-                        start (finish - start)
-                add (DecimalLiteral value) start finish
+                    if not (tryExactNumeric text start finish) then
+                        lexicalError
+                            "SQL_LEXICAL_NUMERIC_PRECISION_LOSS"
+                            "Numeric literal cannot be represented exactly by the supported Decimal model."
+                            start (finish - start)
+                else
+                    add (DecimalLiteral value) start finish
             | false, _ ->
-                lexicalError
-                    "SQL_LEXICAL_NUMERIC_OUT_OF_RANGE"
-                    "Numeric literal is outside the supported Decimal range."
-                    start (finish - start)
+                if not (tryExactNumeric text start finish) then
+                    lexicalError
+                        "SQL_LEXICAL_NUMERIC_OUT_OF_RANGE"
+                        "Numeric literal is outside the supported Decimal range."
+                        start (finish - start)
 
         let rejectBackslashIfAmbiguous kind start current =
             match semantics.Backslash with
