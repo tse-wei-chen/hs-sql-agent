@@ -147,10 +147,10 @@ public sealed class SqlCoreSqliteLiveKeyAssuredUpdateFromTests
     }
 
     [Theory]
-    [InlineData("WITH checked AS (SELECT 1) UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.payload")]
-    [InlineData("WITH checked AS (SELECT 1) UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.id OR dest.id = 1")]
-    [InlineData("WITH checked AS (SELECT 1) UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.id")]
-    [InlineData("WITH checked AS (SELECT 1) UPDATE dest SET label = b.payload FROM bag b WHERE dest.id = b.id")]
+    [InlineData("WITH checked AS (SELECT 1 AS marker) UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.payload")]
+    [InlineData("WITH checked AS (SELECT 1 AS marker) UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.id OR dest.id = 1")]
+    [InlineData("WITH checked AS (SELECT 1 AS marker) UPDATE dest SET label = s.payload FROM lookup s WHERE dest.id = s.id")]
+    [InlineData("WITH checked AS (SELECT 1 AS marker) UPDATE dest SET label = b.payload FROM bag b WHERE dest.id = b.id")]
     public void WrongSourceOrUnprovenWhereConditionCannotBorrowKeyEvidence(string sql)
     {
         using var db = Open();
