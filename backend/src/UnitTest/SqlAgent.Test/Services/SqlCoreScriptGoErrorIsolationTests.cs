@@ -98,4 +98,56 @@ public sealed class SqlCoreScriptGoErrorIsolationTests
             "SELECT (1", new SqlScriptParseOptions(
                 SqlAgentToolType.Postgres, TestContext.Current.CancellationToken)));
     }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void StandaloneGoRecoversFromUnexpectedClosingParen(string newline)
+    {
+        var sql = string.Join(newline, "SELECT 1)", "GO", "SELECT 2");
+        var parsed = SqlCoreFacade.ParseScript(sql, new SqlScriptParseOptions(
+            SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken));
+
+        Assert.Equal(2, parsed.BatchCount);
+        Assert.Equal(2, parsed.Statements.Count);
+        Assert.Equal(new[] { 0, 1 }, parsed.Statements.Select(s => s.BatchIndex));
+        Assert.Equal(SqlScriptParseStatus.Invalid, parsed.Statements[0].Status);
+        Assert.Equal(SqlScriptParseStatus.Parsed, parsed.Statements[1].Status);
+        Assert.Equal("SELECT 1)", parsed.Statements[0].Text);
+        Assert.Equal("SELECT 2", parsed.Statements[1].Text);
+        Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS",
+            Assert.Single(parsed.Diagnostics).Code);
+
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, new SqlScriptAnalysisOptions(
+            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(),
+            TestContext.Current.CancellationToken));
+        Assert.Equal(2, analyzed.Statements.Count);
+        Assert.Equal(SqlScriptParseStatus.Invalid, analyzed.Statements[0].Syntax.Status);
+        Assert.Equal(SqlScriptParseStatus.Parsed, analyzed.Statements[1].Syntax.Status);
+    }
+
+    [Theory]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    [InlineData("\r\n")]
+    public void StandaloneGoIsolatesOpaqueProcedureWithUnexpectedClosingParen(string newline)
+    {
+        var sql = string.Join(newline,
+            "CREATE PROCEDURE p AS BEGIN SELECT 1);",
+            "GO",
+            "SELECT 2");
+        var parsed = SqlCoreFacade.ParseScript(sql, new SqlScriptParseOptions(
+            SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken));
+
+        Assert.Equal(2, parsed.BatchCount);
+        Assert.Equal(2, parsed.Statements.Count);
+        Assert.Equal(new[] { 0, 1 }, parsed.Statements.Select(s => s.BatchIndex));
+        Assert.Equal(SqlScriptStatementKind.Procedural, parsed.Statements[0].Kind);
+        Assert.Equal(SqlScriptParseStatus.Unsupported, parsed.Statements[0].Status);
+        Assert.Equal(SqlScriptStatementKind.Query, parsed.Statements[1].Kind);
+        Assert.Equal(SqlScriptParseStatus.Parsed, parsed.Statements[1].Status);
+        Assert.Single(parsed.Diagnostics);
+        Assert.Equal("SELECT 2", parsed.Statements[1].Text);
+    }
 }
