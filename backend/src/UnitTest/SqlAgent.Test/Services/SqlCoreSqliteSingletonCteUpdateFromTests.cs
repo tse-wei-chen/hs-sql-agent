@@ -105,6 +105,24 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
         Assert.NotEmpty(attempt.TypedDiagnostics);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Postgres)]
+    public void ExplicitCteColumnNamesSurviveSharedQueryRenderer(SqlAgentToolType provider)
+    {
+        const string sql = "WITH picked(id,label) AS (SELECT 2, 'changed') " +
+                           "SELECT label FROM picked";
+        var result = SqlCoreFacade.CompileQuery(sql, provider, provider,
+            new SqlPlanValidationContext("cte-column-render-regression"),
+            new SqlExecutionPlanPolicy(0));
+        var firstAs = result.Sql.IndexOf(" AS (", StringComparison.OrdinalIgnoreCase);
+        Assert.True(firstAs > 0, result.Sql);
+        var cteHeader = result.Sql[..firstAs];
+        Assert.Contains('(', cteHeader);
+        Assert.Contains("id", cteHeader, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("label", cteHeader, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static SqlProviderCapabilityProfile SqliteProfile() =>
         new(SqlAgentToolType.Sqlite, new Version(3, 35));
 
