@@ -104,52 +104,24 @@ internal static class SqlServerCteLiveProofDiscovery
         };
 
         if (target is null || target.Alias is not null
-            || ctes.Length != 1 || sources.Length != 1
+            || ctes.IsDefaultOrEmpty || ctes.Length > 3
+            || sources.Length != 1
             || !TryPhysicalTable(target.Name, out var targetTable)
-            || !TrySingleName(ctes[0].Name, out var cteName)
-            || ctes[0].RecursiveScope
             || sources[0] is not NamedTableSource cteReference
             || !TrySingleName(cteReference.Name, out var referencedName)
+            || !TryBuildDirectKeyChain(
+                ctes, out var cteName, out var outputName,
+                out var sourceTable, out var sourceKey)
             || !Same(cteName, referencedName)
-            || ctes[0].Query is not SelectStatement selection
-            || selection.From is not NamedTableSource physicalSource
-            || !TryPhysicalTable(physicalSource.Name, out var sourceTable)
-            || Same(targetTable, sourceTable)
-            || selection.Ctes.Length != 0
-            || selection.Joins.Length != 0
-            || selection.Distinct || selection.DistinctOn.Length != 0
-            || selection.Select.Length != 1 || selection.GroupBy.Length != 0
-            || selection.Having is not null || selection.OrderBy.Length != 0
-            || selection.Limit.HasValue || selection.Offset.HasValue
-            || selection.FetchPercent.HasValue || selection.FetchWithTies)
-        {
-            return false;
-        }
-
-        var projection = selection.Select[0];
-        if (projection.Expression is not ColumnExpr sourceField
-            || !TryPhysicalKey(sourceField.Name, physicalSource, out var sourceKey))
-            return false;
-
-        string outputName;
-        if (ctes[0].ColumnAliases.IsDefaultOrEmpty)
-        {
-            outputName = projection.Alias?.Value ?? sourceKey;
-        }
-        else if (ctes[0].ColumnAliases.Length == 1
-                 && TrySingleName(ctes[0].ColumnAliases[0], out var alias))
-        {
-            outputName = alias;
-        }
-        else
+            || Same(targetTable, sourceTable))
         {
             return false;
         }
 
         var cteQualifier = cteReference.Alias?.Value ?? cteName;
-        // A mandatory equality is an ordinary '=' reached only through AND.
-        // No OR, NOT, coercion or arbitrary expression can count as a
-        // uniqueness condition. Bound the work even for deep hostile SQL.
+        // The only accepted source-to-target match is a mandatory direct
+        // ordinary '=' predicate reachable through AND. Arbitrary derived
+        // columns, OR or CAST are not sources of unique INT evidence.
         var pending = new Stack<SqlExpr>();
         if (predicate is not null) pending.Push(predicate);
         string? matchedTargetKey = null;
@@ -179,6 +151,86 @@ internal static class SqlServerCteLiveProofDiscovery
         candidate = new Candidate(targetTable, matchedTargetKey, sourceTable, sourceKey);
         return true;
     }
+
+    /// <summary>
+    /// Derive exactly one INT-key lineage through up to three lexically ordered
+    /// CTEs. A later CTE must read the *immediately preceding* CTE; no side
+    /// branches, recursive references, duplicate scope or cardinality-
+    /// multiplying features may acquire physical source key evidence.
+    /// </summary>
+    private static bool TryBuildDirectKeyChain(
+        ImmutableArray<CteDefinition> ctes,
+        out string finalCte, out string finalKey,
+        out string physicalTable, out string physicalKey)
+    {
+        finalCte = "";
+        finalKey = "";
+        physicalTable = "";
+        physicalKey = "";
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < ctes.Length; i++)
+        {
+            var cte = ctes[i];
+            if (!TrySingleName(cte.Name, out var cteName)
+                || !seen.Add(cteName)
+                || cte.RecursiveScope
+                || cte.Query is not SelectStatement select
+                || select.Ctes.Length != 0 || select.Joins.Length != 0
+                || select.Distinct || select.DistinctOn.Length != 0
+                || select.Select.Length != 1 || select.GroupBy.Length != 0
+                || select.Having is not null || select.OrderBy.Length != 0
+                || select.Limit.HasValue || select.Offset.HasValue
+                || select.FetchPercent.HasValue || select.FetchWithTies
+                || select.Select[0].Expression is not ColumnExpr keyColumn
+                || select.From is not NamedTableSource input)
+                return false;
+
+            string inputKey;
+            if (i == 0)
+            {
+                if (!TryPhysicalTable(input.Name, out physicalTable)
+                    || !TryPhysicalKey(keyColumn.Name, input, out physicalKey))
+                    return false;
+                inputKey = physicalKey;
+            }
+            else
+            {
+                if (!TrySingleName(input.Name, out var namedCte)
+                    || !Same(namedCte, finalCte))
+                    return false;
+                var qualifier = input.Alias?.Value ?? finalCte;
+                if (!TrySelectedKey(keyColumn.Name, finalKey, qualifier))
+                    return false;
+                inputKey = finalKey;
+            }
+
+            string outputKey;
+            if (cte.ColumnAliases.IsDefaultOrEmpty)
+                outputKey = select.Select[0].Alias?.Value ?? inputKey;
+            else if (cte.ColumnAliases.Length == 1
+                     && TrySingleName(cte.ColumnAliases[0], out var columnAlias))
+                outputKey = columnAlias;
+            else
+                return false;
+
+            if (!SafeName(outputKey))
+                return false;
+            finalCte = cteName;
+            finalKey = outputKey;
+        }
+        return !string.IsNullOrEmpty(physicalTable)
+            && !string.IsNullOrEmpty(physicalKey);
+    }
+
+    private static bool TrySelectedKey(
+        SqlIdentifier identifier, string expectedKey, string qualifier) =>
+        identifier.Parts.Length switch
+        {
+            1 => Same(identifier.Parts[0].Value, expectedKey),
+            2 => Same(identifier.Parts[0].Value, qualifier)
+                 && Same(identifier.Parts[1].Value, expectedKey),
+            _ => false
+        };
 
     private static ImmutableArray<TableSource> GetSources(
         ImmutableArray<TableSource> primary,

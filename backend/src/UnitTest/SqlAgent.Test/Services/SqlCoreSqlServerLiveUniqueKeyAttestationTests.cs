@@ -776,6 +776,211 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
         }
     }
 
+
+    [Theory]
+    [InlineData(true, false, 2)]
+    [InlineData(false, false, 2)]
+    [InlineData(true, true, 2)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, false, 3)]
+    [InlineData(false, false, 3)]
+    [InlineData(true, true, 3)]
+    [InlineData(false, true, 3)]
+    public async Task MultiCteDirectIntKeyLineage_AutoProofAndApprovedLiveMutation(
+        bool update, bool cteColumnAliases, int depth)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server chained key-lineage parity requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("SQL Server required.");
+        }
+
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "chain_" + suffix + "_s";
+        var target = "chain_" + suffix + "_t";
+        await using var db = new SqlConnection(cs);
+        await db.OpenAsync(ct);
+        async Task Exec(string sql)
+        {
+            await using var command = new SqlCommand(sql, db);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));"
+                + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));"
+                + "INSERT INTO dbo.[" + target + "] (id, label) VALUES (1, 'old'), (2, 'untouched');"
+                + "INSERT INTO dbo.[" + source + "] (id, label) VALUES (1, 'one');");
+
+            var root = cteColumnAliases
+                ? "picked(root_id) AS (SELECT id FROM dbo.[" + source + "])"
+                : "picked AS (SELECT id AS root_id FROM dbo.[" + source + "])";
+            var middle = cteColumnAliases
+                ? "forwarded(lookup_id) AS (SELECT root_id FROM picked)"
+                : "forwarded AS (SELECT root_id AS lookup_id FROM picked)";
+            var tail = cteColumnAliases
+                ? "finished(final_id) AS (SELECT lookup_id FROM forwarded)"
+                : "finished AS (SELECT lookup_id AS final_id FROM forwarded)";
+            var cteName = depth == 2 ? "forwarded" : "finished";
+            var finalKey = depth == 2 ? "lookup_id" : "final_id";
+            var withCte = "WITH " + root + ", " + middle
+                + (depth == 3 ? ", " + tail : "") + " ";
+            var sql = withCte + (update
+                ? "UPDATE dbo.[" + target + "] SET label = 'changed' FROM " + cteName
+                  + " WHERE dbo." + target + ".id = " + cteName + "." + finalKey
+                : "DELETE FROM dbo.[" + target + "] FROM " + cteName
+                  + " WHERE dbo." + target + ".id = " + cteName + "." + finalKey);
+            var profile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            var parsed = CoreSqlTextParser.ParseDml(
+                sql, SqlAgentToolType.MsSqlServer, profile);
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "dbo." + target, "dbo." + source };
+            var policy = "sqlserver-chained-cte-v1";
+            // No live source/target proof: the closed F# compiler must
+            // reject the same complete chain under an identical profile.
+            Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileDml(
+                    parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed),
+                    new DmlCompilationPolicy(), profile, null));
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("metadata-test",
+                    It.IsAny<CancellationToken>())).ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("metadata-test", "dbo",
+                    It.IsAny<CancellationToken>())).ReturnsAsync([target]);
+            metadata.Setup(x => x.GetColumnsAsync("metadata-test", "dbo", target,
+                    It.IsAny<CancellationToken>())).ReturnsAsync([
+                    new DatabaseColumnMetadata("dbo", target, "id", "int", true, 1),
+                    new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
+                ]);
+
+            // RED: no fake caller proof; the Host must derive the full
+            // renamed key chain before minting live uniqueness evidence.
+            var plan = await new DmlPlanFactory(metadata.Object)
+                .CreateWithMetadataConnectionAsync(
+                    db, "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 5, cancellationToken: ct,
+                    targetProfile: profile);
+            var proof = Assert.IsType<SqlServerCteUniqueKeyAssurance>(
+                plan.SqlServerCteUniqueKeyAssurance);
+            Assert.Equal("dbo." + source, proof.SourceTable);
+            Assert.Equal("dbo." + target, proof.TargetTable);
+            Assert.Equal("id", proof.SourceKeyColumn);
+            Assert.Equal("id", proof.TargetKeyColumn);
+            Assert.StartsWith("WITH ", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith("WITH ", plan.MatchQueryCommand!.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(cteName, plan.MatchQueryCommand.Sql, StringComparison.OrdinalIgnoreCase);
+            DmlCoordinator.ValidatePlan(plan);
+
+            var coordinator = new DmlCoordinator(new LiveSqlServerConnectionFactory());
+            var version = db.ServerVersion.Trim();
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, "sqlserver-chained-cte", ct, version);
+            Assert.Equal(1, preview.AffectedRows);
+            var result = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, "sqlserver-chained-cte", ct, version);
+            Assert.True(result.Committed);
+            await using var read = new SqlCommand(
+                "SELECT id, label FROM dbo.[" + target + "] ORDER BY id", db);
+            await using var rows = await read.ExecuteReaderAsync(ct);
+            if (update)
+            {
+                Assert.True(await rows.ReadAsync(ct));
+                Assert.Equal(1, rows.GetInt32(0));
+                Assert.Equal("changed", rows.GetString(1));
+            }
+            Assert.True(await rows.ReadAsync(ct));
+            Assert.Equal(2, rows.GetInt32(0));
+            Assert.Equal("untouched", rows.GetString(1));
+            Assert.False(await rows.ReadAsync(ct));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "];"
+                + "DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
+
+    [Theory]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id+1 AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = forwarded.key_id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked UNION ALL SELECT id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = forwarded.key_id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT a.id AS key_id FROM picked a JOIN picked b ON a.id = b.id) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = forwarded.key_id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = forwarded.key_id OR {target}.id = 1")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = CAST(forwarded.key_id AS INT)")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM picked WHERE {target}.id = forwarded.key_id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), hop2 AS (SELECT id FROM picked), hop3 AS (SELECT id FROM hop2), hop4 AS (SELECT id FROM hop3) UPDATE {target} SET label = 'x' FROM hop4 WHERE {target}.id = hop4.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), discarded AS (SELECT id FROM picked WHERE id > 0), hop3 AS (SELECT id FROM picked) UPDATE {target} SET label = 'x' FROM hop3 WHERE {target}.id = hop3.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), picked AS (SELECT id FROM picked) UPDATE {target} SET label = 'x' FROM picked WHERE {target}.id = picked.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = picked.id")]
+    public async Task ChainedCteUnsafeLineageCannotMintLiveWriteAuthority(string template)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server chained negative cases require TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "chnneg_" + suffix + "_s";
+        var target = "chnneg_" + suffix + "_t";
+        await using var db = new SqlConnection(cs);
+        await db.OpenAsync(ct);
+        try
+        {
+            await using (var setup = new SqlCommand(
+                "CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));"
+                + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));", db))
+                await setup.ExecuteNonQueryAsync(ct);
+            var sql = template.Replace("{source}", "dbo.[" + source + "]")
+                .Replace("{target}", "dbo.[" + target + "]");
+            var profile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("metadata-test",
+                    It.IsAny<CancellationToken>())).ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("metadata-test", "dbo",
+                    It.IsAny<CancellationToken>())).ReturnsAsync([target]);
+            metadata.Setup(x => x.GetColumnsAsync("metadata-test", "dbo", target,
+                    It.IsAny<CancellationToken>())).ReturnsAsync([
+                    new DatabaseColumnMetadata("dbo", target, "id", "int", true, 1),
+                    new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
+                ]);
+            var error = await Record.ExceptionAsync(async () =>
+            {
+                var parsed = CoreSqlTextParser.ParseDml(
+                    sql, SqlAgentToolType.MsSqlServer, profile);
+                await new DmlPlanFactory(metadata.Object)
+                    .CreateWithMetadataConnectionAsync(
+                        db, "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
+                        new SqlPlanValidationContext("sqlserver-chained-negative",
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                                { "dbo." + target, "dbo." + source }),
+                        new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                        maxAffectedRows: 5, cancellationToken: ct,
+                        targetProfile: profile);
+            });
+            Assert.NotNull(error);
+            Assert.True(error is SqlCompilationException or SqlParseException
+                or InvalidOperationException or UnauthorizedAccessException,
+                $"Unexpected chained rejection: {error.GetType().Name}: {error.Message}");
+        }
+        finally
+        {
+            await using var cleanup = new SqlCommand(
+                "DROP TABLE IF EXISTS dbo.[" + source + "];"
+                + "DROP TABLE IF EXISTS dbo.[" + target + "]", db);
+            await cleanup.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     private static async Task<string> PrimaryKeyName(SqlConnection db, string table, CancellationToken token)
     {
         await using var cmd = new SqlCommand(
