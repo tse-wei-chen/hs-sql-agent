@@ -60,12 +60,17 @@ public sealed class SqlCoreNumericLexicalWorkBudgetTests
         }
     }
 
-    [Fact]
-    public void GiantLeadingZeroLiteral_ExhaustsNumericWorkBudgetBeforeAllocationHeavyNormalization()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GiantNumericLiteral_ExhaustsWorkBudgetBeforeAdditionalClrParsing(
+        bool fractional)
     {
-        // Under the independent 4 Mi-character input and 131072 token caps,
-        // but canonicalization would otherwise revisit ~4 million digits.
-        var sql = "SELECT " + new string('0', 4_010_000);
+        // Under the independent 4 Mi-character input and 131072 token caps;
+        // integer and decimal parsing are separate metered CLR passes.
+        var literal = fractional ? "0." + new string('0', 4_010_000)
+                                 : new string('0', 4_010_000);
+        var sql = "SELECT " + literal;
 
         var error = Assert.Throws<SqlParseException>(() =>
             SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres,
