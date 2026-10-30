@@ -67,15 +67,17 @@ module internal RewritePipeline =
               ConflictProofs: ConflictProofs
               Policy: ExecutionPolicy
               AllowedTables: string list option
-              SchemaSnapshot: SqlSchemaSnapshot option }
+              SchemaSnapshot: SqlSchemaSnapshot option
+              SqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance option }
 
-    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) =
+    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) (liveKeyAssurance: SqliteUpdateFromKeyAssurance | null) =
         { Source = source
           Target = target
           ConflictProofs = conflictProofs
           Policy = policy
           AllowedTables = allowedTables
-          SchemaSnapshot = Option.ofObj schemaSnapshot }
+          SchemaSnapshot = Option.ofObj schemaSnapshot
+          SqliteUpdateFromKeyAssurance = Option.ofObj liveKeyAssurance }
 
     let private sourceProvider = function
         | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
@@ -150,6 +152,8 @@ module internal RewritePipeline =
                 sourceSemantics.MySqlPipes
                 (VerifiedSource.profile source)
                 (VerifiedTarget.profile target)
+                (options.SqliteUpdateFromKeyAssurance |> Option.toObj)
+                (options.SchemaSnapshot |> Option.toObj)
                 bound)
 
     let private validate options canonical =
