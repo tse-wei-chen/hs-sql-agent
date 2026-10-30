@@ -3066,3 +3066,37 @@ and a proof attached to a `ValidatedDmlPlan` does not change
 A subsequent stage must first prove exact closed-AST CTE key lineage and
 bind execution authority to this same transactional gate before lifting any
 physical-source CTE compiler restriction.
+
+## SQL Server physical-source CTE DML, exact INT proof (#466, stage 2)
+
+A new opt-in `SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation`
+factory attests **both** the source's enabled, unfiltered, unique single-column
+INT index **and** the target's noncomputed exact INT comparison column from
+the live SQL Server `sys.*` catalog. The immutable proof includes the target
+key in its identity and performs the same check under commit-time transaction
+locks. The older `VerifyLive` proof (without a target INT key) is not
+sufficient to unlock compilation.
+
+Attach the proof with
+`SqlPlanValidationContext.WithSqlServerCteUniqueKeyAssurance(proof)` and
+compile through the F# `SqlCoreFacade.CompileDml` API with explicit
+SQL Server source/target profiles. The first admitted shape is exactly one
+nonrecursive, read-only CTE selecting a single physical source INT key (an
+output alias is permitted), with one bound CTE FROM source and an ordinary
+mandatory target INT = CTE INT equality. SQL Server physical target name,
+physical source table, source/target key and the compiler's proof fingerprint
+must agree. No SQL-text substitution or second legacy parser authorizes it.
+
+The strict Host `DmlPlanFactory` carries this same proof into the
+`ValidatedDmlPlan`. `DmlCoordinator` validates the proof-bound compiler
+fingerprint, requires strict bounded row-set approval, and calls
+`IsCurrent` on the **actual write connection/transaction** before matching
+or executing. The same constraint applies to atomic DML batches.
+Other joined CTE graphs, arbitrary CAST comparisons, unproven uniqueness,
+cross-provider lowering and unbound proof use remain fail-closed.
+
+The proof never grants permission to execute without the Host transaction
+gate. Manually executing generated SQL outside the approved transaction does
+not satisfy the host security contract. Live SQL Server tests compare actual
+UPDATE/DELETE row effects, while negative dialect/shape matrices preserve
+existing refusal behavior.

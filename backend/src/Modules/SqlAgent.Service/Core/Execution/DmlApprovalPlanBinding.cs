@@ -20,8 +20,13 @@ internal static class DmlApprovalPlanBinding
 
         Append(hash, "dml-approval-plan-binding-v1");
         Append(hash, plan.PlanFingerprint);
+        var mutationFingerprintPolicy =
+            plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
+                ? plan.PolicyVersion + "|live-sqlserver-cte-int=" +
+                  plan.SqlServerCteUniqueKeyAssurance.ProofIdentity
+                : plan.PolicyVersion;
         Append(hash, DmlFingerprintService.ComputePlanFingerprint(
-            plan.MutationCommand, plan.PolicyVersion));
+            plan.MutationCommand, mutationFingerprintPolicy));
         Append(hash, plan.Operation.ToString());
         Append(hash, plan.TableName);
         Append(hash, plan.PolicyVersion);

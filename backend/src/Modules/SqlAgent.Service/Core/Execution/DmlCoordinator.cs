@@ -506,9 +506,19 @@ public sealed class DmlCoordinator(
             }
         }
 
+        var fingerprintPolicy = plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
+            ? plan.PolicyVersion + "|live-sqlserver-cte-int=" +
+              plan.SqlServerCteUniqueKeyAssurance.ProofIdentity
+            : plan.PolicyVersion;
         var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(
-            plan.MutationCommand,
-            plan.PolicyVersion);
+            plan.MutationCommand, fingerprintPolicy);
+        if (plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
+            && !string.Equals(expectedFingerprint, plan.MutationCommand.PlanFingerprint,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "SQL Server live CTE proof is not bound to the compiled command fingerprint.");
+        }
         if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
 
