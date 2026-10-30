@@ -531,6 +531,7 @@ namespace HsSqlAgent.SqlCore.Core.Pipeline
 open System
 open System.Collections.Generic
 open System.Collections.Immutable
+open System.Data
 open System.Data.Common
 open System.Security.Cryptography
 open System.Text
@@ -784,7 +785,7 @@ type SqliteUpdateFromKeyAssurance private (
         if snapshot.Provider <> SqlAgentToolType.Sqlite then
             invalidArg "snapshot" "SQLite metadata assurance requires a SQLite schema snapshot."
 
-        let identifier name value =
+        let identifier (name: string) (value: string) =
             let ascii c =
                 (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
                 || (c >= '0' && c <= '9') || c = '_'
