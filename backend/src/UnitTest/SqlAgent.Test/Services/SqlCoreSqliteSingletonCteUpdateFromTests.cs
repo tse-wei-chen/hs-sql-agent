@@ -38,6 +38,17 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     }
 
     [Theory]
+    [InlineData("WITH PICKED AS (SELECT 2 AS id, 'changed' AS label) UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id")]
+    [InlineData("WITH Seed AS (SELECT 2 AS id, 'changed' AS label), Picked AS (SELECT id, label FROM sEeD) UPDATE users SET name = picked.label FROM PICKED WHERE users.id = picked.id")]
+    public void SqliteCteIdentityFollowsBinderCaseFolding(string sql)
+    {
+        var command = Compile(sql, new SqlPlanValidationContext("sqlite-cte-case-folding",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData("WITH picked AS (SELECT id, label FROM source_rows) UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id")]
     [InlineData("WITH picked AS (SELECT 2 AS id, 'a' AS label UNION ALL SELECT 2 AS id, 'b' AS label) UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id")]
     [InlineData("WITH picked AS (SELECT 2 AS id, 'a' AS label) UPDATE users SET name = p.label FROM picked p, picked q WHERE users.id = p.id")]
@@ -48,6 +59,18 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
         var result = SqlCoreFacade.TryCompileDml(sql,
             SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
             new SqlPlanValidationContext("sqlite-unproven-cardinality"));
+        Assert.False(result.Success);
+        Assert.NotEmpty(result.TypedDiagnostics);
+    }
+
+    [Theory]
+    [InlineData("WITH picked AS (SELECT 2 AS id, 'x' AS label), PICKED AS (SELECT id, label FROM source_rows) UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id")]
+    [InlineData("WITH PICKED AS (SELECT id, label FROM source_rows), picked AS (SELECT 2 AS id, 'x' AS label) UPDATE users SET name = picked.label FROM picked WHERE users.id = picked.id")]
+    public void DuplicateCanonicalCteNameMustNotConferSingletonProof(string sql)
+    {
+        var result = SqlCoreFacade.TryCompileDml(sql,
+            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
+            new SqlPlanValidationContext("sqlite-duplicate-cte"));
         Assert.False(result.Success);
         Assert.NotEmpty(result.TypedDiagnostics);
     }

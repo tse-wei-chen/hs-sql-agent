@@ -395,17 +395,24 @@ module internal RewriteStages =
     /// Each earlier read-only CTE may contribute a singleton relational
     /// source only if its closed SELECT cannot multiply input rows.
     let private sqliteUpdateFromSingletonCte (update: Update) =
+        // Match SQLite Binder's identifier canonicalization. SQLite CTE
+        // binding is case-insensitive even for quoted identifiers.
+        let key (name: IdentifierPart) = name.Value.ToUpperInvariant()
         let singleton = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        let seen = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        let mutable uniqueNames = true
         let isSingletonCteSource (source: TableSource) =
             match source with
             | CteTable(identifier, _) ->
                 match Identifier.parts identifier with
-                | [ name ] -> singleton.Contains name.Value
+                | [ name ] -> singleton.Contains(key name)
                 | _ -> false
             | _ -> false
 
         for cte in update.Ctes do
             RewriteResourceBudget.checkpoint ()
+            let name = key cte.Name
+            if not (seen.Add name) then uniqueNames <- false
             let query = cte.Query
             if not cte.RecursiveScope
                && query.SetOperations.IsEmpty
@@ -413,13 +420,19 @@ module internal RewriteStages =
                && query.Head.Joins.IsEmpty
                && (query.Head.From.IsNone
                    || Option.exists isSingletonCteSource query.Head.From) then
-                singleton.Add(cte.Name.Value) |> ignore
+                singleton.Add name |> ignore
+            else
+                // Never reuse an earlier singleton proof when a later CTE
+                // with the same canonical name has unproven cardinality.
+                singleton.Remove name |> ignore
 
         // One syntactically bound CTE source at most. Physical tables,
-        // derived relations, extra FROM sources and unproven chains fail.
-        match update.From with
-        | [ source ] -> isSingletonCteSource source
-        | _ -> false
+        // derived relations, duplicate names, extra FROM sources and
+        // unproven chains fail closed.
+        uniqueNames
+        && (match update.From with
+            | [ source ] -> isSingletonCteSource source
+            | _ -> false)
 
     let private validateAggregateDocument enforceSource source sourceProfile target targetProfile document =
         match document.Statement with
