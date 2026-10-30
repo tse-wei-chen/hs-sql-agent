@@ -105,6 +105,15 @@ public sealed class SqlCorePostgresWithInsertSelectTests
         Assert.NotEmpty(script.Diagnostics);
     }
 
+    [Fact]
+    public void ContextualInsertCteNameNeverTurnsWithSelectIntoDml()
+    {
+        const string sql = "WITH insert AS (SELECT 1 AS id) SELECT id FROM insert";
+        var statement = Assert.Single(SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres).Statements);
+        Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
+        Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.MySQL)]
