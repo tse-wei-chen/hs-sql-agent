@@ -1977,8 +1977,6 @@ module internal RewriteParser =
         let withToken = cursor.Current
         if not (acceptKeyword "WITH" cursor) then complete []
         else
-            if cursor.Dialect = SourceDialect.MySql then
-                requireSourceParseCapability withToken cursor.SourceMySqlOrdinaryCte
             let recursiveScope =
                 if isKeyword "RECURSIVE" cursor.Current then
                     let token = cursor.Current
@@ -1987,6 +1985,9 @@ module internal RewriteParser =
                     true
                 else
                     false
+            // Recursive CTE has its own version and diagnostic contract.
+            if cursor.Dialect = SourceDialect.MySql && not recursiveScope then
+                requireSourceParseCapability withToken cursor.SourceMySqlOrdinaryCte
             let ctes = ResizeArray<Cte>()
             let rec scheduleOne () =
                 let start = cursor.Current.Start

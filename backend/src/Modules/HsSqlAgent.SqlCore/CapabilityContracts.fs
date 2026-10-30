@@ -695,12 +695,15 @@ module internal SqlMySqlOrdinaryCteCapabilityRules =
                                 (profile: SqlProviderCapabilityProfile | null)
                                 (side: string) : string | null =
         if provider <> SqlAgentToolType.MySQL then null
-        elif isNull profile || isNull profile.ServerVersion then null
-        elif profile.ServerVersion.CompareTo(MinimumVersion) >= 0 then null
         else
-            "SQL capability 'select.cte' requires MySQL " + side
-            + " ServerVersion " + string MinimumVersion
-            + "+; declared version is " + string profile.ServerVersion + "."
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when p.ServerVersion.CompareTo(MinimumVersion) >= 0 -> null
+            | p ->
+                "SQL capability 'select.cte' requires MySQL " + side
+                + " ServerVersion " + string MinimumVersion
+                + "+; declared version is " + string p.ServerVersion + "."
 
     let SourceValidationError(provider, sourceProfile) =
         validationError provider sourceProfile "source"

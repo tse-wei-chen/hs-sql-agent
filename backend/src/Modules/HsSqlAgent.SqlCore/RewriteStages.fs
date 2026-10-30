@@ -309,7 +309,9 @@ module internal RewriteStages =
                 // Ordinary WITH is a native MySQL 8.0.1+ grammar capability.
                 // Check both sides here as well as at parsing so a parsed
                 // statement cannot bypass version proof through a CLR adapter.
-                if not select.Ctes.IsEmpty && target = SqlAgentToolType.MySQL then
+                if not select.Ctes.IsEmpty
+                   && target = SqlAgentToolType.MySQL
+                   && not (select.Ctes |> List.exists (fun cte -> cte.RecursiveScope)) then
                     if enforceSource then
                         match SqlMySqlOrdinaryCteCapabilityRules.SourceValidationError(source, sourceProfile) with
                         | null -> ()
