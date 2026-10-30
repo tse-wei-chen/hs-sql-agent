@@ -20,7 +20,9 @@ public sealed class SqlCoreSqlServerCteCatalogKeyLineageTests
         "CREATE TABLE dbo.dest (id INT NOT NULL PRIMARY KEY, label INT);" +
         "CREATE TABLE dbo.lookup (id INT NOT NULL PRIMARY KEY, payload INT);" +
         "CREATE TABLE dbo.bag (id INT NOT NULL, payload INT);" +
-        "CREATE TABLE dbo.wide (id BIGINT NOT NULL PRIMARY KEY, payload INT);";
+        "CREATE TABLE dbo.wide (id BIGINT NOT NULL PRIMARY KEY, payload INT);" +
+        "CREATE TABLE dbo.pairs (k1 INT NOT NULL, k2 INT NOT NULL, payload INT, " +
+        "CONSTRAINT uq_pairs UNIQUE(k1,k2));";
 
     private static SqlProviderCapabilityProfile Profile(string collation = "Latin1_General_100_CI_AS") =>
         new(SqlAgentToolType.MsSqlServer, new Version(16, 0), default, null,
@@ -62,6 +64,27 @@ public sealed class SqlCoreSqlServerCteCatalogKeyLineageTests
         Assert.Empty(stmt.Diagnostics);
         Assert.Same(state, stmt.CatalogAfter);
         Assert.Empty(stmt.Changes);
+    }
+
+    [Theory]
+    [InlineData("WITH picked AS (SELECT k1 AS id1, k2 AS id2 FROM dbo.pairs) UPDATE dbo.dest SET label = 1 FROM picked WHERE dbo.dest.id = picked.id1 AND dbo.dest.label = picked.id2")]
+    [InlineData("WITH seed AS (SELECT k1 AS id1, k2 AS id2 FROM dbo.pairs), picked AS (SELECT id1, id2 FROM seed) DELETE FROM dbo.dest FROM picked WHERE dbo.dest.id = picked.id1 AND dbo.dest.label = picked.id2")]
+    public void CompositeUniqueKeyRequiresEveryProjectedKeyColumn(string sql)
+    {
+        var stmt = One(sql);
+        Assert.Equal(SqlCatalogBindingStatus.Verified, stmt.CatalogBinding);
+        Assert.Equal(SqlMutationSourceMatchCardinality.ProvenAtMostOne, stmt.SourceMatchCardinality);
+        Assert.Empty(stmt.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData("WITH picked AS (SELECT k1 AS id1, k2 AS id2 FROM dbo.pairs) UPDATE dbo.dest SET label = 1 FROM picked WHERE dbo.dest.id = picked.id1")]
+    [InlineData("WITH picked AS (SELECT k1 AS id1, k2 AS id2 FROM dbo.pairs) DELETE FROM dbo.dest FROM picked WHERE dbo.dest.id = picked.id1 OR dbo.dest.label = picked.id2")]
+    [InlineData("WITH picked AS (SELECT k1 AS id1 FROM dbo.pairs) DELETE FROM dbo.dest FROM picked WHERE dbo.dest.id = picked.id1")]
+    public void CompositeUniqueKeyWithMissingOrOptionalEqualityNeverProves(string sql)
+    {
+        var stmt = One(sql);
+        Assert.Equal(SqlMutationSourceMatchCardinality.Unverified, stmt.SourceMatchCardinality);
     }
 
     [Theory]
