@@ -497,6 +497,8 @@ module internal RewriteFacadeAdapter =
                         semantics.MySqlPipes
                         sourceProfile
                         targetProfile
+                        null
+                        null
                         bound)
             let canonicalDocument = Canonical.value canonical
             RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.SemanticValidation (fun () ->

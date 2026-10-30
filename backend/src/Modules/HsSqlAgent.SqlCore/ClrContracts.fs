@@ -757,7 +757,7 @@ type SqliteUpdateFromKeyAssurance private (
     /// SQLite schema cookie on the *execution connection*.
     member this.IsCurrent(connection: DbConnection) =
         try
-            let refreshed = SqliteUpdateFromKeyAssurance.VerifyLive(
+            let refreshed: SqliteUpdateFromKeyAssurance = SqliteUpdateFromKeyAssurance.VerifyLive(
                 connection, pinnedSnapshot, targetTable, targetPrimaryKey,
                 sourceTable, sourcePrimaryKey)
             refreshed.DatabaseSchemaVersion = schemaVersion
