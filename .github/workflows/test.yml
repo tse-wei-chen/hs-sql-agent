@@ -1055,7 +1055,7 @@ jobs:
       - name: Verify live Firebird 5 Catalog against modeled DDL
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreFirebirdLiveDdlParityTests'
+          --filter 'FullyQualifiedName~SqlCoreFirebirdLiveDdlParityTests|FullyQualifiedName~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
         env:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
 
