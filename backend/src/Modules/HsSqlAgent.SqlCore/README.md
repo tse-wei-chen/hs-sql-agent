@@ -96,6 +96,22 @@ Cancellation is cooperative at compiler checkpoints; it does not stop an
 already-running database command. Each call restores its previous ambient
 token scope so later independent requests are unaffected.
 
+## P6: numeric literal overflow is a typed lexical failure
+
+The F# Lexer represents numeric literals as signed 64-bit integers or
+`DecimalLiteral` values. Well-formed integers, decimal fractions and
+scientific notation that exceed both supported ranges now fail closed with
+`SqlParseException` and the exact
+`SQL_LEXICAL_NUMERIC_OUT_OF_RANGE` diagnostic (Lexical / Syntax), including
+the source span of the **entire numeric literal**. No numeric truncation,
+defaulting or untyped CLR `OverflowException` is permitted.
+
+This is shared across all six dialects, Query and Mutation compilation, and
+the static Script APIs. `TryCompileQuery` retains its existing outer
+`SQL_PARSE_ERROR` result code; the specific lexical code is surfaced through
+`TypedDiagnostics`. Representable `Decimal.MaxValue` values remain valid.
+This does not add arbitrary-precision numeric SQL grammar.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
