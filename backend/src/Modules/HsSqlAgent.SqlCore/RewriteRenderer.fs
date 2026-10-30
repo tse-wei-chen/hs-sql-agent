@@ -2825,7 +2825,8 @@ module internal RewriteRenderer =
             | Some _ -> invalidOp "DML target aliases are not supported by the target provider."
         let renderedTarget = renderIdentifier ctx delete.Target
         let sql = RenderBuffer(ctx,
-            "DELETE FROM "
+            renderCtes ctx delete.Ctes
+            + "DELETE FROM "
             + renderedTarget
             + targetAlias
             + (if ctx.Provider = SqlServer then

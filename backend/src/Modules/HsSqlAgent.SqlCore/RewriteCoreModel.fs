@@ -801,7 +801,8 @@ module internal CoreModel =
         member this.Assignments = NonEmpty.toList this.AssignmentItems
 
     type Delete =
-        { Target: Identifier
+        { Ctes: Cte list
+          Target: Identifier
           TargetAlias: IdentifierPart option
           Using: TableSource list
           Where: Expr option

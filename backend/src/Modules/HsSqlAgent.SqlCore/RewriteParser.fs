@@ -2898,7 +2898,8 @@ module internal RewriteParser =
                 requireSourceParseCapability token cursor.SourceDml.DeleteUsing
                 parseNamedDmlSources cursor
             else []
-        { Target = target
+        { Ctes = []
+          Target = target
           TargetAlias = targetAlias
           Using = using
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
@@ -2959,6 +2960,7 @@ module internal RewriteParser =
             match (peek ()).Kind with
             | Keyword "INSERT" -> Some "INSERT"
             | Keyword "UPDATE" -> Some "UPDATE"
+            | Keyword "DELETE" -> Some "DELETE"
             | _ -> None
 
     /// Read-only statement CTEs feeding INSERT SELECT retain the typed
@@ -3027,6 +3029,15 @@ module internal RewriteParser =
         let update = parseUpdate cursor
         UpdateStatement { update with Ctes = ctes }
 
+    /// Only native PostgreSQL read-only statement CTEs may precede DELETE.
+    /// The CTE definitions remain closed Query nodes in the typed Delete.
+    let private parseReadOnlyWithDelete (cursor: Cursor) =
+        if cursor.Dialect <> SourceDialect.PostgreSql then
+            fail cursor.Current "Statement-level WITH DELETE is PostgreSQL-only"
+        let ctes = parseReadOnlyStatementCtes cursor
+        let delete = parseDelete cursor
+        DeleteStatement { delete with Ctes = ctes }
+
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let tokens = RewriteLexer.tokenizeWith semantics.Lexical sql
@@ -3040,6 +3051,8 @@ module internal RewriteParser =
                 | Some "INSERT" -> parseReadOnlyWithInsert cursor
                 | Some "UPDATE" when dialect = SourceDialect.PostgreSql ->
                     parseReadOnlyWithUpdate cursor
+                | Some "DELETE" when dialect = SourceDialect.PostgreSql ->
+                    parseReadOnlyWithDelete cursor
                 | _ -> QueryStatement(parseQuery cursor)
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)
             | Keyword "INSERT" -> InsertStatement(parseInsert cursor)

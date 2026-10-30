@@ -744,6 +744,7 @@ module internal RewriteLegacyAstAdapter =
             | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement as delete ->
                 Statement.DeleteStatement
                     { Delete.Target = identifierOf delete.Target.Name
+                      Ctes = []
                       TargetAlias = Option.ofObj delete.Target.Alias |> Option.map partOf
                       Using =
                         (if delete.UsingSources.IsDefaultOrEmpty then

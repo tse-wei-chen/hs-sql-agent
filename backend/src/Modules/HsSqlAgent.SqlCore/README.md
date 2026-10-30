@@ -298,6 +298,22 @@ remain unchanged. It does not authorize SQL execution or establish runtime
 function effects. Views are never treated as physical INSERT/UPDATE/DELETE
 targets by this feature.
 
+## PostgreSQL statement-level WITH DELETE (strict source subset)
+
+Native PostgreSQL read-only statement-level CTEs now precede DELETE FROM,
+including multiple CTEs and named outputs. The closed F# Delete record owns
+the CTEs; Binder resolves CTE names in USING and WHERE without granting
+physical table permissions to virtual CTE names. Mutation target allowlists,
+nontrivial WHERE policy, parameterization, source/target capability proofs,
+resource budgets, snapshot schema/type checks and physical-only static
+effect inspection remain active. The PostgreSQL renderer emits WITH ahead
+of DELETE and preserves native RETURNING.
+
+Recursive or data-modifying CTE definitions, statement-level WITH MERGE
+and cross-provider lowering remain fail-closed. Legacy CLR AST conversion
+refuses this shape instead of discarding the CTEs. Parsing and static
+analysis do not authorize a DELETE execution.
+
 ## PostgreSQL statement-level WITH UPDATE (strict source subset)
 
 PostgreSQL source SQL admits read-only statement-level WITH CTEs preceding
@@ -311,7 +327,7 @@ strict Virtual Catalog proofs remain active. CTEs cannot become physical
 write targets and static script analysis does not authorize execution.
 
 Only native PostgreSQL source/target compilation is proven. Recursive or
-data-modifying CTE bodies, statement-level WITH DELETE / MERGE, and
+data-modifying CTE bodies, statement-level WITH MERGE, and
 cross-provider lowering remain fail-closed. Legacy CLR AST projection
 refuses this new form rather than silently dropping its CTEs.
 

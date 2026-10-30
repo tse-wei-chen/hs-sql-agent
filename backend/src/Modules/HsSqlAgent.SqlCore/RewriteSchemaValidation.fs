@@ -779,10 +779,11 @@ module internal RewriteSchemaValidation =
                 update.Where |> Option.iter (expression catalog visibleCtes current Span.unknown)
                 returning catalog target update.Returning
             | DeleteStatement delete ->
+                let visibleCtes = proveMutationCtes delete.Ctes
                 let target = namedSource catalog.Dialect delete.Target delete.TargetAlias (physicalTable catalog delete.Target)
-                let others = delete.Using |> List.map (source catalog emptyCtes None)
+                let others = delete.Using |> List.map (source catalog visibleCtes None)
                 let current = makeScope None (target :: others)
-                delete.Where |> Option.iter (expression catalog emptyCtes current Span.unknown)
+                delete.Where |> Option.iter (expression catalog visibleCtes current Span.unknown)
                 returning catalog target delete.Returning
             | MergeStatement _ ->
                 reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (

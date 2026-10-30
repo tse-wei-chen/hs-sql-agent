@@ -1019,10 +1019,25 @@ module internal RewriteSchemaTypeValidation =
                     expression catalog visibleCtes scope Span.unknown value |> ignore)
                 update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
             | DeleteStatement delete ->
+                // Sequential CTE lexical visibility is the same strict typed
+                // projection rule used by statement-level WITH UPDATE.
+                let mutable visibleCtes = ctes
+                for cte in delete.Ctes do
+                    let output = queryTypes catalog visibleCtes None cte.Query
+                    let names =
+                        if cte.ColumnAliases.IsEmpty then output |> List.map fst
+                        else cte.ColumnAliases |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+                    if names.Length <> output.Length || (names |> List.exists Option.isNone) then
+                        invalidOp "Statement-level DELETE CTE requires a proven output column layout."
+                    let typed =
+                        List.zip names (output |> List.map snd)
+                        |> List.choose (fun (name, kind) -> name |> Option.map (fun value -> value, kind))
+                    visibleCtes <- Map.add (keyPart catalog.Dialect cte.Name) typed visibleCtes
                 let target = namedSource catalog delete.Target delete.TargetAlias
                 let scope =
-                    makeScope None (target :: (delete.Using |> List.map (tableSource catalog ctes None)))
-                delete.Where |> Option.iter (inspect scope)
+                    makeScope None (target :: (delete.Using |> List.map (tableSource catalog visibleCtes None)))
+                delete.Where |> Option.iter (fun value ->
+                    expression catalog visibleCtes scope Span.unknown value |> ignore)
                 delete.Returning |> List.iter (fun item -> inspect (makeScope None [ target ]) item.Expression)
             | MergeStatement _ -> () // Name binding already rejects MERGE in strict snapshot mode.
 

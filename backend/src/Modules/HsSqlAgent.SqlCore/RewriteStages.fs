@@ -434,6 +434,12 @@ module internal RewriteStages =
             update.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
             update.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         | DeleteStatement delete ->
+            if not delete.Ctes.IsEmpty then
+                if source <> SqlAgentToolType.Postgres || target <> SqlAgentToolType.Postgres then
+                    raise (SqlCompilationException(
+                        "Statement-level WITH DELETE is proven only for native PostgreSQL source and target; cross-provider lowering remains fail-closed."))
+                delete.Ctes |> List.iter (fun cte ->
+                    validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
             requireNativeSqliteRichReturning source target delete.Returning
             delete.Using |> List.iter (validateAggregateSource enforceSource source sourceProfile target targetProfile)
             delete.Where |> Option.iter (validateAggregateExpr enforceSource source sourceProfile target targetProfile)
@@ -996,6 +1002,8 @@ module internal RewriteStages =
             | DeleteStatement delete ->
                 DeleteStatement
                     { delete with
+                        Ctes = delete.Ctes |> List.map (fun cte ->
+                            { cte with Query = normalizeQuery source target cte.Query })
                         Using = delete.Using |> List.map (normalizeSource source target)
                         Where = delete.Where |> Option.map (normalizeExpr source target)
                         Returning = normalizeReturning source target delete.Returning }
@@ -1226,6 +1234,7 @@ module internal RewriteStages =
             update.Where |> Option.iter (validateExpr allowedTables)
             validateReturning allowedTables update.Returning
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> validateQuery allowedTables cte.Query)
             ensureTableAllowed allowedTables delete.Target
             delete.Using |> List.iter (validateSource allowedTables)
             delete.Where |> Option.iter (validateExpr allowedTables)
@@ -1984,6 +1993,7 @@ module internal RewriteStages =
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
             delete.Using |> List.iter (validateSemanticTable targetRuntime)
             delete.Where
             |> Option.iter (fun predicate ->

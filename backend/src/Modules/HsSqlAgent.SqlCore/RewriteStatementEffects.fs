@@ -90,6 +90,16 @@ module internal RewriteStatementEffects =
                          && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
                     reraise()
                 | :? InvalidOperationException -> original
+            | DeleteStatement delete when not delete.Ctes.IsEmpty ->
+                try
+                    RewriteBinder.bind sourceDialect parsed
+                    |> Typestate.Bound.value
+                with
+                | :? SqlCompilationException as ex
+                    when not (isNull ex.Diagnostic)
+                         && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                    reraise()
+                | :? InvalidOperationException -> original
             | _ -> original
         let references = physicalReferences document
         let potential kind operation name dependencies =

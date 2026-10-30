@@ -733,6 +733,8 @@ module internal RewriteCompatibilityAstAdapter =
                 :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
             | Statement.DeleteStatement delete ->
+                if not delete.Ctes.IsEmpty then
+                    invalidOp "The legacy CLR AST cannot represent statement-level WITH DELETE CTEs; use the direct typed SqlCoreFacade mutation pipeline."
                 let result =
                     HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
                         HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
