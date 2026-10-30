@@ -515,9 +515,23 @@ module internal RewriteStages =
                     source = SqlAgentToolType.Postgres && target = SqlAgentToolType.Postgres
                 let nativeSqlite =
                     source = SqlAgentToolType.Sqlite && target = SqlAgentToolType.Sqlite
-                if not nativePostgres && not nativeSqlite then
+                let nativeMySql =
+                    source = SqlAgentToolType.MySQL && target = SqlAgentToolType.MySQL
+                if not nativePostgres && not nativeSqlite && not nativeMySql then
                     raise (SqlCompilationException(
-                        "Statement-level WITH DELETE is proven only for native PostgreSQL or SQLite source and target; cross-provider lowering remains fail-closed."))
+                        "Statement-level WITH DELETE is proven only for native PostgreSQL, SQLite or MySQL source and target; cross-provider lowering remains fail-closed."))
+                if nativeMySql then
+                    if not delete.Using.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'mysql.with_delete.using' is not proven for CTE-prefixed MySQL DELETE; only a single physical delete target is supported."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        match profileVersion profile with
+                        | Some declared when declared.CompareTo(Version(8, 0)) < 0 ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'mysql.with_delete' requires MySQL "
+                                + side + " ServerVersion 8.0+; declared version is "
+                                + string declared + "."))
+                        | _ -> ()
                 if nativeSqlite then
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
                         match profileVersion profile with

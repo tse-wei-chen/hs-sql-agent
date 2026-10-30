@@ -118,7 +118,6 @@ public sealed class SqlCorePostgresWithDeleteTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]

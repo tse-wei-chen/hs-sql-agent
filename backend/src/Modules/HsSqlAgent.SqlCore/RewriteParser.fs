@@ -31,6 +31,7 @@ module internal RewriteParser =
           Dml: DmlProofs
           MySqlWithUpdateCte: CapabilityProof
           SqliteWithUpdateCte: CapabilityProof
+          MySqlWithDeleteCte: CapabilityProof
           SqliteWithDeleteCte: CapabilityProof
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
@@ -92,6 +93,7 @@ module internal RewriteParser =
               Dml = permissiveDml
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
+              MySqlWithDeleteCte = ProvenCapability
               SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
@@ -119,6 +121,7 @@ module internal RewriteParser =
               Dml = permissiveDml
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
+              MySqlWithDeleteCte = ProvenCapability
               SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
@@ -347,6 +350,7 @@ module internal RewriteParser =
         member _.SourceDml = semantics.Dml
         member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
         member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
+        member _.SourceMySqlWithDeleteCte = semantics.MySqlWithDeleteCte
         member _.SourceSqliteWithDeleteCte = semantics.SqliteWithDeleteCte
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
@@ -3046,14 +3050,17 @@ module internal RewriteParser =
         let update = parseUpdate cursor
         UpdateStatement { update with Ctes = ctes }
 
-    /// Only proven native PostgreSQL / SQLite read-only statement CTEs may
-    /// precede DELETE. The CTE definitions remain closed typed Query nodes.
+    /// Proven native PostgreSQL / SQLite / MySQL read-only statement CTEs
+    /// precede a typed DELETE, never an opaque source SQL prefix.
     let private parseReadOnlyWithDelete (cursor: Cursor) =
         if cursor.Dialect <> SourceDialect.PostgreSql
-           && cursor.Dialect <> SourceDialect.SQLite then
-            fail cursor.Current "Statement-level WITH DELETE is PostgreSQL/SQLite-only"
+           && cursor.Dialect <> SourceDialect.SQLite
+           && cursor.Dialect <> SourceDialect.MySql then
+            fail cursor.Current "Statement-level WITH DELETE has no source dialect proof"
         if cursor.Dialect = SourceDialect.SQLite then
             requireSourceParseCapability cursor.Current cursor.SourceSqliteWithDeleteCte
+        if cursor.Dialect = SourceDialect.MySql then
+            requireSourceParseCapability cursor.Current cursor.SourceMySqlWithDeleteCte
         let ctes = parseReadOnlyStatementCtes cursor
         let delete = parseDelete cursor
         DeleteStatement { delete with Ctes = ctes }
@@ -3077,7 +3084,8 @@ module internal RewriteParser =
                                        || dialect = SourceDialect.MySql ->
                     parseReadOnlyWithUpdate cursor
                 | Some "DELETE" when dialect = SourceDialect.PostgreSql
-                                       || dialect = SourceDialect.SQLite ->
+                                       || dialect = SourceDialect.SQLite
+                                       || dialect = SourceDialect.MySql ->
                     parseReadOnlyWithDelete cursor
                 | _ -> QueryStatement(parseQuery cursor)
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)
