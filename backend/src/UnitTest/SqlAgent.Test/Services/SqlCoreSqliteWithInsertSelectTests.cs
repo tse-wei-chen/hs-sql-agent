@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Core.Compilation;
@@ -22,7 +23,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
     [InlineData("WITH input_rows AS (SELECT 7 AS id) INSERT INTO users(id) SELECT id FROM input_rows WHERE id > 0 ON CONFLICT(id) DO NOTHING RETURNING id")]
     public void ParseAndAnalyzeSqliteWithInsertAsTypedMutation(string sql)
     {
-        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2;", SqlAgentToolType.Sqlite);
+        var script = SqlCoreFacade.ParseScript(sql + "; SELECT 2;", SqlAgentToolType.Sqlite, SqliteProfile());
         Assert.Equal(2, script.Statements.Count);
         Assert.Empty(script.Diagnostics);
         Assert.Equal(SqlScriptStatementKind.Mutation, script.Statements[0].Kind);
@@ -31,7 +32,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
         Assert.Equal(sql, script.Statements[0].Text);
 
         var analyzed = SqlCoreFacade.AnalyzeScript(sql,
-            SqlAgentToolType.Sqlite, SqlCatalogState.Unknown());
+            SqlAgentToolType.Sqlite, SqlCatalogState.Unknown(), SqliteProfile());
         var statement = Assert.Single(analyzed.Statements);
         Assert.Equal(SqlScriptStatementKind.Mutation, statement.Kind);
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Syntax.Status);
@@ -48,8 +49,7 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
         const string prefix = "WITH input_rows AS (SELECT 7 AS id) " +
                               "INSERT INTO users(id) SELECT id FROM input_rows";
         var sql = prefix + suffix;
-        var command = SqlCoreFacade.CompileDml(sql,
-            SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
+        var command = CompileWithProfile(sql,
             new SqlPlanValidationContext("sqlite-cte-insert-compiled",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
 
@@ -90,12 +90,11 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
             "WITH input_rows AS (SELECT 7 AS id) " +
             "INSERT INTO users(id) SELECT id FROM input_rows " +
             "ON CONFLICT(id) DO NOTHING RETURNING id";
-        var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite);
+        var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, SqliteProfile());
         Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parse.Statements).Status);
         Assert.NotEmpty(parse.Diagnostics);
-        Assert.Throws<SqlParseException>(() => SqlCoreFacade.CompileDml(
-            sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
-            new SqlPlanValidationContext("sqlite-ambiguous-upsert")));
+        Assert.Throws<SqlParseException>(() => CompileWithProfile(
+            sql, new SqlPlanValidationContext("sqlite-ambiguous-upsert")));
     }
 
     [Theory]
@@ -109,6 +108,30 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
         var parse = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(parse.Statements).Status);
         Assert.NotEmpty(parse.Diagnostics);
+    }
+
+    [Theory]
+    [InlineData(" RETURNING id", 3, 34)]
+    [InlineData(" WHERE id > 0 ON CONFLICT(id) DO NOTHING", 3, 23)]
+    public void LegacySqliteProfilesCannotInheritNewerInsertModifiers(string suffix, int major, int minor)
+    {
+        var sql = "WITH input_rows AS (SELECT 7 AS id) " +
+                  "INSERT INTO users(id) SELECT id FROM input_rows" + suffix;
+        var oldProfile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, new Version(major, minor));
+        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Sqlite, oldProfile);
+        Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parsed.Statements).Status);
+        Assert.NotEmpty(parsed.Diagnostics);
+    }
+
+    private static SqlProviderCapabilityProfile SqliteProfile() =>
+        new(SqlAgentToolType.Sqlite, new Version(3, 35));
+
+    private static CompiledSqlCommand CompileWithProfile(string sql, SqlPlanValidationContext context)
+    {
+        var profile = SqliteProfile();
+        return SqlCoreFacade.CompileDml(sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
+            context, new DmlCompilationPolicy(), profile, profile,
+            new DmlConflictTargetAssurance(ImmutableArray<string>.Empty));
     }
 
     [Theory]

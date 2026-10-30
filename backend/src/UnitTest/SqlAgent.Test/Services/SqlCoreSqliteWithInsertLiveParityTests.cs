@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Data.Common;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
@@ -37,7 +38,7 @@ public sealed class SqlCoreSqliteWithInsertLiveParityTests
 
         var expected = await ReadAsync(sqlite, stmt("native_result"),
             Array.Empty<SqlParameterValue>(), token);
-        var compiled = Compile(stmt("compiled_result"));
+        var compiled = Compile(stmt("compiled_result"), Version.Parse(sqlite.ServerVersion));
         var actual = await ReadAsync(sqlite, compiled.Sql, compiled.Parameters, token);
         Assert.Equal(new[] { 2, 3 }, expected);
         Assert.Equal(expected, actual);
@@ -68,7 +69,7 @@ public sealed class SqlCoreSqliteWithInsertLiveParityTests
 
         var expected = await ReadAsync(sqlite, stmt("native_result"),
             Array.Empty<SqlParameterValue>(), token);
-        var compiled = Compile(stmt("compiled_result"));
+        var compiled = Compile(stmt("compiled_result"), Version.Parse(sqlite.ServerVersion));
         Assert.Contains("ON CONFLICT", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         var actual = await ReadAsync(sqlite, compiled.Sql, compiled.Parameters, token);
         Assert.Equal(new[] { 23 }, expected);
@@ -78,14 +79,20 @@ public sealed class SqlCoreSqliteWithInsertLiveParityTests
                 Array.Empty<SqlParameterValue>(), token));
     }
 
-    private static CompiledSqlCommand Compile(string sql) =>
-        SqlCoreFacade.CompileDml(sql,
+    private static CompiledSqlCommand Compile(string sql, Version runtimeVersion)
+    {
+        // Version is proven from this opened SQLite connection, not assumed.
+        var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.Sqlite, runtimeVersion);
+        return SqlCoreFacade.CompileDml(sql,
             SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
             new SqlPlanValidationContext("sqlite-with-insert-live-parity",
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
                     "source_ids", "compiled_result"
-                }));
+                }),
+            new DmlCompilationPolicy(), profile, profile,
+            new DmlConflictTargetAssurance(ImmutableArray<string>.Empty));
+    }
 
     private static async Task ExecuteAsync(DbConnection connection, string sql, CancellationToken token)
     {

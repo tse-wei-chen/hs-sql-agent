@@ -318,8 +318,11 @@ assurance matching the complete conflict target. Existing target permissions,
 parameterization and conflict-target proofs are not relaxed.
 
 SQLite independently supports the same restricted read-only statement-level
-WITH INSERT SELECT grammar, including typed RETURNING and ON CONFLICT
-DO NOTHING. Unlike PostgreSQL, SQLite's native INSERT SELECT UPSERT grammar
+WITH INSERT SELECT grammar. SQLite RETURNING requires a proven source
+ServerVersion >= 3.35, while SQLite ON CONFLICT DO NOTHING requires a
+proven source ServerVersion >= 3.24; a missing or older source capability
+profile remains fail-closed. Both modifiers also pass the existing target
+capability checks rather than inheriting PostgreSQL's version guarantees. Unlike PostgreSQL, SQLite's native INSERT SELECT UPSERT grammar
 is ambiguous when the SELECT has FROM but no WHERE. The strict SQLite source
 parser therefore requires an explicit SELECT WHERE for that combination
 and does not add an implicit predicate. Actual in-memory SQLite parity
