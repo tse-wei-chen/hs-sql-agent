@@ -385,6 +385,9 @@ module internal RewriteFacadeAdapter =
           FetchWithTies =
             SqlFetchWithTiesCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
+          ApplyJoin =
+            SqlApplyJoinCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           LateralDerivedTable =
             SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
