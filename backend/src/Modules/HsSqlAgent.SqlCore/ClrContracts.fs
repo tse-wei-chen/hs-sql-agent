@@ -1133,8 +1133,7 @@ type SqlServerCteUniqueKeyAssurance private (
         SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
         if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
             invalidArg "sourceTable" "Self-joined live SQL Server key proof is outside the first verified subset."
-        let dbId, liveServer, liveName, liveGuid,
-            sourceId, targetId, indexId, indexName, digest =
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable, sourceKeyColumn, None, false)
         SqlServerCteUniqueKeyAssurance(
@@ -1156,8 +1155,7 @@ type SqlServerCteUniqueKeyAssurance private (
         SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
         if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
             invalidArg "sourceTable" "Self-joined SQL Server key proof is not modeled."
-        let dbId, liveServer, liveName, liveGuid,
-            sourceId, targetId, indexId, indexName, digest =
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable,
                 sourceKeyColumn, Some targetKeyColumn, false)
@@ -1174,8 +1172,7 @@ type SqlServerCteUniqueKeyAssurance private (
            || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
         else
             try
-                let dbId, liveServer, liveName, liveGuid,
-                    sourceId, targetId, indexId, indexName, digest =
+                let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
                     SqlServerCteUniqueKeyAssurance.Attest(
                         connection, transaction, pinnedSnapshot,
                         targetTable, sourceTable, sourceKeyColumn, targetKeyColumn, true)
