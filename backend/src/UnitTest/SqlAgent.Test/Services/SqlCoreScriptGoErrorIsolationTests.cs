@@ -2,6 +2,7 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Script;
+using HsSqlAgent.SqlCore.SqlParsing;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -72,5 +73,29 @@ public sealed class SqlCoreScriptGoErrorIsolationTests
 
         foreach (var statement in parsed.Statements)
             Assert.Equal(statement.Text, sql.Substring(statement.Span.Start, statement.Span.Length));
+    }
+
+    [Fact]
+    public void SqlServerUnclosedGroupingWithoutGoRemainsAnInvalidStatement()
+    {
+        const string sql = "SELECT (1";
+        var parsed = SqlCoreFacade.ParseScript(sql, new SqlScriptParseOptions(
+            SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken));
+
+        Assert.Equal(1, parsed.BatchCount);
+        var statement = Assert.Single(parsed.Statements);
+        Assert.Equal(SqlScriptParseStatus.Invalid, statement.Status);
+        Assert.Equal(SqlScriptStatementKind.Query, statement.Kind);
+        Assert.Equal(sql, statement.Text);
+        Assert.Equal("SQL_LEXICAL_UNBALANCED_PARENTHESIS",
+            Assert.Single(parsed.Diagnostics).Code);
+    }
+
+    [Fact]
+    public void OtherDialectScriptLexerKeepsStrictGlobalGroupingValidation()
+    {
+        Assert.Throws<SqlParseException>(() => SqlCoreFacade.ParseScript(
+            "SELECT (1", new SqlScriptParseOptions(
+                SqlAgentToolType.Postgres, TestContext.Current.CancellationToken)));
     }
 }

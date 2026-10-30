@@ -376,6 +376,11 @@ module internal RewriteFacadeAdapter =
         let lexical = sourceLexicalSemantics source sourceProfile
         if source = SqlAgentToolType.MySQL then
             RewriteLexer.tokenizeWith { lexical with ScriptMySqlAccountSeparator = true } sql
+        elif source = SqlAgentToolType.MsSqlServer then
+            // GO is a client-side physical batch delimiter. A malformed prior
+            // batch must not invalidate lexical scanning of later batches.
+            // Query/Mutation statements are still lexed strictly in emit.
+            RewriteLexer.tokenizeWith { lexical with ScriptDeferUnclosedGrouping = true } sql
         else
             RewriteLexer.tokenizeWith lexical sql
 

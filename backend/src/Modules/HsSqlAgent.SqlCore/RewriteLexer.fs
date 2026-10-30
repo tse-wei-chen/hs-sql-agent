@@ -45,7 +45,8 @@ module internal RewriteLexer =
           PostgresDollarQuotedString: bool
           OracleQuotedString: bool
           HashPrefixedIdentifier: bool
-          ScriptMySqlAccountSeparator: bool }
+          ScriptMySqlAccountSeparator: bool
+          ScriptDeferUnclosedGrouping: bool }
 
     module LexicalSemantics =
         let standard =
@@ -59,7 +60,8 @@ module internal RewriteLexer =
               PostgresDollarQuotedString = false
               OracleQuotedString = false
               HashPrefixedIdentifier = false
-              ScriptMySqlAccountSeparator = false }
+              ScriptMySqlAccountSeparator = false
+              ScriptDeferUnclosedGrouping = false }
 
         let mysql ansiQuotes noBackslashEscapes =
             { standard with
@@ -604,7 +606,11 @@ module internal RewriteLexer =
 
         chargeSourceProgress ()
 
-        if groupingDepth <> 0 then
+        // Script-only SQL Server dispatch can defer unmatched opening
+        // grouping to each statement's strict lexer, allowing a subsequent
+        // physical GO batch to be analyzed independently. The executable
+        // compiler always uses the original strict grouping validation.
+        if groupingDepth <> 0 && not semantics.ScriptDeferUnclosedGrouping then
             lexicalError
                 "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
                 "SQL text ends with an opening parenthesis that has no matching closing parenthesis."
