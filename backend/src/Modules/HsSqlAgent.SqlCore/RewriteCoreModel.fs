@@ -230,6 +230,74 @@ module internal CoreModel =
         /// must bind the value and emit an explicit, target-proven NUMERIC CAST.
         let bindingText (ExactNumeric(text, negative)) =
             if negative then "-" + text else text
+        /// Provider-target DECIMAL evidence derived from the exact SQL
+        /// mathematical value, not its source spelling or CLR decimal.
+        /// Returns only a canonical plain decimal string (no exponent) and
+        /// the minimum precision/scale that can contain its nonzero digits.
+        /// The validated source token is <=4096 characters. All output
+        /// construction takes place AFTER the provider's bounds are proven.
+        let tryBoundedDecimal maxPrecision maxScale (ExactNumeric(text, negative)) =
+            if maxPrecision < 1 || maxScale < 0 then None
+            else
+                let exponentAt = text.IndexOfAny([| 'e'; 'E' |])
+                let coefficientEnd = if exponentAt < 0 then text.Length else exponentAt
+                let digits = System.Text.StringBuilder(coefficientEnd)
+                let mutable fractional = false
+                let mutable fractionalDigits = 0
+                for position = 0 to coefficientEnd - 1 do
+                    let c = text.[position]
+                    if c = '.' then fractional <- true
+                    elif c >= '0' && c <= '9' then
+                        digits.Append(c) |> ignore
+                        if fractional then fractionalDigits <- fractionalDigits + 1
+
+                let raw = digits.ToString()
+                let mutable first = 0
+                while first < raw.Length && raw.[first] = '0' do
+                    first <- first + 1
+                if first = raw.Length then Some("0", 1, 0)
+                else
+                    let mutable last = raw.Length
+                    while last > first && raw.[last - 1] = '0' do
+                        last <- last - 1
+                    let significant = raw.Substring(first, last - first)
+
+                    let mutable exponent = 0L
+                    let exponentValid =
+                        exponentAt < 0
+                        || Int64.TryParse(
+                            text.Substring(exponentAt + 1),
+                            Globalization.NumberStyles.AllowLeadingSign,
+                            Globalization.CultureInfo.InvariantCulture,
+                            &exponent)
+                    // Early bound avoids overflows when a source exponent
+                    // contains an extreme signed 64-bit integer.
+                    let exponentLimit = int64 maxPrecision + int64 maxScale + int64 text.Length
+                    if not exponentValid || exponent > exponentLimit || exponent < -exponentLimit then
+                        None
+                    else
+                        let power = exponent - int64 fractionalDigits + int64 (raw.Length - last)
+                        if power > int64 maxPrecision || power < -int64 maxScale then None
+                        else
+                            let integralDigits = max 0L (int64 significant.Length + power)
+                            let scale = max 0L (-power)
+                            let precision = max 1L (integralDigits + scale)
+                            if precision > int64 maxPrecision || scale > int64 maxScale then None
+                            else
+                                let plain =
+                                    if power >= 0L then
+                                        significant + String('0', int power)
+                                    else
+                                        let decimalPoint = int64 significant.Length + power
+                                        if decimalPoint > 0L then
+                                            significant.Substring(0, int decimalPoint)
+                                            + "."
+                                            + significant.Substring(int decimalPoint)
+                                        else
+                                            "0." + String('0', int -decimalPoint) + significant
+                                let bound = if negative then "-" + plain else plain
+                                Some(bound, int precision, int scale)
+
 
     type ScalarValue =
         | Null
