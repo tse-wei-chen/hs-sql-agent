@@ -368,6 +368,36 @@ schema/type policies remain mandatory. This compiler-local cardinality
 gate does not upgrade the independent public SourceMatchCardinality
 analysis or authorize execution.
 
+### SQLite CTE UPDATE FROM: opt-in live INTEGER primary-key assurance
+
+A separately verified opt-in path allows one physical named `FROM` source in
+native `WITH ... UPDATE ... FROM` only when source and target tables have
+actual single-column `INTEGER PRIMARY KEY` rowid aliases. The host mints
+`SqliteUpdateFromKeyAssurance.VerifyLive(connection, snapshot, targetTable,
+targetPk, sourceTable, sourcePk)` using an open SQLite connection. It
+independently checks SQLite 3.33+, `PRAGMA table_info` and `PRAGMA
+index_list`, rejects indexed/composite/non-rowid primary keys and limits
+identifiers to simple ASCII. A standalone schema snapshot or virtual
+Catalog analysis is **not** an executable uniqueness assurance.
+
+Attach the immutable evidence to a `SqlPlanValidationContext` with its
+matching `SqlSchemaSnapshot` using
+`WithSqliteUpdateFromKeyAssurance(assurance)`. The compiler checks the
+snapshot SHA-256, both SQLite source/target profiles >= 3.33, exact
+physical table and primary-key identities, exactly one FROM source, and
+mandatory, bound AST equality of those two integer PK columns. OR-guarded
+equality, unknown sources, changed snapshots and cross-provider lowering
+stay fail-closed; normal physical allowlists, selective WHERE, parameter
+binding and all DML approval policies still apply.
+
+The assurance identity participates in policy/fingerprint evidence, so
+it cannot be reused as the same compile proof without the metadata.
+Hosts **must call `assurance.IsCurrent(executionConnection)` immediately
+before execution** to recheck live keys and SQLite's schema cookie, and
+coordinate the check with execution against concurrent DDL. This compiler
+does not itself execute SQL, lock schema, or grant mutation approval.
+`SourceMatchCardinality.ProvenAtMostOne` alone never enables compilation.
+
 ## MySQL 8.0 statement-level WITH DELETE (native, single-table subset)
 
 MySQL 8.0+ accepts read-only non-recursive CTEs preceding a single-table
