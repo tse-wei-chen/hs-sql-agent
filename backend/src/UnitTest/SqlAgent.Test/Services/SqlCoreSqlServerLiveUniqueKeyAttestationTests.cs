@@ -665,7 +665,7 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
 
             await using (var identityCommand = new SqlCommand(
                 "SELECT CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')), "
-                + "DB_NAME(), service_broker_guid FROM sys.databases WHERE database_id = DB_ID()", db))
+                + "DB_NAME(), database_guid FROM sys.database_recovery_status WHERE database_id = DB_ID()", db))
             await using (var identityReader = await identityCommand.ExecuteReaderAsync(ct))
             {
                 Assert.True(await identityReader.ReadAsync(ct));
