@@ -564,93 +564,114 @@ module internal RewriteStages =
                     same s.Value schema && same t.Value table && same k.Value column
                 | _ -> false
             | _ -> false
+        let simpleColumn field inputName inputQualifier =
+            match Expr.unspan field with
+            | Column identifier
+            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                match Identifier.parts identifier with
+                | [column] -> same column.Value inputName
+                | [owner; column] ->
+                    same owner.Value inputQualifier && same column.Value inputName
+                | _ -> false
+            | _ -> false
         if isNull proof || String.IsNullOrWhiteSpace(proof.TargetKeyColumn)
            || not (versioned sourceProfile) || not (versioned targetProfile)
            || (not (isNull snapshot)
                && (snapshot.Provider <> SqlAgentToolType.MsSqlServer
                    || not (same snapshot.Sha256 proof.SchemaSha256)))
            || not (qualified target proof.TargetTable)
-           || targetAlias.IsSome then false
+           || targetAlias.IsSome
+           || ctes.IsEmpty || ctes.Length > 3 then false
         else
-            match ctes, sources with
-            | [cte], [CteTable(cteIdentifier, sourceAlias)] ->
-                let cteName =
-                    match Identifier.parts cteIdentifier with
-                    | [name] -> same name.Value cte.Name.Value
-                    | _ -> false
-                let query = cte.Query
-                let head = query.Head
-                let sourceIsPhysical =
-                    match head.From with
-                    | Some(NamedTable(name, _)) ->
-                        qualified name proof.SourceTable
-                    | _ -> false
-                let projection =
-                    match head.Projection, cte.ColumnAliases with
-                    | [item], [] -> Some(item, None)
-                    | [item], [name] -> Some(item, Some name.Value)
-                    | _ -> None
-                match projection with
-                | Some(item, alias) when cteName && sourceIsPhysical
-                     && not cte.RecursiveScope
-                     && query.SetOperations.IsEmpty
-                     && query.OrderBy.IsEmpty
-                     && query.Limit.IsNone && query.Offset.IsNone
-                     && query.FetchPercent.IsNone && not query.FetchWithTies
-                     && head.Ctes.IsEmpty && head.Joins.IsEmpty
-                     && head.GroupBy.IsEmpty && head.Having.IsNone
-                     && head.DistinctMode = SelectDistinct.AllRows ->
-                    let physicalSourceColumn =
-                        match Expr.unspan item.Expression with
-                        | Column identifier
-                        | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
-                            match Identifier.parts identifier, head.From with
-                            | [column], _ ->
-                                same column.Value proof.SourceKeyColumn
-                            | [owner; column], Some(NamedTable(name, sourceAlias)) ->
-                                let ownerMatches =
-                                    match sourceAlias, Identifier.parts name with
-                                    | Some alias, _ -> same owner.Value alias.Value
-                                    | None, [_;table] -> same owner.Value table.Value
-                                    | _ -> false
-                                ownerMatches && same column.Value proof.SourceKeyColumn
-                            | _ -> false
-                        | _ -> false
-                    if not physicalSourceColumn then false
+            match sources with
+            | [CteTable(cteIdentifier, outerAlias)] ->
+                let mutable valid = true
+                let mutable lastName = ""
+                let mutable lastKey = ""
+                let seen = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+                // The only cardinality-preserving chain is:
+                // physical unique INT -> one direct column projection ->
+                // 0..2 single-source, direct CTE-key projections.
+                // Any nested scope, branching, grouping or row multiplier
+                // invalidates the whole proof, not only that CTE.
+                for index, cte in ctes |> List.indexed do
+                    RewriteResourceBudget.checkpoint ()
+                    let query = cte.Query
+                    let head = query.Head
+                    let input =
+                        match head.From, index with
+                        | Some(NamedTable(name, alias)), 0
+                            when qualified name proof.SourceTable ->
+                            Some(proof.SourceKeyColumn,
+                                 match alias, Identifier.parts name with
+                                 | Some a, _ -> a.Value
+                                 | None, [_; table] -> table.Value
+                                 | _ -> "")
+                        | Some(CteTable(name, alias)), n when n > 0 ->
+                            match Identifier.parts name with
+                            | [namePart] when same namePart.Value lastName ->
+                                Some(lastKey, match alias with
+                                              | Some a -> a.Value
+                                              | None -> lastName)
+                            | _ -> None
+                        | _ -> None
+                    let directProjection =
+                        match head.Projection, cte.ColumnAliases, input with
+                        | [item], [], Some(key, qualifier)
+                            when simpleColumn item.Expression key qualifier ->
+                            Some(defaultArg (item.Alias |> Option.map (fun a -> a.Value)) key)
+                        | [item], [alias], Some(key, qualifier)
+                            when simpleColumn item.Expression key qualifier ->
+                            Some alias.Value
+                        | _ -> None
+                    if not valid
+                       || not (seen.Add cte.Name.Value)
+                       || cte.RecursiveScope
+                       || not query.SetOperations.IsEmpty
+                       || not query.OrderBy.IsEmpty
+                       || query.Limit.IsSome || query.Offset.IsSome
+                       || query.FetchPercent.IsSome || query.FetchWithTies
+                       || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+                       || not head.GroupBy.IsEmpty || head.Having.IsSome
+                       || head.DistinctMode <> SelectDistinct.AllRows
+                       || directProjection.IsNone then
+                        valid <- false
                     else
-                        let output =
-                            match alias, item.Alias with
-                            | Some name, _ -> name
-                            | None, Some name -> name.Value
-                            | None, None -> proof.SourceKeyColumn
-                        let qualifier =
-                            match sourceAlias with
-                            | Some alias -> alias.Value
-                            | None -> cte.Name.Value
-                        // Only top-level mandatory ordinary equality is a
-                        // valid source match. OR, NULL-safe comparisons and
-                        // coercive CASTs must never mint INT key evidence.
-                        let pending = ResizeArray<Expr>()
-                        predicate |> Option.iter pending.Add
-                        let mutable proven = false
-                        while pending.Count > 0 && not proven do
-                            RewriteResourceBudget.checkpoint ()
-                            let last = pending.Count - 1
-                            let node = pending.[last]
-                            pending.RemoveAt(last)
-                            match Expr.unspan node with
-                            | Binary(BinaryOperator.And, left, right) ->
-                                pending.Add right
-                                pending.Add left
-                            | Binary(BinaryOperator.Equal, left, right) ->
-                                if (isTargetKey left proof.TargetTable proof.TargetKeyColumn
-                                    && isColumn right qualifier output)
-                                   || (isTargetKey right proof.TargetTable proof.TargetKeyColumn
-                                       && isColumn left qualifier output) then
-                                    proven <- true
-                            | _ -> ()
-                        proven
-                | _ -> false
+                        lastName <- cte.Name.Value
+                        lastKey <- directProjection.Value
+                let outerNameMatches =
+                    match Identifier.parts cteIdentifier with
+                    | [name] -> same name.Value lastName
+                    | _ -> false
+                if not valid || not outerNameMatches then false
+                else
+                    let qualifier = match outerAlias with
+                                    | Some alias -> alias.Value
+                                    | None -> lastName
+                    // Ordinary key equality must occur in an AND-only path
+                    // from the root; an OR, CAST or computed operand cannot
+                    // contribute a unique-key match. Bound traversal by the
+                    // existing resource budget as well.
+                    let pending = ResizeArray<Expr>()
+                    predicate |> Option.iter pending.Add
+                    let mutable proven = false
+                    while pending.Count > 0 && not proven do
+                        RewriteResourceBudget.checkpoint ()
+                        let last = pending.Count - 1
+                        let node = pending.[last]
+                        pending.RemoveAt(last)
+                        match Expr.unspan node with
+                        | Binary(BinaryOperator.And, left, right) ->
+                            pending.Add right
+                            pending.Add left
+                        | Binary(BinaryOperator.Equal, left, right) ->
+                            if (isTargetKey left proof.TargetTable proof.TargetKeyColumn
+                                && isColumn right qualifier lastKey)
+                               || (isTargetKey right proof.TargetTable proof.TargetKeyColumn
+                                   && isColumn left qualifier lastKey) then
+                                proven <- true
+                        | _ -> ()
+                    proven
             | _ -> false
 
     /// Public CLR mutation statements may be constructed without the native
