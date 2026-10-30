@@ -435,9 +435,22 @@ module internal RewriteStages =
             update.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         | DeleteStatement delete ->
             if not delete.Ctes.IsEmpty then
-                if source <> SqlAgentToolType.Postgres || target <> SqlAgentToolType.Postgres then
+                let nativePostgres =
+                    source = SqlAgentToolType.Postgres && target = SqlAgentToolType.Postgres
+                let nativeSqlite =
+                    source = SqlAgentToolType.Sqlite && target = SqlAgentToolType.Sqlite
+                if not nativePostgres && not nativeSqlite then
                     raise (SqlCompilationException(
-                        "Statement-level WITH DELETE is proven only for native PostgreSQL source and target; cross-provider lowering remains fail-closed."))
+                        "Statement-level WITH DELETE is proven only for native PostgreSQL or SQLite source and target; cross-provider lowering remains fail-closed."))
+                if nativeSqlite then
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        match profileVersion profile with
+                        | Some declared when declared.CompareTo(Version(3, 8, 3)) < 0 ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'sqlite.with_delete' requires SQLite "
+                                + side + " ServerVersion 3.8.3+; declared version is "
+                                + string declared + "."))
+                        | _ -> ()
                 delete.Ctes |> List.iter (fun cte ->
                     validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
             requireNativeSqliteRichReturning source target delete.Returning

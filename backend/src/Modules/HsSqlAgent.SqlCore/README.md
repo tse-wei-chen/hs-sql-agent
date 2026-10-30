@@ -298,6 +298,22 @@ remain unchanged. It does not authorize SQL execution or establish runtime
 function effects. Views are never treated as physical INSERT/UPDATE/DELETE
 targets by this feature.
 
+## SQLite statement-level WITH DELETE (native, strict source subset)
+
+SQLite read-only non-recursive CTEs can now prefix DELETE FROM in the closed
+F# `Delete.Ctes` model, including multiple CTEs, named output columns,
+`WHERE` subqueries and SQLite 3.35+ `RETURNING`. Native SQLite source/target
+compilation retains physical-table allowlists, nontrivial DELETE WHERE policy,
+typed Catalog binding, resource budgets, parameterized rendering and
+physical-only static effects. The CTE itself is never a physical delete target
+or execution authorization.
+
+Source/target profiles declaring SQLite older than 3.8.3 cannot claim this
+native CTE syntax; SQLite RETURNING remains gated to 3.35+. Recursive and
+data-modifying CTE bodies, SQLite DELETE USING and all cross-provider
+`WITH DELETE` lowering remain fail-closed. SQLite execution parity tests
+compare actual affected rows and RETURNING output.
+
 ## PostgreSQL statement-level WITH DELETE (strict source subset)
 
 Native PostgreSQL read-only statement-level CTEs now precede DELETE FROM,

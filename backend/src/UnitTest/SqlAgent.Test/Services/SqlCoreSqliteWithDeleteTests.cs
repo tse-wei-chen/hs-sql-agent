@@ -181,6 +181,26 @@ public sealed class SqlCoreSqliteWithDeleteTests
         Assert.Equal(SqlScriptParseStatus.Parsed, statement.Status);
     }
 
+    [Fact]
+    public void SqliteWithDeleteIsNativeOnlyAndTargetVersionCannotInventCteCapability()
+    {
+        const string sql =
+            "WITH picked AS (SELECT 7 AS id) DELETE FROM users WHERE id IN (SELECT id FROM picked)";
+        var crossProvider = SqlCoreFacade.TryCompileDml(sql,
+            SqlAgentToolType.Sqlite, SqlAgentToolType.Postgres,
+            new SqlPlanValidationContext("sqlite-delete-cross-provider"));
+        Assert.False(crossProvider.Success);
+        Assert.NotEmpty(crossProvider.TypedDiagnostics);
+
+        var oldTarget = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Sqlite, new Version(3, 8, 2));
+        Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
+            sql, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite,
+            new SqlPlanValidationContext("sqlite-delete-old-target"),
+            new DmlCompilationPolicy(), SqliteProfile(), oldTarget,
+            new DmlConflictTargetAssurance(ImmutableArray<string>.Empty)));
+    }
+
     private static SqlProviderCapabilityProfile SqliteProfile() =>
         new(SqlAgentToolType.Sqlite, new Version(3, 35));
 
