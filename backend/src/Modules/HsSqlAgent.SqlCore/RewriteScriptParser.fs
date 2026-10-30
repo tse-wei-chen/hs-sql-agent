@@ -269,7 +269,10 @@ module internal RewriteScriptParser =
                 while index < tokenCount do
                     RewriteResourceBudget.checkpoint ()
                     let token = tokens.[index]
-                    if nesting = 0 && isGoSeparator token then
+                    // GO is a physical client-side batch boundary even when a
+                    // prior malformed statement has unmatched parentheses.
+                    // Keep error isolation across independent SQL Server batches.
+                    if isGoSeparator token then
                         emit index
                         // An empty GO segment is not an analyzable batch;
                         // trailing and adjacent GO cannot create phantom counts.

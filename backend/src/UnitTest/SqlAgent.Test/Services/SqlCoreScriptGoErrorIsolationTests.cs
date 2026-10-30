@@ -20,7 +20,8 @@ public sealed class SqlCoreScriptGoErrorIsolationTests
     public void StandaloneGoRecoversFromUnclosedParenthesesInEarlierBatch(string newline)
     {
         var sql = string.Join(newline, "SELECT (1", "GO", "SELECT 2");
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, new SqlScriptParseOptions(
+            SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken));
 
         Assert.Equal(2, parsed.BatchCount);
         Assert.Equal(2, parsed.Statements.Count);
@@ -37,8 +38,9 @@ public sealed class SqlCoreScriptGoErrorIsolationTests
         foreach (var statement in parsed.Statements)
             Assert.Equal(statement.Text, sql.Substring(statement.Span.Start, statement.Span.Length));
 
-        var analyzed = SqlCoreFacade.AnalyzeScript(
-            sql, SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty());
+        var analyzed = SqlCoreFacade.AnalyzeScript(sql, new SqlScriptAnalysisOptions(
+            SqlAgentToolType.MsSqlServer, SqlCatalogState.KnownEmpty(),
+            TestContext.Current.CancellationToken));
         Assert.Equal(2, analyzed.Statements.Count);
         Assert.Equal(SqlScriptParseStatus.Invalid, analyzed.Statements[0].Syntax.Status);
         Assert.Equal(SqlScriptParseStatus.Parsed, analyzed.Statements[1].Syntax.Status);
@@ -55,7 +57,8 @@ public sealed class SqlCoreScriptGoErrorIsolationTests
             "CREATE PROCEDURE p AS BEGIN SELECT (1;",
             "GO",
             "SELECT 2");
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql, new SqlScriptParseOptions(
+            SqlAgentToolType.MsSqlServer, TestContext.Current.CancellationToken));
 
         Assert.Equal(2, parsed.BatchCount);
         Assert.Equal(2, parsed.Statements.Count);
