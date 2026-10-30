@@ -131,7 +131,14 @@ module internal RewriteFacadeAdapter =
           FirebirdTimeZoneType =
             SqlFirebirdTimeZoneTypeCapabilityRules.CastSourceValidationError(source, sourceProfile)
             |> sourceCapabilityProof
-          FirebirdExtendedDecimal = CapabilityProof.ProvenCapability
+          FirebirdExtendedDecimal =
+            if source <> SqlAgentToolType.Firebird
+               || SqlFirebirdTimeZoneTypeCapabilityRules.SupportsTargetProfile(sourceProfile) then
+                CapabilityProof.ProvenCapability
+            else
+                sourceCapabilityProof (
+                    "SQL capability 'numeric.decimal_extended' requires an explicit Firebird source "
+                    + "capability profile with ServerVersion 4.0 or newer.")
           StandaloneTime = CapabilityProof.ProvenCapability
           FilterPredicate = filterPredicateProofs source "source" sourceCapabilityProof }
 
