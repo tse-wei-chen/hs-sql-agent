@@ -734,6 +734,7 @@ type SqlSchemaSnapshot(provider: SqlAgentToolType, version: string, tables: IEnu
 /// compiler has no connection and cannot prove absence of later DDL.
 [<Sealed>]
 type SqliteUpdateFromKeyAssurance private (
+    pinnedSnapshot: SqlSchemaSnapshot,
     schemaSha256: string,
     targetTable: string,
     targetPrimaryKey: string,
@@ -747,6 +748,21 @@ type SqliteUpdateFromKeyAssurance private (
     member _.SourceTable = sourceTable
     member _.SourcePrimaryKey = sourcePrimaryKey
     member _.DatabaseSchemaVersion = schemaVersion
+
+    /// The compiler does not contact a database. Immediately before a host
+    /// executes a compiled command, re-read the live PK/index metadata and
+    /// SQLite schema cookie on the *execution connection*.
+    member this.IsCurrent(connection: DbConnection) =
+        try
+            let refreshed = SqliteUpdateFromKeyAssurance.VerifyLive(
+                connection, pinnedSnapshot, targetTable, targetPrimaryKey,
+                sourceTable, sourcePrimaryKey)
+            refreshed.DatabaseSchemaVersion = schemaVersion
+            && StringComparer.Ordinal.Equals(refreshed.SchemaSha256, schemaSha256)
+        with
+        | :? ArgumentException
+        | :? InvalidOperationException
+        | :? DbException -> false
 
     /// The signature binds the attested PK metadata to compiler evidence,
     /// independent of parameter values or SQL text.
@@ -844,7 +860,7 @@ type SqliteUpdateFromKeyAssurance private (
         verifyPrimaryKey source sourcePk
         let schemaVersion = Convert.ToInt32(scalar "PRAGMA schema_version")
         SqliteUpdateFromKeyAssurance(
-            snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
+            snapshot, snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
 
 [<Sealed>]
 type SqlPlanValidationContext private (
