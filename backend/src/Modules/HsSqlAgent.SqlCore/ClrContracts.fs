@@ -936,10 +936,11 @@ type SqlServerCteUniqueKeyAssurance private (
         (connection: DbConnection, tx: DbTransaction | null,
          tableName: string, digest: IncrementalHash) =
         let schema, table = SqlServerCteUniqueKeyAssurance.Parts "tableName" tableName
-        use tableCommand = SqlServerCteUniqueKeyAssurance.Command connection tx
-            """SELECT t.object_id, s.name, t.name
-               FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id
-               WHERE s.name = @schema AND t.name = @table"""
+        use tableCommand =
+            SqlServerCteUniqueKeyAssurance.Command connection tx (
+                """SELECT t.object_id, s.name, t.name
+                   FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id
+                   WHERE s.name = @schema AND t.name = @table""")
         SqlServerCteUniqueKeyAssurance.Bind tableCommand "@schema" schema
         SqlServerCteUniqueKeyAssurance.Bind tableCommand "@table" table
         let objectId =
@@ -1022,8 +1023,9 @@ type SqlServerCteUniqueKeyAssurance private (
             // Lock in canonical order to avoid reversed source/target order.
             for tableName in [targetTable; sourceTable] |> List.sort do
                 let schema, table = SqlServerCteUniqueKeyAssurance.Parts "tableName" tableName
-                use lockCommand = SqlServerCteUniqueKeyAssurance.Command connection tx
-                    ("SELECT TOP (1) 1 FROM [" + schema + "].[" + table + "] WITH (TABLOCK, HOLDLOCK)")
+                use lockCommand =
+                    SqlServerCteUniqueKeyAssurance.Command connection tx (
+                        "SELECT TOP (1) 1 FROM [" + schema + "].[" + table + "] WITH (TABLOCK, HOLDLOCK)")
                 lockCommand.ExecuteScalar() |> ignore
         use databaseCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx "SELECT DB_ID()"
@@ -1033,23 +1035,24 @@ type SqlServerCteUniqueKeyAssurance private (
             connection, tx, sourceTable, digest)
         let targetId = SqlServerCteUniqueKeyAssurance.Metadata(
             connection, tx, targetTable, digest)
-        use indexCommand = SqlServerCteUniqueKeyAssurance.Command connection tx
-            """SELECT i.index_id, i.name, c.name, typ.name
-               FROM sys.indexes i
-               JOIN sys.index_columns ic ON ic.object_id = i.object_id
-                   AND ic.index_id = i.index_id AND ic.key_ordinal = 1
-               JOIN sys.columns c ON c.object_id = ic.object_id
-                   AND c.column_id = ic.column_id
-               JOIN sys.types typ ON typ.user_type_id = c.user_type_id
-               WHERE i.object_id = @objectId
-                 AND i.is_unique = 1 AND i.is_disabled = 0
-                 AND i.is_hypothetical = 0 AND i.has_filter = 0
-                 AND i.type IN (1, 2) AND c.is_nullable = 0
-                 AND c.is_computed = 0
-                 AND (SELECT COUNT(*) FROM sys.index_columns k
-                      WHERE k.object_id = i.object_id
-                        AND k.index_id = i.index_id AND k.key_ordinal > 0) = 1
-               ORDER BY i.index_id"""
+        use indexCommand =
+            SqlServerCteUniqueKeyAssurance.Command connection tx (
+                """SELECT i.index_id, i.name, c.name, typ.name
+                   FROM sys.indexes i
+                   JOIN sys.index_columns ic ON ic.object_id = i.object_id
+                       AND ic.index_id = i.index_id AND ic.key_ordinal = 1
+                   JOIN sys.columns c ON c.object_id = ic.object_id
+                       AND c.column_id = ic.column_id
+                   JOIN sys.types typ ON typ.user_type_id = c.user_type_id
+                   WHERE i.object_id = @objectId
+                     AND i.is_unique = 1 AND i.is_disabled = 0
+                     AND i.is_hypothetical = 0 AND i.has_filter = 0
+                     AND i.type IN (1, 2) AND c.is_nullable = 0
+                     AND c.is_computed = 0
+                     AND (SELECT COUNT(*) FROM sys.index_columns k
+                          WHERE k.object_id = i.object_id
+                            AND k.index_id = i.index_id AND k.key_ordinal > 0) = 1
+                   ORDER BY i.index_id""")
         SqlServerCteUniqueKeyAssurance.Bind indexCommand "@objectId" (box sourceId)
         let mutable matching: (int * string) option = None
         use indexes = indexCommand.ExecuteReader()
