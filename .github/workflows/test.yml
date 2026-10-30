@@ -1085,9 +1085,10 @@ jobs:
       - name: Verify real Oracle 26ai Catalog, joined DML and LATERAL DQL parity
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~SqlCoreOracleLiveDdlParityTests|FullyQualifiedName~SqlCoreOracleInboundForeignKeyLiveParityTests|FullyQualifiedName~SqlCoreOracleRenameConstraintLiveParityTests|FullyQualifiedName~SqlCoreOracle26JoinedMutationLiveParityTests|FullyQualifiedName~SqlCoreOracleLateralDerived121LiveParityTests|FullyQualifiedName~SqlCoreOracleApplyLiveParityTests'
+          --filter 'FullyQualifiedName~SqlCoreOracleLiveDdlParityTests|FullyQualifiedName~SqlCoreOracleInboundForeignKeyLiveParityTests|FullyQualifiedName~SqlCoreOracleRenameConstraintLiveParityTests|FullyQualifiedName~SqlCoreOracle26JoinedMutationLiveParityTests|FullyQualifiedName~SqlCoreOracleLateralDerived121LiveParityTests|FullyQualifiedName~SqlCoreOracleApplyLiveParityTests|FullyQualifiedName~SqlCoreOracleExactNumberLiveParityTests'
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+          SQLCORE_ORACLE_EXACT_NUMERIC_LIVE: "true"
 
   sqlagent-package-smoke:
     runs-on: ubuntu-latest
