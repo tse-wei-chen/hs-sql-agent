@@ -172,6 +172,16 @@ public sealed class DmlPlanFactory(
             planningMetadata?.HasEnabledDmlTrigger,
             cancellationToken);
 
+        // Only a live, already-verified metadata connection can mint this
+        // proof; the F# compiler independently checks the entire CTE shape.
+        if (_dmlCompiler is null && _queryCompiler is null)
+        {
+            effectiveValidationContext = SqlServerCteLiveProofDiscovery.AttachIfProven(
+                metadataConnection, resolvedMutation, resolvedStatement,
+                targetProvider, effectiveValidationContext, targetProfile,
+                assurance, maxAffectedRows, cancellationToken);
+        }
+
         var mutationCommand = CompileMutation(
             resolvedMutation,
             targetProvider,
