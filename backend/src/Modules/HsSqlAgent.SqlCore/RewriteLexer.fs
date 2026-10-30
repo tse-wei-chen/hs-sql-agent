@@ -227,12 +227,77 @@ module internal RewriteLexer =
                         detail,
                         SqlDiagnosticSpan(start, actualLength))))
 
+        // A successful CLR Decimal.TryParse is NOT proof that the SQL number
+        // survived unchanged: it can round significant digits or turn a
+        // nonzero 1e-29 (or 1e-1000) into zero. Compare normalized exact
+        // decimal values, not their textual spelling. Mantissa trailing zeros
+        // and exponent spellings are mathematically equivalent.
+        //
+        // This scan is linear in the already bounded SQL token length; very
+        // long exponents saturate at +/-1e9 (far outside Decimal's finite
+        // representable scale) instead of overflowing a CLR integer.
+        let normalizedNumeric (literal: string) =
+            let exponentAt = literal.IndexOfAny([| 'e'; 'E' |])
+            let coefficientEnd =
+                if exponentAt < 0 then literal.Length else exponentAt
+            let digits = Text.StringBuilder(coefficientEnd)
+            let mutable inFraction = false
+            let mutable fractionalDigits = 0L
+            for position = 0 to coefficientEnd - 1 do
+                let c = literal.[position]
+                if c = '.' then
+                    inFraction <- true
+                elif c >= '0' && c <= '9' then
+                    digits.Append(c) |> ignore
+                    if inFraction then fractionalDigits <- fractionalDigits + 1L
+
+            let mutable first = 0
+            while first < digits.Length && digits.[first] = '0' do
+                first <- first + 1
+            if first = digits.Length then
+                "0", 0L
+            else
+                let mutable last = digits.Length
+                while last > first && digits.[last - 1] = '0' do
+                    last <- last - 1
+
+                let mutable power = 0L
+                if exponentAt >= 0 then
+                    let mutable position = exponentAt + 1
+                    let negative =
+                        if position < literal.Length && literal.[position] = '-' then
+                            position <- position + 1
+                            true
+                        else
+                            if position < literal.Length && literal.[position] = '+' then
+                                position <- position + 1
+                            false
+                    while position < literal.Length do
+                        power <-
+                            min 1000000000L
+                                (power * 10L + int64 (int literal.[position] - int '0'))
+                        position <- position + 1
+                    if negative then power <- -power
+
+                digits.ToString(first, last - first),
+                power - fractionalDigits + int64 (digits.Length - last)
+
         // SQL numeric magnitudes are bounded by the canonical DecimalLiteral
-        // model. Never leak CLR OverflowException/FormatException out of
-        // lexing: failure is a typed, source-positioned syntax diagnostic.
+        // model. Never leak CLR overflow or silently round/underflow
+        // representable SQL syntax into a DIFFERENT numeric value.
         let decimalLiteral (text: string) start finish =
             match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
-            | true, value -> add (DecimalLiteral value) start finish
+            | true, value ->
+                // G29 round-trips the entire CLR Decimal value with invariant
+                // formatting; canonical comparison removes only insignificant
+                // decimal zeroes, preserving arbitrary source exponent form.
+                let rendered = value.ToString("G29", CultureInfo.InvariantCulture)
+                if normalizedNumeric text <> normalizedNumeric rendered then
+                    lexicalError
+                        "SQL_LEXICAL_NUMERIC_PRECISION_LOSS"
+                        "Numeric literal cannot be represented exactly by the supported Decimal model."
+                        start (finish - start)
+                add (DecimalLiteral value) start finish
             | false, _ ->
                 lexicalError
                     "SQL_LEXICAL_NUMERIC_OUT_OF_RANGE"
