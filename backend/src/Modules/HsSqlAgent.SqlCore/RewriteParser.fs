@@ -29,6 +29,7 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          SqlServerWithMutationCte: CapabilityProof
           MySqlOrdinaryCte: CapabilityProof
           MySqlWithUpdateCte: CapabilityProof
           SqliteWithUpdateCte: CapabilityProof
@@ -93,6 +94,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqlServerWithMutationCte = ProvenCapability
               MySqlOrdinaryCte = ProvenCapability
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
@@ -123,6 +125,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqlServerWithMutationCte = ProvenCapability
               MySqlOrdinaryCte = ProvenCapability
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
@@ -354,6 +357,7 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceSqlServerWithMutationCte = semantics.SqlServerWithMutationCte
         member _.SourceMySqlOrdinaryCte = semantics.MySqlOrdinaryCte
         member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
         member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
@@ -3047,6 +3051,18 @@ module internal RewriteParser =
             fail cursor.Current "Recursive statement-level WITH mutation CTE is not yet proven"
         ctes
 
+    /// SQL Server permits UPDATE/DELETE of a directly updatable CTE name.
+    /// That is *not* the physical table named by the unqualified target.
+    /// Until underlying write-target lineage is attested, fail closed:
+    /// otherwise a declared CTE alias could bypass the table allowlist.
+    let private requirePhysicalSqlServerMutationTarget (cursor: Cursor) (ctes: Cte list) (target: Identifier) =
+        match Identifier.parts target with
+        | [ part ] when ctes |> List.exists (fun cte ->
+            StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+            fail cursor.Current
+                "SQL Server CTE name is not a verified physical mutation target; CTE-target writes require separate catalog lineage proof"
+        | _ -> ()
+
     let private parseReadOnlyWithInsert (cursor: Cursor) =
         let ctes = parseReadOnlyStatementCtes cursor
         let insert = parseInsert cursor
@@ -3083,14 +3099,22 @@ module internal RewriteParser =
     let private parseReadOnlyWithUpdate (cursor: Cursor) =
         if cursor.Dialect <> SourceDialect.PostgreSql
            && cursor.Dialect <> SourceDialect.SQLite
-           && cursor.Dialect <> SourceDialect.MySql then
+           && cursor.Dialect <> SourceDialect.MySql
+           && cursor.Dialect <> SourceDialect.SqlServer then
             fail cursor.Current "Statement-level WITH UPDATE has no source dialect proof"
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requireSourceParseCapability cursor.Current cursor.SourceSqlServerWithMutationCte
         if cursor.Dialect = SourceDialect.SQLite then
             requireSourceParseCapability cursor.Current cursor.SourceSqliteWithUpdateCte
         if cursor.Dialect = SourceDialect.MySql then
             requireSourceParseCapability cursor.Current cursor.SourceMySqlWithUpdateCte
         let ctes = parseReadOnlyStatementCtes cursor
         let update = parseUpdate cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes update.Target
+        if cursor.Dialect = SourceDialect.SqlServer && not update.From.IsEmpty then
+            fail cursor.Current
+                "SQL Server CTE-prefixed joined UPDATE FROM is not yet proven; only single-target WHERE mutations are supported"
         UpdateStatement { update with Ctes = ctes }
 
     /// Proven native PostgreSQL / SQLite / MySQL read-only statement CTEs
@@ -3098,14 +3122,22 @@ module internal RewriteParser =
     let private parseReadOnlyWithDelete (cursor: Cursor) =
         if cursor.Dialect <> SourceDialect.PostgreSql
            && cursor.Dialect <> SourceDialect.SQLite
-           && cursor.Dialect <> SourceDialect.MySql then
+           && cursor.Dialect <> SourceDialect.MySql
+           && cursor.Dialect <> SourceDialect.SqlServer then
             fail cursor.Current "Statement-level WITH DELETE has no source dialect proof"
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requireSourceParseCapability cursor.Current cursor.SourceSqlServerWithMutationCte
         if cursor.Dialect = SourceDialect.SQLite then
             requireSourceParseCapability cursor.Current cursor.SourceSqliteWithDeleteCte
         if cursor.Dialect = SourceDialect.MySql then
             requireSourceParseCapability cursor.Current cursor.SourceMySqlWithDeleteCte
         let ctes = parseReadOnlyStatementCtes cursor
         let delete = parseDelete cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes delete.Target
+        if cursor.Dialect = SourceDialect.SqlServer && not delete.Using.IsEmpty then
+            fail cursor.Current
+                "SQL Server CTE-prefixed joined DELETE FROM is not yet proven; only single-target WHERE mutations are supported"
         DeleteStatement { delete with Ctes = ctes }
 
     let parseForWith semantics dialect (sql: string) =
@@ -3117,18 +3149,21 @@ module internal RewriteParser =
             match cursor.Current.Kind with
             | Keyword "WITH" when dialect = SourceDialect.PostgreSql
                                    || dialect = SourceDialect.SQLite
-                                   || dialect = SourceDialect.MySql ->
+                                   || dialect = SourceDialect.MySql
+                                   || dialect = SourceDialect.SqlServer ->
                 match readOnlyWithMutationHead cursor with
                 | Some "INSERT" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite ->
                     parseReadOnlyWithInsert cursor
                 | Some "UPDATE" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite
-                                       || dialect = SourceDialect.MySql ->
+                                       || dialect = SourceDialect.MySql
+                                       || dialect = SourceDialect.SqlServer ->
                     parseReadOnlyWithUpdate cursor
                 | Some "DELETE" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite
-                                       || dialect = SourceDialect.MySql ->
+                                       || dialect = SourceDialect.MySql
+                                       || dialect = SourceDialect.SqlServer ->
                     parseReadOnlyWithDelete cursor
                 | _ -> QueryStatement(parseQuery cursor)
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)

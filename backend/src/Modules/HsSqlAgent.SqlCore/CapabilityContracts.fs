@@ -685,6 +685,31 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
+/// Native SQL Server CTE-prefixed mutations entered the language in
+/// SQL Server 2005. Explicit older source/target versions must fail closed.
+module internal SqlSqlServerWithMutationCteCapabilityRules =
+    let MinimumVersion = Version(9, 0)
+
+    let private validationError (provider: SqlAgentToolType)
+                                (profile: SqlProviderCapabilityProfile | null)
+                                (side: string) : string | null =
+        if provider <> SqlAgentToolType.MsSqlServer then null
+        else
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when p.ServerVersion.CompareTo(MinimumVersion) >= 0 -> null
+            | p ->
+                "SQL capability 'sqlserver.with_mutation_cte' requires SQL Server "
+                + side + " ServerVersion " + string MinimumVersion
+                + "+; declared version is " + string p.ServerVersion + "."
+
+    let SourceValidationError(provider, sourceProfile) =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider, targetProfile) =
+        validationError provider targetProfile "target"
+
 /// An explicit MySQL version must never silently turn an unsupported ordinary
 /// CTE into a parsed/compiled statement. Missing profiles retain the legacy
 /// permissive contract; declaring a version below 8.0.1 rejects the syntax.

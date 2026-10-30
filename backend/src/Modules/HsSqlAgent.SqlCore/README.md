@@ -2801,3 +2801,25 @@ mutation approval, conflict policies, or source table permissions.
 Real MySQL integration tests compare native and compiled INSERT CTE
 results and parameter bindings. Cross-provider CTE semantics are not
 inferred from the MySQL-specific version proof.
+
+## SQL Server nonrecursive CTE UPDATE and DELETE (native mutation)
+
+SQL Server's `WITH picked AS (SELECT ...) UPDATE ... WHERE ...` and
+`WITH picked AS (SELECT ...) DELETE FROM ... WHERE ...` are typed, **native
+SQL Server-only** Mutation statements. Multiple read-only CTEs and CTE
+projection aliases are preserved. A CTE name may not be used directly
+as the UPDATE/DELETE write target, because SQL Server may resolve that
+name to an updatable underlying table whose lineage has not been proven
+by the physical write allowlist. A declared source or target
+`ServerVersion` earlier than SQL Server **2005 (9.0)** is rejected;
+undeclared profiles retain the current compatibility behavior.
+
+Both statements reuse the existing CTE binder, physical-table read/write
+allowlists, selective-WHERE Mutation Policy, source spans, static effects,
+parameterization and OUTPUT contracts; the CTE alias never becomes an
+implicitly authorized physical table. CTE-prefixed joined UPDATE FROM /
+DELETE FROM, recursive and data-modifying CTE definitions, and
+cross-provider lowering remain fail-closed until independently proved.
+`ParseScript` and `AnalyzeScript` do not connect to any database.
+The SQL Server service CI runs native-vs-compiled row parity for UPDATE
+and DELETE; no driver is added to SqlCore itself.

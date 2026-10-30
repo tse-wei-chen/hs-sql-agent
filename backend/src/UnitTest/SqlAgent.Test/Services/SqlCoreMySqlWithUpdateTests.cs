@@ -129,7 +129,6 @@ public sealed class SqlCoreMySqlWithUpdateTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void OtherUnprovenDialectsDoNotInheritMySqlCteUpdate(SqlAgentToolType source)
