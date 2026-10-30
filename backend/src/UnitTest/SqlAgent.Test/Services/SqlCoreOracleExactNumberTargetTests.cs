@@ -49,8 +49,15 @@ public sealed class SqlCoreOracleExactNumberTargetTests
         Assert.Contains("TO_NUMBER(", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains($"AS NUMBER({precision},{scale}))", result.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("NLS_NUMERIC_CHARACTERS", result.Sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain(value.TrimStart('-'), result.Sql, StringComparison.Ordinal);
-        Assert.Equal(expected, Assert.IsType<string>(Assert.Single(result.Parameters).Value));
+        // Oracle's generated 'FM999...' number format is intentionally
+        // digit-shaped and can equal an all-nines test value. Verify the
+        // actual SQL binding boundary, not substring coincidence.
+        var parameter = Assert.Single(result.Parameters);
+        Assert.Contains("TO_NUMBER(" + parameter.Name, result.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SELECT " + value.TrimStart('-') + " AS",
+            result.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(expected, Assert.IsType<string>(parameter.Value));
     }
 
     [Theory]
