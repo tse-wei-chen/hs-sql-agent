@@ -298,6 +298,23 @@ remain unchanged. It does not authorize SQL execution or establish runtime
 function effects. Views are never treated as physical INSERT/UPDATE/DELETE
 targets by this feature.
 
+## PostgreSQL statement-level WITH UPDATE (strict source subset)
+
+PostgreSQL source SQL admits read-only statement-level WITH CTEs preceding
+UPDATE, including multiple sequential CTE definitions and explicit output
+aliases. The closed F# Update record carries the CTEs directly; Binder
+validates lexical visibility of CTE names in UPDATE FROM, WHERE subqueries
+and expressions, while the PostgreSQL renderer emits the WITH clause before
+UPDATE. Mutation target allowlists, selective-WHERE policy, source/target
+capability checks, resource budgets, parameterization, inspection and
+strict Virtual Catalog proofs remain active. CTEs cannot become physical
+write targets and static script analysis does not authorize execution.
+
+Only native PostgreSQL source/target compilation is proven. Recursive or
+data-modifying CTE bodies, statement-level WITH DELETE / MERGE, and
+cross-provider lowering remain fail-closed. Legacy CLR AST projection
+refuses this new form rather than silently dropping its CTEs.
+
 ## PostgreSQL statement-level WITH INSERT SELECT (strict source subset)
 
 The PostgreSQL source grammar accepts a read-only statement-level CTE prefix

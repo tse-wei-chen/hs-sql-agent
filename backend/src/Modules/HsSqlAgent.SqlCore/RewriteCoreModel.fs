@@ -791,7 +791,8 @@ module internal CoreModel =
             | Values _ | DefaultValues -> None
 
     type Update =
-        { Target: Identifier
+        { Ctes: Cte list
+          Target: Identifier
           TargetAlias: IdentifierPart option
           AssignmentItems: NonEmpty<Assignment>
           From: TableSource list

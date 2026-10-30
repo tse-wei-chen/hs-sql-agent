@@ -93,6 +93,11 @@ module internal RewriteInspection =
                 pushExpr assignment.Value
             for source in List.rev update.From do
                 pending.Add(VisitSource(scope, source))
+            if not update.Ctes.IsEmpty then
+                state.ContainsCte <- true
+                state.ContainsSubquery <- true
+            for cte in List.rev update.Ctes do
+                pending.Add(VisitQuery cte.Query)
         | Statement.DeleteStatement delete ->
             state.Tables.Add(identifierText delete.Target) |> ignore
             let scope = scopeId state

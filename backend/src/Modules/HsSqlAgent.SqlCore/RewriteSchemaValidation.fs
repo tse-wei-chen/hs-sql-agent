@@ -690,6 +690,27 @@ module internal RewriteSchemaValidation =
         let document catalog (doc: Document) =
             let emptyCtes = Map.empty<string, string list>
             let emptyScope = makeScope None []
+            // Reuse the strict Query schema proof for every statement-level
+            // read-only CTE before resolving the UPDATE write scope.
+            // Neither synthetic table metadata nor physical write ownership
+            // is inferred for a CTE.
+            let proveMutationCtes (definitions: Cte list) =
+                let mutable visible = emptyCtes
+                for cte in definitions do
+                    if cte.RecursiveScope then
+                        reject "SQL_SCHEMA_RECURSIVE_CTE_UNPROVABLE" cte.Span
+                            "Recursive CTE schema projection is not proven for mutation."
+                    let projected = queryColumns catalog visible None cte.Query
+                    let names =
+                        match cte.ColumnAliases with
+                        | [] -> requireNamedProjection cte.Span projected
+                        | aliases when aliases.Length = projected.Length ->
+                            aliases |> List.map (keyPart catalog.Dialect)
+                        | _ ->
+                            reject "SQL_SCHEMA_SHAPE_UNPROVABLE" cte.Span
+                                "CTE projection and column-alias widths differ."
+                    visible <- Map.add (keyPart catalog.Dialect cte.Name) names visible
+                visible
             match doc.Statement with
             | QueryStatement query ->
                 queryColumns catalog emptyCtes None query |> ignore
@@ -728,8 +749,9 @@ module internal RewriteSchemaValidation =
                         "Strict snapshot mode does not yet prove UPSERT key and assignment columns.")
                 returning catalog target insert.Returning
             | UpdateStatement update ->
+                let visibleCtes = proveMutationCtes update.Ctes
                 let target = namedSource catalog.Dialect update.Target update.TargetAlias (physicalTable catalog update.Target)
-                let otherSources = update.From |> List.map (source catalog emptyCtes None)
+                let otherSources = update.From |> List.map (source catalog visibleCtes None)
                 let current = makeScope None (target :: otherSources)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun assignment ->
@@ -753,8 +775,8 @@ module internal RewriteSchemaValidation =
                                     + "qualify it with the update target.")
                         | _ -> ()
                     column catalog targetScope doc.Span assignment.Target
-                    expression catalog emptyCtes current Span.unknown assignment.Value)
-                update.Where |> Option.iter (expression catalog emptyCtes current Span.unknown)
+                    expression catalog visibleCtes current Span.unknown assignment.Value)
+                update.Where |> Option.iter (expression catalog visibleCtes current Span.unknown)
                 returning catalog target update.Returning
             | DeleteStatement delete ->
                 let target = namedSource catalog.Dialect delete.Target delete.TargetAlias (physicalTable catalog delete.Target)

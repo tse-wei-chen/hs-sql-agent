@@ -294,6 +294,7 @@ module internal RewriteCapabilityValidation =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveFilterExpr capabilityMessage expressionProofs assignment.Value)
             update.From |> List.iter (proveFilterSource capabilityMessage expressionProofs)
             update.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
@@ -463,6 +464,7 @@ module internal RewriteCapabilityValidation =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> proveTargetExpr targetRuntime targetProfile expressionProofs item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> proveTargetQuery targetRuntime targetProfile expressionProofs cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveTargetExpr targetRuntime targetProfile expressionProofs assignment.Value)
             update.From |> List.iter (proveTargetSource targetRuntime targetProfile expressionProofs)
             update.Where |> Option.iter (proveTargetExpr targetRuntime targetProfile expressionProofs)

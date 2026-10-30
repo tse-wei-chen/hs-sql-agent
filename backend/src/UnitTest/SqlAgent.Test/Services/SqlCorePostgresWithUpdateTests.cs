@@ -39,7 +39,7 @@ public sealed class SqlCorePostgresWithUpdateTests
         var command = SqlCoreFacade.CompileDml(sql,
             SqlAgentToolType.Postgres, SqlAgentToolType.Postgres,
             new SqlPlanValidationContext("postgres-with-update",
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users", "selected" }));
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.True(command.Sql.IndexOf("WITH ", StringComparison.OrdinalIgnoreCase) <
@@ -103,6 +103,42 @@ public sealed class SqlCorePostgresWithUpdateTests
                            "UPDATE users SET name = 'x' FROM x WHERE users.id = x.id";
         var syntax = SqlCoreFacade.ParseScript(sql, provider);
         Assert.NotEqual(SqlScriptParseStatus.Parsed, Assert.Single(syntax.Statements).Status);
+    }
+
+    [Fact]
+    public void StrictSchemaSnapshotResolvesCteColumnsWithoutTreatingCteAsPhysicalTable()
+    {
+        var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.Postgres,
+            "postgres-update-cte-schema-v1",
+            [
+                SqlSchemaTable.WithTypes("users",
+                [
+                    new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+                    new SqlSchemaColumn("name", SqlSchemaValueKind.Text)
+                ])
+            ]);
+        const string sql = "WITH selected AS (SELECT 7 AS id) " +
+                           "UPDATE users SET name = 'done' FROM selected s WHERE users.id = s.id";
+        var context = new SqlPlanValidationContext("strict-cte-update-schema")
+            .WithSchemaSnapshot(snapshot);
+        var command = SqlCoreFacade.CompileDml(sql,
+            SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, context);
+        Assert.Equal(SqlStatementKind.Update, command.Kind);
+        Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void StaticEffectsRecordPhysicalCteReadsButNotVirtualCteName()
+    {
+        const string sql = "WITH selected AS (SELECT id FROM inputs WHERE id = 2) " +
+                           "UPDATE users SET name = 'done' FROM selected s WHERE users.id = s.id";
+        var analysis = SqlCoreFacade.AnalyzeScript(sql, SqlAgentToolType.Postgres);
+        var effects = Assert.Single(analysis.Statements).DetailedEffects;
+        Assert.Contains(effects, e => e.Operation == SqlStatementEffectOperation.ReadTable
+                                      && e.ObjectName == "inputs");
+        Assert.Contains(effects, e => e.Operation == SqlStatementEffectOperation.Update
+                                      && e.ObjectName == "users");
+        Assert.DoesNotContain(effects, e => e.ObjectName == "selected");
     }
 
     [Fact]
