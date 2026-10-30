@@ -3037,3 +3037,32 @@ remains denied by `CompileDml` until the separate typed
 predicate/evidence/commit-gate integration is complete. Native SQL
 Server 2005+, CTE target guard, maximum-row policy and six-dialect
 capability restrictions remain intact.
+
+
+## SQL Server CTE source-key approval and transaction-held host gate (#466, stage 1)
+
+A live `SqlServerCteUniqueKeyAssurance.VerifyLive` proof can now be attached
+to a host `ValidatedDmlPlan.SqlServerCteUniqueKeyAssurance`. It is a
+provider-minted, immutable physical **source** INT unique-key attestation;
+a caller-supplied Catalog or SQL string is not equivalent. The approval
+binding commits to the proof's database, exact source/target identity, index
+and metadata digest, while all plans without this opt-in proof retain their
+existing approval binding hash.
+
+Host single- and atomic-DML commits require a strict, row-set-identified,
+bounded SQL Server UPDATE/DELETE plan with the same exact physical target.
+Before any row-set revalidation or mutation, the coordinator calls
+`proof.IsCurrent(connection, transaction)` on the **actual mutation
+connection and open write transaction**, after schema freshness checks.
+Both tables are locked through commit/rollback; revocation, schema drift,
+wrong connection/transaction and unverified physical metadata abort the
+entire write without silently dropping the proof. The ordinary approval,
+fencing, isolation and rollback rules remain mandatory.
+
+**This is a host-side safety gate, not SQL Server physical-CTE execution
+authorization.** The closed F# compiler still rejects unproven CTE sources
+and a proof attached to a `ValidatedDmlPlan` does not change
+`SqlCoreFacade.CompileDml` or authorize an arbitrary compiled command.
+A subsequent stage must first prove exact closed-AST CTE key lineage and
+bind execution authority to this same transactional gate before lifting any
+physical-source CTE compiler restriction.

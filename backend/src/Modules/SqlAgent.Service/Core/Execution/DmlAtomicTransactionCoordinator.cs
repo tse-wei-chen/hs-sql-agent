@@ -131,6 +131,12 @@ internal sealed class DmlAtomicTransactionCoordinator(
                     await RelationalDmlTargetExecutionFence.EnsureAdmittedInTransactionAsync(
                         connection, transaction, provider, witnessEvidence!, cancellationToken);
 
+                // Validate every plan's source uniqueness in this exact
+                // transaction, before its match query or mutation. A later
+                // failed child still rolls back the entire atomic batch.
+                DmlCoordinator.EnsureLiveSqlServerCteKeyCurrent(
+                    plan, connection, transaction, cancellationToken);
+
                 if (approved.AffectedRows < 0)
                     throw new InvalidOperationException("Approved DML affected row count cannot be negative.");
 

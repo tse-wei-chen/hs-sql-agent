@@ -31,6 +31,16 @@ internal static class DmlApprovalPlanBinding
         Append(hash, plan.ApprovalTtl.Ticks.ToString(CultureInfo.InvariantCulture));
         Append(hash, plan.SchemaSnapshot?.Sha256 ?? "no-schema-snapshot");
 
+        // Only opt-in SQL Server plans gain a new binding component. Preserve
+        // the existing challenge hash for all other DML and previous plans.
+        // The proof is live-minted and includes source/target identity, index
+        // fingerprint, physical database and pinned schema SHA256.
+        if (plan.SqlServerCteUniqueKeyAssurance is { } proof)
+        {
+            Append(hash, "sqlserver-cte-live-key-proof-v1");
+            Append(hash, proof.ProofIdentity);
+        }
+
         if (plan.MatchQueryCommand is { } match)
         {
             Append(hash, "match-query");
