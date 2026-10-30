@@ -51,6 +51,7 @@ module internal RewriteMutationSourceMatchProof =
           NonNullColumns: Set<string>
           ExactIntColumns: Set<string>
           OracleNumberColumns: Set<string>
+          SqliteIntegerColumns: Set<string>
           UniqueKeys: string list list }
 
     // A literal NULL is a fixed value but does not provide non-NULL evidence.
@@ -69,6 +70,11 @@ module internal RewriteMutationSourceMatchProof =
             // Oracle folds unquoted identifiers to uppercase, while quoted
             // names retain their exact spelling. Never uppercase quoted names.
             if part.WasQuoted then part.Value else part.Value.ToUpperInvariant()
+        | SqlAgentToolType.Sqlite ->
+            // Follow RewriteCatalogIdentifierProof.canonicalName: SQLite
+            // virtual Catalog physical names are upper-canonical even when
+            // the identifier was quoted. PostgreSQL's lowercase rule differs.
+            part.Value.ToUpperInvariant()
         | _ ->
             if part.WasQuoted then part.Value else part.Value.ToLowerInvariant()
 
@@ -97,6 +103,18 @@ module internal RewriteMutationSourceMatchProof =
             else None)
         |> Set.ofSeq
 
+    /// Exact SQLite INTEGER is significant: INT and BIGINT share affinity,
+    /// but are not INTEGER PRIMARY KEY rowid aliases. The closed catalog
+    /// parser excludes WITHOUT ROWID and PRIMARY KEY DESC variants.
+    let private sqliteIntegerColumns (table: SqlCatalogTable) =
+        table.Columns
+        |> Seq.choose (fun column ->
+            RewriteResourceBudget.checkpoint ()
+            if String.Equals(column.TypeName, "INTEGER", StringComparison.OrdinalIgnoreCase) then
+                Some column.Name
+            else None)
+        |> Set.ofSeq
+
     let private oracleNumberColumns (table: SqlCatalogTable) =
         table.Columns
         |> Seq.choose (fun column ->
@@ -115,6 +133,7 @@ module internal RewriteMutationSourceMatchProof =
         // keys in that provider; PostgreSQL keeps its existing proof model.
         let safeInt = exactIntColumns table
         let safeOracleNumber = oracleNumberColumns table
+        let safeSqliteInteger = sqliteIntegerColumns table
         table.Constraints
         |> Seq.choose (fun item ->
             RewriteResourceBudget.checkpoint ()
@@ -126,6 +145,14 @@ module internal RewriteMutationSourceMatchProof =
                     match dialect with
                     | SqlAgentToolType.MsSqlServer -> columns |> List.forall safeInt.Contains
                     | SqlAgentToolType.Oracle -> columns |> List.forall safeOracleNumber.Contains
+                    | SqlAgentToolType.Sqlite ->
+                        // Only a single physical INTEGER PRIMARY KEY aliases a
+                        // rowid in the currently modeled SQLite DDL subset.
+                        // Ordinary UNIQUE, INT/BIGINT and composite keys do not
+                        // get a dynamic-affinity/collation proof.
+                        item.Kind = SqlCatalogConstraintKind.PrimaryKey
+                        && columns.Length = 1
+                        && (columns |> List.forall safeSqliteInteger.Contains)
                     | _ -> true
                 if supported then Some columns else None
             | _ -> None)
@@ -180,6 +207,8 @@ module internal RewriteMutationSourceMatchProof =
                                       relation.ExactIntColumns.Contains columnName
                                   | SqlAgentToolType.Oracle ->
                                       relation.OracleNumberColumns.Contains columnName
+                                  | SqlAgentToolType.Sqlite ->
+                                      relation.SqliteIntegerColumns.Contains columnName
                                   | _ -> true) ->
                 Some(Field(relation.Position, columnName))
             | _ -> None
@@ -187,7 +216,8 @@ module internal RewriteMutationSourceMatchProof =
             Some(FixedLiteral false)
         | Literal(ScalarValue.Integer value)
             when dialect = SqlAgentToolType.MsSqlServer
-                 || dialect = SqlAgentToolType.Oracle ->
+                 || dialect = SqlAgentToolType.Oracle
+                 || dialect = SqlAgentToolType.Sqlite ->
             if value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue then
                 Some(FixedLiteral true)
             else None
@@ -235,6 +265,7 @@ module internal RewriteMutationSourceMatchProof =
                        NonNullColumns = nonNullColumns table
                        ExactIntColumns = exactIntColumns table
                        OracleNumberColumns = oracleNumberColumns table
+                       SqliteIntegerColumns = sqliteIntegerColumns table
                        UniqueKeys = uniqueKeys dialect table }
         let targetRelation = create 0 target targetAlias
         let readRelations =
@@ -347,6 +378,17 @@ module internal RewriteMutationSourceMatchProof =
                 && profile.Provider = SqlAgentToolType.Oracle
                 && not (isNull profile.ServerVersion)
                 && profile.ServerVersion.Major >= 26
+            | SqlAgentToolType.Sqlite ->
+                // A source-profile syntax gate is necessary but does not
+                // authorize runtime execution or declare SQLite type rigidity.
+                not (isNull profile)
+                && profile.Provider = SqlAgentToolType.Sqlite
+                && not (isNull profile.ServerVersion)
+                && profile.ServerVersion.CompareTo(Version(3, 33, 0)) >= 0
+                // The shared .NET Unicode uppercase transform is not a
+                // general SQLite identifier-collation proof. Restrict the
+                // physical Catalog to exact ASCII canonical identities.
+                && RewriteCatalogIdentifierProof.safeCatalog state
             | _ -> false
         match (Bound.value bound).Statement with
         | UpdateStatement update when not update.From.IsEmpty ->
