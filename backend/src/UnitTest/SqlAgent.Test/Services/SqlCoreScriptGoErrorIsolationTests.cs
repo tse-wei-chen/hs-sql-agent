@@ -97,6 +97,9 @@ public sealed class SqlCoreScriptGoErrorIsolationTests
         Assert.Throws<SqlParseException>(() => SqlCoreFacade.ParseScript(
             "SELECT (1", new SqlScriptParseOptions(
                 SqlAgentToolType.Postgres, TestContext.Current.CancellationToken)));
+        Assert.Throws<SqlParseException>(() => SqlCoreFacade.ParseScript(
+            "SELECT 1)", new SqlScriptParseOptions(
+                SqlAgentToolType.Postgres, TestContext.Current.CancellationToken)));
     }
 
     [Theory]
