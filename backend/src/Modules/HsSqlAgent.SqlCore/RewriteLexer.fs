@@ -613,6 +613,7 @@ module internal RewriteLexer =
                 let mutable hasExponent = false
 
                 while i < length && Char.IsDigit(sql[i]) do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
                     hasDigits <- true
                     i <- i + 1
 
@@ -620,6 +621,7 @@ module internal RewriteLexer =
                     hasDot <- true
                     i <- i + 1
                     while i < length && Char.IsDigit(sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         hasDigits <- true
                         i <- i + 1
 
@@ -633,6 +635,7 @@ module internal RewriteLexer =
                         i <- i + 1
                     let exponentStart = i
                     while i < length && Char.IsDigit(sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         i <- i + 1
                     if i = exponentStart then
                         parseError "Invalid numeric exponent." start (max 1 (i - start))
