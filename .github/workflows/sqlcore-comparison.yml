@@ -27,8 +27,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify comparator rejects missing cases, output drift and regressions
-        run: python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_perf_comparison.py
+      - name: Verify comparator and code-delta classification contracts
+        run: |
+          python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_perf_comparison.py
+          python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_code_delta.py
       - name: Use identical benchmark workload against both compiler revisions
         shell: bash
         run: |
