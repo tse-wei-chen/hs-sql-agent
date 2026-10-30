@@ -438,10 +438,24 @@ module internal RewriteRenderer =
         let bind scalar = ctx.Bind(scalarObject scalar)
         match ctx.Provider, value with
         | PostgreSql, ScalarValue.ExactNumeric number ->
-            // A text parameter is never a SQL fragment. PostgreSQL performs
-            // the explicit exact-numeric cast on the server; CLR decimal or
-            // double conversion would silently alter the supplied value.
+            // PostgreSQL's unbounded NUMERIC uses the original verified
+            // value in a text parameter; no CLR floating-point conversion.
             "CAST(" + ctx.Bind(box (ExactNumeric.bindingText number)) + " AS NUMERIC)"
+        | (MySql | SqlServer), ScalarValue.ExactNumeric number ->
+            // A derived DECIMAL(p,s) must fit *every* nonzero digit, including
+            // fractional-leading zeroes and exponent shifts. A plain-decimal
+            // string parameter avoids provider-dependent scientific-notation
+            // parsing; neither parameter text nor CAST shape is user SQL.
+            let maximumPrecision, maximumScale =
+                if ctx.Provider = MySql then 65, 30 else 38, 38
+            match ExactNumeric.tryBoundedDecimal maximumPrecision maximumScale number with
+            | Some(text, precision, scale) ->
+                "CAST(" + ctx.Bind(box text) + " AS DECIMAL("
+                + string precision + "," + string scale + "))"
+            | None ->
+                raise (SqlCompilationException(
+                    capabilityError ctx.Provider "numeric.exact_literal"
+                    + " Exact value exceeds the target DECIMAL precision/scale envelope."))
         | _, ScalarValue.ExactNumeric _ ->
             raise (SqlCompilationException(capabilityError ctx.Provider "numeric.exact_literal"))
         | PostgreSql, ScalarValue.OffsetDateTime offset ->
