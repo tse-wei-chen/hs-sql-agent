@@ -27,7 +27,12 @@ public sealed class SqlCoreNumericLiteralPrecisionTests
             "1.00000000000000000000000000001",      // Silently rounded mantissa.
             "0.12345678901234567890123456789"      // Over-precision fractional literal.
         })
-            yield return [provider, value];
+        {
+            // PostgreSQL exact NUMERIC is independently proven by the new
+            // AST/parameter-bound tests; other sources still fail closed.
+            if (provider != SqlAgentToolType.Postgres)
+                yield return [provider, value];
+        }
     }
 
     private static void AssertLosslessRejection(
