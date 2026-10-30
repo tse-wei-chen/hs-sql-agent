@@ -230,7 +230,7 @@ module internal RewriteLexer =
         // SQL numeric magnitudes are bounded by the canonical DecimalLiteral
         // model. Never leak CLR OverflowException/FormatException out of
         // lexing: failure is a typed, source-positioned syntax diagnostic.
-        let decimalLiteral text start finish =
+        let decimalLiteral (text: string) start finish =
             match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
             | true, value -> add (DecimalLiteral value) start finish
             | false, _ ->
