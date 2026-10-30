@@ -98,8 +98,8 @@ token scope so later independent requests are unaffected.
 
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
-The `sqlagent-syntax-matrix` GitHub Actions job runs an opt-in,
-**subprocess-isolated** stack probe after building the SqlCore benchmark:
+The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
+**subprocess-isolated** stack probe in both Debug and Release:
 
 ```bash
 dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --capability-stack-probe
