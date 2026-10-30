@@ -341,6 +341,15 @@ module internal RewriteFacadeAdapter =
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
+          SqliteWithUpdateCte =
+            (if source = SqlAgentToolType.Sqlite
+                && not (isNull sourceProfile)
+                && not (isNull sourceProfile.ServerVersion)
+                && sourceProfile.ServerVersion.CompareTo(Version(3, 8, 3)) < 0 then
+                "SQL capability 'sqlite.with_update' requires SQLite source ServerVersion 3.8.3+; declared version is "
+                + string sourceProfile.ServerVersion + "."
+             else null)
+            |> sourceCapabilityProof
           SqliteWithDeleteCte =
             (if source = SqlAgentToolType.Sqlite
                 && not (isNull sourceProfile)

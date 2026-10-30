@@ -98,7 +98,6 @@ public sealed class SqlCoreSqliteWithInsertSelectTests
     }
 
     [Theory]
-    [InlineData("WITH input_rows AS (SELECT 1) UPDATE users SET id = 2 WHERE id = 1")]
     [InlineData("WITH RECURSIVE input_rows AS (SELECT 1) INSERT INTO users(id) SELECT * FROM input_rows")]
     [InlineData("WITH input_rows AS (SELECT 1) INSERT INTO users(id) VALUES (1)")]
     [InlineData("WITH input_rows AS (DELETE FROM users RETURNING id) INSERT INTO users(id) SELECT id FROM input_rows")]
