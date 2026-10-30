@@ -314,7 +314,8 @@ module internal RewriteFacadeAdapter =
             grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.OracleQuotedString)
           HashPrefixedIdentifier =
             grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier)
-          ScriptMySqlAccountSeparator = false }
+          ScriptMySqlAccountSeparator = false
+          ScriptDeferUnclosedGrouping = false }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { EnforceDialectSyntax = true
