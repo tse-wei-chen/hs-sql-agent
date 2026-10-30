@@ -29,6 +29,7 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          SqliteWithDeleteCte: CapabilityProof
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
           FetchPercent: CapabilityProof
@@ -87,6 +88,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
               FetchPercent = ProvenCapability
@@ -111,6 +113,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
               FetchPercent = ProvenCapability
@@ -336,6 +339,7 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceSqliteWithDeleteCte = semantics.SqliteWithDeleteCte
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
         member _.SourceFetchPercent = semantics.FetchPercent
@@ -3029,11 +3033,14 @@ module internal RewriteParser =
         let update = parseUpdate cursor
         UpdateStatement { update with Ctes = ctes }
 
-    /// Only native PostgreSQL read-only statement CTEs may precede DELETE.
-    /// The CTE definitions remain closed Query nodes in the typed Delete.
+    /// Only proven native PostgreSQL / SQLite read-only statement CTEs may
+    /// precede DELETE. The CTE definitions remain closed typed Query nodes.
     let private parseReadOnlyWithDelete (cursor: Cursor) =
-        if cursor.Dialect <> SourceDialect.PostgreSql then
-            fail cursor.Current "Statement-level WITH DELETE is PostgreSQL-only"
+        if cursor.Dialect <> SourceDialect.PostgreSql
+           && cursor.Dialect <> SourceDialect.SQLite then
+            fail cursor.Current "Statement-level WITH DELETE is PostgreSQL/SQLite-only"
+        if cursor.Dialect = SourceDialect.SQLite then
+            requireSourceParseCapability cursor.Current cursor.SourceSqliteWithDeleteCte
         let ctes = parseReadOnlyStatementCtes cursor
         let delete = parseDelete cursor
         DeleteStatement { delete with Ctes = ctes }
@@ -3051,7 +3058,8 @@ module internal RewriteParser =
                 | Some "INSERT" -> parseReadOnlyWithInsert cursor
                 | Some "UPDATE" when dialect = SourceDialect.PostgreSql ->
                     parseReadOnlyWithUpdate cursor
-                | Some "DELETE" when dialect = SourceDialect.PostgreSql ->
+                | Some "DELETE" when dialect = SourceDialect.PostgreSql
+                                       || dialect = SourceDialect.SQLite ->
                     parseReadOnlyWithDelete cursor
                 | _ -> QueryStatement(parseQuery cursor)
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)

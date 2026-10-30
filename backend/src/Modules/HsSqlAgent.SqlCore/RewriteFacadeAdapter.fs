@@ -341,6 +341,15 @@ module internal RewriteFacadeAdapter =
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
+          SqliteWithDeleteCte =
+            (if source = SqlAgentToolType.Sqlite
+                && not (isNull sourceProfile)
+                && not (isNull sourceProfile.ServerVersion)
+                && sourceProfile.ServerVersion.CompareTo(Version(3, 8, 3)) < 0 then
+                "SQL capability 'sqlite.with_delete' requires SQLite source ServerVersion 3.8.3+; declared version is "
+                + string sourceProfile.ServerVersion + "."
+             else null)
+            |> sourceCapabilityProof
           OnConflict = sourceOnConflictProof source sourceProfile
           Ordering = sourceOrderingProofs source
           FetchPercent =
