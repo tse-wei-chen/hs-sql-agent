@@ -522,6 +522,137 @@ module internal RewriteStages =
             | [ source ] -> isProvenSource source
             | _ -> false)
 
+    /// A live physical unique source INT and live target INT prove one source
+    /// row per target only for this closed, nonmultiplying CTE path. A caller
+    /// catalog alone is never evidence; the DB-minted object is rechecked in
+    /// the host's actual transaction before the approved write.
+    let private sqlServerLiveIntCteProof
+        (proof: SqlServerCteUniqueKeyAssurance | null)
+        (sourceProfile: SqlProviderCapabilityProfile | null)
+        (targetProfile: SqlProviderCapabilityProfile | null)
+        (snapshot: SqlSchemaSnapshot | null)
+        (ctes: Cte list) (target: Identifier) (targetAlias: IdentifierPart option)
+        (sources: TableSource list) (predicate: Expr option) =
+
+        let same (left: string) (right: string) =
+            StringComparer.Ordinal.Equals(left, right)
+        let versioned (profile: SqlProviderCapabilityProfile | null) =
+            not (isNull profile)
+            && profile.Provider = SqlAgentToolType.MsSqlServer
+            && not (isNull profile.ServerVersion)
+            && profile.ServerVersion.CompareTo(Version(9, 0)) >= 0
+        let qualified (identifier: Identifier) (physical: string) =
+            match Identifier.parts identifier, physical.Split('.') with
+            | [schema; table], [|expectedSchema; expectedTable|] ->
+                same schema.Value expectedSchema && same table.Value expectedTable
+            | _ -> false
+        let isColumn field qualifier column =
+            match Expr.unspan field with
+            | Column identifier
+            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                match Identifier.parts identifier with
+                | [owner; memberName] ->
+                    same owner.Value qualifier && same memberName.Value column
+                | _ -> false
+            | _ -> false
+        let isTargetKey field (physical: string) column =
+            match Expr.unspan field, physical.Split('.') with
+            | Column identifier, [|schema; table|]
+            | BoundColumn(identifier, ColumnBinding.LocalRowSource), [|schema; table|] ->
+                match Identifier.parts identifier with
+                | [s; t; k] ->
+                    same s.Value schema && same t.Value table && same k.Value column
+                | _ -> false
+            | _ -> false
+        if isNull proof || String.IsNullOrWhiteSpace(proof.TargetKeyColumn)
+           || not (versioned sourceProfile) || not (versioned targetProfile)
+           || (not (isNull snapshot)
+               && (snapshot.Provider <> SqlAgentToolType.MsSqlServer
+                   || not (same snapshot.Sha256 proof.SchemaSha256)))
+           || not (qualified target proof.TargetTable)
+           || targetAlias.IsSome then false
+        else
+            match ctes, sources with
+            | [cte], [CteTable(cteIdentifier, sourceAlias)] ->
+                let cteName =
+                    match Identifier.parts cteIdentifier with
+                    | [name] -> same name.Value cte.Name.Value
+                    | _ -> false
+                let query = cte.Query
+                let head = query.Head
+                let sourceIsPhysical =
+                    match head.From with
+                    | Some(NamedTable(name, _)) ->
+                        qualified name proof.SourceTable
+                    | _ -> false
+                let projection =
+                    match head.Projection, cte.ColumnAliases with
+                    | [item], [] -> Some(item, None)
+                    | [item], [name] -> Some(item, Some name.Value)
+                    | _ -> None
+                match projection with
+                | Some(item, alias) when cteName && sourceIsPhysical
+                     && not cte.RecursiveScope
+                     && query.SetOperations.IsEmpty
+                     && query.OrderBy.IsEmpty
+                     && query.Limit.IsNone && query.Offset.IsNone
+                     && query.FetchPercent.IsNone && not query.FetchWithTies
+                     && head.Ctes.IsEmpty && head.Joins.IsEmpty
+                     && head.GroupBy.IsEmpty && head.Having.IsNone
+                     && head.DistinctMode = SelectDistinct.AllRows ->
+                    let physicalSourceColumn =
+                        match Expr.unspan item.Expression with
+                        | Column identifier
+                        | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                            match Identifier.parts identifier, head.From with
+                            | [column], _ ->
+                                same column.Value proof.SourceKeyColumn
+                            | [owner; column], Some(NamedTable(name, sourceAlias)) ->
+                                let ownerMatches =
+                                    match sourceAlias, Identifier.parts name with
+                                    | Some alias, _ -> same owner.Value alias.Value
+                                    | None, [_;table] -> same owner.Value table.Value
+                                    | _ -> false
+                                ownerMatches && same column.Value proof.SourceKeyColumn
+                            | _ -> false
+                        | _ -> false
+                    if not physicalSourceColumn then false
+                    else
+                        let output =
+                            match alias, item.Alias with
+                            | Some name, _ -> name
+                            | None, Some name -> name.Value
+                            | None, None -> proof.SourceKeyColumn
+                        let qualifier =
+                            match sourceAlias with
+                            | Some alias -> alias.Value
+                            | None -> cte.Name.Value
+                        // Only top-level mandatory ordinary equality is a
+                        // valid source match. OR, NULL-safe comparisons and
+                        // coercive CASTs must never mint INT key evidence.
+                        let pending = ResizeArray<Expr>()
+                        predicate |> Option.iter pending.Add
+                        let mutable proven = false
+                        while pending.Count > 0 && not proven do
+                            RewriteResourceBudget.checkpoint ()
+                            let last = pending.Count - 1
+                            let node = pending.[last]
+                            pending.RemoveAt(last)
+                            match Expr.unspan node with
+                            | Binary(BinaryOperator.And, left, right) ->
+                                pending.Add right
+                                pending.Add left
+                            | Binary(BinaryOperator.Equal, left, right) ->
+                                if (isTargetKey left proof.TargetTable proof.TargetKeyColumn
+                                    && isColumn right qualifier output)
+                                   || (isTargetKey right proof.TargetTable proof.TargetKeyColumn
+                                       && isColumn left qualifier output) then
+                                    proven <- true
+                            | _ -> ()
+                        proven
+                | _ -> false
+            | _ -> false
+
     /// Public CLR mutation statements may be constructed without the native
     /// Parser. Never trust an unqualified CTE name as the physical UPDATE/
     /// DELETE write target: SQL Server permits writes through updatable CTEs,
@@ -601,7 +732,7 @@ module internal RewriteStages =
                 proven
             | _ -> false
 
-    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile liveKeyAssurance schemaSnapshot document =
+    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile liveKeyAssurance sqlServerLiveProof schemaSnapshot document =
         match document.Statement with
         | QueryStatement query ->
             validateAggregateQuery enforceSource source sourceProfile target targetProfile query
@@ -655,7 +786,8 @@ module internal RewriteStages =
                 if nativeSqlServer then
                     requireSqlServerPhysicalCteTarget update.Ctes update.Target
                     if not update.From.IsEmpty
-                       && not (sqlServerSingletonCteSource update.Ctes update.From) then
+                       && not (sqlServerSingletonCteSource update.Ctes update.From)
+                       && not (sqlServerLiveIntCteProof sqlServerLiveProof sourceProfile targetProfile schemaSnapshot update.Ctes update.Target update.TargetAlias update.From update.Where) then
                         raise (SqlCompilationException(
                             "SQL capability 'sqlserver.with_update.from' requires an at-most-one-row read-only CTE source for every target row; unproven joined cardinality remains fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
@@ -727,7 +859,8 @@ module internal RewriteStages =
                 if nativeSqlServer then
                     requireSqlServerPhysicalCteTarget delete.Ctes delete.Target
                     if not delete.Using.IsEmpty
-                       && not (sqlServerSingletonCteSource delete.Ctes delete.Using) then
+                       && not (sqlServerSingletonCteSource delete.Ctes delete.Using)
+                       && not (sqlServerLiveIntCteProof sqlServerLiveProof sourceProfile targetProfile schemaSnapshot delete.Ctes delete.Target delete.TargetAlias delete.Using delete.Where) then
                         raise (SqlCompilationException(
                             "SQL capability 'sqlserver.with_delete.from' requires an at-most-one-row read-only CTE source for every target row; unproven joined cardinality remains fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
@@ -1358,7 +1491,7 @@ module internal RewriteStages =
     let internal normalizeDocumentForInspection sourceDialect targetRuntime document =
         normalizeDocument sourceDialect targetRuntime document
 
-    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile liveKeyAssurance schemaSnapshot bound =
+    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile liveKeyAssurance sqlServerLiveProof schemaSnapshot bound =
         Transition.normalize
             (fun document ->
                 withCompilationDiagnostic
@@ -1384,6 +1517,7 @@ module internal RewriteStages =
                             target
                             targetProfile
                             liveKeyAssurance
+                            sqlServerLiveProof
                             schemaSnapshot
                             document)
 

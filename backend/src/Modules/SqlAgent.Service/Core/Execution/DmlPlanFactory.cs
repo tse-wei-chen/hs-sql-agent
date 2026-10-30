@@ -229,9 +229,12 @@ public sealed class DmlPlanFactory(
             validationContext,
             targetProfile);
 
+        var boundProof = effectiveValidationContext.SqlServerCteUniqueKeyAssurance;
+        var fingerprintPolicy = boundProof?.TargetKeyColumn is not null
+            ? validationContext.PolicyVersion + "|live-sqlserver-cte-int=" + boundProof.ProofIdentity
+            : validationContext.PolicyVersion;
         var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
-            mutationCommand,
-            validationContext.PolicyVersion);
+            mutationCommand, fingerprintPolicy);
 
         return new ValidatedDmlPlan(
             operation,
@@ -244,7 +247,10 @@ public sealed class DmlPlanFactory(
             validationContext.PolicyVersion,
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             maxAffectedRows,
-            SchemaSnapshot: validationContext.SchemaSnapshot);
+            SchemaSnapshot: validationContext.SchemaSnapshot)
+        {
+            SqlServerCteUniqueKeyAssurance = boundProof
+        };
     }
 
     private async Task<ValidatedDmlPlan> CreateInsertValuesPlanAsync(

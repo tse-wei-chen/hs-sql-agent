@@ -68,16 +68,18 @@ module internal RewritePipeline =
               Policy: ExecutionPolicy
               AllowedTables: string list option
               SchemaSnapshot: SqlSchemaSnapshot option
-              SqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance option }
+              SqliteUpdateFromKeyAssurance: SqliteUpdateFromKeyAssurance option
+              SqlServerCteUniqueKeyAssurance: SqlServerCteUniqueKeyAssurance option }
 
-    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) (liveKeyAssurance: SqliteUpdateFromKeyAssurance | null) =
+    let internal createOptions source target conflictProofs policy allowedTables (schemaSnapshot: SqlSchemaSnapshot | null) (liveKeyAssurance: SqliteUpdateFromKeyAssurance | null) (sqlServerLiveProof: SqlServerCteUniqueKeyAssurance | null) =
         { Source = source
           Target = target
           ConflictProofs = conflictProofs
           Policy = policy
           AllowedTables = allowedTables
           SchemaSnapshot = Option.ofObj schemaSnapshot
-          SqliteUpdateFromKeyAssurance = Option.ofObj liveKeyAssurance }
+          SqliteUpdateFromKeyAssurance = Option.ofObj liveKeyAssurance
+          SqlServerCteUniqueKeyAssurance = Option.ofObj sqlServerLiveProof }
 
     let private sourceProvider = function
         | SourceDialect.PostgreSql -> SqlAgentToolType.Postgres
@@ -153,6 +155,7 @@ module internal RewritePipeline =
                 (VerifiedSource.profile source)
                 (VerifiedTarget.profile target)
                 (options.SqliteUpdateFromKeyAssurance |> Option.toObj)
+                (options.SqlServerCteUniqueKeyAssurance |> Option.toObj)
                 (options.SchemaSnapshot |> Option.toObj)
                 bound)
 

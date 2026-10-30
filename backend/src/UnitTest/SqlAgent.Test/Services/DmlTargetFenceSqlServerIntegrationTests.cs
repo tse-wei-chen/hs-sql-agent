@@ -67,9 +67,28 @@ public sealed class DmlTargetFenceSqlServerIntegrationTests
                     Assert.Contains("activeSessions=", live.Message);
                 }
 
-                var credentialStillValid = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                    verifier.VerifyAsync(admin, login, ct));
-                Assert.Contains("still enabled", credentialStillValid.Message);
+                // SQL Server DMV session-drain visibility is eventually
+                // consistent immediately after disposing a non-pooled login.
+                // Every intermediate observation must still reject cutover,
+                // and success is accepted only when the specific disabled-
+                // credential gate (not an active-session error) is reached.
+                var disabledCredentialGateObserved = false;
+                for (var attempt = 0; attempt < 30; attempt++)
+                {
+                    var credentialStillValid = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                        verifier.VerifyAsync(admin, login, ct));
+                    if (credentialStillValid.Message.Contains("still enabled",
+                            StringComparison.Ordinal))
+                    {
+                        disabledCredentialGateObserved = true;
+                        break;
+                    }
+                    Assert.Contains("activeSessions=", credentialStillValid.Message);
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+                }
+                Assert.True(disabledCredentialGateObserved,
+                    "SQL Server must finish draining retired login sessions before the " +
+                    "disabled-credential gate can be asserted.");
 
                 // Removing grants and sessions does NOT disable credentials.
                 // SQL Server must itself confirm the retired login is disabled.
