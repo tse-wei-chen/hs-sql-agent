@@ -61,11 +61,11 @@ module internal RewriteCatalogBinding =
         SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
         SqlCatalogKnowledge.Unknown, [d], fallbackMatch syntax
 
-    let private typeUnverified syntax code message =
+    let private typeUnverified syntax code message sourceMatch =
         let d = report syntax code SqlDiagnosticStage.SemanticValidation SqlDiagnosticCategory.Capability message
         SqlCatalogBindingStatus.Unverified, SqlCatalogBindingStatus.Verified,
         SqlCatalogBindingStatus.Unverified, SqlStatementAnalysisStatus.PartiallyAnalyzed,
-        SqlCatalogKnowledge.Unknown, [d], fallbackMatch syntax
+        SqlCatalogKnowledge.Unknown, [d], sourceMatch
 
     let private verified sourceMatch =
         SqlCatalogBindingStatus.Verified, SqlCatalogBindingStatus.Verified,
@@ -140,6 +140,8 @@ module internal RewriteCatalogBinding =
                         // assignment semantics. Its names can still be proven.
                         typeUnverified syntax "SQL_CATALOG_TYPE_SQLITE_AFFINITY_UNPROVEN"
                             "SQLite column affinity is dynamic; table/column names are verified but assignment types are not."
+                            (RewriteMutationSourceMatchProof.classify
+                                sourceDialect profile catalogForBinding bound)
                     else
                         RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteSchemaTypeValidation.verifyVirtual sourceDialect catalogForBinding namesChecked)
