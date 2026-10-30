@@ -65,6 +65,26 @@ public sealed class SqlCoreSqliteWithUpdateLiveParityTests
             "SELECT id FROM compiled_result WHERE label = 'changed' ORDER BY id",
             Array.Empty<SqlParameterValue>(), token);
         Assert.Equal(nativeFinal, compiledFinal);
+
+        // Comparing only updated/RETURNING rows can miss unintended writes
+        // to rows outside the intended predicate. Prove the entire table.
+        var nativeSnapshot = await ReadSnapshot(connection,
+            "SELECT id,label FROM native_result ORDER BY id", token);
+        var compiledSnapshot = await ReadSnapshot(connection,
+            "SELECT id,label FROM compiled_result ORDER BY id", token);
+        Assert.Equal(new[] { "1:old", "2:changed", "3:changed" }, nativeSnapshot);
+        Assert.Equal(nativeSnapshot, compiledSnapshot);
+    }
+
+    private static async Task<string[]> ReadSnapshot(DbConnection connection, string sql, CancellationToken token)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        var rows = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync(token);
+        while (await reader.ReadAsync(token))
+            rows.Add(reader.GetInt32(0) + ":" + reader.GetString(1));
+        return rows.ToArray();
     }
 
     private static async Task Execute(DbConnection connection, string sql, CancellationToken token)
