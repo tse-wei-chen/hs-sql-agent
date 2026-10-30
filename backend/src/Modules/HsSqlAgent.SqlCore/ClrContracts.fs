@@ -1054,7 +1054,7 @@ type SqlServerCteUniqueKeyAssurance private (
            || identity.IsDBNull(1) || identity.IsDBNull(2)
            || identity.IsDBNull(3) then
             invalidOp "SQL Server physical database identity is not visible."
-        let databaseId = identity.GetInt32(0)
+        let databaseId = Convert.ToInt32(identity.GetValue(0), Globalization.CultureInfo.InvariantCulture)
         let databaseName = identity.GetString(1)
         let serverInstanceName = identity.GetString(2)
         let databaseGuid = identity.GetGuid(3)
