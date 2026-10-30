@@ -73,7 +73,8 @@ public sealed class SqlCorePostgresExactNumericLiteralTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL)]
+    // This 40-digit value fits MySQL DECIMAL(40,0), but not SQL Server's
+    // maximum precision 38. Its remaining targets are still unproven.
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Oracle)]

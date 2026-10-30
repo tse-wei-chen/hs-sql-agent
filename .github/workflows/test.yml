@@ -963,6 +963,7 @@ jobs:
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
+          SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MySQL
 
 
   sqlagent-test-rest:
@@ -1024,9 +1025,10 @@ jobs:
         # The same live SQL Server 2022 instance is used by both test classes.
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests'
+          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests|FullyQualifiedName~SqlCoreBoundedExactNumericLiveParityTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+          SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MsSqlServer
 
   sqlagent-firebird-ddl-parity:
     runs-on: ubuntu-latest

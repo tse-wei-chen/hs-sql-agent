@@ -208,6 +208,43 @@ The existing source length, per-stage work, compilation deadlines, typed
 lexical diagnostics and cancellation remain active. This feature does not
 alter the six-dialect `DECIMAL(p,s)` CAST type-declaration bounds.
 
+## P6: bounded exact NUMERIC for MySQL and SQL Server targets
+
+The closed F# `ExactNumeric` model (introduced for PostgreSQL source SQL)
+can now lower **losslessly** to MySQL or SQL Server DECIMAL when the precise
+integer/fraction digit shape fits their proven bounds:
+
+- **MySQL target:** explicit `DECIMAL(p,s)`, `1 <= p <= 65`, `0 <= s <= 30`.
+- **SQL Server target:** explicit `DECIMAL(p,s)`, `1 <= p <= 38`, `0 <= s <= p`.
+
+The compiler strips insignificant leading/trailing coefficient zeroes,
+applies the verified decimal exponent exactly, then derives the minimum
+`p = max(1, integerDigits + fractionalDigits)`, `s = fractionalDigits`.
+It checks these bounds **before** allocating the final fixed-decimal string,
+without any CLR decimal or double rounding. The result is a **text-valued
+bound parameter** plus `CAST(parameter AS DECIMAL(p,s))`; scientific source
+literals like `1e-29` are bound as exact `0.000...001`, *not* as text
+scientific notation interpreted differently by the target driver.
+
+Oversized integer, fractional scale, total-precision or exponent cases
+reject with `numeric.exact_literal` during target capability validation.
+The PostgreSQL source's existing 1000-digit envelope stays unchanged;
+**MySQL and SQL Server source dialects are not expanded by this change**.
+PostgreSQL targets retain unbounded `CAST(parameter AS NUMERIC)`; Oracle,
+Firebird and SQLite remain fail-closed pending independent exact parameter
+and server-equivalence proofs.
+
+Positive and negative Query/DML tests cover both targets, and separate
+database-backed tests compare the actual MySQL and SQL Server results
+after driver binding with exact expected decimal text. These live cases
+run in **separate CI shards**: `sqlagent-test` enforces MySQL parity via
+`TEST_MYSQL_CONNECTION`, while `sqlagent-fence-sqlserver` enforces SQL
+Server parity via `TEST_SQLSERVER_CONNECTION`. The selected provider is
+declared by `SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER`; a missing required
+connection fails its designated CI job, not silently skips the proof.
+The tests are read-only and do not modify database state. The readback is explicitly
+stringified *on the server* to avoid CLR decimal deserialization limits.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
