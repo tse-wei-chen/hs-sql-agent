@@ -241,6 +241,8 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
 
             Assert.NotEqual(DmlApprovalPlanBinding.Compute(plan),
                 DmlApprovalPlanBinding.Compute(plan with { SqlServerCteUniqueKeyAssurance = null }));
+            Assert.Throws<InvalidOperationException>(() =>
+                DmlCoordinator.ValidatePlan(plan with { TableName = "dbo.wrong_target" }));
 
             var factory = new LiveSqlServerConnectionFactory();
             var coordinator = new DmlCoordinator(factory);
@@ -248,6 +250,23 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             var preview = await coordinator.PreviewAsync(
                 cs, plan, "sqlserver-cte-gate", token, identity);
             Assert.Equal(1, preview.AffectedRows);
+
+            // A different approved plan (even with identical compiled SQL)
+            // cannot strip its minted live evidence after preview.
+            if (atomic)
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    new DmlAtomicTransactionCoordinator(factory).CommitAsync(
+                        cs, [plan with { SqlServerCteUniqueKeyAssurance = null }],
+                        [preview], token, identity));
+            }
+            else
+            {
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    coordinator.CommitAsync(
+                        cs, plan with { SqlServerCteUniqueKeyAssurance = null },
+                        preview.Challenge, "sqlserver-cte-gate", token, identity));
+            }
 
             if (revokeIndex)
                 await Exec("DROP INDEX [" + index + "] ON dbo.[" + source + "]");

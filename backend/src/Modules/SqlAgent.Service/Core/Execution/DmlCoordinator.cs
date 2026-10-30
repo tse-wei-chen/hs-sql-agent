@@ -182,6 +182,12 @@ public sealed class DmlCoordinator(
                 connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
                 _schemaFreshnessVerifier, cancellationToken);
 
+            // An approval-time unique index is not a transaction-held proof.
+            // Acquire SQL Server table locks and re-attest on THIS write
+            // connection before even reading the approved row set.
+            EnsureLiveSqlServerCteKeyCurrent(
+                plan, connection, transaction, cancellationToken);
+
             if (requireExecutionFence)
             {
                 await _targetExecutionFence!.AdmitAsync(connection, transaction,
@@ -481,6 +487,25 @@ public sealed class DmlCoordinator(
         if (plan.MutationCommand.Kind != expectedKind)
             throw new InvalidOperationException("DML operation does not match its compiled mutation command kind.");
 
+        if (plan.SqlServerCteUniqueKeyAssurance is { } proof)
+        {
+            if (plan.MutationCommand.TargetProvider != SqlAgentToolType.MsSqlServer
+                || plan.Operation is not (DmlOperation.Update or DmlOperation.Delete)
+                || plan.ApprovalMode != DmlApprovalMode.RowSetMutation
+                || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                || plan.MaxAffectedRows <= 0
+                || !string.Equals(plan.TableName, proof.TargetTable, StringComparison.Ordinal)
+                || (plan.SchemaSnapshot is not null
+                    && (plan.SchemaSnapshot.Provider != SqlAgentToolType.MsSqlServer
+                        || !string.Equals(plan.SchemaSnapshot.Sha256, proof.SchemaSha256,
+                            StringComparison.Ordinal))))
+            {
+                throw new InvalidOperationException(
+                    "SQL Server live CTE key proof is not bound to a strict, bounded, " +
+                    "same-provider UPDATE/DELETE plan and its exact physical target/snapshot.");
+            }
+        }
+
         var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(
             plan.MutationCommand,
             plan.PolicyVersion);
@@ -526,6 +551,28 @@ public sealed class DmlCoordinator(
             default:
                 throw new InvalidOperationException($"Unsupported DML approval mode {plan.ApprovalMode}.");
         }
+    }
+
+    // Shared by single and atomic commits. No detached metadata connection,
+    // optimistic preview digest or caller-owned Catalog can discharge this
+    // proof. IsCurrent pins both tables until the active transaction ends.
+    internal static void EnsureLiveSqlServerCteKeyCurrent(
+        ValidatedDmlPlan plan,
+        DbConnection connection,
+        DbTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (plan.SqlServerCteUniqueKeyAssurance is not { } proof)
+            return;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!proof.IsCurrent(connection, transaction))
+        {
+            throw new InvalidOperationException(
+                "SQL Server CTE source unique-key metadata changed or cannot be " +
+                "reverified in the actual mutation transaction; write denied.");
+        }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private static CompiledSqlCommand RequireMatchCommand(ValidatedDmlPlan plan) =>
