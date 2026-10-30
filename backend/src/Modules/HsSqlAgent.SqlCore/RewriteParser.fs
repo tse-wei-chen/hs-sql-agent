@@ -326,7 +326,7 @@ module internal RewriteParser =
                     else
                         let literal =
                             match at (close + 2) with
-                            | IntegerLiteral _ | DecimalLiteral _ | StringLiteral _
+                            | IntegerLiteral _ | DecimalLiteral _ | ExactNumericLiteral _ | StringLiteral _
                             | Keyword "NULL" | Keyword "TRUE" | Keyword "FALSE" -> true
                             | _ -> false
                         literal && at (close + 3) = Keyword "END"
@@ -1224,6 +1224,19 @@ module internal RewriteParser =
                         | Some casted -> expression <- casted
                         | None -> scanningCast <- false
                     expression
+                | ExactNumericLiteral text ->
+                    cursor.Advance()
+                    let value = ExactNumeric.create text
+                    let signed =
+                        if innermost = UnaryOperator.Negate then ExactNumeric.negate value
+                        else value
+                    let mutable expression = Literal(ScalarValue.ExactNumeric signed)
+                    let mutable scanningCast = true
+                    while scanningCast do
+                        match tryParsePostfixCast cursor expression with
+                        | Some casted -> expression <- casted
+                        | None -> scanningCast <- false
+                    expression
                 | _ ->
                     markExpr start cursor (Unary(innermost, parsePostfix cursor))
             let mutable expression = inner
@@ -1560,6 +1573,9 @@ module internal RewriteParser =
         match token.Kind with
         | IntegerLiteral value -> cursor.Advance(); Literal(ScalarValue.Integer value)
         | DecimalLiteral value -> cursor.Advance(); Literal(ScalarValue.Decimal value)
+        | ExactNumericLiteral text ->
+            cursor.Advance()
+            Literal(ScalarValue.ExactNumeric(ExactNumeric.create text))
         | StringLiteral value -> cursor.Advance(); Literal(ScalarValue.Text value)
         | Operator "*" -> cursor.Advance(); Wildcard None
         | Keyword "NULL" -> cursor.Advance(); Literal ScalarValue.Null

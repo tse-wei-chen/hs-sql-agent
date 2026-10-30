@@ -322,7 +322,8 @@ module internal RewriteFacadeAdapter =
           HashPrefixedIdentifier =
             grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier)
           ScriptMySqlAccountSeparator = false
-          ScriptDeferUnclosedGrouping = false }
+          ScriptDeferUnclosedGrouping = false
+          PostgresExactNumeric = source = SqlAgentToolType.Postgres }
 
     let private sourceSemantics source (sourceProfile: SqlProviderCapabilityProfile | null) : RewriteParser.SourceSemantics =
         { EnforceDialectSyntax = true

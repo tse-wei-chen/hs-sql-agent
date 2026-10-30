@@ -206,11 +206,37 @@ module internal CoreModel =
             | SingleBound _ -> None
             | BetweenBounds(_, finish) -> Some finish
 
+    /// First sealed semantic shape for SQL exact numerics outside CLR
+    /// Decimal. The sign is separate so folding a unary minus never changes
+    /// source lexeme validation or silently rounds the numeric magnitude.
+    /// The only construction path receives a fully lexed numeric token.
+    type ExactNumeric = private ExactNumeric of literal: string * negative: bool
+
+    module ExactNumeric =
+        let private grammar =
+            Regex(
+                @"\A(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\z",
+                RegexOptions.CultureInvariant,
+                TimeSpan.FromMilliseconds(100.))
+
+        let create (text: string) =
+            if String.IsNullOrEmpty(text) || text.Length > 4096 || not (grammar.IsMatch(text)) then
+                invalidArg (nameof text) "Exact SQL numeric must be a bounded, lexically validated decimal."
+            ExactNumeric(text, false)
+
+        let negate (ExactNumeric(text, negative)) = ExactNumeric(text, not negative)
+
+        /// Never generate raw executable SQL from this string. The renderer
+        /// must bind the value and emit an explicit, target-proven NUMERIC CAST.
+        let bindingText (ExactNumeric(text, negative)) =
+            if negative then "-" + text else text
+
     type ScalarValue =
         | Null
         | Boolean of bool
         | Integer of int64
         | Decimal of decimal
+        | ExactNumeric of ExactNumeric
         | Floating of double
         | Text of string
         | Date of DateOnly

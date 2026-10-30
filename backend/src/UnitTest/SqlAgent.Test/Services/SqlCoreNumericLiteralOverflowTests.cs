@@ -24,7 +24,13 @@ public sealed class SqlCoreNumericLiteralOverflowTests
             "999999999999999999999999999999.0",       // decimal fraction overflow
             "1e1000"                                 // scientific notation overflow
         })
-            yield return [provider, number];
+        {
+            // PostgreSQL's closed ExactNumeric model handles bounded
+            // magnitudes beyond CLR Decimal; 1e1000 exceeds this first
+            // capability envelope and still fails with the same diagnostic.
+            if (provider != SqlAgentToolType.Postgres || number == "1e1000")
+                yield return [provider, number];
+        }
     }
 
     private static void AssertOverflow(SqlParseException exception, string sql, string number)

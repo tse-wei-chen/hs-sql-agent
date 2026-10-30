@@ -37,7 +37,7 @@ module internal RewriteScalarTypeEvidence =
         | ScalarValue.Integer number -> ExactPrimitive (integerType number)
         | ScalarValue.Boolean _ -> ExactPrimitive SqlFunctionReturnType.Boolean
         | ScalarValue.Text _ -> ExactPrimitive SqlFunctionReturnType.Text
-        | ScalarValue.Decimal _ | ScalarValue.Floating _ ->
+        | ScalarValue.Decimal _ | ScalarValue.ExactNumeric _ | ScalarValue.Floating _ ->
             FamilyOnly SqlSchemaValueKind.Numeric
         | ScalarValue.Date _ | ScalarValue.Time _ | ScalarValue.LocalDateTime _
         | ScalarValue.OffsetDateTime _ | ScalarValue.Duration _ ->

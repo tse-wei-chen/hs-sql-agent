@@ -56,6 +56,9 @@ module internal RewriteCompatibilityAstAdapter =
         | ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> box (int value)
         | ScalarValue.Integer value -> box (decimal value)
         | ScalarValue.Decimal value -> box value
+        | ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(
+                "Exact NUMERIC cannot be projected into the legacy CLR decimal AST without a lossless type."))
         | ScalarValue.Floating value -> box value
         | ScalarValue.Text value -> box value
         | ScalarValue.Date value -> box (SqlDateValue(value))

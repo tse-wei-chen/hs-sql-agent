@@ -28,6 +28,11 @@ module internal RewriteCapabilityValidation =
             | RejectedCapability rejection ->
                 raise (SqlCompilationException(targetCapabilityMessage rejection))
         match targetRuntime, value with
+        | PostgreSqlRuntime, ScalarValue.ExactNumeric _ -> ()
+        | _, ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(
+                "SQL capability 'numeric.exact_literal' requires proven PostgreSQL NUMERIC "
+                + "text-parameter CAST semantics; no lossless target proof exists for this provider."))
         | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
             raise (SqlCompilationException(
                 "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."))

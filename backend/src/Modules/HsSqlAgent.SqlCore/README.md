@@ -179,6 +179,35 @@ still accepts only exactly representable CLR integer/decimal literals; this
 CAST capability proof does not claim to execute 1000-digit numeric parameters.
 The separate target DB / provider must prove or reject the actual data shape.
 
+## P6: first closed exact-NUMERIC literal capability (PostgreSQL)
+
+PostgreSQL SQL text can now represent **bounded arbitrary-precision NUMERIC
+literals** (initial acceptance envelope: at most 1000 decimal integer/fraction
+positions, up to 4096 source characters) without coercing the source value to
+CLR `decimal` or `double`. Source grammar is lexed and validated first; the
+new private F# `ExactNumeric` DU then carries the original verified decimal
+lexeme and independently folded unary sign. Exactly representable ordinary
+CLR integer/decimal literals retain their original typed parameter path.
+
+Query and DML rendering binds the exact numeric as a **text parameter** and
+emits `CAST(parameter AS NUMERIC)` on PostgreSQL; it never concatenates the
+numeric lexeme into executable SQL. The declared SQL numeric is not rounded
+before server evaluation. Static type analysis yields **Numeric family-only**
+evidence, never an invented exact primitive/overload proof.
+
+All **five other source dialects** keep their previous lexical rejection of
+numbers they cannot represent exactly within the current CLR scalar model.
+Compilation from PostgreSQL to any unproven other target refuses
+`numeric.exact_literal` before SQL rendering. Legacy CLR AST projection also
+fails closed instead of turning the value into a string, decimal, or float.
+This is a staged capability expansion, **not** a claim of six-provider
+driver-level exact-numeric parity; each future target needs proven parameter,
+precision, scale and runtime driver semantics first.
+
+The existing source length, per-stage work, compilation deadlines, typed
+lexical diagnostics and cancellation remain active. This feature does not
+alter the six-dialect `DECIMAL(p,s)` CAST type-declaration bounds.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
