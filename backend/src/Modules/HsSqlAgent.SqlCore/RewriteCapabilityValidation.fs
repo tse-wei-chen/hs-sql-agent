@@ -54,6 +54,26 @@ module internal RewriteCapabilityValidation =
                 raise (SqlCompilationException(
                     "SQL capability 'numeric.exact_literal' cannot preserve this value "
                     + "as Oracle NUMBER: maximum precision 38 and portable scale 38."))
+        | FirebirdRuntime, ScalarValue.ExactNumeric number ->
+            // Only integer-scale INT128 bindings are proven by the
+            // pinned ADO.NET driver. VARCHAR -> NUMERIC(p,s) was observed
+            // rounding and overflowing for scale >0 and wide integers.
+            // Do not substitute DECFLOAT(34) or implicit CLR Decimal.
+            match ExactNumeric.tryBoundedDecimal 38 0 number with
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "via the Firebird INT128 driver binding: only exact integer scale 0 "
+                    + "and maximum precision 38 are proven; fractional values remain fail-closed."))
+            | Some(_, precision, _) when precision > 18 ->
+                match proofs.FirebirdExtendedDecimal with
+                | ProvenCapability -> ()
+                | RejectedCapability _ ->
+                    raise (SqlCompilationException(
+                        "SQL capability 'numeric.decimal_extended' requires an explicit Firebird "
+                        + "ServerVersion 4.0+ target profile to prove INT128-backed NUMERIC."))
+            | Some _ -> ()
+
         | _, ScalarValue.ExactNumeric _ ->
             raise (SqlCompilationException(
                 "SQL capability 'numeric.exact_literal' requires a proven exact "

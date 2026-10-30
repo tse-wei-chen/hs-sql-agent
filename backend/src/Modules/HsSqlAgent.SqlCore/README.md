@@ -285,6 +285,45 @@ rounding, or stable format conversion. Both remain fail-closed until
 independent live target tests establish the intended exact-value
 contract; Oracle's NUMBER proof cannot be reused as Firebird proof.
 
+## P6: Firebird 4+ typed INT128 exact integer target
+
+Firebird 4+ supports `NUMERIC/DECIMAL` declarations up to precision 38,
+with `INT128` storage backing precision 19..38 in dialect 3.
+**This does not guarantee that a VARCHAR-bound numeric reaches INT128
+losslessly.** The Firebird 5 / .NET provider live test discovered that
+string parameters cast as `NUMERIC(38,s)` are coerced via CLR Decimal:
+38-digit values can overflow `DbValue.GetDecimal()`, while some
+fractions are rounded or underflow to zero. Such binding is forbidden.
+
+The currently *proven* Firebird ExactNumeric target is therefore
+**integer-only, scale 0, at most 38 digits**. The closed F# model
+converts its lexically validated PostgreSQL-source number into an exact
+`BigInteger` parameter; the generated SQL uses
+`CAST(CAST(parameter AS INT128) AS NUMERIC(p,0))`. A target-side
+`numeric.decimal_extended` proof must attest an explicit Firebird
+ServerVersion 4.0+ profile for precision above 18. Firebird 3 and
+unprofiled >18-digit values are rejected.
+
+All fractional exact values that cannot be represented losslessly by
+the existing CLR Decimal model, including `1e-29` and 29-37 decimal
+fractional places, **remain fail-closed** with
+`numeric.exact_literal` even under Firebird 5. No reinterpretation
+of a scaled `INT128` as an integer, no string-to-decimal fallback,
+and no automatic downgrade to `DECFLOAT(34)` is permitted.
+
+Live parity runs against the pinned Firebird 5.0.4 service with the
+actual Firebird .NET driver, comparing readback of 31- and 38-digit
+positive and negative integer values. This readback is performed on
+the server as VARCHAR, without CLR decimal deserialization. The
+dedicated `sqlagent-firebird-ddl-parity` job must pass; absence of
+`TEST_FIREBIRD_CONNECTION` is a CI failure.
+
+The source SQL dialect for high precision remains PostgreSQL;
+Firebird source syntax above CLR decimal precision is not enabled.
+A future fractional Firebird capability needs separately proven
+driver-level scaled INT128 or another lossless wire format before
+`NUMERIC(p,s)` for `s > 0` can be allowed.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
