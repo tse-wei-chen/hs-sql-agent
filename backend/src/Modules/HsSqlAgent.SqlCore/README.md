@@ -559,6 +559,13 @@ ScriptDispatch resource budget. `GO 2` repetition
 remains outside the modeled subset, and none of the other five dialects
 inherits this SQL Server-specific behavior. Parsing never sends `GO` to a
 database or confers compiler authorization.
+SQL Server Script dispatch also recovers at a semicolon after an **extra
+closing parenthesis** (for example `SELECT 1); SELECT 2`). The first
+statement remains `Invalid` with the strict source-parser diagnostic; the
+next statement retains its own span and syntax status. This is error
+isolation for static inspection, **not** acceptance of malformed SQL.
+Unclosed opening parentheses are not recovered at semicolons, opaque
+procedure bodies remain intact, and `GO` batch behavior is unchanged.
 
 ## Cooperative cancellation for static SQL scripts
 
