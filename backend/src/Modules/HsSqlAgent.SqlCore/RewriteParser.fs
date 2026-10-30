@@ -2982,9 +2982,7 @@ module internal RewriteParser =
         let insert = parseInsert cursor
         match insert.Input with
         | QuerySource query
-            when query.Head.Ctes.IsEmpty
-                 && insert.Conflict.IsNone
-                 && insert.Returning.IsEmpty ->
+            when query.Head.Ctes.IsEmpty ->
             InsertStatement
                 { insert with
                     Input =
@@ -2993,7 +2991,7 @@ module internal RewriteParser =
                                 Head = { query.Head with Ctes = ctes } } }
         | _ ->
             fail cursor.Current
-                "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without RETURNING or conflict clauses"
+                "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without a nested input WITH"
 
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
