@@ -623,6 +623,134 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
         }
     }
 
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LiveProof_BindsServerDatabaseGuid_AndPinsDdlEvenForEmptySource(bool emptySource)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server CTE physical DB fence requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "dbf_" + suffix + "_s";
+        var target = "dbf_" + suffix + "_t";
+        var index = "ux_dbf_" + suffix;
+        await using var db = new SqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var ddl = new SqlConnection(cs);
+        await ddl.OpenAsync(ct);
+
+        async Task Execute(SqlConnection connection, string sql)
+        {
+            await using var command = new SqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        try
+        {
+            await Execute(db, "CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30))");
+            await Execute(db, "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL, label VARCHAR(30))");
+            await Execute(db, "CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + source + "](id)");
+            if (!emptySource)
+                await Execute(db, "INSERT INTO dbo.[" + source + "] (id, label) VALUES (1, 'one')");
+            var snapshot = Snapshot(target, source);
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, snapshot, "dbo." + target, "id", "dbo." + source, "id");
+
+            await using (var identityCommand = new SqlCommand(
+                "SELECT CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')), "
+                + "DB_NAME(), service_broker_guid FROM sys.databases WHERE database_id = DB_ID()", db))
+            await using (var identityReader = await identityCommand.ExecuteReaderAsync(ct))
+            {
+                Assert.True(await identityReader.ReadAsync(ct));
+                Assert.Equal(identityReader.GetString(0), proof.ServerInstanceName);
+                Assert.Equal(identityReader.GetString(1), proof.DatabaseName);
+                Assert.Equal(identityReader.GetGuid(2), proof.DatabaseGuid);
+                Assert.Contains(proof.DatabaseGuid.ToString("D"),
+                    proof.ProofIdentity, StringComparison.OrdinalIgnoreCase);
+                Assert.False(await identityReader.ReadAsync(ct));
+            }
+
+            await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
+            {
+                Assert.True(proof.IsCurrent(db, tx));
+                // DDL must be blocked *even for an empty source table*. A
+                // TOP(1) read must not accidentally grant a metadata fence
+                // without holding a physical lock through the transaction.
+                await using var drop = new SqlCommand(
+                    "SET LOCK_TIMEOUT 1000; DROP INDEX [" + index + "] ON dbo.[" + source + "]", ddl)
+                {
+                    CommandTimeout = 5
+                };
+                var blocked = await Assert.ThrowsAsync<SqlException>(
+                    () => drop.ExecuteNonQueryAsync(ct));
+                Assert.Equal(1222, blocked.Number);
+                await tx.RollbackAsync(ct);
+            }
+            await Execute(ddl, "DROP INDEX [" + index + "] ON dbo.[" + source + "]");
+            await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
+            {
+                Assert.False(proof.IsCurrent(db, tx));
+                await tx.RollbackAsync(ct);
+            }
+        }
+        finally
+        {
+            await Execute(db, "DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Execute(db, "DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
+
+    [Fact]
+    public async Task LiveProof_DatabaseIdentityCannotBeReusedAfterSwitchingCatalog()
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server physical database identity requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "xdb_" + suffix + "_s";
+        var target = "xdb_" + suffix + "_t";
+        await using var db = new SqlConnection(cs);
+        await db.OpenAsync(ct);
+        await using var create = new SqlCommand(
+            "CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY);"
+            + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY)", db);
+        await create.ExecuteNonQueryAsync(ct);
+        try
+        {
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id");
+            // A copied source and target key layout is NOT a substitute for
+            // the actual, specific physical database identity.
+            Assert.NotEqual(Guid.Empty, proof.DatabaseGuid);
+            Assert.False(string.IsNullOrWhiteSpace(proof.ServerInstanceName));
+            Assert.False(string.IsNullOrWhiteSpace(proof.DatabaseName));
+            await using var other = new SqlConnection(cs);
+            await other.OpenAsync(ct);
+            await using var tx = (SqlTransaction)await other.BeginTransactionAsync(ct);
+            Assert.False(proof.IsCurrent(db, tx)); // transaction is on other connection
+            await tx.RollbackAsync(ct);
+        }
+        finally
+        {
+            await using var cleanup = new SqlCommand(
+                "DROP TABLE IF EXISTS dbo.[" + source + "];"
+                + "DROP TABLE IF EXISTS dbo.[" + target + "]", db);
+            await cleanup.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     private static async Task<string> PrimaryKeyName(SqlConnection db, string table, CancellationToken token)
     {
         await using var cmd = new SqlCommand(
