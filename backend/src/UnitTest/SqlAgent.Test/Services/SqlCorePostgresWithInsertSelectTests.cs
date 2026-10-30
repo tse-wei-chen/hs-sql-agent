@@ -88,7 +88,6 @@ public sealed class SqlCorePostgresWithInsertSelectTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void OtherUnprovenDialectsDoNotInheritPostgresWithInsertGrammar(SqlAgentToolType provider)

@@ -73,14 +73,23 @@ module internal RewriteStatementEffects =
                          syntax.Text sourceDialect sourceProfile
         let original = Typestate.Parsed.value parsed
         // Raw CTE references are still NamedTable before Binder resolves
-        // lexical WITH scope. For statement-level UPDATE, inspect the
-        // *bound* tree so virtual CTE aliases are not counted as physical
-        // reads. A semantic binding failure is not silently promoted to
-        // proof: keep the conservative raw references. Resource failures
-        // always propagate rather than falling back.
-        let document =
+        // lexical WITH scope. All three typed Mutation statements can carry
+        // read-only CTEs: INSERT stores them inside QuerySource while UPDATE
+        // and DELETE own Ctes directly. Inspect the *bound* tree so virtual
+        // CTE aliases never become physical read effects or dependencies.
+        // A binding failure is not silently promoted to proof: preserve
+        // conservative raw references, and always propagate resource errors.
+        let mutationHasCtes =
             match original.Statement with
-            | UpdateStatement update when not update.Ctes.IsEmpty ->
+            | InsertStatement insert ->
+                match insert.Input with
+                | QuerySource query -> not query.Head.Ctes.IsEmpty
+                | Values _ | DefaultValues -> false
+            | UpdateStatement update -> not update.Ctes.IsEmpty
+            | DeleteStatement delete -> not delete.Ctes.IsEmpty
+            | _ -> false
+        let document =
+            if mutationHasCtes then
                 try
                     RewriteBinder.bind sourceDialect parsed
                     |> Typestate.Bound.value
@@ -90,17 +99,7 @@ module internal RewriteStatementEffects =
                          && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
                     reraise()
                 | :? InvalidOperationException -> original
-            | DeleteStatement delete when not delete.Ctes.IsEmpty ->
-                try
-                    RewriteBinder.bind sourceDialect parsed
-                    |> Typestate.Bound.value
-                with
-                | :? SqlCompilationException as ex
-                    when not (isNull ex.Diagnostic)
-                         && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
-                    reraise()
-                | :? InvalidOperationException -> original
-            | _ -> original
+            else original
         let references = physicalReferences document
         let potential kind operation name dependencies =
             effect kind operation name null SqlCatalogKnowledge.Unknown

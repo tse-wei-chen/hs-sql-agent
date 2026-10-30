@@ -566,6 +566,23 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "SQL capability 'dml.insert_implicit_columns' is native-only because omitted INSERT target columns depend on provider table-column order. Source provider "
                         + string source + ", target provider " + string target + "."))
+                // A SQL Server target requires the native statement-level CTE
+                // grammar, even when the typed source came from PostgreSQL
+                // or SQLite. Source proof is owned by the parser; target
+                // proof must not be bypassed by cross-provider compilation.
+                if target = SqlAgentToolType.MsSqlServer && not query.Head.Ctes.IsEmpty then
+                    match SqlSqlServerWithMutationCteCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    // SQL Server can resolve an unqualified INSERT target
+                    // against a directly updatable CTE alias. A syntactic
+                    // CTE name is never an attested physical write target.
+                    match Identifier.parts insert.Target with
+                    | [ part ] when query.Head.Ctes |> List.exists (fun cte ->
+                        StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+                        raise (SqlCompilationException(
+                            "SQL Server CTE name is not a verified physical INSERT target; CTE-target writes require separate catalog lineage proof."))
+                    | _ -> ()
                 validateAggregateQuery enforceSource source sourceProfile target targetProfile query
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
