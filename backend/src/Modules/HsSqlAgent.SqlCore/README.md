@@ -96,6 +96,30 @@ Cancellation is cooperative at compiler checkpoints; it does not stop an
 already-running database command. Each call restores its previous ambient
 token scope so later independent requests are unaffected.
 
+## P6: isolated 256 KiB capability and deep-DML stack gate
+
+The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
+**subprocess-isolated** stack probe in both Debug and Release:
+
+```bash
+dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --capability-stack-probe
+```
+
+The gate executes 30 independent child processes (six providers, each with
+three capability-profile scenarios and two 2,048-predicate DML paths) on
+262,144-byte CLR thread stacks. Matrix cases compare every ordered capability
+ID, category, status and complete detail against the same runtime's
+normal-stack fingerprint; the DML cases must either compile an explicitly
+selective DELETE or reject an unbounded DELETE with the exact Policy diagnostic.
+A fatal `StackOverflowException` or timeout is reported as a failed child
+instead of terminating the CI test host. This does **not** attest to database
+execution, approve writes, or declare any new SQL capability.
+
+The large capability list uses streaming construction; changes must preserve
+matrix content and ordinal order, existing policy/evidence contracts, and this
+small-stack acceptance gate. The matrix's public version and methods are
+unchanged by the gate.
+
 ## INSERT target shape and positional type evidence
 
 Strict F# Mutation analysis checks the number of values in **every** VALUES
