@@ -96,6 +96,35 @@ jobs:
         env:
           HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION: "localhost:6379,abortConnect=true,connectTimeout=5000"
 
+  sqlagent-capability-stack:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Gate six-provider 256 KiB capability and DML stacks (Debug)
+        run: >
+          dotnet run -c Debug
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --capability-stack-probe --output artifacts/sqlcore-capability-stack-debug.json
+      - name: Gate six-provider 256 KiB capability and DML stacks (Release)
+        run: >
+          dotnet run -c Release
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --capability-stack-probe --output artifacts/sqlcore-capability-stack-release.json
+      - name: Upload isolated stack evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcore-capability-stack-evidence
+          path: artifacts/sqlcore-capability-stack-*.json
+          if-no-files-found: warn
+
   sqlagent-syntax-matrix:
     runs-on: ubuntu-latest
     permissions:
@@ -111,11 +140,6 @@ jobs:
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)
         run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
-      - name: Gate isolated six-provider 256 KiB capability and DML stack behavior
-        run: >
-          dotnet run -c Release --no-build
-          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
-          --capability-stack-probe --output artifacts/sqlcore-capability-stack-pr.json
       - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
         run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
       - name: Record all-dialect deep SQL behavior (isolated, observational)
