@@ -865,6 +865,245 @@ type SqliteUpdateFromKeyAssurance private (
         SqliteUpdateFromKeyAssurance(
             snapshot, snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
 
+/// SQL Server source-key evidence is minted from its live sys.* catalog,
+/// never from a caller-supplied Virtual Catalog, schema name or SQL text.
+/// An explicit transaction must retain schema locks until the caller commits.
+[<Sealed>]
+type SqlServerCteUniqueKeyAssurance private (
+    pinnedSnapshot: SqlSchemaSnapshot,
+    targetTable: string,
+    sourceTable: string,
+    sourceKeyColumn: string,
+    databaseId: int,
+    sourceObjectId: int,
+    targetObjectId: int,
+    uniqueIndexId: int,
+    uniqueIndexName: string,
+    metadataDigest: string) =
+
+    member _.SchemaSha256 = pinnedSnapshot.Sha256
+    member _.TargetTable = targetTable
+    member _.SourceTable = sourceTable
+    member _.SourceKeyColumn = sourceKeyColumn
+    member _.DatabaseId = databaseId
+    member _.UniqueIndexName = uniqueIndexName
+    member _.ProofIdentity =
+        String.Join("|", [| "sqlserver-live-unique-int-v1"; pinnedSnapshot.Sha256;
+            string databaseId; string sourceObjectId; string targetObjectId;
+            sourceTable; targetTable; sourceKeyColumn;
+            string uniqueIndexId; uniqueIndexName; metadataDigest |])
+
+    /// Binding a proof to a key also requires an exact schema.table scope.
+    /// Restricted ASCII identifiers avoid provider-specific collation and
+    /// delimiter ambiguity in this first version of the proof contract.
+    static member private Name (arg: string) (value: string) =
+        if String.IsNullOrEmpty(value)
+           || not (value |> Seq.mapi (fun i c ->
+               if i = 0 then
+                   (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '_'
+               else
+                   (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                   || (c >= '0' && c <= '9') || c = '_') |> Seq.forall id) then
+            invalidArg arg "SQL Server live unique-key evidence requires a simple ASCII identifier."
+        value
+
+    static member private Parts (arg: string) (value: string) =
+        if isNull value then nullArg arg
+        match value.Split('.') with
+        | [|schema; table|] ->
+            SqlServerCteUniqueKeyAssurance.Name arg schema,
+            SqlServerCteUniqueKeyAssurance.Name arg table
+        | _ -> invalidArg arg "SQL Server live unique-key proof requires schema.table."
+
+    static member private Command (connection: DbConnection) (tx: DbTransaction | null) sql =
+        let command = connection.CreateCommand()
+        command.Transaction <- tx
+        command.CommandText <- sql
+        command
+
+    static member private Bind (command: DbCommand) name (value: obj) =
+        let parameter = command.CreateParameter()
+        parameter.ParameterName <- name
+        parameter.Value <- value
+        command.Parameters.Add(parameter) |> ignore
+
+    static member private SnapshotHasTable (snapshot: SqlSchemaSnapshot) table =
+        snapshot.Tables
+        |> Seq.filter (fun item -> StringComparer.Ordinal.Equals(item.Name, table))
+        |> Seq.length = 1
+
+    static member private Metadata
+        (connection: DbConnection, tx: DbTransaction | null,
+         tableName: string, digest: IncrementalHash) =
+        let schema, table = SqlServerCteUniqueKeyAssurance.Parts "tableName" tableName
+        use tableCommand = SqlServerCteUniqueKeyAssurance.Command connection tx
+            """SELECT t.object_id, s.name, t.name
+               FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id
+               WHERE s.name = @schema AND t.name = @table"""
+        SqlServerCteUniqueKeyAssurance.Bind tableCommand "@schema" schema
+        SqlServerCteUniqueKeyAssurance.Bind tableCommand "@table" table
+        let objectId =
+            use reader = tableCommand.ExecuteReader()
+            if not (reader.Read()) then
+                invalidOp ("SQL Server physical table is absent: " + tableName)
+            let id = reader.GetInt32(0)
+            if not (StringComparer.Ordinal.Equals(reader.GetString(1), schema))
+               || not (StringComparer.Ordinal.Equals(reader.GetString(2), table))
+               || reader.Read() then
+                invalidOp "SQL Server live table identity is ambiguous under database collation."
+            id
+
+        // Hash every physical column and index property needed to detect
+        // a stale index/layout between preview and the commit transaction.
+        // A single-key metadata proof cannot be reused after DDL drift.
+        let append (value: string) =
+            let bytes = Encoding.UTF8.GetBytes value
+            digest.AppendData(BitConverter.GetBytes(bytes.Length))
+            digest.AppendData(bytes)
+        let scan sql =
+            use cmd = SqlServerCteUniqueKeyAssurance.Command connection tx sql
+            SqlServerCteUniqueKeyAssurance.Bind cmd "@objectId" (box objectId)
+            use reader = cmd.ExecuteReader()
+            while reader.Read() do
+                append "row"
+                for i = 0 to reader.FieldCount - 1 do
+                    let value =
+                        if reader.IsDBNull i then "null"
+                        else
+                            let item = reader.GetValue(i)
+                            let text = Convert.ToString(item, Globalization.CultureInfo.InvariantCulture)
+                            "v:" + (if isNull text then "" else text)
+                    append value
+        append tableName
+        append (string objectId)
+        scan """SELECT c.column_id, c.name, typ.name, c.max_length,
+                        c.precision, c.scale, c.is_nullable, c.is_computed,
+                        c.collation_name
+                 FROM sys.columns c
+                 JOIN sys.types typ ON typ.user_type_id = c.user_type_id
+                 WHERE c.object_id = @objectId ORDER BY c.column_id"""
+        append "indexes"
+        scan """SELECT i.index_id, i.name, i.is_unique, i.is_disabled,
+                        i.is_hypothetical, i.has_filter, i.filter_definition,
+                        i.type, ic.index_column_id, ic.key_ordinal,
+                        ic.is_included_column, c.name
+                 FROM sys.indexes i
+                 LEFT JOIN sys.index_columns ic
+                   ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                 LEFT JOIN sys.columns c
+                   ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                 WHERE i.object_id = @objectId
+                 ORDER BY i.index_id, ic.index_column_id"""
+        objectId
+
+    static member private Attest
+        (connection: DbConnection, tx: DbTransaction | null,
+         snapshot: SqlSchemaSnapshot, targetTable: string,
+         sourceTable: string, sourceKey: string, pin: bool) =
+        if connection.State <> ConnectionState.Open then
+            invalidArg "connection" "SQL Server live key proof requires an open connection."
+        if snapshot.Provider <> SqlAgentToolType.MsSqlServer then
+            invalidArg "snapshot" "Only SQL Server schema snapshots can attest SQL Server unique keys."
+        if not (SqlServerCteUniqueKeyAssurance.SnapshotHasTable snapshot targetTable)
+           || not (SqlServerCteUniqueKeyAssurance.SnapshotHasTable snapshot sourceTable) then
+            invalidArg "snapshot" "Both physical target and source must be present in the pinned snapshot."
+        let keyIsNumeric =
+            snapshot.Tables
+            |> Seq.filter (fun item -> StringComparer.Ordinal.Equals(item.Name, sourceTable))
+            |> Seq.collect (fun item -> item.TypedColumns)
+            |> Seq.exists (fun col ->
+                StringComparer.Ordinal.Equals(col.Name, sourceKey)
+                && col.Kind = SqlSchemaValueKind.Numeric)
+        if not keyIsNumeric then
+            invalidArg "snapshot" "The source INT key must be typed Numeric in the immutable schema snapshot."
+        if pin then
+            // TABLE S lock + HOLDLOCK lasts for the SAME explicit transaction;
+            // DDL requires Sch-M and is blocked until commit or rollback.
+            // Lock in canonical order to avoid reversed source/target order.
+            for tableName in [targetTable; sourceTable] |> List.sort do
+                let schema, table = SqlServerCteUniqueKeyAssurance.Parts "tableName" tableName
+                use lockCommand = SqlServerCteUniqueKeyAssurance.Command connection tx
+                    ("SELECT TOP (1) 1 FROM [" + schema + "].[" + table + "] WITH (TABLOCK, HOLDLOCK)")
+                lockCommand.ExecuteScalar() |> ignore
+        use databaseCommand =
+            SqlServerCteUniqueKeyAssurance.Command connection tx "SELECT DB_ID()"
+        let databaseId = Convert.ToInt32(databaseCommand.ExecuteScalar())
+        use digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+        let sourceId = SqlServerCteUniqueKeyAssurance.Metadata(
+            connection, tx, sourceTable, digest)
+        let targetId = SqlServerCteUniqueKeyAssurance.Metadata(
+            connection, tx, targetTable, digest)
+        use indexCommand = SqlServerCteUniqueKeyAssurance.Command connection tx
+            """SELECT i.index_id, i.name, c.name, typ.name
+               FROM sys.indexes i
+               JOIN sys.index_columns ic ON ic.object_id = i.object_id
+                   AND ic.index_id = i.index_id AND ic.key_ordinal = 1
+               JOIN sys.columns c ON c.object_id = ic.object_id
+                   AND c.column_id = ic.column_id
+               JOIN sys.types typ ON typ.user_type_id = c.user_type_id
+               WHERE i.object_id = @objectId
+                 AND i.is_unique = 1 AND i.is_disabled = 0
+                 AND i.is_hypothetical = 0 AND i.has_filter = 0
+                 AND i.type IN (1, 2) AND c.is_nullable = 0
+                 AND c.is_computed = 0
+                 AND (SELECT COUNT(*) FROM sys.index_columns k
+                      WHERE k.object_id = i.object_id
+                        AND k.index_id = i.index_id AND k.key_ordinal > 0) = 1
+               ORDER BY i.index_id"""
+        SqlServerCteUniqueKeyAssurance.Bind indexCommand "@objectId" (box sourceId)
+        let mutable matching: (int * string) option = None
+        use indexes = indexCommand.ExecuteReader()
+        while indexes.Read() do
+            if StringComparer.Ordinal.Equals(indexes.GetString(2), sourceKey)
+               && StringComparer.OrdinalIgnoreCase.Equals(indexes.GetString(3), "int")
+               && matching.IsNone then
+                matching <- Some(indexes.GetInt32(0), indexes.GetString(1))
+        let indexId, indexName =
+            match matching with
+            | Some value -> value
+            | None ->
+                invalidOp "SQL Server live key proof requires an enabled, unfiltered unique single-column INT index."
+        let sha256 = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()
+        databaseId, sourceId, targetId, indexId, indexName, sha256
+
+    static member VerifyLive
+        (connection: DbConnection, snapshot: SqlSchemaSnapshot,
+         targetTable: string, sourceTable: string, sourceKeyColumn: string) =
+        ArgumentNullException.ThrowIfNull connection
+        ArgumentNullException.ThrowIfNull snapshot
+        SqlServerCteUniqueKeyAssurance.Parts "targetTable" targetTable |> ignore
+        SqlServerCteUniqueKeyAssurance.Parts "sourceTable" sourceTable |> ignore
+        SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
+        if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
+            invalidArg "sourceTable" "Self-joined live SQL Server key proof is outside the first verified subset."
+        let dbId, sourceId, targetId, indexId, indexName, digest =
+            SqlServerCteUniqueKeyAssurance.Attest(
+                connection, null, snapshot, targetTable, sourceTable, sourceKeyColumn, false)
+        SqlServerCteUniqueKeyAssurance(
+            snapshot, targetTable, sourceTable, sourceKeyColumn,
+            dbId, sourceId, targetId, indexId, indexName, digest)
+
+    /// The caller MUST invoke this on the actual DML transaction/connection
+    /// before executing the write. Locks are transaction-held; no detached
+    /// preview-time result can satisfy this commit-time check.
+    member this.IsCurrent(connection: DbConnection, transaction: DbTransaction) =
+        if isNull connection || isNull transaction
+           || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
+        else
+            try
+                let dbId, sourceId, targetId, indexId, indexName, digest =
+                    SqlServerCteUniqueKeyAssurance.Attest(
+                        connection, transaction, pinnedSnapshot,
+                        targetTable, sourceTable, sourceKeyColumn, true)
+                dbId = databaseId && sourceId = sourceObjectId
+                && targetId = targetObjectId && indexId = uniqueIndexId
+                && StringComparer.Ordinal.Equals(indexName, uniqueIndexName)
+                && StringComparer.Ordinal.Equals(digest, metadataDigest)
+            with
+            | :? ArgumentException
+            | :? InvalidOperationException
+            | :? DbException -> false
+
 [<Sealed>]
 type SqlPlanValidationContext private (
     policyVersion: string,
