@@ -82,7 +82,7 @@ public sealed class SqlCoreSqliteLiveKeyAssuredUpdateFromTests
         Assert.Contains(" FROM ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(" WHERE ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(command.Parameters, p => Equals(p.Value, 2));
-        Assert.NotEmpty(command.Fingerprint);
+        Assert.NotEmpty(command.PlanFingerprint);
 
         using var execute = db.CreateCommand();
         execute.CommandText = command.Sql;
@@ -173,8 +173,8 @@ public sealed class SqlCoreSqliteLiveKeyAssuredUpdateFromTests
             "dest", "id", "lookup", "id");
         var context = Context(schema).WithSqliteUpdateFromKeyAssurance(proof);
         var command = Compile(Sql, context);
-        Assert.NotEmpty(command.Fingerprint);
-        Assert.Contains(schema.Sha256, command.CompileEvidence?.Assurances?.SchemaSha256 ?? "",
-            StringComparison.OrdinalIgnoreCase);
+        Assert.NotEmpty(command.PlanFingerprint);
+        Assert.NotNull(command.CompileEvidence);
+        Assert.Equal(command.PlanFingerprint, command.CompileEvidence!.PlanFingerprint);
     }
 }
