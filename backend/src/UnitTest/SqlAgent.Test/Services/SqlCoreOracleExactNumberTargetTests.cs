@@ -98,6 +98,24 @@ public sealed class SqlCoreOracleExactNumberTargetTests
         Assert.Contains("numeric.exact_literal", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(4, "123456789012345678901234567890")]
+    [InlineData(5, "12345678901234567890123456789012345")]
+    [InlineData(4, "1e-37")]
+    public void FirebirdVersionProofAloneCannotAuthorizeUnprovenInt128OrDecfloat(
+        int major, string value)
+    {
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.Firebird, new Version(major, 0));
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery("SELECT " + value,
+                SqlAgentToolType.Postgres, SqlAgentToolType.Firebird,
+                new SqlPlanValidationContext("fb-unproven-exact-number"),
+                new SqlExecutionPlanPolicy(), profile));
+        Assert.Contains("numeric.exact_literal", error.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void PostgreSqlSourceUnboundedNumericStillUnchanged()
     {
