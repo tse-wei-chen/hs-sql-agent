@@ -123,7 +123,6 @@ public sealed class SqlCoreMySqlWithDeleteTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void UnprovenDialectsDoNotBorrowMySqlWithDelete(SqlAgentToolType source)

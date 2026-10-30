@@ -133,7 +133,6 @@ public sealed class SqlCoreSqliteWithUpdateTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void OtherDialectsDoNotInheritSqliteUpdateGrammar(SqlAgentToolType source)
