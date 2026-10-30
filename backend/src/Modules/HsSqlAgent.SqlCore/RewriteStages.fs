@@ -389,6 +389,51 @@ module internal RewriteStages =
                 "SQL capability 'dml.returning.expression' is native-only for SQLite and remains fail-closed cross-provider because RETURNING row-source visibility and expression semantics are provider-bound. Source provider "
                 + string source + ", target provider " + string target + "."))
 
+    /// SQLite's UPDATE FROM arbitrarily chooses one joined source row
+    /// when a target matches multiple. This is an at-most-one-row proof,
+    /// independent of live table data and never inferred from WHERE equality.
+    /// Each earlier read-only CTE may contribute a singleton relational
+    /// source only if its closed SELECT cannot multiply input rows.
+    let private sqliteUpdateFromSingletonCte (update: Update) =
+        // Match SQLite Binder's identifier canonicalization. SQLite CTE
+        // binding is case-insensitive even for quoted identifiers.
+        let key (name: IdentifierPart) = name.Value.ToUpperInvariant()
+        let singleton = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        let seen = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
+        let mutable uniqueNames = true
+        let isSingletonCteSource (source: TableSource) =
+            match source with
+            | CteTable(identifier, _) ->
+                match Identifier.parts identifier with
+                | [ name ] -> singleton.Contains(key name)
+                | _ -> false
+            | _ -> false
+
+        for cte in update.Ctes do
+            RewriteResourceBudget.checkpoint ()
+            let name = key cte.Name
+            if not (seen.Add name) then uniqueNames <- false
+            let query = cte.Query
+            if not cte.RecursiveScope
+               && query.SetOperations.IsEmpty
+               && query.Head.Ctes.IsEmpty
+               && query.Head.Joins.IsEmpty
+               && (query.Head.From.IsNone
+                   || Option.exists isSingletonCteSource query.Head.From) then
+                singleton.Add name |> ignore
+            else
+                // Never reuse an earlier singleton proof when a later CTE
+                // with the same canonical name has unproven cardinality.
+                singleton.Remove name |> ignore
+
+        // One syntactically bound CTE source at most. Physical tables,
+        // derived relations, duplicate names, extra FROM sources and
+        // unproven chains fail closed.
+        uniqueNames
+        && (match update.From with
+            | [ source ] -> isSingletonCteSource source
+            | _ -> false)
+
     let private validateAggregateDocument enforceSource source sourceProfile target targetProfile document =
         match document.Statement with
         | QueryStatement query ->
@@ -434,9 +479,10 @@ module internal RewriteStages =
                                 + string declared + "."))
                         | _ -> ()
                 if nativeSqlite then
-                    if not update.From.IsEmpty then
+                    if not update.From.IsEmpty
+                       && not (sqliteUpdateFromSingletonCte update) then
                         raise (SqlCompilationException(
-                            "SQL capability 'sqlite.with_update.from' is not proven for CTE-prefixed SQLite UPDATE; joined mutation cardinality remains fail-closed."))
+                            "SQL capability 'sqlite.with_update.from' requires a single FROM CTE proven at most one row; physical, multi-row, joined, UNION or unproven CTE sources remain fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
                         match profileVersion profile with
                         | Some declared when declared.CompareTo(Version(3, 8, 3)) < 0 ->
