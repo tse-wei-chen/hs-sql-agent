@@ -3,6 +3,7 @@ using System.Data;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using Microsoft.Data.Sqlite;
 using Xunit;
 
