@@ -7,6 +7,7 @@ using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 
+if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
 
 var options = BenchmarkOptions.Parse(args);
