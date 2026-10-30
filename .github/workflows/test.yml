@@ -111,6 +111,11 @@ jobs:
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)
         run: dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --smoke
+      - name: Gate isolated six-provider 256 KiB capability and DML stack behavior
+        run: >
+          dotnet run -c Release --no-build
+          --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks --
+          --capability-stack-probe --output artifacts/sqlcore-capability-stack-pr.json
       - name: Probe SQL expression nesting in isolated subprocesses (smoke only)
         run: dotnet run -c Release --no-build --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --depth-probe --smoke
       - name: Record all-dialect deep SQL behavior (isolated, observational)
