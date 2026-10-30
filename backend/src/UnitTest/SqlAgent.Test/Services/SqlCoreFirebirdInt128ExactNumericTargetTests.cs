@@ -71,18 +71,18 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
     public void Dml_UsesSameBoundINT128ShapeWithoutSourceLiteral(
         string value, string expected, int precision, int scale)
     {
-        // Compile through the parsed-statement overload so ordinary DELETE
-        // does not need an unrelated conflict-target key assurance.
-        // The text overload requires a non-null assurance by contract.
-        var parsed = CoreSqlTextParser.ParseDml(
-            "DELETE FROM metrics WHERE amount = " + value,
-            SqlAgentToolType.Postgres,
-            new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres, new Version(17, 0)));
+        // Use the native F# text compiler: the legacy CLR decimal AST
+        // cannot represent ExactNumeric without loss. The required assurance
+        // carries no conflict key, since DELETE has no conflict target.
         var result = SqlCoreFacade.CompileDml(
-            parsed, SqlAgentToolType.Firebird,
+            "DELETE FROM metrics WHERE amount = " + value,
+            SqlAgentToolType.Postgres, SqlAgentToolType.Firebird,
             new SqlPlanValidationContext("firebird-int128-dml-v1"),
             new DmlCompilationPolicy(),
-            Profile(5), null);
+            new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres, new Version(17, 0)),
+            Profile(5),
+            new DmlConflictTargetAssurance(
+                System.Collections.Immutable.ImmutableArray<string>.Empty));
         Assert.Contains($"AS NUMERIC({precision},{scale}))", result.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(expected, Assert.IsType<System.Numerics.BigInteger>(Assert.Single(result.Parameters).Value).ToString(
