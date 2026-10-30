@@ -33,6 +33,10 @@ jobs:
         shell: bash
         run: |
           cp head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/Program.cs base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/Program.cs
+          # Program references the opt-in probe helper, so baseline and head
+          # must compile with the same benchmark harness source. Its default
+          # workload remains unchanged and executes neither probe path.
+          cp head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/SqlCoreCapabilityStackProbe.cs base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/SqlCoreCapabilityStackProbe.cs
           mkdir -p artifacts
           git -C base rev-parse HEAD > artifacts/base-sha.txt
           git -C head rev-parse HEAD > artifacts/head-sha.txt
