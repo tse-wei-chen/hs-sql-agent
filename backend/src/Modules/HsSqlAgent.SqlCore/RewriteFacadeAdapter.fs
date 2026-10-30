@@ -341,6 +341,15 @@ module internal RewriteFacadeAdapter =
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
+          MySqlWithUpdateCte =
+            (if source = SqlAgentToolType.MySQL
+                && not (isNull sourceProfile)
+                && not (isNull sourceProfile.ServerVersion)
+                && sourceProfile.ServerVersion.CompareTo(Version(8, 0)) < 0 then
+                "SQL capability 'mysql.with_update' requires MySQL source ServerVersion 8.0+; declared version is "
+                + string sourceProfile.ServerVersion + "."
+             else null)
+            |> sourceCapabilityProof
           SqliteWithUpdateCte =
             (if source = SqlAgentToolType.Sqlite
                 && not (isNull sourceProfile)
