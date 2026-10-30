@@ -70,6 +70,11 @@ module internal RewriteMutationSourceMatchProof =
             // Oracle folds unquoted identifiers to uppercase, while quoted
             // names retain their exact spelling. Never uppercase quoted names.
             if part.WasQuoted then part.Value else part.Value.ToUpperInvariant()
+        | SqlAgentToolType.Sqlite ->
+            // Follow RewriteCatalogIdentifierProof.canonicalName: SQLite
+            // virtual Catalog physical names are upper-canonical even when
+            // the identifier was quoted. PostgreSQL's lowercase rule differs.
+            part.Value.ToUpperInvariant()
         | _ ->
             if part.WasQuoted then part.Value else part.Value.ToLowerInvariant()
 
