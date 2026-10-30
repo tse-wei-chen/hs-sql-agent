@@ -112,6 +112,28 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
     }
 
     [Theory]
+    [InlineData("WITH picked AS (SELECT id, name FROM secret_source) UPDATE picked SET name = 'changed' WHERE id = 7")]
+    [InlineData("WITH picked AS (SELECT id, name FROM secret_source) DELETE FROM picked WHERE id = 7")]
+    [InlineData("WITH users AS (SELECT id, name FROM secret_source) UPDATE users SET name = 'changed' WHERE id = 7")]
+    [InlineData("WITH picked AS (SELECT id, name FROM secret_source) UPDATE [picked] SET name = 'changed' WHERE id = 7")]
+    public void CteNameCannotMasqueradeAsPhysicalWriteTarget(string sql)
+    {
+        var parse = SqlCoreFacade.ParseScript(sql,
+            new SqlScriptParseOptions(SqlAgentToolType.MsSqlServer, Profile(),
+                TestContext.Current.CancellationToken));
+        Assert.Equal(SqlScriptParseStatus.Invalid, Assert.Single(parse.Statements).Status);
+        Assert.NotEmpty(parse.Diagnostics);
+
+        var compile = SqlCoreFacade.TryCompileDml(sql,
+            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("cte-write-target-identity",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "picked", "users", "secret_source" }));
+        Assert.False(compile.Success);
+        Assert.NotEmpty(compile.TypedDiagnostics);
+    }
+
+    [Theory]
     [InlineData("WITH RECURSIVE picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' WHERE id = 7")]
     [InlineData("WITH picked AS (DELETE FROM users) DELETE FROM users WHERE id = 7")]
     [InlineData("WITH picked AS (SELECT 7 AS id) INSERT INTO users(id) SELECT id FROM picked")]
