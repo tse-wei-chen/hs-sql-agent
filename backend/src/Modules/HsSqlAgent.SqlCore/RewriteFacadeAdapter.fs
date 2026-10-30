@@ -515,6 +515,7 @@ module internal RewriteFacadeAdapter =
                         targetProfile
                         null
                         null
+                        null
                         bound)
             let canonicalDocument = Canonical.value canonical
             RewriteResourceBudget.withStage "Inspection" SqlDiagnosticStage.SemanticValidation (fun () ->
@@ -726,7 +727,7 @@ module internal RewriteFacadeAdapter =
             (targetNullOrdering target)
             (targetDmlProofs source target targetProfile resultRowAssurance)
 
-    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed schemaSnapshot liveKeyAssurance =
+    let private compileOptions source semantics target sourceProfile targetProfile conflictTargetAssurance resultRowAssurance policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof =
         RewritePipeline.createOptions
             (verifiedSource source semantics sourceProfile)
             (verifiedTarget source target targetProfile resultRowAssurance)
@@ -735,6 +736,7 @@ module internal RewriteFacadeAdapter =
             allowed
             schemaSnapshot
             liveKeyAssurance
+            sqlServerLiveProof
 
 
     // Consume the same canonical digest host verifiers obtain from the snapshot.
@@ -813,7 +815,7 @@ module internal RewriteFacadeAdapter =
                 fingerprint
         CompiledSqlCommand.Create(rendered.Sql, parameterValues, kind, fingerprint, target, rendered.ReturnsRows, evidence)
 
-    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sql =
+    let private compile source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof sql =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let evidenceContext =
             compileEvidenceContext
@@ -841,7 +843,8 @@ module internal RewriteFacadeAdapter =
                         policy
                         allowed
                         schemaSnapshot
-                        liveKeyAssurance)
+                        liveKeyAssurance
+                        sqlServerLiveProof)
                     sql
             buildTranslatedCommand evidenceContext target policyVersion schemaSnapshot parsed rendered
         with ex ->
@@ -852,7 +855,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null sql
+        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null null sql
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
             attachReclassifiedEvidence
@@ -875,7 +878,7 @@ module internal RewriteFacadeAdapter =
         try
             let parsed, facts, rendered =
                 runWithQueryFacts
-                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed validationContext.SchemaSnapshot null)
+                    (compileOptions source (sourceSemantics source sourceProfile) target sourceProfile targetProfile null null queryExecutionPolicy allowed validationContext.SchemaSnapshot null null)
                     sql
             let command =
                 buildTranslatedCommand evidenceContext target validationContext.PolicyVersion validationContext.SchemaSnapshot parsed rendered
@@ -891,16 +894,21 @@ module internal RewriteFacadeAdapter =
             reraise()
 
     let private liveKeyPolicyVersion (context: SqlPlanValidationContext) =
-        match context.SqliteUpdateFromKeyAssurance with
-        | null -> context.PolicyVersion
-        | assurance -> context.PolicyVersion + "|live-sqlite-pk=" + assurance.ProofIdentity
+        let version =
+            match context.SqliteUpdateFromKeyAssurance with
+            | null -> context.PolicyVersion
+            | assurance -> context.PolicyVersion + "|live-sqlite-pk=" + assurance.ProofIdentity
+        match context.SqlServerCteUniqueKeyAssurance with
+        | null -> version
+        | assurance when isNull assurance.TargetKeyColumn -> version
+        | assurance -> version + "|live-sqlserver-cte-int=" + assurance.ProofIdentity
 
     let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         let command =
             try
-                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance (liveKeyPolicyVersion validationContext) (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot validationContext.SqliteUpdateFromKeyAssurance sql
+                compile source target sourceProfile targetProfile conflictTargetAssurance validationContext.DmlResultRowAssurance (liveKeyPolicyVersion validationContext) (dmlPolicy policy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot validationContext.SqliteUpdateFromKeyAssurance validationContext.SqlServerCteUniqueKeyAssurance sql
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
@@ -941,7 +949,7 @@ module internal RewriteFacadeAdapter =
         | :? InvalidOperationException as ex when compilationErrorMessage ex.Message ->
             raise (compilationExceptionFrom ex)
 
-    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance =
+    let private compileParsed (parsed: ParsedStatement) target (targetProfile: SqlProviderCapabilityProfile | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) (resultRowAssurance: DmlResultRowAssurance | null) policyVersion policy allowed schemaSnapshot liveKeyAssurance sqlServerLiveProof =
         let source = parsed.SourceDialect
         let evidenceContext =
             compileEvidenceContext
@@ -983,7 +991,8 @@ module internal RewriteFacadeAdapter =
                             policy
                             allowed
                             schemaSnapshot
-                            liveKeyAssurance)
+                            liveKeyAssurance
+                            sqlServerLiveProof)
                         rewritten
                 let kind = legacyKind parsed.Statement
                 let parameterValues =
@@ -1032,6 +1041,7 @@ module internal RewriteFacadeAdapter =
                 (allowedTables validationContext.AllowedTables)
                 validationContext.SchemaSnapshot
                 null
+                null
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "parsed")
             attachReclassifiedEvidence
@@ -1059,6 +1069,7 @@ module internal RewriteFacadeAdapter =
                     (allowedTables validationContext.AllowedTables)
                     validationContext.SchemaSnapshot
                     validationContext.SqliteUpdateFromKeyAssurance
+                    validationContext.SqlServerCteUniqueKeyAssurance
             with
             | :? InvalidOperationException as ex when unknownQualifierError ex.Message ->
                 raise (compilationExceptionFrom ex)
