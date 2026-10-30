@@ -2908,3 +2908,28 @@ deterministic. Existing non-CTE joined UPDATE/DELETE, SELECT, INSERT,
 cross-provider fail-closed boundaries, profile gates and DML WHERE /
 write-target allowlists remain unchanged. Native SQL Server 2022 DML row
 counts and table snapshots are compared against compiled SQL in CI.
+
+## SQL Server CTE Unique-Key Lineage in Static Mutation Analysis
+
+For native SQL Server `WITH ... UPDATE ... FROM cte` and
+`WITH ... DELETE ... FROM cte`, `AnalyzeScript` can now report
+`SourceMatchCardinality.ProvenAtMostOne` when a **closed Virtual Catalog**
+and a verified, explicitly declared ASCII-safe SQL Server collation establish
+an exact `INT` primary/unique key, and the read-only CTE preserves that key
+by direct projection (including field aliases or chained CTEs).
+The final target-to-CTE predicate must contain a mandatory, type-proven
+equality anchored to every projected unique-key column.
+
+The analysis never derives cardinality from a CTE name, unverified schema,
+a `WHERE` clause alone, a computed key expression, a non-unique source,
+an incompatible/wide/nonnumeric key, a set operation or a multiplying join.
+Any missing proof returns `Unverified`. No new SQL execution path, driver
+or public tool is introduced.
+
+**This is analysis evidence, not permission to execute SQL.** A user-supplied
+Virtual Catalog is not an attestation of *live* physical uniqueness. The
+Mutation compiler's existing singleton-CTE gate remains fail-closed for
+CTE scans of physical tables; accepting those for execution requires an
+independent metadata-backed live schema / freshness assurance at the
+execution boundary. The six-dialect existing source and target capability
+contracts remain unchanged.
