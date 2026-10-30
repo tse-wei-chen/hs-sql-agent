@@ -76,6 +76,7 @@ public sealed class SqlCoreSqliteLiveKeyAssuredUpdateFromTests
         var assurance = SqliteUpdateFromKeyAssurance.VerifyLive(db, schema,
             "dest", "id", "lookup", "id");
         var context = Context(schema).WithSqliteUpdateFromKeyAssurance(assurance);
+        Assert.True(assurance.IsCurrent(db));
         var command = Compile(Sql, context);
         Assert.Equal(SqlStatementKind.Update, command.Kind);
         Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -114,6 +115,20 @@ public sealed class SqlCoreSqliteLiveKeyAssuredUpdateFromTests
         Assert.Throws<SqlCompilationException>(() => Compile(Sql, Context(schema)));
         Assert.Throws<SqlCompilationException>(() =>
             Compile(Sql, new SqlPlanValidationContext("no-schema")));
+    }
+
+    [Fact]
+    public void HostCanRevalidateLiveMetadataAfterSchemaChanges()
+    {
+        using var db = Open();
+        var schema = Snapshot();
+        var proof = SqliteUpdateFromKeyAssurance.VerifyLive(db, schema,
+            "dest", "id", "lookup", "id");
+        Assert.True(proof.IsCurrent(db));
+        Assert.Equal(SqlStatementKind.Update, Compile(Sql,
+            Context(schema).WithSqliteUpdateFromKeyAssurance(proof)).Kind);
+        Execute(db, "CREATE TABLE drifted(id INTEGER);");
+        Assert.False(proof.IsCurrent(db));
     }
 
     [Fact]
