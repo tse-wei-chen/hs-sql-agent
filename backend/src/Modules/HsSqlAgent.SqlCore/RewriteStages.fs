@@ -445,7 +445,74 @@ module internal RewriteStages =
             | [ source ] -> isSingletonCteSource source
             | _ -> false)
 
-    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile document =
+    /// A caller-declared Catalog is NOT a runtime key assurance. Only a
+    /// separate, metadata-verified, schema-bound proof may permit this one
+    /// physical-source native SQLite UPDATE FROM shape.
+    let private sqliteLivePkUpdateFromProof
+            (assurance: SqliteUpdateFromKeyAssurance | null)
+            (snapshot: SqlSchemaSnapshot | null)
+            (sourceProfile: SqlProviderCapabilityProfile | null)
+            (targetProfile: SqlProviderCapabilityProfile | null)
+            (update: Update) =
+
+        let same a b = StringComparer.OrdinalIgnoreCase.Equals(a, b)
+        let versionProven (profile: SqlProviderCapabilityProfile | null) =
+            not (isNull profile)
+            && profile.Provider = SqlAgentToolType.Sqlite
+            && not (isNull profile.ServerVersion)
+            && profile.ServerVersion.CompareTo(Version(3, 33, 0)) >= 0
+
+        if isNull assurance || isNull snapshot
+           || snapshot.Provider <> SqlAgentToolType.Sqlite
+           || not (StringComparer.Ordinal.Equals(snapshot.Sha256, assurance.SchemaSha256))
+           || not (versionProven sourceProfile)
+           || not (versionProven targetProfile) then false
+        else
+            let exactlyOne identifier expected =
+                match Identifier.parts identifier with
+                | [part] -> same part.Value expected
+                | _ -> false
+            let keyColumn qualifier key expr =
+                match Expr.unspan expr with
+                | Column id
+                | BoundColumn(id, ColumnBinding.LocalRowSource) ->
+                    match Identifier.parts id with
+                    | [ table; column ] -> same table.Value qualifier && same column.Value key
+                    | _ -> false
+                | _ -> false
+
+            match update.TargetAlias, update.From with
+            | None, [ NamedTable(name, alias) ]
+                when exactlyOne update.Target assurance.TargetTable
+                     && exactlyOne name assurance.SourceTable
+                     && not (same assurance.TargetTable assurance.SourceTable) ->
+                let sourceQualifier =
+                    alias |> Option.map (fun x -> x.Value)
+                    |> Option.defaultValue assurance.SourceTable
+                let matchesKey left right =
+                    (keyColumn sourceQualifier assurance.SourcePrimaryKey left
+                     && keyColumn assurance.TargetTable assurance.TargetPrimaryKey right)
+                    || (keyColumn sourceQualifier assurance.SourcePrimaryKey right
+                        && keyColumn assurance.TargetTable assurance.TargetPrimaryKey left)
+                let pending = ResizeArray<Expr>()
+                update.Where |> Option.iter pending.Add
+                let mutable proven = false
+                while pending.Count > 0 && not proven do
+                    RewriteResourceBudget.checkpoint ()
+                    let at = pending.Count - 1
+                    let predicate = pending.[at]
+                    pending.RemoveAt at
+                    match Expr.unspan predicate with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add left
+                        pending.Add right
+                    | Binary(BinaryOperator.Equal, left, right) when matchesKey left right ->
+                        proven <- true
+                    | _ -> ()
+                proven
+            | _ -> false
+
+    let private validateAggregateDocument enforceSource source sourceProfile target targetProfile liveKeyAssurance schemaSnapshot document =
         match document.Statement with
         | QueryStatement query ->
             validateAggregateQuery enforceSource source sourceProfile target targetProfile query
@@ -491,9 +558,10 @@ module internal RewriteStages =
                         | _ -> ()
                 if nativeSqlite then
                     if not update.From.IsEmpty
-                       && not (sqliteUpdateFromSingletonCte update) then
+                       && not (sqliteUpdateFromSingletonCte update)
+                       && not (sqliteLivePkUpdateFromProof liveKeyAssurance schemaSnapshot sourceProfile targetProfile update) then
                         raise (SqlCompilationException(
-                            "SQL capability 'sqlite.with_update.from' requires a single FROM CTE proven at most one row; physical, multi-row, joined, UNION or unproven CTE sources remain fail-closed."))
+                            "SQL capability 'sqlite.with_update.from' requires a single singleton CTE, or a live-attested SQLite INTEGER primary-key match bound to the schema snapshot; unproven sources remain fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
                         match profileVersion profile with
                         | Some declared when declared.CompareTo(Version(3, 8, 3)) < 0 ->
@@ -1150,7 +1218,7 @@ module internal RewriteStages =
     let internal normalizeDocumentForInspection sourceDialect targetRuntime document =
         normalizeDocument sourceDialect targetRuntime document
 
-    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile bound =
+    let normalize enforceDialectSyntax sourceDialect targetRuntime sourceRegexProof sourceOrdering mySqlPipes sourceProfile targetProfile liveKeyAssurance schemaSnapshot bound =
         Transition.normalize
             (fun document ->
                 withCompilationDiagnostic
@@ -1175,6 +1243,8 @@ module internal RewriteStages =
                             sourceProfile
                             target
                             targetProfile
+                            liveKeyAssurance
+                            schemaSnapshot
                             document)
 
                 if enforceDialectSyntax then
