@@ -80,7 +80,8 @@ type CoreDmlBatchTextParser private () =
           PostgresDollarQuotedString = grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.PostgresDollarQuotedString)
           OracleQuotedString = grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.OracleQuotedString)
           HashPrefixedIdentifier = grammar.SupportsLexicalFeature(SqlSourceLexicalFeatures.HashPrefixedIdentifier)
-          ScriptMySqlAccountSeparator = false }
+          ScriptMySqlAccountSeparator = false
+          ScriptDeferUnclosedGrouping = false }
 
     static member ParseDmlBatch(sql: string, sourceDialect: SqlAgentToolType) =
         CoreDmlBatchTextParser.ParseDmlBatch(sql, sourceDialect, null)
