@@ -135,9 +135,9 @@ such support requires a future closed numeric AST and target-dialect proof.
 ## P6: numeric-token lexical work and cancellation budget
 
 Numeric lexemes are metered in the same synchronous `RewriteResourceBudget`
-session as the original SQL source scan. Each independent CLR `Decimal.TryParse`
-pass and exact-value canonicalization pass charges a deterministic number of
-work units **before** entering potentially large input scans or digit-buffer
+session as the original SQL source scan. Each independent CLR `Int64.TryParse`
+and `Decimal.TryParse` pass, as well as exact-value canonicalization, charges
+a deterministic number of work units **before** entering potentially large input scans or digit-buffer
 allocation. Long numeric integer, fraction, exponent and canonicalization
 loops also make amortized cancellation / deadline checkpoints.
 
