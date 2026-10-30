@@ -429,6 +429,27 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.Throws<InvalidOperationException>(() =>
                 DmlCoordinator.ValidatePlan(
                     plan with { SqlServerCteUniqueKeyAssurance = legacySourceOnlyProof }));
+
+            // RED: The production Host receives an open metadata connection,
+            // but no caller-created live proof. It must discover, mint and
+            // bind the exact physical INT key proof from the parsed CTE.
+            var autoPlan = await new DmlPlanFactory(metadata.Object)
+                .CreateWithMetadataConnectionAsync(
+                    db, "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 5, cancellationToken: token,
+                    targetProfile: profile);
+            var automaticallyMinted = Assert.IsType<SqlServerCteUniqueKeyAssurance>(
+                autoPlan.SqlServerCteUniqueKeyAssurance);
+            Assert.Equal("dbo." + target, automaticallyMinted.TargetTable);
+            Assert.Equal("dbo." + source, automaticallyMinted.SourceTable);
+            Assert.Equal("id", automaticallyMinted.TargetKeyColumn);
+            Assert.Equal("id", automaticallyMinted.SourceKeyColumn);
+            Assert.Equal(plan.MutationCommand.Sql, autoPlan.MutationCommand.Sql);
+            DmlCoordinator.ValidatePlan(autoPlan);
+            plan = autoPlan;
+
             var coordinator = new DmlCoordinator(new LiveSqlServerConnectionFactory());
             var version = db.ServerVersion.Trim();
             var preview = await coordinator.PreviewAsync(
@@ -510,6 +531,31 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.NotNull(error);
             Assert.True(error is SqlCompilationException or SqlParseException or UnauthorizedAccessException,
                 $"Unexpected failure category: {error.GetType().Name}: {error.Message}");
+
+            // Even with an open physical metadata connection, the Host
+            // must not turn an unverified CTE graph into a write authority.
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("metadata-test",
+                    It.IsAny<CancellationToken>())).ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("metadata-test", "dbo",
+                    It.IsAny<CancellationToken>())).ReturnsAsync([target]);
+            metadata.Setup(x => x.GetColumnsAsync("metadata-test", "dbo", target,
+                    It.IsAny<CancellationToken>())).ReturnsAsync([
+                    new DatabaseColumnMetadata("dbo", target, "id", "int", true, 1),
+                    new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
+                ]);
+            var parsedForAuto = CoreSqlTextParser.ParseDml(
+                sql, SqlAgentToolType.MsSqlServer, profile);
+            await Assert.ThrowsAnyAsync<Exception>(async () =>
+                await new DmlPlanFactory(metadata.Object)
+                    .CreateWithMetadataConnectionAsync(
+                        db, "metadata-test", parsedForAuto, SqlAgentToolType.MsSqlServer,
+                        new SqlPlanValidationContext("sqlserver-auto-negative",
+                            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                                { "dbo." + target, "dbo." + source }),
+                        new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                        maxAffectedRows: 5, cancellationToken: ct,
+                        targetProfile: profile));
         }
         finally
         {
