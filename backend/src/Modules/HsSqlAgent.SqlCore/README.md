@@ -245,6 +245,46 @@ connection fails its designated CI job, not silently skips the proof.
 The tests are read-only and do not modify database state. The readback is explicitly
 stringified *on the server* to avoid CLR decimal deserialization limits.
 
+## P6: Oracle exact NUMBER target proof and locale-stable parameterization
+
+The existing closed F# `ExactNumeric` model now supports a third bounded
+target: **Oracle `NUMBER(p,s)`**, with `p <= 38` and nonnegative
+`s <= p`. It uses the same exact coefficient/exponent-to-fixed-decimal
+normalization as MySQL and SQL Server, with explicit source/target proof and
+no floating-point coercion. Values exceeding 38 combined decimal digits
+or 38 fractional places fail with `numeric.exact_literal` before rendering.
+
+Oracle SQL text is emitted as a **bound string parameter** inside
+`CAST(TO_NUMBER(parameter, generatedFormat, 'NLS_NUMERIC_CHARACTERS=''.,''') AS NUMBER(p,s))`.
+The generated number format model contains only `FM`, `9` and optional
+`D` digits derived from the proven `p,s`. The source numeric token is
+never spliced into SQL. This explicit `TO_NUMBER` NLS argument is necessary:
+Oracle's implicit VARCHAR2-to-NUMBER conversion depends on the session's
+decimal separator. Live parity intentionally sets the session decimal
+character to a comma and verifies the original fixed decimal value using
+server-side invariant `TO_CHAR` (no CLR `decimal` deserialization).
+
+The Oracle 23ai database-backed read-only tests run in the existing
+`sqlagent-oracle-ddl-parity` CI shard, using its pinned Oracle service and
+`TEST_ORACLE_CONNECTION`. The shard sets
+`SQLCORE_ORACLE_EXACT_NUMERIC_LIVE=true` and missing required Oracle
+credentials fail the job. Other CI shards do not claim to have executed
+Oracle parity.
+
+This expansion affects **PostgreSQL source SQL compiled to an Oracle
+target**; the Oracle source lexer still rejects non-CLR-representable
+numeric tokens pending independent source semantics proof.
+`NUMBER(p,s)` beyond the portable F# type model, and all unproven
+SQLite/Firebird exact target conversions, remain disabled.
+
+**Firebird assessment:** version 4+ offers `INT128`-backed fixed
+`DECIMAL/NUMERIC` (up to 38 digits), but `DECFLOAT(34)` has only
+34 significant digits and may round longer input. A Firebird server
+version profile alone does not prove driver string binding, decimal
+rounding, or stable format conversion. Both remain fail-closed until
+independent live target tests establish the intended exact-value
+contract; Oracle's NUMBER proof cannot be reused as Firebird proof.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,

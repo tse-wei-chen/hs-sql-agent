@@ -441,6 +441,25 @@ module internal RewriteRenderer =
             // PostgreSQL's unbounded NUMERIC uses the original verified
             // value in a text parameter; no CLR floating-point conversion.
             "CAST(" + ctx.Bind(box (ExactNumeric.bindingText number)) + " AS NUMERIC)"
+        | Oracle, ScalarValue.ExactNumeric number ->
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | Some(text, precision, scale) ->
+                // Oracle's implicit CAST(VARCHAR2 AS NUMBER) depends on
+                // NLS_NUMERIC_CHARACTERS. Bind the fixed-decimal lexeme,
+                // then parse it with a generated locale-invariant number
+                // format before applying the exact NUMBER(p,s) shape.
+                let integerPositions = max 1 (precision - scale)
+                let format =
+                    "FM" + String('9', integerPositions)
+                    + (if scale = 0 then "" else "D" + String('9', scale))
+                "CAST(TO_NUMBER("
+                + ctx.Bind(box text)
+                + ", '" + format + "', 'NLS_NUMERIC_CHARACTERS=''.,''') AS NUMBER("
+                + string precision + "," + string scale + "))"
+            | None ->
+                raise (SqlCompilationException(
+                    capabilityError ctx.Provider "numeric.exact_literal"
+                    + " Exact value exceeds the Oracle NUMBER precision/scale envelope."))
         | (MySql | SqlServer), ScalarValue.ExactNumeric number ->
             // A derived DECIMAL(p,s) must fit *every* nonzero digit, including
             // fractional-leading zeroes and exponent shifts. A plain-decimal

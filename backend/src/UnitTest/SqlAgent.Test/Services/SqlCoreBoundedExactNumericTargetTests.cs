@@ -85,8 +85,8 @@ public sealed class SqlCoreBoundedExactNumericTargetTests
 
     [Theory]
     [InlineData(SqlAgentToolType.Sqlite)]
-    [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
+    // Oracle has its own positive, negative, NLS and live execution proof.
     public void OtherTargets_RemainExplicitlyUnproven(SqlAgentToolType target)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
