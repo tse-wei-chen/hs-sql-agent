@@ -81,6 +81,41 @@ public sealed class SqlCoreSqlServerMutationCteClrParityTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
+    public void ConstructedClrCteCannotMasqueradeAsPhysicalWriteTarget(bool update)
+    {
+        var sql = "WITH picked AS (SELECT 7 AS id) " +
+            (update
+                ? "UPDATE users SET label = 1 FROM picked WHERE users.id = picked.id"
+                : "DELETE FROM users FROM picked WHERE users.id = picked.id");
+        var parsed = CoreSqlTextParser.ParseDml(
+            sql, SqlAgentToolType.MsSqlServer, Profile());
+        var forgedTarget = CoreSqlTextParser.ParseDml(
+            update ? "UPDATE picked SET id = 8 WHERE id = 7"
+                   : "DELETE FROM picked WHERE id = 7",
+            SqlAgentToolType.MsSqlServer, Profile());
+        if (update)
+            ((UpdateStatement)parsed.Statement).Target =
+                ((UpdateStatement)forgedTarget.Statement).Target;
+        else
+            ((DeleteStatement)parsed.Statement).Target =
+                ((DeleteStatement)forgedTarget.Statement).Target;
+
+        // Source RawSql still names "users"; CLR AST writes to "picked".
+        // CompileDml must validate the actual supplied AST, not rely on
+        // the earlier source-parser's physical target proof.
+        var ctx = new SqlPlanValidationContext("sqlserver-cte-forged-target",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "picked", "users" });
+        Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileDml(parsed,
+                SqlAgentToolType.MsSqlServer, ctx,
+                new DmlCompilationPolicy(), Profile(),
+                conflictTargetAssurance: null));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
     public void PublicClrCteRequiresSqlServer2005OrLater(bool update)
     {
         var sql = "WITH picked AS (SELECT 7 AS id) " +
