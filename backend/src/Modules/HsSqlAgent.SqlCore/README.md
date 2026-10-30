@@ -150,6 +150,35 @@ below the independent 4 Mi-character total SQL input limit. Work quotas
 apply to total parsing activity, not just the number of emitted tokens; no
 independent global numeric budget or new SQL grammar is introduced.
 
+## P6: exact DECIMAL/NUMERIC CAST source/target capability proof
+
+The closed F# `SqlDecimal(precision, scale)` AST is not sufficient evidence
+that the source and target database can implement the declared SQL shape.
+The compiler now verifies explicit precision/scale independently at source
+parsing and target capability validation, including same-provider CASTs:
+
+| Provider | Maximum explicit precision | Maximum scale | Additional proof |
+| --- | ---: | ---: | --- |
+| PostgreSQL | 1000 | scale ≤ precision in the portable Core model | Unbounded NUMERIC remains native PostgreSQL |
+| MySQL | 65 | 30 | Cross-provider unbounded NUMERIC is rejected (MySQL defaults to DECIMAL(10,0)) |
+| SQL Server | 38 | precision | Includes same-provider CAST |
+| Oracle | 38 | precision in the portable Core model | NUMBER maps by exact modeled precision |
+| Firebird | 18 on v3; 38 on v4+ | precision | Precision 19..38 requires explicit 4.0+ source/target capability profiles |
+| SQLite | No fixed-point precision proof | No fixed-point scale proof | Native NUMERIC affinity remains valid; cross-provider bounded/unbounded exact NUMERIC CAST cannot claim DECIMAL(p,s) fidelity |
+
+Out-of-range declarations fail closed with typed
+`SQL_SOURCE_TYPE_REJECTED` source diagnostics, or target compilation errors
+before rendering and authorization. `ParseScript` retains its existing
+inspection contract: a failing statement is marked `Invalid` with the
+corresponding diagnostic, rather than allowing it to compile. No precision
+clamping, lossy default scale inference, or arbitrary-precision CLR literal
+expansion is introduced.
+
+SQL numeric literals and CAST *type declarations* are distinct: the lexer
+still accepts only exactly representable CLR integer/decimal literals; this
+CAST capability proof does not claim to execute 1000-digit numeric parameters.
+The separate target DB / provider must prove or reject the actual data shape.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
