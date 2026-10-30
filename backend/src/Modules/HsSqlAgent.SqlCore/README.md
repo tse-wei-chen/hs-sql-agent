@@ -382,6 +382,19 @@ CTEs, MySQL multi-table DELETE / DELETE USING, RETURNING and cross-provider
 WITH DELETE lowering remain unproven and denied. Real MySQL 8 tests compare
 native and compiled affected rows and unchanged records.
 
+## Oracle 12.1+ LATERAL inline-view query sources
+
+Oracle Database 12c+ native LATERAL inline views reuse the closed F#
+`LateralDerivedTable`, scope-aware Binder and Query Compiler. CROSS JOIN,
+INNER JOIN, and LEFT JOIN LATERAL correlate to preceding FROM items while
+ordinary derived queries remain uncorrelated; Oracle syntax uses ON 1=1
+rather than a non-portable Boolean TRUE predicate. Source and target
+must separately declare Oracle ServerVersion 12.1 or newer; 11g and
+undeclared versions are rejected. RIGHT/FULL LATERAL, unmodeled lateral
+table sources and Oracle/PostgreSQL/MySQL cross-provider translation remain
+fail-closed. Real Oracle row-parity tests compare native and compiled
+queries including unmatched LEFT JOIN NULL results.
+
 ## MySQL 8.0.14+ LATERAL derived-table query sources
 
 MySQL 8.0.14+ now uses the existing F# `LateralDerivedTable` and

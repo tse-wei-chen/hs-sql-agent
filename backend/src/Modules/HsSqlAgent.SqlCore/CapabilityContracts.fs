@@ -930,12 +930,14 @@ module internal SqlFetchWithTiesCapabilityRules =
 module internal SqlLateralDerivedTableCapabilityRules =
     let PostgresMinimumVersion = Version(9,3)
     let MySqlMinimumVersion = Version(8,0,14)
+    let OracleMinimumVersion = Version(12,1)
 
     /// After source/target runtime proof, emission needs only a native
     /// dialect check. Never infer a runtime version from the renderer.
     let SyntaxEmissionValidationError(provider: SqlAgentToolType) : string | null =
         match provider with
-        | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL -> null
+        | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL
+        | SqlAgentToolType.Oracle -> null
         | _ ->
             "SQL capability 'select.lateral_derived' is not supported by target provider "
             + string provider + "; LATERAL derived-table correlation remains fail-closed."
@@ -965,6 +967,22 @@ module internal SqlLateralDerivedTableCapabilityRules =
                 | version when version.CompareTo(MySqlMinimumVersion) < 0 ->
                     "SQL capability 'select.lateral_derived' requires MySQL " + side
                     + " ServerVersion 8.0.14+; declared version is " + version.ToString() + "."
+                | _ -> null
+        | SqlAgentToolType.Oracle ->
+            // 12c introduced native left-correlated inline views. Runtime
+            // 11g and missing profiles cannot prove the source or target.
+            match profile with
+            | null ->
+                "SQL capability 'select.lateral_derived' requires an explicit Oracle "
+                + side + " ServerVersion 12.1+."
+            | value ->
+                match value.ServerVersion with
+                | null ->
+                    "SQL capability 'select.lateral_derived' requires an explicit Oracle "
+                    + side + " ServerVersion 12.1+."
+                | version when version.CompareTo(OracleMinimumVersion) < 0 ->
+                    "SQL capability 'select.lateral_derived' requires Oracle " + side
+                    + " ServerVersion 12.1+; declared version is " + version.ToString() + "."
                 | _ -> null
         | _ ->
             "SQL capability 'select.lateral_derived' is not supported by " + side

@@ -364,6 +364,18 @@ type SqlCapabilityMatrix private () =
                 | None ->
                     rejected,
                     "MySQL LATERAL derived-table correlation requires explicit target ServerVersion 8.0.14+; undeclared versions remain fail-closed."
+            | SqlAgentToolType.Oracle ->
+                match profileServerVersion with
+                | Some version when version.CompareTo(SqlLateralDerivedTableCapabilityRules.OracleMinimumVersion) >= 0 ->
+                    supported,
+                    "Oracle 12.1+ LATERAL inline views preserve earlier FROM-source correlation through the typed F# AST and native query renderer. Both source and target versions are independently proven; cross-provider lowering remains rejected."
+                | Some version ->
+                    rejected,
+                    "LATERAL inline views require Oracle target ServerVersion 12.1+; declared version is "
+                    + version.ToString() + "."
+                | None ->
+                    rejected,
+                    "Oracle LATERAL inline views require explicit target ServerVersion 12.1+; undeclared runtime versions remain fail-closed."
             | _ ->
                 rejected,
                 "SQL capability 'select.lateral_derived' has no proven native support for "
