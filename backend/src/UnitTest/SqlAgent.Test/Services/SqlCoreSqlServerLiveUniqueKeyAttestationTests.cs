@@ -318,6 +318,202 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
         public DbConnection Create(string connectionString) => new SqlConnection(connectionString);
     }
 
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task LiveTargetAndSourceIntKey_CompilesAndCommitsStrictCteMutation(
+        bool update, bool projectedAlias)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server CTE compiler parity requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("SQL Server required.");
+        }
+
+        var token = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "ctel_" + suffix + "_s";
+        var target = "ctel_" + suffix + "_t";
+        await using var db = new SqlConnection(cs);
+        for (int retry = 0; ; retry++)
+        {
+            try { await db.OpenAsync(token); break; }
+            catch (SqlException) when (retry < 24 && !token.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), token); }
+        }
+
+        async Task Exec(string sql)
+        {
+            await using var cmd = new SqlCommand(sql, db);
+            await cmd.ExecuteNonQueryAsync(token);
+        }
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30))");
+            await Exec("CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30))");
+            await Exec("INSERT INTO dbo.[" + target + "] (id, label) VALUES (1, 'old'), (2, 'untouched')");
+            await Exec("INSERT INTO dbo.[" + source + "] (id, label) VALUES (1, 'one')");
+
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id");
+            Assert.Equal("id", proof.TargetKeyColumn);
+            var profile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            const string policy = "sqlserver-live-cte-compiler-v1";
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "dbo." + target, "dbo." + source };
+            var context = new SqlPlanValidationContext(policy, allowed)
+                .WithSqlServerCteUniqueKeyAssurance(proof);
+            var output = projectedAlias ? "lookup_id" : "id";
+            var select = projectedAlias ? "id AS lookup_id" : "id";
+            var cte = "WITH picked AS (SELECT " + select + " FROM dbo.[" + source + "]) ";
+            var mutation = cte + (update
+                ? "UPDATE dbo.[" + target + "] SET label = 'changed' FROM picked WHERE dbo." + target + ".id = picked." + output
+                : "DELETE FROM dbo.[" + target + "] FROM picked WHERE dbo." + target + ".id = picked." + output);
+            var parsed = CoreSqlTextParser.ParseDml(mutation, SqlAgentToolType.MsSqlServer, profile);
+            var withoutProof = SqlCoreFacade.TryCompileDml(
+                mutation, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                new SqlPlanValidationContext(policy, allowed));
+            Assert.False(withoutProof.Success);
+
+            var compiled = SqlCoreFacade.CompileDml(
+                parsed, SqlAgentToolType.MsSqlServer, context,
+                new DmlCompilationPolicy(), profile, null);
+            Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("picked", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+
+            var match = SqlCoreFacade.CompileQuery(
+                cte + "SELECT dbo.[" + target + "].id FROM dbo.[" + target + "] CROSS JOIN picked WHERE dbo."
+                    + target + ".id = picked." + output,
+                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                new SqlPlanValidationContext(policy, allowed),
+                new SqlExecutionPlanPolicy(), profile, profile);
+            var fingerprintPolicy = policy + "|live-sqlserver-cte-int=" + proof.ProofIdentity;
+            var plan = new ValidatedDmlPlan(
+                update ? DmlOperation.Update : DmlOperation.Delete,
+                "dbo." + target, compiled, match,
+                ImmutableArray.Create("id"), DmlRowIdentityAssurance.Strict,
+                DmlFingerprintService.ComputePlanFingerprint(compiled, fingerprintPolicy),
+                policy, TimeSpan.FromMinutes(5), MaxAffectedRows: 5)
+            {
+                SqlServerCteUniqueKeyAssurance = proof
+            };
+            var coordinator = new DmlCoordinator(new LiveSqlServerConnectionFactory());
+            var version = db.ServerVersion.Trim();
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, "sqlserver-live-cte-execution", token, version);
+            Assert.Equal(1, preview.AffectedRows);
+            var committed = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, "sqlserver-live-cte-execution", token, version);
+            Assert.True(committed.Committed);
+            await using var verify = new SqlCommand(
+                "SELECT id, label FROM dbo.[" + target + "] ORDER BY id", db);
+            await using var reader = await verify.ExecuteReaderAsync(token);
+            if (update)
+            {
+                Assert.True(await reader.ReadAsync(token));
+                Assert.Equal(1, reader.GetInt32(0));
+                Assert.Equal("changed", reader.GetString(1));
+            }
+            Assert.True(await reader.ReadAsync(token));
+            Assert.Equal(2, reader.GetInt32(0));
+            Assert.Equal("untouched", reader.GetString(1));
+            Assert.False(await reader.ReadAsync(token));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
+
+    [Theory]
+    [InlineData("WITH picked AS (SELECT id + 1 AS id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = picked.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = 1")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = picked.id OR {target}.id = 2")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = CAST(picked.id AS BIGINT)")]
+    [InlineData("WITH picked AS (SELECT id FROM {source} UNION ALL SELECT id FROM {source}) DELETE FROM {target} FROM picked WHERE {target}.id = picked.id")]
+    public async Task LiveKeyEvidenceCannotAuthorizeUnprovenCteGraph(string template)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server required.");
+            Assert.Skip("SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "negcte_" + suffix + "_s";
+        var target = "negcte_" + suffix + "_t";
+        await using var db = new SqlConnection(cs);
+        await db.OpenAsync(ct);
+        try
+        {
+            await using (var setup = new SqlCommand(
+                "CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));"
+                + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));", db))
+                await setup.ExecuteNonQueryAsync(ct);
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id");
+            var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            var sql = template.Replace("{source}", "dbo.[" + source + "]")
+                .Replace("{target}", "dbo.[" + target + "]");
+            var context = new SqlPlanValidationContext("sqlserver-live-cte-negative",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "dbo." + target, "dbo." + source })
+                .WithSqlServerCteUniqueKeyAssurance(proof);
+            var compiled = SqlCoreFacade.TryCompileDml(sql,
+                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, context);
+            Assert.False(compiled.Success);
+        }
+        finally
+        {
+            await using var cleanup = new SqlCommand(
+                "DROP TABLE IF EXISTS dbo.[" + source + "]; DROP TABLE IF EXISTS dbo.[" + target + "]", db);
+            await cleanup.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    [Fact]
+    public async Task LiveJoinedProofRejectsNonIntTargetComparisonColumn()
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server required.");
+            Assert.Skip("SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var source = "flcte_" + suffix + "_s";
+        var target = "flcte_" + suffix + "_t";
+        await using var db = new SqlConnection(cs);
+        await db.OpenAsync(ct);
+        try
+        {
+            await using (var setup = new SqlCommand(
+                "CREATE TABLE dbo.[" + target + "] (id REAL NOT NULL, label VARCHAR(30));"
+                + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));", db))
+                await setup.ExecuteNonQueryAsync(ct);
+            Assert.Throws<InvalidOperationException>(() =>
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id"));
+        }
+        finally
+        {
+            await using var cleanup = new SqlCommand(
+                "DROP TABLE IF EXISTS dbo.[" + source + "]; DROP TABLE IF EXISTS dbo.[" + target + "]", db);
+            await cleanup.ExecuteNonQueryAsync(ct);
+        }
+    }
+
     private static async Task<string> PrimaryKeyName(SqlConnection db, string table, CancellationToken token)
     {
         await using var cmd = new SqlCommand(
