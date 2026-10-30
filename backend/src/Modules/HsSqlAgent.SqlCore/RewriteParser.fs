@@ -29,6 +29,7 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          MySqlOrdinaryCte: CapabilityProof
           MySqlWithUpdateCte: CapabilityProof
           SqliteWithUpdateCte: CapabilityProof
           MySqlWithDeleteCte: CapabilityProof
@@ -92,6 +93,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              MySqlOrdinaryCte = ProvenCapability
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
               MySqlWithDeleteCte = ProvenCapability
@@ -121,6 +123,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              MySqlOrdinaryCte = ProvenCapability
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
               MySqlWithDeleteCte = ProvenCapability
@@ -351,7 +354,8 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
-        member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
+        member _.SourceMySqlOrdinaryCte = semantics.MySqlOrdinaryCte
+    member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
         member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
         member _.SourceMySqlWithDeleteCte = semantics.MySqlWithDeleteCte
         member _.SourceSqliteWithDeleteCte = semantics.SqliteWithDeleteCte
@@ -1970,8 +1974,11 @@ module internal RewriteParser =
         (cursor: Cursor)
         (scheduleQuery: (Query -> unit) -> unit)
         (complete: Cte list -> unit) =
+        let withToken = cursor.Current
         if not (acceptKeyword "WITH" cursor) then complete []
         else
+            if cursor.Dialect = SourceDialect.MySql then
+                requireSourceParseCapability withToken cursor.SourceMySqlOrdinaryCte
             let recursiveScope =
                 if isKeyword "RECURSIVE" cursor.Current then
                     let token = cursor.Current
