@@ -929,13 +929,20 @@ module internal SqlFetchWithTiesCapabilityRules =
 
 module internal SqlLateralDerivedTableCapabilityRules =
     let PostgresMinimumVersion = Version(9,3)
+    let MySqlMinimumVersion = Version(8,0,14)
+
+    /// After source/target runtime proof, emission needs only a native
+    /// dialect check. Never infer a runtime version from the renderer.
+    let SyntaxEmissionValidationError(provider: SqlAgentToolType) : string | null =
+        match provider with
+        | SqlAgentToolType.Postgres | SqlAgentToolType.MySQL -> null
+        | _ ->
+            "SQL capability 'select.lateral_derived' is not supported by target provider "
+            + string provider + "; LATERAL derived-table correlation remains fail-closed."
 
     let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
-        if provider <> SqlAgentToolType.Postgres then
-            "SQL capability 'select.lateral_derived' is not supported by " + side
-            + " provider " + string provider
-            + "; LATERAL derived-table correlation remains fail-closed."
-        else
+        match provider with
+        | SqlAgentToolType.Postgres ->
             match profile with
             | null -> null
             | value ->
@@ -945,6 +952,24 @@ module internal SqlLateralDerivedTableCapabilityRules =
                     "SQL capability 'select.lateral_derived' requires PostgreSQL " + side
                     + " ServerVersion 9.3+; declared version is " + version.ToString() + "."
                 | _ -> null
+        | SqlAgentToolType.MySQL ->
+            match profile with
+            | null ->
+                "SQL capability 'select.lateral_derived' requires an explicit MySQL "
+                + side + " ServerVersion 8.0.14+."
+            | value ->
+                match value.ServerVersion with
+                | null ->
+                    "SQL capability 'select.lateral_derived' requires an explicit MySQL "
+                    + side + " ServerVersion 8.0.14+."
+                | version when version.CompareTo(MySqlMinimumVersion) < 0 ->
+                    "SQL capability 'select.lateral_derived' requires MySQL " + side
+                    + " ServerVersion 8.0.14+; declared version is " + version.ToString() + "."
+                | _ -> null
+        | _ ->
+            "SQL capability 'select.lateral_derived' is not supported by " + side
+            + " provider " + string provider
+            + "; LATERAL derived-table correlation remains fail-closed."
 
     let SourceValidationError(provider: SqlAgentToolType, sourceProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider sourceProfile "source"

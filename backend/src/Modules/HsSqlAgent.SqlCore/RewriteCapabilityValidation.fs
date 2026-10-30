@@ -415,7 +415,7 @@ module internal RewriteCapabilityValidation =
         let onSource source =
             match source with
             | LateralDerivedTable _ ->
-                match SqlLateralDerivedTableCapabilityRules.TargetValidationError(provider, null) with
+                match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
             | NamedTable _ | CteTable _ | DerivedTable _ -> ()

@@ -1519,7 +1519,7 @@ module internal RewriteRenderer =
         | TableSource.DerivedTable(query, alias) ->
             renderDerivedSourceChain ctx query alias false
         | TableSource.LateralDerivedTable(query, alias) ->
-            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(providerTool ctx.Provider, null) with
+            match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
             | null -> renderDerivedSourceChain ctx query alias true
             | message -> raise (SqlCompilationException(message))
 
@@ -2243,8 +2243,7 @@ module internal RewriteRenderer =
                     // Skipping renderSource must not skip its fail-closed
                     // provider proof. Only a primary FROM LATERAL is safe
                     // to stream without constructing left-join scope.
-                    match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                              providerTool ctx.Provider, null) with
+                    match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
                     | null ->
                         frames.Add(FinishMixedLateral(current, alias))
                         sawLateral <- true
@@ -2255,8 +2254,7 @@ module internal RewriteRenderer =
                          && head.GroupBy.IsEmpty && head.Having.IsNone ->
                     match head.Joins with
                     | [ OnJoin(OnJoinKind.Inner, TableSource.LateralDerivedTable(inner, alias), predicate) ] ->
-                        match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                                  providerTool ctx.Provider, null) with
+                        match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
                         | null ->
                             frames.Add(FinishMixedJoinedLateral(current, preceding, alias, predicate))
                             sawLateral <- true
@@ -2273,8 +2271,7 @@ module internal RewriteRenderer =
                             // All preceding sources/predicates keep their
                             // original parameter order. Only the last
                             // Query crosses the heap continuation.
-                            match SqlLateralDerivedTableCapabilityRules.TargetValidationError(
-                                      providerTool ctx.Provider, null) with
+                            match SqlLateralDerivedTableCapabilityRules.SyntaxEmissionValidationError(providerTool ctx.Provider) with
                             | null ->
                                 frames.Add(FinishMixedPrefixedJoinedLateral(
                                     current, preceding, List.rev precedingReversed, alias, predicate))

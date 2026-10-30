@@ -352,6 +352,19 @@ CTEs, MySQL multi-table DELETE / DELETE USING, RETURNING and cross-provider
 WITH DELETE lowering remain unproven and denied. Real MySQL 8 tests compare
 native and compiled affected rows and unchanged records.
 
+## MySQL 8.0.14+ LATERAL derived-table query sources
+
+MySQL 8.0.14+ now uses the existing F# `LateralDerivedTable` and
+scope-aware Binder to compile native CROSS JOIN, INNER JOIN and LEFT JOIN
+LATERAL. Ordinary derived tables cannot capture preceding FROM aliases.
+Both MySQL source and target must explicitly declare ServerVersion 8.0.14+
+in separate profiles. The proof rejects older and undeclared versions,
+cross-provider translation, RIGHT/FULL LATERAL joins and non-derived inputs.
+
+Renderer emission uses the proven provider-specific syntax; real MySQL
+query parity verifies native vs compiled rows including LEFT JOIN
+nonmatches and parameterized derived queries.
+
 ## SQLite statement-level WITH DELETE (native, strict source subset)
 
 SQLite read-only non-recursive CTEs can now prefix DELETE FROM in the closed
