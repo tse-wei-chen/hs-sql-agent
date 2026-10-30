@@ -79,6 +79,17 @@ public sealed class SqlCoreSqliteWithUpdateTests
     }
 
     [Fact]
+    public void CtePrefixedSqliteUpdateFromIsNotYetAuthorized()
+    {
+        const string sql = "WITH picked AS (SELECT 7 AS id) " +
+                           "UPDATE users SET name = 'changed' FROM picked p " +
+                           "WHERE users.id = p.id";
+        var rejected = TryCompile(sql, ["users"]);
+        Assert.False(rejected.Success);
+        Assert.NotEmpty(rejected.TypedDiagnostics);
+    }
+
+    [Fact]
     public void TypedSchemaSnapshotProvesCteProjectionAndActualAssignment()
     {
         var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.Sqlite, "sqlite-cte-update-schema",

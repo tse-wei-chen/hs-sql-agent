@@ -420,6 +420,9 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "Statement-level WITH UPDATE is proven only for native PostgreSQL or SQLite source and target; cross-provider lowering remains fail-closed."))
                 if nativeSqlite then
+                    if not update.From.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'sqlite.with_update.from' is not proven for CTE-prefixed SQLite UPDATE; joined mutation cardinality remains fail-closed."))
                     for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
                         match profileVersion profile with
                         | Some declared when declared.CompareTo(Version(3, 8, 3)) < 0 ->
