@@ -2783,7 +2783,10 @@ inferred from the MySQL-specific version proof.
 SQL Server's `WITH picked AS (SELECT ...) UPDATE ... WHERE ...` and
 `WITH picked AS (SELECT ...) DELETE FROM ... WHERE ...` are typed, **native
 SQL Server-only** Mutation statements. Multiple read-only CTEs and CTE
-projection aliases are preserved. A declared source or target
+projection aliases are preserved. A CTE name may not be used directly
+as the UPDATE/DELETE write target, because SQL Server may resolve that
+name to an updatable underlying table whose lineage has not been proven
+by the physical write allowlist. A declared source or target
 `ServerVersion` earlier than SQL Server **2005 (9.0)** is rejected;
 undeclared profiles retain the current compatibility behavior.
 

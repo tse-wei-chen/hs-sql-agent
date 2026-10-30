@@ -685,9 +685,6 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
-/// An explicit MySQL version must never silently turn an unsupported ordinary
-/// CTE into a parsed/compiled statement. Missing profiles retain the legacy
-/// permissive contract; declaring a version below 8.0.1 rejects the syntax.
 /// Native SQL Server CTE-prefixed mutations entered the language in
 /// SQL Server 2005. Explicit older source/target versions must fail closed.
 module internal SqlSqlServerWithMutationCteCapabilityRules =
@@ -713,6 +710,9 @@ module internal SqlSqlServerWithMutationCteCapabilityRules =
     let TargetValidationError(provider, targetProfile) =
         validationError provider targetProfile "target"
 
+/// An explicit MySQL version must never silently turn an unsupported ordinary
+/// CTE into a parsed/compiled statement. Missing profiles retain the legacy
+/// permissive contract; declaring a version below 8.0.1 rejects the syntax.
 module internal SqlMySqlOrdinaryCteCapabilityRules =
     let MinimumVersion = Version(8, 0, 1)
 

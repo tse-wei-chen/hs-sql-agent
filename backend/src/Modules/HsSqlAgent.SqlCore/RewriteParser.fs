@@ -3051,6 +3051,18 @@ module internal RewriteParser =
             fail cursor.Current "Recursive statement-level WITH mutation CTE is not yet proven"
         ctes
 
+    /// SQL Server permits UPDATE/DELETE of a directly updatable CTE name.
+    /// That is *not* the physical table named by the unqualified target.
+    /// Until underlying write-target lineage is attested, fail closed:
+    /// otherwise a declared CTE alias could bypass the table allowlist.
+    let private requirePhysicalSqlServerMutationTarget (cursor: Cursor) (ctes: Cte list) (target: Identifier) =
+        match Identifier.parts target with
+        | [ part ] when ctes |> List.exists (fun cte ->
+            StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+            fail cursor.Current
+                "SQL Server CTE name is not a verified physical mutation target; CTE-target writes require separate catalog lineage proof"
+        | _ -> ()
+
     let private parseReadOnlyWithInsert (cursor: Cursor) =
         let ctes = parseReadOnlyStatementCtes cursor
         let insert = parseInsert cursor
@@ -3098,6 +3110,8 @@ module internal RewriteParser =
             requireSourceParseCapability cursor.Current cursor.SourceMySqlWithUpdateCte
         let ctes = parseReadOnlyStatementCtes cursor
         let update = parseUpdate cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes update.Target
         if cursor.Dialect = SourceDialect.SqlServer && not update.From.IsEmpty then
             fail cursor.Current
                 "SQL Server CTE-prefixed joined UPDATE FROM is not yet proven; only single-target WHERE mutations are supported"
@@ -3119,6 +3133,8 @@ module internal RewriteParser =
             requireSourceParseCapability cursor.Current cursor.SourceMySqlWithDeleteCte
         let ctes = parseReadOnlyStatementCtes cursor
         let delete = parseDelete cursor
+        if cursor.Dialect = SourceDialect.SqlServer then
+            requirePhysicalSqlServerMutationTarget cursor ctes delete.Target
         if cursor.Dialect = SourceDialect.SqlServer && not delete.Using.IsEmpty then
             fail cursor.Current
                 "SQL Server CTE-prefixed joined DELETE FROM is not yet proven; only single-target WHERE mutations are supported"
