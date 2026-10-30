@@ -211,10 +211,40 @@ Unmodeled catalog collations, missing profiles, unknown table state,
 unanchored sources, partial composite keys, OR predicates and
 incompatible type families remain `Unverified` or are rejected by
 the existing binding validator. PostgreSQL preserves its separate
-NULL-aware proof; SQLite, Oracle, Firebird and MySQL continue to
+NULL-aware proof; Oracle, Firebird and MySQL continue to
 report `Unverified` for joined mutations unless their own provider
 contract is proved. As before, cardinality evidence never authorizes
 execution or upgrades DML approvals, runtime certainty or effect coverage.
+
+### SQLite: exact INTEGER PRIMARY KEY rowid source-match evidence
+
+A closed SQLite Virtual Catalog with fully verified physical table names
+can now report *read-only* `ProvenAtMostOne` for SQLite 3.33+ `UPDATE FROM`
+when a single-column, exact-type `INTEGER PRIMARY KEY` source key is
+bounded by mandatory ordinary `=` predicates to a modeled exact
+`INTEGER` column, a signed 32-bit integer literal, or a previously
+anchored key. The shared bounded equality graph handles transitive
+chains and multiple independently unique sources without borrowing
+PostgreSQL or SQL Server type rules. The physical Catalog must have
+simple ASCII canonical identities, and the analyzed SQL must be ASCII:
+Unicode case folding is not a proven SQLite identifier contract.
+All modeled SQLite DDL is a rowid
+table subset; `WITHOUT ROWID`, key `DESC`, arbitrary `COLLATE` and
+expression/partial indexes cannot generate trusted Virtual Catalog keys.
+
+SQLite dynamic storage affinity still prevents complete type verification:
+`NameBinding` stays `Verified`, while `TypeBinding` and
+`CatalogBinding` remain `Unverified`. `INT`, `BIGINT`, `TEXT`, general
+`UNIQUE`, composite keys, unknown sources, missing version provenance,
+OR predicates and unproven match paths **never** acquire this proof.
+A missing or open Catalog likewise stays `Unverified`. For statements
+without joined sources, `SourceMatchCardinality` is `NotApplicable`.
+
+**Critical boundary:** this is analysis evidence, not mutation approval.
+The CompileDml validation context does not carry an attested closed
+physical-key Catalog; CTE-prefixed UPDATE FROM with a physical source
+continues to fail closed. No executable capability or general SQLite
+column-type assurance is inferred.
 
 ### Oracle 26 direct-join UPDATE assignment name parity
 
