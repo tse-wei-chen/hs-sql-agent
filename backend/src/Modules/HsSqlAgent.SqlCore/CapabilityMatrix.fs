@@ -352,9 +352,21 @@ type SqlCapabilityMatrix private () =
                     supported,
                     "PostgreSQL 9.3+ LATERAL derived subqueries are represented explicitly. "
                     + "Only LATERAL sources may reference preceding FROM items; ordinary derived tables remain independent."
+            | SqlAgentToolType.MySQL ->
+                match profileServerVersion with
+                | Some version when version.CompareTo(SqlLateralDerivedTableCapabilityRules.MySqlMinimumVersion) >= 0 ->
+                    supported,
+                    "MySQL 8.0.14+ LATERAL derived sources are emitted natively with typed preceding-table scope. Both source and target must declare ServerVersion and cross-provider lowering remains fail-closed."
+                | Some version ->
+                    rejected,
+                    "LATERAL derived-table correlation requires MySQL target ServerVersion 8.0.14+; declared version is "
+                    + version.ToString() + "."
+                | None ->
+                    rejected,
+                    "MySQL LATERAL derived-table correlation requires explicit target ServerVersion 8.0.14+; undeclared versions remain fail-closed."
             | _ ->
                 rejected,
-                "SQL capability 'select.lateral_derived' has no proven cross-provider lowering for "
+                "SQL capability 'select.lateral_derived' has no proven native support for "
                 + string provider + "."
 
         let capabilities : SqlCapability list =

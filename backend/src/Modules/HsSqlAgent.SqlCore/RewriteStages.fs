@@ -285,6 +285,14 @@ module internal RewriteStages =
                 | NamedTable _ | CteTable _ -> ()
                 | DerivedTable(query, _) -> push (AggregateQuery query)
                 | LateralDerivedTable(query, _) ->
+                    // MySQL/PostgreSQL LATERAL cross-provider equivalence is
+                    // not proven; each native path retains its own semantics.
+                    if source <> target
+                       && (source = SqlAgentToolType.MySQL
+                           || target = SqlAgentToolType.MySQL) then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.lateral_derived' is native-only for MySQL; cross-provider LATERAL lowering remains fail-closed. Source provider "
+                            + string source + ", target provider " + string target + "."))
                     if enforceSource then
                         match SqlLateralDerivedTableCapabilityRules.SourceValidationError(source, sourceProfile) with
                         | null -> ()
