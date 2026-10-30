@@ -429,6 +429,10 @@ module internal RewriteCapabilityValidation =
                 match SqlUsingJoinCapabilityRules.TargetValidationError(provider) with
                 | null -> ()
                 | message -> raise (SqlCompilationException(message))
+            | ApplyJoin _ ->
+                match SqlApplyJoinCapabilityRules.TargetSyntaxValidationError(provider) with
+                | null -> ()
+                | message -> raise (SqlCompilationException(message))
             | CrossJoin _ | OnJoin _ -> ()
         let onSet operator =
             match operator with

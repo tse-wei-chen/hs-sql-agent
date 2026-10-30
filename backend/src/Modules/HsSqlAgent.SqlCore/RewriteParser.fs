@@ -37,6 +37,7 @@ module internal RewriteParser =
           Ordering: SourceOrderingProofs
           FetchPercent: CapabilityProof
           FetchWithTies: CapabilityProof
+          ApplyJoin: CapabilityProof
           LateralDerivedTable: CapabilityProof
           RecursiveCte: CapabilityProof
           SetAll: CapabilityProof
@@ -99,6 +100,7 @@ module internal RewriteParser =
               Ordering = permissiveOrdering
               FetchPercent = ProvenCapability
               FetchWithTies = ProvenCapability
+              ApplyJoin = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
               SetAll =
@@ -127,6 +129,7 @@ module internal RewriteParser =
               Ordering = permissiveOrdering
               FetchPercent = ProvenCapability
               FetchWithTies = ProvenCapability
+              ApplyJoin = ProvenCapability
               LateralDerivedTable = ProvenCapability
               RecursiveCte = ProvenCapability
               SetAll =
@@ -356,6 +359,7 @@ module internal RewriteParser =
         member _.SourceOrdering = semantics.Ordering
         member _.SourceFetchPercent = semantics.FetchPercent
         member _.SourceFetchWithTies = semantics.FetchWithTies
+        member _.SourceApplyJoin = semantics.ApplyJoin
         member _.SourceLateralDerivedTable = semantics.LateralDerivedTable
         member _.SourceRecursiveCte = semantics.RecursiveCte
         member _.SourceSetAll = semantics.SetAll
@@ -1889,11 +1893,27 @@ module internal RewriteParser =
 
             NaturalJoin(kind, source)
         elif acceptKeyword "CROSS" cursor then
-            expectKeyword "JOIN" cursor
+            if acceptKeyword "APPLY" cursor then
+                requireSourceParseCapability cursor.Current cursor.SourceApplyJoin
+                let source = parseTableSource cursor
+                match source with
+                | DerivedTable _ when not (isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current) ->
+                    ApplyJoin(ApplyKind.CrossApply, source)
+                | _ -> fail cursor.Current "CROSS APPLY requires a derived query without LATERAL, ON or USING"
+            else
+                expectKeyword "JOIN" cursor
+                let source = parseTableSource cursor
+                if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then
+                    fail cursor.Current "CROSS JOIN must not have ON/USING predicates"
+                CrossJoin source
+        elif acceptKeyword "OUTER" cursor then
+            expectKeyword "APPLY" cursor
+            requireSourceParseCapability cursor.Current cursor.SourceApplyJoin
             let source = parseTableSource cursor
-            if isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current then
-                fail cursor.Current "CROSS JOIN must not have ON/USING predicates"
-            CrossJoin source
+            match source with
+            | DerivedTable _ when not (isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current) ->
+                ApplyJoin(ApplyKind.OuterApply, source)
+            | _ -> fail cursor.Current "OUTER APPLY requires a derived query without LATERAL, ON or USING"
         else
             let kind =
                 if acceptKeyword "INNER" cursor then expectKeyword "JOIN" cursor; OnJoinKind.Inner
@@ -1943,7 +1963,7 @@ module internal RewriteParser =
                 OnJoin(kind, source, parseExpression cursor)
 
     and private startsJoin (cursor: Cursor) =
-        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "NATURAL" ]
+        [ "JOIN"; "INNER"; "LEFT"; "RIGHT"; "FULL"; "CROSS"; "OUTER"; "NATURAL" ]
         |> List.exists (fun keyword -> isKeyword keyword cursor.Current)
 
     and private parseCtes
@@ -2464,7 +2484,22 @@ module internal RewriteParser =
                         // JOIN LATERAL creates a Query→Source→Query boundary.
                         // Do not enter the old parseJoin→parseTableSource
                         // recursive callback path for this proven syntax.
-                        if isKeyword "JOIN" cursor.Current &&
+                        if (isKeyword "CROSS" cursor.Current || isKeyword "OUTER" cursor.Current)
+                           && isKeyword "APPLY" (cursor.Peek 1) then
+                            let kind =
+                                if isKeyword "CROSS" cursor.Current then ApplyKind.CrossApply
+                                else ApplyKind.OuterApply
+                            let token = cursor.Current
+                            cursor.Advance()
+                            cursor.Advance()
+                            requireSourceParseCapability token cursor.SourceApplyJoin
+                            scheduleSource (fun source ->
+                                match source with
+                                | DerivedTable _ when not (isKeyword "ON" cursor.Current || isKeyword "USING" cursor.Current) ->
+                                    joins.Add(ApplyJoin(kind, source))
+                                    push scanJoins
+                                | _ -> fail cursor.Current "APPLY requires a derived query without LATERAL, ON or USING")
+                        elif isKeyword "JOIN" cursor.Current &&
                            isKeyword "LATERAL" (cursor.Peek 1) then
                             cursor.Advance()
                             scheduleSource (fun source ->
