@@ -32,7 +32,7 @@ class CodeDeltaTests(unittest.TestCase):
 
     def commit(self):
         self.git("add", "-A")
-        self.git("commit", "-qm", "fixture")
+        self.git("commit", "--allow-empty", "-qm", "fixture")
         return self.git("rev-parse", "HEAD")
 
     def test_all_buckets_and_actual_added_deleted_lines(self):

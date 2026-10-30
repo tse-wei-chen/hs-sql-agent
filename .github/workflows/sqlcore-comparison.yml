@@ -44,6 +44,16 @@ jobs:
           git -C head rev-parse HEAD > artifacts/head-sha.txt
           dotnet build -c Release base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks
           dotnet build -c Release head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks
+      - name: Record committed production/test/docs/generated source delta
+        shell: bash
+        run: |
+          base_sha="$(cat artifacts/base-sha.txt)"
+          head_sha="$(cat artifacts/head-sha.txt)"
+          # Checkout defaults to shallow HEAD; fetch only the exact baseline,
+          # never the full repository history, and compare committed content.
+          git -C head fetch --no-tags --depth=1 origin "$base_sha"
+          python3 head/.github/scripts/sqlcore_code_delta.py \\
+            head "$base_sha" "$head_sha" artifacts/code-delta.json | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run three interleaved pairs on the same runner and runtime
         shell: bash
         env:

@@ -210,3 +210,27 @@ rejections are still printed explicitly in the uploaded report.
 - No performance percentage or regression threshold is asserted before establishing a
   repeatable baseline with noise characterization.
 - Benchmark results contain no user SQL, credentials or connection information.
+
+## G0: auditable production-code delta (v2.1 Lean Code)
+
+Every PR's existing `SqlCore baseline comparison` job now records
+`artifacts/code-delta.json` and a GitHub Actions step summary. The script
+compares the **exact committed base and PR head SHAs**, not working-tree edits.
+It uses `git diff --numstat -z --no-renames` to make cross-category file
+moves visible instead of silently recording zero change. The workflow fetches
+only the exact base SHA into its shallow candidate checkout.
+
+The JSON separates `production` (`backend/src/Modules` F#/C# sources),
+`tests`, `generatedMigrations`, `docs`, and `other`. Each category has
+added, deleted, net lines and changed-file counts; binary changes have an
+explicit separate count because Git cannot provide accurate binary line
+counts. Comments and blank lines are included, as with `git --numstat`.
+Moving code to another file or compressing lines can still preserve or
+increase semantic complexity; these counts **do not** prove fewer concepts,
+better safety or faster compilation.
+
+Read the report alongside the paired six-provider, 48-workload output parity,
+mean/P95 and allocation measurements and the independent grammar, live
+database, small-stack and policy tests. No new LOC-based hard rejection
+threshold is enabled. This closes the G0 **code delta evidence** gap only;
+it is not completion of the full G0 semantic-owner audit or G1 DDL compiler.
