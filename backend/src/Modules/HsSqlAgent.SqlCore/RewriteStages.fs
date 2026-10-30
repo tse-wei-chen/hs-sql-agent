@@ -522,6 +522,18 @@ module internal RewriteStages =
             | [ source ] -> isProvenSource source
             | _ -> false)
 
+    /// Public CLR mutation statements may be constructed without the native
+    /// Parser. Never trust an unqualified CTE name as the physical UPDATE/
+    /// DELETE write target: SQL Server permits writes through updatable CTEs,
+    /// which would bypass the verified physical table identity allowlist.
+    let private requireSqlServerPhysicalCteTarget (ctes: Cte list) target =
+        match Identifier.parts target with
+        | [ part ] when ctes |> List.exists (fun cte ->
+            StringComparer.OrdinalIgnoreCase.Equals(part.Value, cte.Name.Value)) ->
+            raise (SqlCompilationException(
+                "SQL Server CTE name is not a verified physical mutation target; CTE-target writes require separate catalog lineage proof."))
+        | _ -> ()
+
     /// A caller-declared Catalog is NOT a runtime key assurance. Only a
     /// separate, metadata-verified, schema-bound proof may permit this one
     /// physical-source native SQLite UPDATE FROM shape.
@@ -641,6 +653,7 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "Statement-level WITH UPDATE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
                 if nativeSqlServer then
+                    requireSqlServerPhysicalCteTarget update.Ctes update.Target
                     if not update.From.IsEmpty
                        && not (sqlServerSingletonCteSource update.Ctes update.From) then
                         raise (SqlCompilationException(
@@ -712,6 +725,7 @@ module internal RewriteStages =
                     raise (SqlCompilationException(
                         "Statement-level WITH DELETE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
                 if nativeSqlServer then
+                    requireSqlServerPhysicalCteTarget delete.Ctes delete.Target
                     if not delete.Using.IsEmpty
                        && not (sqlServerSingletonCteSource delete.Ctes delete.Using) then
                         raise (SqlCompilationException(

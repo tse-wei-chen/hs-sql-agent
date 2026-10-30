@@ -2983,3 +2983,28 @@ lineage, compile evidence and mandatory commit-time `IsCurrent` checking
 before physical-table CTE joined UPDATE/DELETE can be enabled in runtime
 hosts. A caller-supplied Virtual Catalog, snapshot digest or
 unverified unique index name is never a live execution guarantee.
+
+
+## Statement-level CTE mutation CLR and host plan parity
+
+`CoreSqlTextParser.ParseDml` now preserves read-only top-level
+`WITH ... UPDATE` and `WITH ... DELETE` CTE definitions through the
+existing public CLR `UpdateStatement.Ctes` / `DeleteStatement.Ctes`
+collections. These default to empty for existing ordinary mutations.
+The legacy-to-F# adapter roundtrips the same closed typed CTE queries;
+no raw SQL string is substituted for a lost CTE.
+
+`DmlPlanFactory` carries CTEs through physical target resolution and
+places the identical lexical CTE scope on the distinct row-identity
+`SELECT` used for preview/commit row-set revalidation. Thus a
+CTE-prefixed mutation does not use a different source scope when
+its approval match SQL is generated. Positive/negative parser, F#
+compilation parity and host approval-plan tests cover this boundary.
+
+This is a **representation and approval-match correctness** change:
+SQL Server joined UPDATE/DELETE with physical-table CTE sources still
+requires the independent runtime uniqueness assurance of #462, and
+remains denied by `CompileDml` until the separate typed
+predicate/evidence/commit-gate integration is complete. Native SQL
+Server 2005+, CTE target guard, maximum-row policy and six-dialect
+capability restrictions remain intact.

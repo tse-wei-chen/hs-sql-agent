@@ -672,7 +672,7 @@ module internal RewriteLegacyAstAdapter =
             | :? HsSqlAgent.SqlCore.Core.Ast.UpdateStatement as update ->
                 Statement.UpdateStatement
                     { Update.Target = identifierOf update.Target.Name
-                      Ctes = []
+                      Ctes = update.Ctes |> Seq.map cteOf |> Seq.toList
                       TargetAlias = Option.ofObj update.Target.Alias |> Option.map partOf
                       AssignmentItems =
                         update.Assignments
@@ -753,7 +753,7 @@ module internal RewriteLegacyAstAdapter =
             | :? HsSqlAgent.SqlCore.Core.Ast.DeleteStatement as delete ->
                 Statement.DeleteStatement
                     { Delete.Target = identifierOf delete.Target.Name
-                      Ctes = []
+                      Ctes = delete.Ctes |> Seq.map cteOf |> Seq.toList
                       TargetAlias = Option.ofObj delete.Target.Alias |> Option.map partOf
                       Using =
                         (if delete.UsingSources.IsDefaultOrEmpty then

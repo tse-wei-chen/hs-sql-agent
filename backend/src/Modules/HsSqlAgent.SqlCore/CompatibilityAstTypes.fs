@@ -356,6 +356,8 @@ type UpdateStatement(target: NamedTableSource, assignments: ImmutableArray<Assig
     /// Full PostgreSQL FROM table-expression surface. When non-empty this is the
     /// source-of-truth collection; From remains the legacy named-source view.
     member val FromSources = ImmutableArray<TableSource>.Empty with get, set
+    /// Top-level read-only CTE lexical scope. Empty for ordinary UPDATE.
+    member val Ctes = ImmutableArray<CteDefinition>.Empty with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<Sealed>]
@@ -367,6 +369,8 @@ type DeleteStatement(target: NamedTableSource, predicate: SqlExpr | null, span: 
     /// Full PostgreSQL USING table-expression surface. When non-empty this is the
     /// source-of-truth collection; Using remains the legacy named-source view.
     member val UsingSources = ImmutableArray<TableSource>.Empty with get, set
+    /// Top-level read-only CTE lexical scope. Empty for ordinary DELETE.
+    member val Ctes = ImmutableArray<CteDefinition>.Empty with get, set
     member val Returning = ImmutableArray<DmlReturningItem>.Empty with get, set
 
 [<AbstractClass>]

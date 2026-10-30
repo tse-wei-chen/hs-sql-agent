@@ -62,6 +62,76 @@ public class DmlPlanFactoryNativeTests
         Assert.Contains("u", matchCommand.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task SqlServerCteMutationRetainsSameLexicalScopeInPreviewAndCommitPlan(
+        bool update, bool chained)
+    {
+        var metadata = CreateUsersMetadata(primaryKey: true);
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer, new Version(16, 0));
+        var ctes = chained
+            ? "WITH seed AS (SELECT 7 AS id), picked(id) AS (SELECT id FROM seed) "
+            : "WITH picked AS (SELECT 7 AS id) ";
+        var sql = ctes + (update
+            ? "UPDATE users SET status = 'disabled' FROM picked WHERE users.id = picked.id"
+            : "DELETE FROM users FROM picked WHERE users.id = picked.id");
+        var parsed = CoreSqlTextParser.ParseDml(
+            sql, SqlAgentToolType.MsSqlServer, profile);
+
+        var plan = await new DmlPlanFactory(metadata.Object).CreateAsync(
+            "connection",
+            parsed,
+            SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("sqlserver-cte-host-preview",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "public.users" }),
+            new DmlCompilationPolicy(),
+            DmlRowIdentityAssurance.Strict,
+            maxAffectedRows: 25,
+            targetProfile: profile,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var match = Assert.IsType<CompiledSqlCommand>(plan.MatchQueryCommand);
+        Assert.Equal(update ? SqlStatementKind.Update : SqlStatementKind.Delete,
+            plan.MutationCommand.Kind);
+        Assert.Equal(SqlStatementKind.Select, match.Kind);
+        Assert.StartsWith("WITH ", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith("WITH ", match.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("picked", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("picked", match.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("public", plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("public", match.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(plan.MutationCommand.Parameters, p => Equals(p.Value, 7));
+        Assert.Contains(match.Parameters, p => Equals(p.Value, 7));
+        Assert.NotEqual(plan.MutationCommand.Sql, match.Sql);
+        Assert.Single(plan.RowIdentityColumns);
+    }
+
+    [Fact]
+    public async Task SqlServerPhysicalCteSourceNeverInheritsStaticSingletonHostApproval()
+    {
+        var metadata = CreateUsersMetadata(primaryKey: true);
+        var profile = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer, new Version(16, 0));
+        var sql = "WITH picked AS (SELECT id FROM private_source) " +
+            "UPDATE users SET status = 'disabled' FROM picked WHERE users.id = picked.id";
+        var parsed = CoreSqlTextParser.ParseDml(
+            sql, SqlAgentToolType.MsSqlServer, profile);
+        await Assert.ThrowsAsync<SqlCompilationException>(() =>
+            new DmlPlanFactory(metadata.Object).CreateAsync(
+                "connection", parsed, SqlAgentToolType.MsSqlServer,
+                new SqlPlanValidationContext("sqlserver-cte-host-physical-negative",
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                    { "public.users", "private_source" }),
+                new DmlCompilationPolicy(),
+                targetProfile: profile,
+                cancellationToken: TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task CreateAsync_JoinedDelete_CountOnlyIdentity_RemainsFailClosed()
     {
