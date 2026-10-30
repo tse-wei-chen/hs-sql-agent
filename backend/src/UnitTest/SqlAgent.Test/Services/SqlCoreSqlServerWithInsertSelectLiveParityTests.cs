@@ -70,7 +70,7 @@ public sealed class SqlCoreSqlServerWithInsertSelectLiveParityTests
                 (output ? "OUTPUT INSERTED.id " : "") +
                 "SELECT id, 'copied' FROM picked";
 
-            var nativeOutput = output
+            int[] nativeOutput = output
                 ? await OutputRows(db, statement(nativeTarget), [], token)
                 : [];
             var nativeCount = output
@@ -89,12 +89,12 @@ public sealed class SqlCoreSqlServerWithInsertSelectLiveParityTests
             Assert.Equal(SqlStatementKind.Insert, compiled.Kind);
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("INSERT INTO ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(compiled.Parameters, p => Convert.ToInt32(p.Value, CultureInfo.InvariantCulture) == 2);
-            Assert.Contains(compiled.Parameters, p => Convert.ToInt32(p.Value, CultureInfo.InvariantCulture) == 3);
+            Assert.Contains(compiled.Parameters, p => p.Value is not string && Convert.ToInt32(p.Value, CultureInfo.InvariantCulture) == 2);
+            Assert.Contains(compiled.Parameters, p => p.Value is not string && Convert.ToInt32(p.Value, CultureInfo.InvariantCulture) == 3);
             Assert.Contains(compiled.Parameters, p => Equals(p.Value, "copied"));
             Assert.DoesNotContain("'copied'", compiled.Sql, StringComparison.OrdinalIgnoreCase);
 
-            var compiledOutput = output
+            int[] compiledOutput = output
                 ? await OutputRows(db, compiled.Sql, compiled.Parameters, token)
                 : [];
             var compiledCount = output
