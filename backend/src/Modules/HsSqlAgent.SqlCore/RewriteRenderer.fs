@@ -1647,6 +1647,8 @@ module internal RewriteRenderer =
         for join in select.Joins do
             let joinSql =
                 match join with
+                | ApplyJoin(ApplyKind.CrossApply, _) -> "CROSS APPLY"
+                | ApplyJoin(ApplyKind.OuterApply, _) -> "OUTER APPLY"
                 | NaturalJoin(kind, _) ->
                     match SqlNaturalJoinCapabilityRules.TargetValidationError(providerTool ctx.Provider) with
                     | null -> naturalJoinText kind
@@ -1656,6 +1658,7 @@ module internal RewriteRenderer =
                .Append(renderSource ctx join.Source) |> ignore
             match join with
             | CrossJoin _
+            | ApplyJoin _
             | NaturalJoin _ -> ()
             | OnJoin(_, _, predicate) ->
                 sql.Append(" ON ").Append(renderPredicate ctx predicate) |> ignore
@@ -1891,10 +1894,15 @@ module internal RewriteRenderer =
         |> Option.iter (fun source ->
             baseSql.Append(" FROM ").Append(renderSource ctx source) |> ignore)
         for join in query.Head.Joins do
-            baseSql.Append(" ").Append(joinText join.Kind).Append(" ")
+            let joinSql =
+                match join with
+                | ApplyJoin(ApplyKind.CrossApply, _) -> "CROSS APPLY"
+                | ApplyJoin(ApplyKind.OuterApply, _) -> "OUTER APPLY"
+                | _ -> joinText join.Kind
+            baseSql.Append(" ").Append(joinSql).Append(" ")
                    .Append(renderSource ctx join.Source) |> ignore
             match join with
-            | CrossJoin _ -> ()
+            | CrossJoin _ | ApplyJoin _ -> ()
             | NaturalJoin _ ->
                 invalidOp "NATURAL JOIN cannot enter SQL Server pagination lowering without an explicit target capability."
             | OnJoin(_, _, predicate) ->

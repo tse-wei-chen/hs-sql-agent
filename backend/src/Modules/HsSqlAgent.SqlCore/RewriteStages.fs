@@ -305,6 +305,28 @@ module internal RewriteStages =
                     | message -> raise (SqlCompilationException(message))
                     push (AggregateQuery query)
             | AggregateSelect select ->
+                if select.Joins |> List.exists (function ApplyJoin _ -> true | _ -> false) then
+                    if select.From.IsNone then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.apply_join' requires a preceding FROM source."))
+                    if source <> target then
+                        raise (SqlCompilationException(
+                            "SQL capability 'select.apply_join' is native-only; cross-provider APPLY semantics are not proven. Source provider "
+                            + string source + ", target provider " + string target + "."))
+                    if enforceSource then
+                        match SqlApplyJoinCapabilityRules.SourceValidationError(source, sourceProfile) with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                    match SqlApplyJoinCapabilityRules.TargetValidationError(target, targetProfile) with
+                    | null -> ()
+                    | message -> raise (SqlCompilationException(message))
+                    for join in select.Joins do
+                        match join with
+                        | ApplyJoin(_, DerivedTable _) -> ()
+                        | ApplyJoin _ ->
+                            raise (SqlCompilationException(
+                                "SQL capability 'select.apply_join' accepts only a derived SELECT as the APPLY source."))
+                        | _ -> ()
                 if select.Ctes |> List.exists (fun cte -> cte.RecursiveScope) then
                     if enforceSource then
                         match SqlRecursiveCteCapabilityRules.SourceValidationError(source, sourceProfile) with
