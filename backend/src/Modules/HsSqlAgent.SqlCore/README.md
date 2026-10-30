@@ -310,12 +310,18 @@ resource budgets, table policy, parameterization and typed diagnostics are
 unchanged. Script statement classification uses the *parsed* Statement DU, so
 `WITH ... INSERT ... SELECT` is exposed as Mutation, not Query.
 
-This first conservative subset does not admit recursive statement CTEs,
+Statement-level PostgreSQL CTE INSERT SELECT can compose with typed
+RETURNING and ON CONFLICT DO NOTHING through existing DML policy, proof and
+PostgreSQL-native rendering. ON CONFLICT DO UPDATE is parsed, but remains
+fail-closed at capability validation without explicit source-row uniqueness
+assurance matching the complete conflict target. Existing target permissions,
+parameterization and conflict-target proofs are not relaxed.
+
+This conservative subset still rejects recursive statement CTEs,
 data-modifying CTE bodies, top-level CTE INSERT VALUES or DEFAULT VALUES,
-nested input WITH, RETURNING or ON CONFLICT. Top-level CTE UPDATE, DELETE,
-MERGE and the remaining five source dialects retain their strict rejection
-until scope, capability and renderer parity are modeled. As always, parsing
-and static analysis do not authorize DML execution.
+and nested input WITH. Top-level CTE UPDATE, DELETE, MERGE and the remaining
+five source dialects retain strict rejection until independently proven.
+Parsing and static analysis never authorize DML execution.
 
 ## SQL Server GO comments in static scripts
 

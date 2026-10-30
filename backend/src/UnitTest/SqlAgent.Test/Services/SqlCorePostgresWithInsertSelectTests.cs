@@ -75,8 +75,6 @@ public sealed class SqlCorePostgresWithInsertSelectTests
     [Theory]
     [InlineData("WITH x AS (SELECT 1) INSERT INTO users(id) VALUES (1)")]
     [InlineData("WITH x AS (SELECT 1) INSERT INTO users(id) DEFAULT VALUES")]
-    [InlineData("WITH x AS (SELECT 1) INSERT INTO users(id) SELECT 1 RETURNING id")]
-    [InlineData("WITH x AS (SELECT 1) INSERT INTO users(id) SELECT 1 ON CONFLICT (id) DO NOTHING")]
     [InlineData("WITH x AS (SELECT 1) UPDATE users SET id = 1 WHERE id = 2")]
     [InlineData("WITH x AS (SELECT 1) DELETE FROM users WHERE id = 1")]
     [InlineData("WITH x AS (DELETE FROM users RETURNING id) INSERT INTO archive(id) SELECT id FROM x")]
