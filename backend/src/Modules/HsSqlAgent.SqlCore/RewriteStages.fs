@@ -562,8 +562,6 @@ module internal RewriteStages =
                 match Identifier.parts identifier with
                 | [s; t; k] ->
                     same s.Value schema && same t.Value table && same k.Value column
-                | [t; k] ->
-                    same t.Value table && same k.Value column
                 | _ -> false
             | _ -> false
         if isNull proof || String.IsNullOrWhiteSpace(proof.TargetKeyColumn)

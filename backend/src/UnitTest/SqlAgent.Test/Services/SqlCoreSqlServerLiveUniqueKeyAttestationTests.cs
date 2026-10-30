@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Data.Common;
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.Provider.Abstractions;
 using SqlAgent.Service.Core.Execution;
 using HsSqlAgent.SqlCore.Core.Pipeline;
@@ -362,6 +363,9 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
                 db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id");
             Assert.Equal("id", proof.TargetKeyColumn);
+            var legacySourceOnlyProof = SqlServerCteUniqueKeyAssurance.VerifyLive(
+                db, Snapshot(target, source), "dbo." + target, "dbo." + source, "id");
+            Assert.Null(legacySourceOnlyProof.TargetKeyColumn);
             var profile = new SqlProviderCapabilityProfile(
                 SqlAgentToolType.MsSqlServer, new Version(16, 0));
             const string policy = "sqlserver-live-cte-compiler-v1";
@@ -376,6 +380,12 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                 ? "UPDATE dbo.[" + target + "] SET label = 'changed' FROM picked WHERE dbo." + target + ".id = picked." + output
                 : "DELETE FROM dbo.[" + target + "] FROM picked WHERE dbo." + target + ".id = picked." + output);
             var parsed = CoreSqlTextParser.ParseDml(mutation, SqlAgentToolType.MsSqlServer, profile);
+            Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileDml(
+                    parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed)
+                        .WithSqlServerCteUniqueKeyAssurance(legacySourceOnlyProof),
+                    new DmlCompilationPolicy(), profile, null));
             var withoutProof = SqlCoreFacade.TryCompileDml(
                 mutation, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
                 new SqlPlanValidationContext(policy, allowed));
@@ -437,6 +447,8 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
     [InlineData("WITH picked AS (SELECT id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = 1")]
     [InlineData("WITH picked AS (SELECT id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = picked.id OR {target}.id = 2")]
     [InlineData("WITH picked AS (SELECT id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = CAST(picked.id AS BIGINT)")]
+    [InlineData("WITH picked AS (SELECT label AS id FROM {source}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = picked.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {target}) UPDATE {target} SET label = 'changed' FROM picked WHERE {target}.id = picked.id")]
     [InlineData("WITH picked AS (SELECT id FROM {source} UNION ALL SELECT id FROM {source}) DELETE FROM {target} FROM picked WHERE {target}.id = picked.id")]
     public async Task LiveKeyEvidenceCannotAuthorizeUnprovenCteGraph(string template)
     {
@@ -468,9 +480,20 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                 new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "dbo." + target, "dbo." + source })
                 .WithSqlServerCteUniqueKeyAssurance(proof);
-            var compiled = SqlCoreFacade.TryCompileDml(sql,
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, context);
-            Assert.False(compiled.Success);
+            // Use the real, explicit SQL Server source AND target profile.
+            // Otherwise every negative would trivially fail on the missing
+            // version profile, not on its unsafe CTE lineage.
+            var error = Record.Exception(() =>
+            {
+                var parsed = CoreSqlTextParser.ParseDml(
+                    sql, SqlAgentToolType.MsSqlServer, profile);
+                SqlCoreFacade.CompileDml(
+                    parsed, SqlAgentToolType.MsSqlServer, context,
+                    new DmlCompilationPolicy(), profile, null);
+            });
+            Assert.NotNull(error);
+            Assert.True(error is SqlCompilationException or SqlParseException or UnauthorizedAccessException,
+                $"Unexpected failure category: {error.GetType().Name}: {error.Message}");
         }
         finally
         {
