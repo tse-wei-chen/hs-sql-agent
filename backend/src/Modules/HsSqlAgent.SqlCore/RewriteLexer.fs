@@ -652,6 +652,10 @@ module internal RewriteLexer =
                 chargeSourceProgress ()
                 let text = sql.Substring(start, i - start)
                 if not hasDot && not hasExponent then
+                    // Huge leading-zero integer lexemes may fit Int64 despite
+                    // being millions of digits long. The CLR integer parse is
+                    // a separate pass that must not bypass the lexical quota.
+                    RewriteResourceBudget.charge (int64 text.Length)
                     match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
                     | true, value -> add (IntegerLiteral value) start i
                     | _ -> decimalLiteral text start i
