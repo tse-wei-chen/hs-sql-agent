@@ -298,6 +298,22 @@ remain unchanged. It does not authorize SQL execution or establish runtime
 function effects. Views are never treated as physical INSERT/UPDATE/DELETE
 targets by this feature.
 
+## MySQL 8.0 statement-level WITH UPDATE (native, single-table subset)
+
+MySQL 8.0+ read-only non-recursive statement-level CTEs may precede
+a single-table UPDATE. The compiler uses the same closed F# `Update.Ctes`
+model, Mutation WHERE authorization, physical read/write allowlists,
+catalog/typed-column proofs, source/target capability checks, parameterized
+native SQL rendering, work budgets and physical-only static effects.
+Explicit older MySQL source or target profiles (pre-8.0) fail closed.
+
+Multiple and aliased-output CTEs are supported within the typed query
+subset. Joined/multiple-table UPDATE, CTE mutations, recursive CTEs,
+MySQL RETURNING and cross-provider WITH UPDATE lowering are **not**
+authorized by this milestone. Static parsing and analysis are not DML
+execution authorization. Real MySQL integration verifies native-versus-
+compiled affected rows and unchanged row contents.
+
 ## SQLite statement-level WITH UPDATE (native, strict source subset)
 
 SQLite read-only, non-recursive statement-level CTEs can prefix ordinary

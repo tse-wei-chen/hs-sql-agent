@@ -133,7 +133,6 @@ public sealed class SqlCoreSqliteWithUpdateTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]

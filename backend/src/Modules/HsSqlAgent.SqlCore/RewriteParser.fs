@@ -29,6 +29,7 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          MySqlWithUpdateCte: CapabilityProof
           SqliteWithUpdateCte: CapabilityProof
           SqliteWithDeleteCte: CapabilityProof
           OnConflict: CapabilityProof
@@ -89,6 +90,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
               SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
@@ -115,6 +117,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
               SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
@@ -342,6 +345,7 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
         member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
         member _.SourceSqliteWithDeleteCte = semantics.SqliteWithDeleteCte
         member _.SourceOnConflict = semantics.OnConflict
@@ -3027,15 +3031,17 @@ module internal RewriteParser =
             fail cursor.Current
                 "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without a nested input WITH"
 
-    /// PostgreSQL / SQLite read-only statement CTEs remain typed UPDATE
-    /// nodes. Source capability proof is required before parsing SQLite
-    /// versions predating ordinary CTE syntax. No SQL text is spliced.
+    /// Proven native PostgreSQL, SQLite and MySQL read-only statement CTEs
+    /// remain typed UPDATE nodes, never textual SQL prefixes.
     let private parseReadOnlyWithUpdate (cursor: Cursor) =
         if cursor.Dialect <> SourceDialect.PostgreSql
-           && cursor.Dialect <> SourceDialect.SQLite then
-            fail cursor.Current "Statement-level WITH UPDATE is PostgreSQL/SQLite-only"
+           && cursor.Dialect <> SourceDialect.SQLite
+           && cursor.Dialect <> SourceDialect.MySql then
+            fail cursor.Current "Statement-level WITH UPDATE has no source dialect proof"
         if cursor.Dialect = SourceDialect.SQLite then
             requireSourceParseCapability cursor.Current cursor.SourceSqliteWithUpdateCte
+        if cursor.Dialect = SourceDialect.MySql then
+            requireSourceParseCapability cursor.Current cursor.SourceMySqlWithUpdateCte
         let ctes = parseReadOnlyStatementCtes cursor
         let update = parseUpdate cursor
         UpdateStatement { update with Ctes = ctes }
@@ -3060,11 +3066,15 @@ module internal RewriteParser =
         let statement =
             match cursor.Current.Kind with
             | Keyword "WITH" when dialect = SourceDialect.PostgreSql
-                                   || dialect = SourceDialect.SQLite ->
+                                   || dialect = SourceDialect.SQLite
+                                   || dialect = SourceDialect.MySql ->
                 match readOnlyWithMutationHead cursor with
-                | Some "INSERT" -> parseReadOnlyWithInsert cursor
-                | Some "UPDATE" when dialect = SourceDialect.PostgreSql
+                | Some "INSERT" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite ->
+                    parseReadOnlyWithInsert cursor
+                | Some "UPDATE" when dialect = SourceDialect.PostgreSql
+                                       || dialect = SourceDialect.SQLite
+                                       || dialect = SourceDialect.MySql ->
                     parseReadOnlyWithUpdate cursor
                 | Some "DELETE" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite ->
