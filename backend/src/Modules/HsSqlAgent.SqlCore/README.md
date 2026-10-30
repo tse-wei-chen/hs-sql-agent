@@ -3247,3 +3247,42 @@ custom hosts; the overload without an already-open metadata connection
 continues to fail closed on physical-source CTE DML. SQL Server 2022 live
 tests cover UPDATE/DELETE, direct/aliased projections, Host approval and
 commit, absent connection/row cap, and unsafe CTE grammar.
+
+## SQL Server CTE physical database and DDL transaction fence (#466 stage 4)
+
+SQL Server `DB_ID()`, `object_id`, and index IDs are **local
+integers**, and can coincide on different server instances or in
+independently created databases with identical schemas. The immutable
+`SqlServerCteUniqueKeyAssurance` now also records the actual
+`SERVERPROPERTY('ServerName')`, `DB_NAME()` and
+`sys.database_recovery_status.database_guid` values from the open
+SQL Server connection. Its versioned proof identity binds all three
+together with the existing schema digest, physical table/index identity
+and source/target INT key names.
+
+Both initial `VerifyLive` / `VerifyLiveForJoinedMutation` and
+transaction-bound `IsCurrent` require the real physical identity.
+A missing/unreadable/null GUID or instance identity **fails closed**:
+the Host cannot use a caller-supplied Catalog as replacement evidence.
+Host planning, compiled mutation and approval fingerprints thereby
+bind the same physical database witness; the commit rechecks it on
+the actual write transaction.
+
+The commit-time proof first acquires explicit source and target
+`TABLOCK, HOLDLOCK` locks in canonical order, then rechecks the
+unique physical INT index and database identity. SQL Server live
+tests require a concurrent `DROP INDEX` from an independent
+connection to time out until transaction rollback, for **both
+populated and empty source tables**. After the index is dropped,
+the old proof must fail. A second physical SQL Server database with
+the same source/target DDL must also produce a different proof
+identity and reject a plan minted for the first database.
+
+This is a practical physical-instance/database identity fence, **not**
+a claim that a displayable server name is a globally collision-proof
+host identifier: cloning a whole SQL Server installation or restoring
+its master/database files with retained GUIDs requires separate
+operational identity controls. Operators must grant the SQL Server
+metadata visibility required for `sys.database_recovery_status`;
+without that visibility this feature deliberately rejects compilation
+rather than falling back to unverified names.

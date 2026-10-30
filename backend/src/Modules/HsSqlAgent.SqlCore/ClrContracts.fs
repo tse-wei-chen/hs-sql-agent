@@ -876,6 +876,9 @@ type SqlServerCteUniqueKeyAssurance private (
     sourceKeyColumn: string,
     targetKeyColumn: string option,
     databaseId: int,
+    serverInstanceName: string,
+    databaseName: string,
+    databaseGuid: Guid,
     sourceObjectId: int,
     targetObjectId: int,
     uniqueIndexId: int,
@@ -889,9 +892,13 @@ type SqlServerCteUniqueKeyAssurance private (
     /// Only the more restrictive joined-mutation proof carries an exact target INT key.
     member _.TargetKeyColumn = targetKeyColumn |> Option.toObj
     member _.DatabaseId = databaseId
+    member _.ServerInstanceName = serverInstanceName
+    member _.DatabaseName = databaseName
+    member _.DatabaseGuid = databaseGuid
     member _.UniqueIndexName = uniqueIndexName
     member _.ProofIdentity =
-        String.Join("|", [| "sqlserver-live-unique-int-v1"; pinnedSnapshot.Sha256;
+        String.Join("|", [| "sqlserver-live-unique-int-v2"; pinnedSnapshot.Sha256;
+            serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumn;
             string uniqueIndexId; uniqueIndexName; metadataDigest |])
@@ -1034,9 +1041,28 @@ type SqlServerCteUniqueKeyAssurance private (
                     SqlServerCteUniqueKeyAssurance.Command connection tx (
                         "SELECT TOP (1) 1 FROM [" + schema + "].[" + table + "] WITH (TABLOCK, HOLDLOCK)")
                 lockCommand.ExecuteScalar() |> ignore
+        // Local database and object IDs can be reused by another instance.
+        // Require an actual physical database GUID and server identity.
         use databaseCommand =
-            SqlServerCteUniqueKeyAssurance.Command connection tx "SELECT DB_ID()"
-        let databaseId = Convert.ToInt32(databaseCommand.ExecuteScalar())
+            SqlServerCteUniqueKeyAssurance.Command connection tx (
+                """SELECT DB_ID(), DB_NAME(),
+                          CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')),
+                          database_guid
+                   FROM sys.database_recovery_status WHERE database_id = DB_ID()""")
+        use identity = databaseCommand.ExecuteReader()
+        if not (identity.Read()) || identity.IsDBNull(0)
+           || identity.IsDBNull(1) || identity.IsDBNull(2)
+           || identity.IsDBNull(3) then
+            invalidOp "SQL Server physical database identity is not visible."
+        let databaseId = Convert.ToInt32(identity.GetValue(0), Globalization.CultureInfo.InvariantCulture)
+        let databaseName = identity.GetString(1)
+        let serverInstanceName = identity.GetString(2)
+        let databaseGuid = identity.GetGuid(3)
+        if databaseId <= 0 || String.IsNullOrWhiteSpace(databaseName)
+           || String.IsNullOrWhiteSpace(serverInstanceName)
+           || databaseGuid = Guid.Empty || identity.Read() then
+            invalidOp "SQL Server physical database identity is absent or ambiguous."
+        identity.Close()
         use digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
         let sourceId = SqlServerCteUniqueKeyAssurance.Metadata(
             connection, tx, sourceTable, digest)
@@ -1094,7 +1120,8 @@ type SqlServerCteUniqueKeyAssurance private (
             | None ->
                 invalidOp "SQL Server live key proof requires an enabled, unfiltered unique single-column INT index."
         let sha256 = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()
-        databaseId, sourceId, targetId, indexId, indexName, sha256
+        databaseId, serverInstanceName, databaseName, databaseGuid,
+        sourceId, targetId, indexId, indexName, sha256
 
     static member VerifyLive
         (connection: DbConnection, snapshot: SqlSchemaSnapshot,
@@ -1106,12 +1133,13 @@ type SqlServerCteUniqueKeyAssurance private (
         SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
         if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
             invalidArg "sourceTable" "Self-joined live SQL Server key proof is outside the first verified subset."
-        let dbId, sourceId, targetId, indexId, indexName, digest =
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable, sourceKeyColumn, None, false)
         SqlServerCteUniqueKeyAssurance(
             snapshot, targetTable, sourceTable, sourceKeyColumn, None,
-            dbId, sourceId, targetId, indexId, indexName, digest)
+            dbId, liveServer, liveName, liveGuid,
+            sourceId, targetId, indexId, indexName, digest)
 
     /// Only this API may mint compilation evidence for physical-read CTE
     /// UPDATE/DELETE. Both INT equality operands are checked on the live DB.
@@ -1127,13 +1155,14 @@ type SqlServerCteUniqueKeyAssurance private (
         SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
         if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
             invalidArg "sourceTable" "Self-joined SQL Server key proof is not modeled."
-        let dbId, sourceId, targetId, indexId, indexName, digest =
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable,
                 sourceKeyColumn, Some targetKeyColumn, false)
         SqlServerCteUniqueKeyAssurance(
             snapshot, targetTable, sourceTable, sourceKeyColumn, Some targetKeyColumn,
-            dbId, sourceId, targetId, indexId, indexName, digest)
+            dbId, liveServer, liveName, liveGuid,
+            sourceId, targetId, indexId, indexName, digest)
 
     /// The caller MUST invoke this on the actual DML transaction/connection
     /// before executing the write. Locks are transaction-held; no detached
@@ -1143,11 +1172,15 @@ type SqlServerCteUniqueKeyAssurance private (
            || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
         else
             try
-                let dbId, sourceId, targetId, indexId, indexName, digest =
+                let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
                     SqlServerCteUniqueKeyAssurance.Attest(
                         connection, transaction, pinnedSnapshot,
                         targetTable, sourceTable, sourceKeyColumn, targetKeyColumn, true)
-                dbId = databaseId && sourceId = sourceObjectId
+                dbId = databaseId
+                && StringComparer.Ordinal.Equals(liveServer, serverInstanceName)
+                && StringComparer.Ordinal.Equals(liveName, databaseName)
+                && liveGuid = databaseGuid
+                && sourceId = sourceObjectId
                 && targetId = targetObjectId && indexId = uniqueIndexId
                 && StringComparer.Ordinal.Equals(indexName, uniqueIndexName)
                 && StringComparer.Ordinal.Equals(digest, metadataDigest)
