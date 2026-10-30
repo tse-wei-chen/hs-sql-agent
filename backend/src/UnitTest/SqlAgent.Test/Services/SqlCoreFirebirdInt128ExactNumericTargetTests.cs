@@ -75,7 +75,9 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
             "DELETE FROM metrics WHERE amount = " + value,
             SqlAgentToolType.Postgres, SqlAgentToolType.Firebird,
             new SqlPlanValidationContext("firebird-int128-dml-v1"),
-            new DmlCompilationPolicy(), null, Profile(5), null);
+            new DmlCompilationPolicy(),
+            new SqlProviderCapabilityProfile(SqlAgentToolType.Postgres, new Version(17, 0)),
+            Profile(5), null);
         Assert.Contains($"AS NUMERIC({precision},{scale}))", result.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Equal(expected, Assert.IsType<System.Numerics.BigInteger>(Assert.Single(result.Parameters).Value).ToString(
