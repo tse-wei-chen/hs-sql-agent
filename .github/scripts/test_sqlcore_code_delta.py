@@ -48,11 +48,11 @@ class CodeDeltaTests(unittest.TestCase):
         self.assertEqual(1, result["schemaVersion"])
         self.assertEqual(base, result["baseCommit"])
         self.assertEqual(head, result["headCommit"])
-        self.assertEqual({"added": 2, "deleted": 1, "files": 1}, result["categories"]["production"])
-        self.assertEqual({"added": 2, "deleted": 0, "files": 1}, result["categories"]["tests"])
-        self.assertEqual({"added": 1, "deleted": 0, "files": 1}, result["categories"]["docs"])
-        self.assertEqual({"added": 2, "deleted": 0, "files": 1}, result["categories"]["generatedMigrations"])
-        self.assertEqual({"added": 1, "deleted": 0, "files": 1}, result["categories"]["other"])
+        self.assertEqual({"added": 2, "deleted": 1, "files": 1, "net": 1}, result["categories"]["production"])
+        self.assertEqual({"added": 2, "deleted": 0, "files": 1, "net": 2}, result["categories"]["tests"])
+        self.assertEqual({"added": 1, "deleted": 0, "files": 1, "net": 1}, result["categories"]["docs"])
+        self.assertEqual({"added": 2, "deleted": 0, "files": 1, "net": 2}, result["categories"]["generatedMigrations"])
+        self.assertEqual({"added": 1, "deleted": 0, "files": 1, "net": 1}, result["categories"]["other"])
         self.assertEqual(0, result["binaryFiles"])
 
     def test_move_from_test_to_production_is_not_hidden_as_rename(self):
