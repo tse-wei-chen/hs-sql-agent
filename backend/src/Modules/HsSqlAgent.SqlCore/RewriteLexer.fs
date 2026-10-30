@@ -191,11 +191,16 @@ module internal RewriteLexer =
                     overNestingAt <- start
             | Symbol ')' ->
                 if groupingDepth = 0 then
-                    lexicalError
-                        "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
-                        "Unexpected closing parenthesis without a matching opening parenthesis."
-                        start (finish - start)
-                groupingDepth <- groupingDepth - 1
+                    // Script dispatch defers this error to the strictly lexed
+                    // statement, so a later physical SQL Server GO batch is
+                    // not hidden by the malformed earlier batch.
+                    if not semantics.ScriptDeferUnclosedGrouping then
+                        lexicalError
+                            "SQL_LEXICAL_UNBALANCED_PARENTHESIS"
+                            "Unexpected closing parenthesis without a matching opening parenthesis."
+                            start (finish - start)
+                else
+                    groupingDepth <- groupingDepth - 1
             | _ -> ()
 
             tokens.Add({ Kind = kind; Start = start; Length = finish - start })
