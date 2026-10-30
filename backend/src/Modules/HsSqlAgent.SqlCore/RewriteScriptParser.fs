@@ -288,7 +288,14 @@ module internal RewriteScriptParser =
                                 opaque <- requiresOpaqueRemainder tokens start sourceDialect
                         match token.Kind with
                         | Symbol '(' -> nesting <- nesting + 1
-                        | Symbol ')' -> nesting <- nesting - 1
+                        | Symbol ')' ->
+                            // Dispatch depth represents *open* grouping only.
+                            // An extra ')' makes this statement invalid in the
+                            // strict parser; it must not turn depth negative
+                            // and swallow later semicolon-separated statements.
+                            // Opaque procedure bodies still ignore ';', and an
+                            // unmatched opening '(' still blocks recovery.
+                            nesting <- max 0 (nesting - 1)
                         | Symbol ';' when nesting = 0 && not opaque ->
                             emit index
                         | _ -> ()
