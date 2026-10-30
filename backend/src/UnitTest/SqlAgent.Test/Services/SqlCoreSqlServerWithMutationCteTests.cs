@@ -100,8 +100,8 @@ public sealed class SqlCoreSqlServerWithMutationCteTests
     }
 
     [Theory]
-    [InlineData("WITH picked AS (SELECT 7 AS id) UPDATE users SET name = 'changed' FROM picked WHERE users.id = picked.id")]
-    [InlineData("WITH picked AS (SELECT 7 AS id) DELETE FROM users FROM picked WHERE users.id = picked.id")]
+    [InlineData("WITH picked AS (SELECT id FROM physical_source) UPDATE users SET name = 'changed' FROM picked WHERE users.id = picked.id")]
+    [InlineData("WITH picked AS (SELECT id FROM physical_source) DELETE FROM users FROM picked WHERE users.id = picked.id")]
     public void JoinedMutationRequiresSeparateProofAndIsRejected(string sql)
     {
         var result = SqlCoreFacade.TryCompileDml(sql,

@@ -92,7 +92,6 @@ public sealed class SqlCorePostgresWithUpdateTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
     public void NonPostgresSourceCannotInheritNewWithUpdateGrammar(SqlAgentToolType provider)

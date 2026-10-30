@@ -2868,3 +2868,23 @@ Statement-level `WITH INSERT ... VALUES` / `DEFAULT VALUES`, recursive
 and data-modifying CTEs, nested input CTEs, and any unproved cross-dialect
 semantics remain fail-closed. Real SQL Server 2022 native/compiled row
 parity and OUTPUT parity are gated in the dedicated SQL Server CI job.
+
+## Native SQL Server CTE joined mutation singleton proof
+
+Native SQL Server 2005+ `WITH ... UPDATE target SET ... FROM cte WHERE ...`
+and `WITH ... DELETE FROM target FROM cte WHERE ...` are admitted through
+the closed F# Mutation AST **only if the bound CTE source graph is
+statically proven to yield at most one row**. An initial singleton
+`SELECT` without `FROM` may be followed by a chain of CTE-only SELECT
+statements with optional WHERE filters; one bound CTE reference must be
+the sole joined source. CTE column aliases are preserved via Binder.
+
+SET operations, JOINs, grouped/aggregated CTEs, nested CTEs, physical
+table scans within the CTE, multiple FROM sources and arbitrary derived
+relations have no singleton proof and are rejected at TargetCapability.
+This deliberately does *not* infer uniqueness from a plain WHERE equality
+or assume arbitrary SQL Server UPDATE FROM duplicate matches are
+deterministic. Existing non-CTE joined UPDATE/DELETE, SELECT, INSERT,
+cross-provider fail-closed boundaries, profile gates and DML WHERE /
+write-target allowlists remain unchanged. Native SQL Server 2022 DML row
+counts and table snapshots are compared against compiled SQL in CI.

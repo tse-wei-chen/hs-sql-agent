@@ -3116,9 +3116,9 @@ module internal RewriteParser =
         let update = parseUpdate cursor
         if cursor.Dialect = SourceDialect.SqlServer then
             requirePhysicalSqlServerMutationTarget cursor ctes update.Target
-        if cursor.Dialect = SourceDialect.SqlServer && not update.From.IsEmpty then
-            fail cursor.Current
-                "SQL Server CTE-prefixed joined UPDATE FROM is not yet proven; only single-target WHERE mutations are supported"
+        // Cardinality is proven from the *bound* CTE graph at compilation
+        // time. Source parsing recognizes native SQL Server JOIN grammar
+        // without declaring unverified multi-row matches safe.
         UpdateStatement { update with Ctes = ctes }
 
     /// Proven native PostgreSQL / SQLite / MySQL read-only statement CTEs
@@ -3139,9 +3139,8 @@ module internal RewriteParser =
         let delete = parseDelete cursor
         if cursor.Dialect = SourceDialect.SqlServer then
             requirePhysicalSqlServerMutationTarget cursor ctes delete.Target
-        if cursor.Dialect = SourceDialect.SqlServer && not delete.Using.IsEmpty then
-            fail cursor.Current
-                "SQL Server CTE-prefixed joined DELETE FROM is not yet proven; only single-target WHERE mutations are supported"
+        // The compiled SQL Server joined-delete renderer restates the
+        // physical target in its native FROM list after typed proof.
         DeleteStatement { delete with Ctes = ctes }
 
     let parseForWith semantics dialect (sql: string) =
