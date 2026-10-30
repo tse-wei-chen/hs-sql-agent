@@ -29,6 +29,7 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          SqliteWithUpdateCte: CapabilityProof
           SqliteWithDeleteCte: CapabilityProof
           OnConflict: CapabilityProof
           Ordering: SourceOrderingProofs
@@ -88,6 +89,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqliteWithUpdateCte = ProvenCapability
               SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
@@ -113,6 +115,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              SqliteWithUpdateCte = ProvenCapability
               SqliteWithDeleteCte = ProvenCapability
               OnConflict = ProvenCapability
               Ordering = permissiveOrdering
@@ -339,6 +342,7 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
         member _.SourceSqliteWithDeleteCte = semantics.SqliteWithDeleteCte
         member _.SourceOnConflict = semantics.OnConflict
         member _.SourceOrdering = semantics.Ordering
@@ -3023,12 +3027,15 @@ module internal RewriteParser =
             fail cursor.Current
                 "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without a nested input WITH"
 
-    /// PostgreSQL read-only statement CTEs are part of the typed UPDATE
-    /// AST, not a textual UPDATE prefix. Binder and Mutation Policy must
-    /// still validate every CTE and the actual write target.
+    /// PostgreSQL / SQLite read-only statement CTEs remain typed UPDATE
+    /// nodes. Source capability proof is required before parsing SQLite
+    /// versions predating ordinary CTE syntax. No SQL text is spliced.
     let private parseReadOnlyWithUpdate (cursor: Cursor) =
-        if cursor.Dialect <> SourceDialect.PostgreSql then
-            fail cursor.Current "Statement-level WITH UPDATE is PostgreSQL-only"
+        if cursor.Dialect <> SourceDialect.PostgreSql
+           && cursor.Dialect <> SourceDialect.SQLite then
+            fail cursor.Current "Statement-level WITH UPDATE is PostgreSQL/SQLite-only"
+        if cursor.Dialect = SourceDialect.SQLite then
+            requireSourceParseCapability cursor.Current cursor.SourceSqliteWithUpdateCte
         let ctes = parseReadOnlyStatementCtes cursor
         let update = parseUpdate cursor
         UpdateStatement { update with Ctes = ctes }
@@ -3056,7 +3063,8 @@ module internal RewriteParser =
                                    || dialect = SourceDialect.SQLite ->
                 match readOnlyWithMutationHead cursor with
                 | Some "INSERT" -> parseReadOnlyWithInsert cursor
-                | Some "UPDATE" when dialect = SourceDialect.PostgreSql ->
+                | Some "UPDATE" when dialect = SourceDialect.PostgreSql
+                                       || dialect = SourceDialect.SQLite ->
                     parseReadOnlyWithUpdate cursor
                 | Some "DELETE" when dialect = SourceDialect.PostgreSql
                                        || dialect = SourceDialect.SQLite ->

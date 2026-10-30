@@ -298,6 +298,19 @@ remain unchanged. It does not authorize SQL execution or establish runtime
 function effects. Views are never treated as physical INSERT/UPDATE/DELETE
 targets by this feature.
 
+## SQLite statement-level WITH UPDATE (native, strict source subset)
+
+SQLite read-only, non-recursive statement-level CTEs can prefix ordinary
+UPDATE statements through the existing closed F# `Update.Ctes` model.
+Multiple CTEs, named output columns, bounded WHERE subqueries, and
+SQLite 3.35+ RETURNING preserve Mutation policy, physical-table allowlists,
+strict catalog/type proofs, parameterization and physical-only effects.
+
+The SQLite source and target version must be 3.8.3+ for the WITH syntax.
+Recursive or data-modifying CTEs, write-target aliases that lack a
+native proof, and cross-provider WITH UPDATE lowering remain fail-closed.
+SQLite UPDATE FROM cardinality proof is out of this feature's scope.
+
 ## SQLite statement-level WITH DELETE (native, strict source subset)
 
 SQLite read-only non-recursive CTEs can now prefix DELETE FROM in the closed
