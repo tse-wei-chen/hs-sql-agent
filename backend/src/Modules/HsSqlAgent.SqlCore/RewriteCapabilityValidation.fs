@@ -379,6 +379,16 @@ module internal RewriteCapabilityValidation =
                 requireExpressionCapability expressionProofs.QualifiedFunction
         | Cast(_, targetType) ->
             match targetRuntime, CastType.semantic targetType with
+            | FirebirdRuntime, Some(SqlDecimal(Some precision, _)) when precision > 18 ->
+                // Firebird 3 and older lack extended exact-numeric types.
+                // Do not confuse syntactically modeled DECIMAL(20,4) with
+                // a target capability proven by an explicit 4.0+ profile.
+                match expressionProofs.FirebirdExtendedDecimal with
+                | ProvenCapability -> ()
+                | RejectedCapability _ ->
+                    raise (SqlCompilationException(
+                        "SQL capability 'numeric.decimal_extended' requires a Firebird target "
+                        + "ServerVersion 4.0+ profile for DECIMAL precision above 18."))
             | FirebirdRuntime, Some(SqlTime(_, true))
             | FirebirdRuntime, Some(SqlTimestamp(_, true)) ->
                 requireExpressionCapability expressionProofs.FirebirdTimeZoneType
