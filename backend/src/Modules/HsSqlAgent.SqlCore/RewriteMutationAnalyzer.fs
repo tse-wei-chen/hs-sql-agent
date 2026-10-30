@@ -385,6 +385,10 @@ module internal RewriteMutationSourceMatchProof =
                 && profile.Provider = SqlAgentToolType.Sqlite
                 && not (isNull profile.ServerVersion)
                 && profile.ServerVersion.CompareTo(Version(3, 33, 0)) >= 0
+                // The shared .NET Unicode uppercase transform is not a
+                // general SQLite identifier-collation proof. Restrict the
+                // physical Catalog to exact ASCII canonical identities.
+                && RewriteCatalogIdentifierProof.safeCatalog state
             | _ -> false
         match (Bound.value bound).Statement with
         | UpdateStatement update when not update.From.IsEmpty ->

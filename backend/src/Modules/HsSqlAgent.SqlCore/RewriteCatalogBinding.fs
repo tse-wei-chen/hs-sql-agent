@@ -140,8 +140,10 @@ module internal RewriteCatalogBinding =
                         // assignment semantics. Its names can still be proven.
                         typeUnverified syntax "SQL_CATALOG_TYPE_SQLITE_AFFINITY_UNPROVEN"
                             "SQLite column affinity is dynamic; table/column names are verified but assignment types are not."
-                            (RewriteMutationSourceMatchProof.classify
-                                sourceDialect profile catalogForBinding bound)
+                            (if RewriteCatalogIdentifierProof.isAsciiSql syntax.Text then
+                                 RewriteMutationSourceMatchProof.classify
+                                     sourceDialect profile catalogForBinding bound
+                             else fallbackMatch syntax)
                     else
                         RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
                             RewriteSchemaTypeValidation.verifyVirtual sourceDialect catalogForBinding namesChecked)

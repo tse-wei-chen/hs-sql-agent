@@ -225,7 +225,10 @@ bounded by mandatory ordinary `=` predicates to a modeled exact
 `INTEGER` column, a signed 32-bit integer literal, or a previously
 anchored key. The shared bounded equality graph handles transitive
 chains and multiple independently unique sources without borrowing
-PostgreSQL or SQL Server type rules. All modeled SQLite DDL is a rowid
+PostgreSQL or SQL Server type rules. The physical Catalog must have
+simple ASCII canonical identities, and the analyzed SQL must be ASCII:
+Unicode case folding is not a proven SQLite identifier contract.
+All modeled SQLite DDL is a rowid
 table subset; `WITHOUT ROWID`, key `DESC`, arbitrary `COLLATE` and
 expression/partial indexes cannot generate trusted Virtual Catalog keys.
 

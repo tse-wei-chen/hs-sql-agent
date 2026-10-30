@@ -73,6 +73,7 @@ public sealed class SqlCoreSqliteIntegerPkMatchEvidenceTests
     [InlineData("UPDATE dest SET label = 1 FROM lookup s WHERE dest.id = s.bridge")]
     [InlineData("UPDATE dest SET label = 1 FROM lookup s WHERE s.id = s.bridge")]
     [InlineData("UPDATE dest SET label = 1 FROM lookup s WHERE s.id = '1'")]
+    [InlineData("UPDATE dest SET label = 1 FROM lookup s WHERE dest.id = s.id AND 'é' = 'é'")]
     [InlineData("UPDATE dest SET label = 1 FROM lookup s WHERE s.id = 1.5")]
     [InlineData("UPDATE dest SET label = 1 FROM lookup s WHERE dest.id = s.id OR s.id = 2")]
     [InlineData("UPDATE dest SET label = 1 FROM lookup s, bag b WHERE dest.id = s.id AND b.id = s.id")]
