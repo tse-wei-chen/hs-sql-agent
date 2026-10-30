@@ -531,8 +531,8 @@ module internal RewriteStages =
         (sourceProfile: SqlProviderCapabilityProfile | null)
         (targetProfile: SqlProviderCapabilityProfile | null)
         (snapshot: SqlSchemaSnapshot | null)
-        (ctes: Cte list) (target: Identifier) targetAlias
-        (sources: TableSource list) predicate =
+        (ctes: Cte list) (target: Identifier) (targetAlias: IdentifierPart option)
+        (sources: TableSource list) (predicate: Expr option) =
 
         let same (left: string) (right: string) =
             StringComparer.Ordinal.Equals(left, right)
