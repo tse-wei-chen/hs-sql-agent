@@ -168,6 +168,38 @@ public sealed class SqlCoreSqliteLiveKeyAssuredUpdateFromTests
     }
 
     [Fact]
+    public void IndexedPrimaryKeysAreNotAcceptedAsRowidAliases()
+    {
+        using var db = Open();
+        Execute(db, "CREATE TABLE descending_key(id INTEGER PRIMARY KEY DESC,payload INTEGER);" +
+                    "CREATE TABLE without_rowid(id INTEGER PRIMARY KEY,payload INTEGER) WITHOUT ROWID;");
+        var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.Sqlite, "indexed-pk", new[]
+        {
+            SqlSchemaTable.WithTypes("dest", new[]
+            {
+                new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+                new SqlSchemaColumn("label", SqlSchemaValueKind.Numeric)
+            }),
+            SqlSchemaTable.WithTypes("descending_key", new[]
+            {
+                new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+                new SqlSchemaColumn("payload", SqlSchemaValueKind.Numeric)
+            }),
+            SqlSchemaTable.WithTypes("without_rowid", new[]
+            {
+                new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric),
+                new SqlSchemaColumn("payload", SqlSchemaValueKind.Numeric)
+            })
+        });
+        Assert.ThrowsAny<ArgumentException>(() =>
+            SqliteUpdateFromKeyAssurance.VerifyLive(db, snapshot,
+                "dest", "id", "descending_key", "id"));
+        Assert.ThrowsAny<ArgumentException>(() =>
+            SqliteUpdateFromKeyAssurance.VerifyLive(db, snapshot,
+                "dest", "id", "without_rowid", "id"));
+    }
+
+    [Fact]
     public void ChangingSnapshotOrProviderVersionInvalidatesAssurance()
     {
         using var db = Open();
