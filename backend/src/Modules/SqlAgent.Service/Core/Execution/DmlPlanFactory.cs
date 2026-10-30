@@ -207,7 +207,7 @@ public sealed class DmlPlanFactory(
             .ToImmutableArray();
 
         var matchStatement = new SelectStatement(
-            ImmutableArray<CteDefinition>.Empty,
+            MutationCtes(resolvedStatement),
             !auxiliarySources.IsDefaultOrEmpty,
             selectItems,
             resolvedTarget,
@@ -487,6 +487,13 @@ public sealed class DmlPlanFactory(
         _ => false
     };
 
+    private static ImmutableArray<CteDefinition> MutationCtes(SqlStatement statement) => statement switch
+    {
+        UpdateStatement update => update.Ctes,
+        DeleteStatement delete => delete.Ctes,
+        _ => ImmutableArray<CteDefinition>.Empty
+    };
+
     private static ImmutableArray<TableSource> MutationSources(SqlStatement statement) => statement switch
     {
         UpdateStatement update when !update.FromSources.IsDefaultOrEmpty => update.FromSources,
@@ -647,6 +654,7 @@ public sealed class DmlPlanFactory(
                 {
                     From = update.From,
                     FromSources = update.FromSources,
+                    Ctes = update.Ctes,
                     Returning = update.Returning
                 };
                 return clone;
@@ -660,6 +668,7 @@ public sealed class DmlPlanFactory(
                 {
                     Using = delete.Using,
                     UsingSources = delete.UsingSources,
+                    Ctes = delete.Ctes,
                     Returning = delete.Returning
                 };
                 return clone;

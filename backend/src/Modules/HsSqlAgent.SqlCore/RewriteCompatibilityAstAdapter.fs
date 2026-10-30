@@ -663,8 +663,6 @@ module internal RewriteCompatibilityAstAdapter =
                 result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
             | Statement.UpdateStatement update ->
-                if not update.Ctes.IsEmpty then
-                    invalidOp "The legacy CLR AST cannot represent statement-level WITH UPDATE CTEs; use the direct typed SqlCoreFacade mutation pipeline."
                 let result =
                     HsSqlAgent.SqlCore.Core.Ast.UpdateStatement(
                         HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
@@ -680,6 +678,7 @@ module internal RewriteCompatibilityAstAdapter =
                         |> ImmutableArray.CreateRange,
                         update.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                         statementSpan)
+                result.Ctes <- update.Ctes |> List.map cteOf |> ImmutableArray.CreateRange
                 let fromSources = update.From |> List.map tableSourceOf
                 result.FromSources <- fromSources |> ImmutableArray.CreateRange
                 if fromSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
@@ -741,8 +740,6 @@ module internal RewriteCompatibilityAstAdapter =
                 :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
             | Statement.DeleteStatement delete ->
-                if not delete.Ctes.IsEmpty then
-                    invalidOp "The legacy CLR AST cannot represent statement-level WITH DELETE CTEs; use the direct typed SqlCoreFacade mutation pipeline."
                 let result =
                     HsSqlAgent.SqlCore.Core.Ast.DeleteStatement(
                         HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(
@@ -751,6 +748,7 @@ module internal RewriteCompatibilityAstAdapter =
                             unknown),
                         delete.Where |> Option.map exprOf |> Option.defaultValue (Unchecked.defaultof<_>),
                         statementSpan)
+                result.Ctes <- delete.Ctes |> List.map cteOf |> ImmutableArray.CreateRange
                 let usingSources = delete.Using |> List.map tableSourceOf
                 result.UsingSources <- usingSources |> ImmutableArray.CreateRange
                 if usingSources |> List.forall (fun source -> source :? HsSqlAgent.SqlCore.Core.Ast.NamedTableSource) then
