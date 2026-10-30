@@ -88,14 +88,16 @@ public sealed class SqlCoreNumericLiteralOverflowTests
             new SqlPlanValidationContext("numeric-overflow-v1"),
             new SqlExecutionPlanPolicy(), TestContext.Current.CancellationToken);
         Assert.False(result.Success);
-        Assert.Equal(DiagnosticCode, result.ErrorCode);
+        // Try-result envelope retains its existing broad parse-error code;
+        // the detailed, stable lexical classification lives in TypedDiagnostics.
+        Assert.Equal("SQL_PARSE_ERROR", result.ErrorCode);
         var diagnostic = Assert.Single(result.TypedDiagnostics);
         Assert.Equal(DiagnosticCode, diagnostic.Code);
         Assert.Equal(SqlDiagnosticStage.Lexical, diagnostic.Stage);
         Assert.Equal(SqlDiagnosticCategory.Syntax, diagnostic.Category);
-        Assert.Equal(sql.IndexOf(number, StringComparison.Ordinal),
-            diagnostic.Span.Start);
-        Assert.Equal(number.Length, diagnostic.Span.Length);
+        var span = Assert.IsType<SqlDiagnosticSpan>(diagnostic.Span);
+        Assert.Equal(sql.IndexOf(number, StringComparison.Ordinal), span.Start);
+        Assert.Equal(number.Length, span.Length);
     }
 
     [Fact]
