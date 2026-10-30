@@ -365,6 +365,8 @@ namespace HsSqlAgent.SqlCore.Models
 
 open System
 open System.Collections.Generic
+open System.Data
+open System.Data.Common
 open HsSqlAgent.SqlCore.Enums
 
 [<Sealed>]
