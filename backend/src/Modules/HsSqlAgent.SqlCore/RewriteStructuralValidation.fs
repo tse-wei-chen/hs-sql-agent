@@ -258,6 +258,8 @@ module internal RewriteStructuralValidation =
             update.Where |> Option.iter (validateNestedCteExpr targetRuntime)
             update.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)
         | DeleteStatement delete ->
+            delete.Ctes |> List.iter (fun cte ->
+                validateNestedCteQuery targetRuntime RootQuery cte.Query)
             delete.Using |> List.iter (validateNestedCteTable targetRuntime)
             delete.Where |> Option.iter (validateNestedCteExpr targetRuntime)
             delete.Returning |> List.iter (fun item -> validateNestedCteExpr targetRuntime item.Expression)

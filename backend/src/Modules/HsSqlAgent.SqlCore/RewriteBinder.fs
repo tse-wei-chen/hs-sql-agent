@@ -1241,15 +1241,17 @@ module internal RewriteBinder =
                         Matched = matched
                         NotMatched = notMatched }
             | DeleteStatement delete ->
+                let ctes, visibleCtes = bindCtes dialect [] delete.Ctes
                 let baseScope : Scope =
                     { Id = 0
                       Parent = None
                       Sources = [ sourceBinding dialect (NamedTable(delete.Target, delete.TargetAlias)) ]
-                      VisibleCtes = []
+                      VisibleCtes = visibleCtes
                       Dialect = dialect }
                 let usingSources, scope = extendScopeWithSources baseScope delete.Using
                 DeleteStatement
                     { delete with
+                        Ctes = ctes
                         Using = usingSources
                         Where = delete.Where |> Option.map (bindExpr scope)
                         Returning =
@@ -1349,6 +1351,7 @@ module internal RewriteBinder =
             value.Where |> Option.iter expr
             returning value.Returning
         | DeleteStatement value ->
+            for cte in value.Ctes do query cte.Query
             for item in value.Using do source item
             value.Where |> Option.iter expr
             returning value.Returning

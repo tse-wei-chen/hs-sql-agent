@@ -79,7 +79,6 @@ public sealed class SqlCorePostgresWithUpdateTests
     [Theory]
     [InlineData("WITH x AS (DELETE FROM users RETURNING id) UPDATE users SET name = 'x' WHERE id = 1")]
     [InlineData("WITH RECURSIVE x AS (SELECT 1 AS id) UPDATE users SET name = 'x' WHERE id = 1")]
-    [InlineData("WITH x AS (SELECT 1 AS id) DELETE FROM users WHERE id = 1")]
     [InlineData("WITH x AS (SELECT 1 AS id) MERGE INTO users u USING (VALUES (1)) s(id) ON u.id=s.id WHEN MATCHED THEN DELETE")]
     public void UnmodeledWithMutationsRemainFailClosed(string sql)
     {

@@ -105,6 +105,11 @@ module internal RewriteInspection =
             delete.Where |> Option.iter pushExpr
             for source in List.rev delete.Using do
                 pending.Add(VisitSource(scope, source))
+            if not delete.Ctes.IsEmpty then
+                state.ContainsCte <- true
+                state.ContainsSubquery <- true
+            for cte in List.rev delete.Ctes do
+                pending.Add(VisitQuery cte.Query)
         | Statement.MergeStatement merge ->
             state.Tables.Add(identifierText merge.Target) |> ignore
             merge.NotMatched |> Option.iter (fun value ->
