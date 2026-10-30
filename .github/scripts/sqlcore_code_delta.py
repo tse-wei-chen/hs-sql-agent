@@ -19,6 +19,9 @@ def classify(path):
     normalized = path.replace("\\", "/")
     segments = normalized.casefold().split("/")
     name = segments[-1]
+    if (normalized.startswith(".github/scripts/") and name.startswith("test_")
+            and name.endswith(".py")):
+        return "tests"
     if name.endswith((".test.cs", ".spec.cs", ".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx")):
         return "tests"
     if (normalized.startswith("backend/src/UnitTest/")
