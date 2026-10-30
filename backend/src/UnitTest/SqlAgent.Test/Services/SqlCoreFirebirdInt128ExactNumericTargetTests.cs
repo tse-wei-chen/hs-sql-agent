@@ -16,16 +16,14 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
 {
     public static IEnumerable<object[]> ValidValues()
     {
+        // The actual ADO.NET driver has proven typed BigInteger/INT128
+        // semantics only for scale-0 values. Fractional values must not
+        // silently enter a CLR Decimal or DECFLOAT conversion.
         yield return [new string('9', 38), new string('9', 38), 38, 0];
         yield return ["12345678901234567890123456789012345678",
             "12345678901234567890123456789012345678", 38, 0];
-        yield return ["-0.12345678901234567890123456789",
-            "-0.12345678901234567890123456789", 29, 29];
-        yield return ["1e-29", "0." + new string('0', 28) + "1", 29, 29];
-        yield return ["-1.00000000000000000000000000001",
-            "-1.00000000000000000000000000001", 30, 29];
         yield return ["1e+30", "1" + new string('0', 30), 31, 0];
-        yield return ["-1e-37", "-0." + new string('0', 36) + "1", 37, 37];
+        yield return ["-1e+30", "-1" + new string('0', 30), 31, 0];
     }
 
     public static IEnumerable<object[]> InvalidValues()
@@ -35,6 +33,10 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
         yield return [new string('9', 20) + "." + new string('1', 20)];
         yield return ["1e+38"];
         yield return ["1e-1000"];
+        yield return ["1e-29"];
+        yield return ["-1e-37"];
+        yield return ["-0.12345678901234567890123456789"];
+        yield return ["-1.00000000000000000000000000001"];
     }
 
     private static SqlProviderCapabilityProfile Profile(int major) =>
@@ -57,8 +59,10 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
         Assert.DoesNotContain(value.TrimStart('-') + " AS amount", command.Sql,
             StringComparison.OrdinalIgnoreCase);
         var binding = Assert.Single(command.Parameters);
-        Assert.Equal(expected, Assert.IsType<string>(binding.Value));
+        Assert.Equal(expected, Assert.IsType<System.Numerics.BigInteger>(binding.Value).ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
         Assert.Contains(binding.Name, command.Sql, StringComparison.Ordinal);
+        Assert.Contains("AS INT128)", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DECFLOAT", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -74,7 +78,8 @@ public sealed class SqlCoreFirebirdInt128ExactNumericTargetTests
             new DmlCompilationPolicy(), null, Profile(5), null);
         Assert.Contains($"AS NUMERIC({precision},{scale}))", result.Sql,
             StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(expected, Assert.IsType<string>(Assert.Single(result.Parameters).Value));
+        Assert.Equal(expected, Assert.IsType<System.Numerics.BigInteger>(Assert.Single(result.Parameters).Value).ToString(
+            System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Theory]
