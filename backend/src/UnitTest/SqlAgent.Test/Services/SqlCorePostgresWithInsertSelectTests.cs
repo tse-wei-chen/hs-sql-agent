@@ -90,11 +90,10 @@ public sealed class SqlCorePostgresWithInsertSelectTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
-    [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void OtherSourceDialectsDoNotInheritPostgresWithInsertGrammar(SqlAgentToolType provider)
+    public void OtherUnprovenDialectsDoNotInheritPostgresWithInsertGrammar(SqlAgentToolType provider)
     {
         const string sql =
             "WITH x AS (SELECT 1 AS id) INSERT INTO users(id) SELECT id FROM x";

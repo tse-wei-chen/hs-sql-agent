@@ -102,10 +102,9 @@ public sealed class SqlCorePostgresWithInsertModifiersTests
     [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
-    [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]
-    public void OtherSourceDialectsCannotBorrowPostgresWithInsertModifiers(SqlAgentToolType source)
+    public void OtherUnprovenSourceDialectsCannotBorrowPostgresWithInsertModifiers(SqlAgentToolType source)
     {
         const string sql = "WITH source_rows AS (SELECT 17 AS id) " +
                            "INSERT INTO users(id) SELECT id FROM source_rows RETURNING id";

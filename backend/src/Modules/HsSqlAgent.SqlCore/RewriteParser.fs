@@ -2903,11 +2903,11 @@ module internal RewriteParser =
           Where = if acceptKeyword "WHERE" cursor then Some(parseExpression cursor) else None
           Returning = if output.IsEmpty then parseReturning cursor else output }
 
-    /// Route a PostgreSQL WITH statement only after all complete CTE headers.
+    /// Route a proven WITH INSERT statement only after all complete CTE headers.
     /// A CTE name or output alias may itself be a contextual INSERT keyword.
     /// This is a bounded lexical preflight; parseCtes remains the sole owner
     /// of actual grammar validation and Query construction.
-    let private hasPostgresWithInsertHead (cursor: Cursor) =
+    let private hasReadOnlyWithInsertHead (cursor: Cursor) =
         let mutable offset = 1 // The first WITH has not been consumed.
         let mutable invalid = false
         let peek () = cursor.Peek(offset)
@@ -2955,12 +2955,11 @@ module internal RewriteParser =
                 foundHead <- true
         not invalid && isKeyword "INSERT" (peek ())
 
-    /// Read-only statement CTEs feeding INSERT ... SELECT have the same
-    /// observable QuerySource graph as INSERT ... WITH ... SELECT for the
-    /// admitted restricted grammar. The existing PostgreSQL renderer emits
-    /// QuerySource CTEs *before* INSERT, restoring original SQL scope.
-    /// Every nested Query is parsed by the same strict source parser.
-    let private parsePostgresWithInsert (cursor: Cursor) =
+    /// Read-only statement CTEs feeding INSERT SELECT retain the typed
+    /// QuerySource graph, independently proven for PostgreSQL and SQLite.
+    /// Both renderers emit the CTEs *before* INSERT; Mutation policy remains
+    /// the same and no opaque SQL text is ever spliced into the AST.
+    let private parseReadOnlyWithInsert (cursor: Cursor) =
         let pending = ResizeArray<unit -> unit>()
         let mutable ctes: Cte list = []
         let mutable completed = false
@@ -2980,6 +2979,21 @@ module internal RewriteParser =
         if ctes |> List.exists (fun cte -> cte.RecursiveScope) then
             fail cursor.Current "Recursive statement-level CTE INSERT is not yet proven"
         let insert = parseInsert cursor
+        // SQLite's INSERT SELECT with a FROM and an UPSERT clause is
+        // ambiguous without an explicit SELECT WHERE (even WHERE true).
+        // Reject rather than inserting a predicate or assuming PostgreSQL
+        // grammar/semantics are portable.
+        let sqliteUpsertAmbiguous =
+            match insert.Input with
+            | QuerySource query ->
+                cursor.Dialect = SourceDialect.SQLite
+                && insert.Conflict.IsSome
+                && query.Head.From.IsSome
+                && query.Head.Where.IsNone
+            | _ -> false
+        if sqliteUpsertAmbiguous then
+            fail cursor.Current
+                "SQLite INSERT SELECT with a FROM and ON CONFLICT requires an explicit SELECT WHERE clause"
         match insert.Input with
         | QuerySource query
             when query.Head.Ctes.IsEmpty ->
@@ -3000,9 +3014,10 @@ module internal RewriteParser =
         let start = cursor.Current.Start
         let statement =
             match cursor.Current.Kind with
-            | Keyword "WITH" when dialect = SourceDialect.PostgreSql
-                                  && hasPostgresWithInsertHead cursor ->
-                parsePostgresWithInsert cursor
+            | Keyword "WITH" when (dialect = SourceDialect.PostgreSql
+                                   || dialect = SourceDialect.SQLite)
+                                  && hasReadOnlyWithInsertHead cursor ->
+                parseReadOnlyWithInsert cursor
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)
             | Keyword "INSERT" -> InsertStatement(parseInsert cursor)
             | Keyword "UPDATE" when isKeyword "OR" (cursor.Peek 1) && isKeyword "INSERT" (cursor.Peek 2) ->

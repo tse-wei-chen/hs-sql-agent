@@ -317,10 +317,25 @@ fail-closed at capability validation without explicit source-row uniqueness
 assurance matching the complete conflict target. Existing target permissions,
 parameterization and conflict-target proofs are not relaxed.
 
-This conservative subset still rejects recursive statement CTEs,
-data-modifying CTE bodies, top-level CTE INSERT VALUES or DEFAULT VALUES,
-and nested input WITH. Top-level CTE UPDATE, DELETE, MERGE and the remaining
-five source dialects retain strict rejection until independently proven.
+SQLite independently supports the same restricted read-only statement-level
+WITH INSERT SELECT grammar. SQLite RETURNING requires a proven source
+ServerVersion >= 3.35, while SQLite ON CONFLICT DO NOTHING requires a
+proven source ServerVersion >= 3.24; a missing or older source capability
+profile remains fail-closed. Both modifiers also pass the existing target
+capability checks rather than inheriting PostgreSQL's version guarantees. Unlike PostgreSQL, SQLite's native INSERT SELECT UPSERT grammar
+is ambiguous when the SELECT has FROM but no WHERE. The strict SQLite source
+parser therefore requires an explicit SELECT WHERE for that combination
+and does not add an implicit predicate. Native SQLite ON CONFLICT
+DO NOTHING is admitted only for a SQLite source and SQLite target;
+INSERT SELECT ON CONFLICT DO UPDATE remains fail-closed even if a caller
+supplies an explicit source-uniqueness assurance. Cross-provider conflict
+lowering remains unproven. Actual in-memory SQLite parity checks compare
+native writes and RETURNING rows against compiled commands.
+
+Both proven dialects still reject recursive statement CTEs, data-modifying
+CTE bodies, top-level CTE INSERT VALUES or DEFAULT VALUES, and nested input
+WITH. Top-level CTE UPDATE, DELETE, MERGE and MySQL, SQL Server, Oracle and
+Firebird sources retain strict rejection until independently proven.
 Parsing and static analysis never authorize DML execution.
 
 ## SQL Server GO comments in static scripts
