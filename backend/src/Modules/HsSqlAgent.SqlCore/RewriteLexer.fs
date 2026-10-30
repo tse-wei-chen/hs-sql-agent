@@ -237,6 +237,9 @@ module internal RewriteLexer =
         // long exponents saturate at +/-1e9 (far outside Decimal's finite
         // representable scale) instead of overflowing a CLR integer.
         let normalizedNumeric (literal: string) =
+            // Charge the entire canonical pass before allocating its digit
+            // buffer; this work is separate from lexical source scanning.
+            RewriteResourceBudget.charge (int64 literal.Length)
             let exponentAt = literal.IndexOfAny([| 'e'; 'E' |])
             let coefficientEnd =
                 if exponentAt < 0 then literal.Length else exponentAt
@@ -244,6 +247,7 @@ module internal RewriteLexer =
             let mutable inFraction = false
             let mutable fractionalDigits = 0L
             for position = 0 to coefficientEnd - 1 do
+                if (position &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
                 let c = literal.[position]
                 if c = '.' then
                     inFraction <- true
@@ -253,12 +257,14 @@ module internal RewriteLexer =
 
             let mutable first = 0
             while first < digits.Length && digits.[first] = '0' do
+                if (first &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
                 first <- first + 1
             if first = digits.Length then
                 "0", 0L
             else
                 let mutable last = digits.Length
                 while last > first && digits.[last - 1] = '0' do
+                    if (last &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
                     last <- last - 1
 
                 let mutable power = 0L
@@ -273,6 +279,7 @@ module internal RewriteLexer =
                                 position <- position + 1
                             false
                     while position < literal.Length do
+                        if (position &&& 4095) = 0 then RewriteResourceBudget.checkpoint ()
                         power <-
                             min 1000000000L
                                 (power * 10L + int64 (int literal.[position] - int '0'))
@@ -286,6 +293,9 @@ module internal RewriteLexer =
         // model. Never leak CLR overflow or silently round/underflow
         // representable SQL syntax into a DIFFERENT numeric value.
         let decimalLiteral (text: string) start finish =
+            // Account for the CLR parse pass separately from exact decimal
+            // normalization, before entering an expensive long-token parse.
+            RewriteResourceBudget.charge (int64 text.Length)
             match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
             | true, value ->
                 // G29 round-trips the entire CLR Decimal value with invariant
@@ -603,6 +613,7 @@ module internal RewriteLexer =
                 let mutable hasExponent = false
 
                 while i < length && Char.IsDigit(sql[i]) do
+                    if (i &&& 4095) = 0 then chargeSourceProgress ()
                     hasDigits <- true
                     i <- i + 1
 
@@ -610,6 +621,7 @@ module internal RewriteLexer =
                     hasDot <- true
                     i <- i + 1
                     while i < length && Char.IsDigit(sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         hasDigits <- true
                         i <- i + 1
 
@@ -623,6 +635,7 @@ module internal RewriteLexer =
                         i <- i + 1
                     let exponentStart = i
                     while i < length && Char.IsDigit(sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         i <- i + 1
                     if i = exponentStart then
                         parseError "Invalid numeric exponent." start (max 1 (i - start))
@@ -630,11 +643,19 @@ module internal RewriteLexer =
                 if i < length && (sql[i] = '.' || isConfiguredIdentifierStart sql[i]) then
                     let invalidStart = i
                     while i < length && (sql[i] = '.' || isConfiguredIdentifierPart sql[i]) do
+                        if (i &&& 4095) = 0 then chargeSourceProgress ()
                         i <- i + 1
                     parseError "Invalid numeric literal." start (max 1 (i - start))
 
+                // Ensure single-token digit loops observe cancellation and
+                // charge source progress before allocating their substring.
+                chargeSourceProgress ()
                 let text = sql.Substring(start, i - start)
                 if not hasDot && not hasExponent then
+                    // Huge leading-zero integer lexemes may fit Int64 despite
+                    // being millions of digits long. The CLR integer parse is
+                    // a separate pass that must not bypass the lexical quota.
+                    RewriteResourceBudget.charge (int64 text.Length)
                     match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
                     | true, value -> add (IntegerLiteral value) start i
                     | _ -> decimalLiteral text start i

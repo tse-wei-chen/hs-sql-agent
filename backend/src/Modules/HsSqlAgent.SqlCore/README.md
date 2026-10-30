@@ -132,6 +132,24 @@ The source/target SQL capability matrix, DML policy, TryCompile's broad outer
 remain unchanged. This is **not** arbitrary-precision SQL numeric support;
 such support requires a future closed numeric AST and target-dialect proof.
 
+## P6: numeric-token lexical work and cancellation budget
+
+Numeric lexemes are metered in the same synchronous `RewriteResourceBudget`
+session as the original SQL source scan. Each independent CLR `Int64.TryParse`
+and `Decimal.TryParse` pass, as well as exact-value canonicalization, charges
+a deterministic number of work units **before** entering potentially large input scans or digit-buffer
+allocation. Long numeric integer, fraction, exponent and canonicalization
+loops also make amortized cancellation / deadline checkpoints.
+
+All six dialects share the same behavior through Query/DML compilation and
+Script parsing/analysis. Ordinary valid numeric literals, lossless precision
+checks, source diagnostics and `TryCompile` contracts are unchanged.
+Pathological single numeric tokens may now be rejected with
+`SQL_COMPILER_STAGE_WORK_LIMIT` (Lexical / Resource) even while they remain
+below the independent 4 Mi-character total SQL input limit. Work quotas
+apply to total parsing activity, not just the number of emitted tokens; no
+independent global numeric budget or new SQL grammar is introduced.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
