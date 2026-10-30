@@ -29,10 +29,24 @@ module internal RewriteCapabilityValidation =
                 raise (SqlCompilationException(targetCapabilityMessage rejection))
         match targetRuntime, value with
         | PostgreSqlRuntime, ScalarValue.ExactNumeric _ -> ()
+        | MySqlRuntime, ScalarValue.ExactNumeric number ->
+            match ExactNumeric.tryBoundedDecimal 65 30 number with
+            | Some _ -> ()
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as MySQL DECIMAL: maximum precision 65 and scale 30."))
+        | SqlServerRuntime _, ScalarValue.ExactNumeric number ->
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | Some _ -> ()
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as SQL Server DECIMAL: maximum precision 38 and scale 38."))
         | _, ScalarValue.ExactNumeric _ ->
             raise (SqlCompilationException(
-                "SQL capability 'numeric.exact_literal' requires proven PostgreSQL NUMERIC "
-                + "text-parameter CAST semantics; no lossless target proof exists for this provider."))
+                "SQL capability 'numeric.exact_literal' requires a proven exact "
+                + "text-parameter DECIMAL CAST target; no lossless proof exists for this provider."))
         | FirebirdRuntime, ScalarValue.Text text when text.Length > 8191 ->
             raise (SqlCompilationException(
                 "Firebird string literal exceeds the safe UTF8 VARCHAR limit of 8191 characters."))
