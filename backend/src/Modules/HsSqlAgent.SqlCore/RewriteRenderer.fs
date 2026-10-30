@@ -2786,7 +2786,7 @@ module internal RewriteRenderer =
         // Emit each assignment after checking the output work budget,
         // instead of constructing both a list of rendered assignments and
         // a second joined SET clause. Render parameter order is unchanged.
-        let sql = RenderBuffer(ctx, "UPDATE ")
+        let sql = RenderBuffer(ctx, renderCtes ctx update.Ctes + "UPDATE ")
         sql.Append(renderIdentifier ctx update.Target)
            .Append(targetAlias)
            .Append(" SET ") |> ignore

@@ -1186,15 +1186,17 @@ module internal RewriteBinder =
                     | DefaultValues -> DefaultValues
                 InsertStatement { insert with Input = input; Returning = bindReturning targetScope insert.Returning }
             | UpdateStatement update ->
+                let ctes, visibleCtes = bindCtes dialect [] update.Ctes
                 let baseScope : Scope =
                     { Id = 0
                       Parent = None
                       Sources = [ sourceBinding dialect (NamedTable(update.Target, update.TargetAlias)) ]
-                      VisibleCtes = []
+                      VisibleCtes = visibleCtes
                       Dialect = dialect }
                 let from, scope = extendScopeWithSources baseScope update.From
                 UpdateStatement
                     { update with
+                        Ctes = ctes
                         From = from
                         AssignmentItems = update.AssignmentItems |> NonEmpty.map (bindAssignment scope)
                         Where = update.Where |> Option.map (bindExpr scope)
@@ -1341,6 +1343,7 @@ module internal RewriteBinder =
             | None -> ()
             returning value.Returning
         | UpdateStatement value ->
+            for cte in value.Ctes do query cte.Query
             assignments value.Assignments
             for item in value.From do source item
             value.Where |> Option.iter expr

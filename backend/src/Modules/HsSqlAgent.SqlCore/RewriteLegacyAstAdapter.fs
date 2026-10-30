@@ -663,6 +663,7 @@ module internal RewriteLegacyAstAdapter =
             | :? HsSqlAgent.SqlCore.Core.Ast.UpdateStatement as update ->
                 Statement.UpdateStatement
                     { Update.Target = identifierOf update.Target.Name
+                      Ctes = []
                       TargetAlias = Option.ofObj update.Target.Alias |> Option.map partOf
                       AssignmentItems =
                         update.Assignments

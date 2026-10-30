@@ -84,6 +84,7 @@ module internal RewritePlanCapabilityValidation =
             | QuerySource query -> proveJoinQuery capabilityMessage proofs query
             | Values _ | DefaultValues -> ()
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
             update.From |> List.iter (proveJoinSource capabilityMessage proofs)
         | DeleteStatement delete ->
             delete.Using |> List.iter (proveJoinSource capabilityMessage proofs)
@@ -599,6 +600,7 @@ module internal RewritePlanCapabilityValidation =
             | Values _ | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> proveOrderingExpr targetRuntime targetOrdering item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> proveOrderingQuery targetRuntime targetOrdering cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveOrderingExpr targetRuntime targetOrdering assignment.Value)
             update.From |> List.iter (proveOrderingSource targetRuntime targetOrdering)
             update.Where |> Option.iter (proveOrderingExpr targetRuntime targetOrdering)

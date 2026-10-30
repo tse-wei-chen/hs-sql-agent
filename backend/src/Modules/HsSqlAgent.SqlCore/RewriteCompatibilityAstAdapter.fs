@@ -655,6 +655,8 @@ module internal RewriteCompatibilityAstAdapter =
                 result :> HsSqlAgent.SqlCore.Core.Ast.SqlStatement
 
             | Statement.UpdateStatement update ->
+                if not update.Ctes.IsEmpty then
+                    invalidOp "The legacy CLR AST cannot represent statement-level WITH UPDATE CTEs; use the direct typed SqlCoreFacade mutation pipeline."
                 let result =
                     HsSqlAgent.SqlCore.Core.Ast.UpdateStatement(
                         HsSqlAgent.SqlCore.Core.Ast.NamedTableSource(

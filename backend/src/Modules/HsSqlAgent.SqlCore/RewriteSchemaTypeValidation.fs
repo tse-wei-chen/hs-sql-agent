@@ -991,19 +991,32 @@ module internal RewriteSchemaTypeValidation =
                 insert.Returning |> List.iter (fun item ->
                     inspect (makeScope None [ target ]) item.Expression)
             | UpdateStatement update ->
+                let mutable visibleCtes = ctes
+                for cte in update.Ctes do
+                    let output = queryTypes catalog visibleCtes None cte.Query
+                    let names =
+                        if cte.ColumnAliases.IsEmpty then output |> List.map fst
+                        else cte.ColumnAliases |> List.map (fun alias -> Some(keyPart catalog.Dialect alias))
+                    if names.Length <> output.Length || (names |> List.exists Option.isNone) then
+                        invalidOp "Statement-level UPDATE CTE requires a proven output column layout."
+                    let typed =
+                        List.zip names (output |> List.map snd)
+                        |> List.choose (fun (name, kind) -> name |> Option.map (fun value -> value, kind))
+                    visibleCtes <- Map.add (keyPart catalog.Dialect cte.Name) typed visibleCtes
                 let target = namedSource catalog update.Target update.TargetAlias
-                let others = update.From |> List.map (tableSource catalog ctes None)
+                let others = update.From |> List.map (tableSource catalog visibleCtes None)
                 let scope = makeScope None (target :: others)
                 let targetScope = makeScope None [ target ]
                 update.Assignments |> List.iter (fun item ->
                     let targetKind = columnKind catalog targetScope item.Target
-                    let valueKind = expression catalog ctes scope Span.unknown item.Value
+                    let valueKind = expression catalog visibleCtes scope Span.unknown item.Value
                     if knownFamilyMismatch targetKind valueKind then
                         compatibleWith (expressionSpanOr document.Span item.Value)
                             targetKind valueKind "UPDATE assignment"
                             [ targetOrigin (Identifier.text item.Target) targetKind
                               expressionOrigin catalog scope item.Value ])
-                update.Where |> Option.iter (inspect scope)
+                update.Where |> Option.iter (fun value ->
+                    expression catalog visibleCtes scope Span.unknown value |> ignore)
                 update.Returning |> List.iter (fun item -> inspect targetScope item.Expression)
             | DeleteStatement delete ->
                 let target = namedSource catalog delete.Target delete.TargetAlias

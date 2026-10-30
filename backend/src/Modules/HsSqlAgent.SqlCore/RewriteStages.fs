@@ -411,6 +411,12 @@ module internal RewriteStages =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateAggregateExpr enforceSource source sourceProfile target targetProfile item.Expression)
         | UpdateStatement update ->
+            if not update.Ctes.IsEmpty then
+                if source <> SqlAgentToolType.Postgres || target <> SqlAgentToolType.Postgres then
+                    raise (SqlCompilationException(
+                        "Statement-level WITH UPDATE is proven only for native PostgreSQL source and target; cross-provider lowering remains fail-closed."))
+                update.Ctes |> List.iter (fun cte ->
+                    validateAggregateQuery enforceSource source sourceProfile target targetProfile cte.Query)
             requireNativeSqliteRichReturning source target update.Returning
             if not update.From.IsEmpty
                && source <> target
@@ -978,6 +984,8 @@ module internal RewriteStages =
             | UpdateStatement update ->
                 UpdateStatement
                     { update with
+                        Ctes = update.Ctes |> List.map (fun cte ->
+                            { cte with Query = normalizeQuery source target cte.Query })
                         AssignmentItems =
                             update.AssignmentItems
                             |> NonEmpty.map (fun assignment ->
@@ -1211,6 +1219,7 @@ module internal RewriteStages =
             | DefaultValues -> ()
             validateReturning allowedTables insert.Returning
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> validateQuery allowedTables cte.Query)
             ensureTableAllowed allowedTables update.Target
             update.From |> List.iter (validateSource allowedTables)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> validateExpr allowedTables assignment.Value)
@@ -1962,6 +1971,7 @@ module internal RewriteStages =
             |> List.iter (fun item ->
                 validateSemanticExpr targetRuntime ProjectionClause false false item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> validateSemanticQuery targetRuntime cte.Query)
             update.AssignmentItems
             |> NonEmpty.iter (fun item ->
                 validateSemanticExpr targetRuntime AssignmentClause false false item.Value)

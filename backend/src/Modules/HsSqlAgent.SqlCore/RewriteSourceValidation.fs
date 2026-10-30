@@ -171,6 +171,7 @@ module internal RewriteSourceValidation =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> verifySourceRegexExpr regexProof item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> verifySourceRegexQuery regexProof cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun assignment -> verifySourceRegexExpr regexProof assignment.Value)
             update.From |> List.iter (verifySourceRegexSource regexProof)
             update.Where |> Option.iter (verifySourceRegexExpr regexProof)
@@ -287,6 +288,7 @@ module internal RewriteSourceValidation =
             | DefaultValues -> ()
             insert.Returning |> List.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Expression)
         | UpdateStatement update ->
+            update.Ctes |> List.iter (fun cte -> validateRawSourceQuery source orderingProofs mySqlPipes cte.Query)
             update.AssignmentItems |> NonEmpty.iter (fun item -> validateRawSourceExpr source orderingProofs mySqlPipes item.Value)
             update.From |> List.iter (validateRawSourceTable source orderingProofs mySqlPipes)
             update.Where |> Option.iter (validateRawSourceExpr source orderingProofs mySqlPipes)

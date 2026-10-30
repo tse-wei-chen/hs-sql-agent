@@ -2866,7 +2866,8 @@ module internal RewriteParser =
                 requireSourceParseCapability cursor.Current cursor.SourceDml.UpdateFrom
                 parseNamedDmlSources cursor
             else []
-        { Target = target
+        { Ctes = []
+          Target = target
           TargetAlias = targetAlias
           AssignmentItems = assignments |> Seq.toList |> NonEmpty.ofList "assignments"
           From = from
@@ -2907,7 +2908,7 @@ module internal RewriteParser =
     /// A CTE name or output alias may itself be a contextual INSERT keyword.
     /// This is a bounded lexical preflight; parseCtes remains the sole owner
     /// of actual grammar validation and Query construction.
-    let private hasReadOnlyWithInsertHead (cursor: Cursor) =
+    let private readOnlyWithMutationHead (cursor: Cursor) =
         let mutable offset = 1 // The first WITH has not been consumed.
         let mutable invalid = false
         let peek () = cursor.Peek(offset)
@@ -2953,13 +2954,18 @@ module internal RewriteParser =
                 consume () |> ignore
             else
                 foundHead <- true
-        not invalid && isKeyword "INSERT" (peek ())
+        if invalid then None
+        else
+            match (peek ()).Kind with
+            | Keyword "INSERT" -> Some "INSERT"
+            | Keyword "UPDATE" -> Some "UPDATE"
+            | _ -> None
 
     /// Read-only statement CTEs feeding INSERT SELECT retain the typed
     /// QuerySource graph, independently proven for PostgreSQL and SQLite.
     /// Both renderers emit the CTEs *before* INSERT; Mutation policy remains
     /// the same and no opaque SQL text is ever spliced into the AST.
-    let private parseReadOnlyWithInsert (cursor: Cursor) =
+    let private parseReadOnlyStatementCtes (cursor: Cursor) =
         let pending = ResizeArray<unit -> unit>()
         let mutable ctes: Cte list = []
         let mutable completed = false
@@ -2977,7 +2983,11 @@ module internal RewriteParser =
         if not completed || ctes.IsEmpty then
             fail cursor.Current "WITH INSERT requires one or more read-only CTEs"
         if ctes |> List.exists (fun cte -> cte.RecursiveScope) then
-            fail cursor.Current "Recursive statement-level CTE INSERT is not yet proven"
+            fail cursor.Current "Recursive statement-level WITH mutation CTE is not yet proven"
+        ctes
+
+    let private parseReadOnlyWithInsert (cursor: Cursor) =
+        let ctes = parseReadOnlyStatementCtes cursor
         let insert = parseInsert cursor
         // SQLite's INSERT SELECT with a FROM and an UPSERT clause is
         // ambiguous without an explicit SELECT WHERE (even WHERE true).
@@ -3007,6 +3017,16 @@ module internal RewriteParser =
             fail cursor.Current
                 "Statement-level WITH INSERT supports only read-only CTEs feeding INSERT SELECT without a nested input WITH"
 
+    /// PostgreSQL read-only statement CTEs are part of the typed UPDATE
+    /// AST, not a textual UPDATE prefix. Binder and Mutation Policy must
+    /// still validate every CTE and the actual write target.
+    let private parseReadOnlyWithUpdate (cursor: Cursor) =
+        if cursor.Dialect <> SourceDialect.PostgreSql then
+            fail cursor.Current "Statement-level WITH UPDATE is PostgreSQL-only"
+        let ctes = parseReadOnlyStatementCtes cursor
+        let update = parseUpdate cursor
+        UpdateStatement { update with Ctes = ctes }
+
     let parseForWith semantics dialect (sql: string) =
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
         let tokens = RewriteLexer.tokenizeWith semantics.Lexical sql
@@ -3014,10 +3034,13 @@ module internal RewriteParser =
         let start = cursor.Current.Start
         let statement =
             match cursor.Current.Kind with
-            | Keyword "WITH" when (dialect = SourceDialect.PostgreSql
-                                   || dialect = SourceDialect.SQLite)
-                                  && hasReadOnlyWithInsertHead cursor ->
-                parseReadOnlyWithInsert cursor
+            | Keyword "WITH" when dialect = SourceDialect.PostgreSql
+                                   || dialect = SourceDialect.SQLite ->
+                match readOnlyWithMutationHead cursor with
+                | Some "INSERT" -> parseReadOnlyWithInsert cursor
+                | Some "UPDATE" when dialect = SourceDialect.PostgreSql ->
+                    parseReadOnlyWithUpdate cursor
+                | _ -> QueryStatement(parseQuery cursor)
             | Keyword "WITH" | Keyword "SELECT" -> QueryStatement(parseQuery cursor)
             | Keyword "INSERT" -> InsertStatement(parseInsert cursor)
             | Keyword "UPDATE" when isKeyword "OR" (cursor.Peek 1) && isKeyword "INSERT" (cursor.Peek 2) ->

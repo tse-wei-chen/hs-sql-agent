@@ -2,6 +2,7 @@ namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
 open System.Collections.Generic
+open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
@@ -70,7 +71,26 @@ module internal RewriteStatementEffects =
         // accept this statement. Reparse only to inspect the closed F# AST.
         let parsed = RewriteFacadeAdapter.parseSourceValidated
                          syntax.Text sourceDialect sourceProfile
-        let document = Typestate.Parsed.value parsed
+        let original = Typestate.Parsed.value parsed
+        // Raw CTE references are still NamedTable before Binder resolves
+        // lexical WITH scope. For statement-level UPDATE, inspect the
+        // *bound* tree so virtual CTE aliases are not counted as physical
+        // reads. A semantic binding failure is not silently promoted to
+        // proof: keep the conservative raw references. Resource failures
+        // always propagate rather than falling back.
+        let document =
+            match original.Statement with
+            | UpdateStatement update when not update.Ctes.IsEmpty ->
+                try
+                    RewriteBinder.bind sourceDialect parsed
+                    |> Typestate.Bound.value
+                with
+                | :? SqlCompilationException as ex
+                    when not (isNull ex.Diagnostic)
+                         && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                    reraise()
+                | :? InvalidOperationException -> original
+            | _ -> original
         let references = physicalReferences document
         let potential kind operation name dependencies =
             effect kind operation name null SqlCatalogKnowledge.Unknown
