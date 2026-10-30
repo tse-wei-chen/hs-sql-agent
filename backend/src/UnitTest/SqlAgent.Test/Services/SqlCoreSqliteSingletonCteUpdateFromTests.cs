@@ -131,19 +131,38 @@ public sealed class SqlCoreSqliteSingletonCteUpdateFromTests
     [Theory]
     [InlineData(SqlAgentToolType.Sqlite)]
     [InlineData(SqlAgentToolType.Postgres)]
-    public void ExplicitCteColumnNamesSurviveSharedQueryRenderer(SqlAgentToolType provider)
+    public void ExplicitCteOutputNamesSurviveSharedQueryNormalization(SqlAgentToolType provider)
     {
         const string sql = "WITH picked(id,label) AS (SELECT 2, 'changed') " +
                            "SELECT label FROM picked";
         var result = SqlCoreFacade.CompileQuery(sql, provider, provider,
             new SqlPlanValidationContext("cte-column-render-regression"),
             new SqlExecutionPlanPolicy(0));
-        var firstAs = result.Sql.IndexOf(" AS (", StringComparison.OrdinalIgnoreCase);
-        Assert.True(firstAs > 0, result.Sql);
-        var cteHeader = result.Sql[..firstAs];
-        Assert.Contains('(', cteHeader);
-        Assert.Contains("id", cteHeader, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("label", cteHeader, StringComparison.OrdinalIgnoreCase);
+
+        // Query normalization may lower CTE(a,b) into SELECT ... AS a,
+        // ... AS b instead of retaining the original CTE header spelling.
+        // Validate the inner CTE output contract, not one SQL formatting.
+        var outerSelect = result.Sql.LastIndexOf("SELECT", StringComparison.OrdinalIgnoreCase);
+        Assert.True(outerSelect > 0, result.Sql);
+        var cteSource = result.Sql[..outerSelect];
+        Assert.Contains("id", cteSource, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("label", cteSource, StringComparison.OrdinalIgnoreCase);
+
+        if (provider == SqlAgentToolType.Sqlite)
+        {
+            using var connection = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = result.Sql;
+            foreach (var binding in result.Parameters)
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = binding.Name;
+                parameter.Value = binding.Value ?? DBNull.Value;
+                command.Parameters.Add(parameter);
+            }
+            Assert.Equal("changed", Assert.IsType<string>(command.ExecuteScalar()));
+        }
     }
 
     private static SqlProviderCapabilityProfile SqliteProfile() =>
