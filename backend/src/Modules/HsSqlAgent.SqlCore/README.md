@@ -112,6 +112,26 @@ the static Script APIs. `TryCompileQuery` retains its existing outer
 `TypedDiagnostics`. Representable `Decimal.MaxValue` values remain valid.
 This does not add arbitrary-precision numeric SQL grammar.
 
+## P6: lossless decimal literal contract
+
+A successful CLR `Decimal.TryParse` is **not** sufficient SQL semantic
+evidence: it may round significant digits or underflow a nonzero literal to
+zero. For all six dialects, the F# Lexer now compares canonical exact decimal
+values (significant digits and decimal exponent), from both the SQL source and
+the parsed `DecimalLiteral`. A difference rejects the entire numeric token
+with `SQL_LEXICAL_NUMERIC_PRECISION_LOSS` (Lexical / Syntax and exact source
+span), rather than accepting a **different** numeric value.
+
+Mathematically equivalent forms such as `1e-28`, `10e-29`, fractional
+trailing zeros and exact decimal zero still work. Unrepresentable `1e-29`,
+`1e-1000`, and significant-digit rounding fail closed. Out-of-range
+magnitudes retain the separate `SQL_LEXICAL_NUMERIC_OUT_OF_RANGE` code.
+
+The source/target SQL capability matrix, DML policy, TryCompile's broad outer
+`SQL_PARSE_ERROR` code, typed diagnostics, and public compiler signatures
+remain unchanged. This is **not** arbitrary-precision SQL numeric support;
+such support requires a future closed numeric AST and target-dialect proof.
+
 ## P6: isolated 256 KiB capability and deep-DML stack gate
 
 The independent `sqlagent-capability-stack` GitHub Actions job runs an opt-in,
