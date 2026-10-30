@@ -49,6 +49,12 @@ public sealed class SqlCoreBoundedExactNumericLiveParityTests
     public async Task ActualDriverAndDatabase_PreserveExactBoundNumericValue(
         SqlAgentToolType target, string source, string expected)
     {
+        // Both providers run against a real DB, but in separate CI shards.
+        // The designated provider is mandatory within its own CI job.
+        var assigned = Environment.GetEnvironmentVariable("SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER");
+        if (!string.IsNullOrWhiteSpace(assigned)
+            && !string.Equals(assigned, target.ToString(), StringComparison.OrdinalIgnoreCase))
+            Assert.Skip("Exact numeric live parity for " + target + " runs in its dedicated CI shard.");
         var env = target == SqlAgentToolType.MySQL
             ? "TEST_MYSQL_CONNECTION" : "TEST_SQLSERVER_CONNECTION";
         var connection = Environment.GetEnvironmentVariable(env);
