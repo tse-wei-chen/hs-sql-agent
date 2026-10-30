@@ -43,6 +43,17 @@ module internal RewriteCapabilityValidation =
                 raise (SqlCompilationException(
                     "SQL capability 'numeric.exact_literal' cannot preserve this value "
                     + "as SQL Server DECIMAL: maximum precision 38 and scale 38."))
+        | OracleRuntime, ScalarValue.ExactNumeric number ->
+            // Oracle NUMBER is exact up to 38 decimal digits. Never assume
+            // that an unconstrained cast can carry more or silently round.
+            // Oracle's independent NLS decimal parsing is explicitly fixed
+            // at the bound-text renderer.
+            match ExactNumeric.tryBoundedDecimal 38 38 number with
+            | Some _ -> ()
+            | None ->
+                raise (SqlCompilationException(
+                    "SQL capability 'numeric.exact_literal' cannot preserve this value "
+                    + "as Oracle NUMBER: maximum precision 38 and portable scale 38."))
         | _, ScalarValue.ExactNumeric _ ->
             raise (SqlCompilationException(
                 "SQL capability 'numeric.exact_literal' requires a proven exact "
