@@ -708,46 +708,71 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
     }
 
     [Fact]
-    public async Task LiveProof_DatabaseIdentityCannotBeReusedAfterSwitchingCatalog()
+    public async Task LiveProof_RejectsSameTableAndIndexLayoutInDifferentPhysicalDatabase()
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
         {
             if (Environment.GetEnvironmentVariable("CI") == "true")
-                throw new InvalidOperationException("SQL Server physical database identity requires TEST_SQLSERVER_CONNECTION.");
+                throw new InvalidOperationException("SQL Server physical database parity requires TEST_SQLSERVER_CONNECTION.");
             Assert.Skip("SQL Server required.");
         }
+
         var ct = TestContext.Current.CancellationToken;
         var suffix = Guid.NewGuid().ToString("N")[..12];
+        var extraDatabase = "cteproof_" + suffix;
         var source = "xdb_" + suffix + "_s";
         var target = "xdb_" + suffix + "_t";
-        await using var db = new SqlConnection(cs);
-        await db.OpenAsync(ct);
-        await using var create = new SqlCommand(
-            "CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY);"
-            + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY)", db);
-        await create.ExecuteNonQueryAsync(ct);
+        await using var original = new SqlConnection(cs);
+        await original.OpenAsync(ct);
+
+        static async Task Run(SqlConnection db, string sql, CancellationToken token)
+        {
+            await using var command = new SqlCommand(sql, db);
+            await command.ExecuteNonQueryAsync(token);
+        }
+
+        await Run(original, "CREATE DATABASE [" + extraDatabase + "]", ct);
         try
         {
-            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
-                db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id");
-            // A copied source and target key layout is NOT a substitute for
-            // the actual, specific physical database identity.
-            Assert.NotEqual(Guid.Empty, proof.DatabaseGuid);
-            Assert.False(string.IsNullOrWhiteSpace(proof.ServerInstanceName));
-            Assert.False(string.IsNullOrWhiteSpace(proof.DatabaseName));
-            await using var other = new SqlConnection(cs);
-            await other.OpenAsync(ct);
-            await using var tx = (SqlTransaction)await other.BeginTransactionAsync(ct);
-            Assert.False(proof.IsCurrent(db, tx)); // transaction is on other connection
-            await tx.RollbackAsync(ct);
+            var createTables =
+                "CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30));"
+                + "CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30))";
+            await Run(original, createTables, ct);
+            var first = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                original, Snapshot(target, source), "dbo." + target, "id",
+                "dbo." + source, "id");
+
+            var otherCs = new SqlConnectionStringBuilder(cs)
+            {
+                InitialCatalog = extraDatabase
+            }.ConnectionString;
+            await using (var other = new SqlConnection(otherCs))
+            {
+                await other.OpenAsync(ct);
+                await Run(other, createTables, ct);
+                var second = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    other, Snapshot(target, source), "dbo." + target, "id",
+                    "dbo." + source, "id");
+
+                Assert.Equal(first.ServerInstanceName, second.ServerInstanceName);
+                Assert.NotEqual(first.DatabaseName, second.DatabaseName);
+                Assert.NotEqual(first.DatabaseGuid, second.DatabaseGuid);
+                Assert.NotEqual(first.ProofIdentity, second.ProofIdentity);
+
+                await using var tx = (SqlTransaction)await other.BeginTransactionAsync(ct);
+                Assert.True(second.IsCurrent(other, tx));
+                Assert.False(first.IsCurrent(other, tx));
+                await tx.RollbackAsync(ct);
+            }
         }
         finally
         {
-            await using var cleanup = new SqlCommand(
-                "DROP TABLE IF EXISTS dbo.[" + source + "];"
-                + "DROP TABLE IF EXISTS dbo.[" + target + "]", db);
-            await cleanup.ExecuteNonQueryAsync(ct);
+            await Run(original, "DROP TABLE IF EXISTS dbo.[" + source + "];"
+                + "DROP TABLE IF EXISTS dbo.[" + target + "]", ct);
+            await Run(original, "ALTER DATABASE [" + extraDatabase
+                + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;"
+                + "DROP DATABASE [" + extraDatabase + "]", ct);
         }
     }
 
