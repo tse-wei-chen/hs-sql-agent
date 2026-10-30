@@ -250,7 +250,8 @@ module internal RewriteMutationSourceMatchProof =
             | _ -> ()  // OR/NOT/IN/functions cannot make equality mandatory.
         matched |> Seq.toList
 
-    let private proof dialect (state: SqlCatalogState) target targetAlias sources predicate =
+    let private proof dialect (state: SqlCatalogState)
+                      (ctes: Cte list) target targetAlias sources predicate =
         let tableByIdentity =
             state.Tables
             |> Seq.map (fun table -> table.QualifiedName.BinderKey, table)
@@ -267,6 +268,124 @@ module internal RewriteMutationSourceMatchProof =
                        OracleNumberColumns = oracleNumberColumns table
                        SqliteIntegerColumns = sqliteIntegerColumns table
                        UniqueKeys = uniqueKeys dialect table }
+        // Bound CTE references are virtual; do not use a CTE's name as
+        // evidence of a physical table or a physical write target. A unique
+        // key may survive a read-only CTE ONLY as a direct field projection
+        // of a catalog-proven exact-INT unique key (including renaming), and
+        // only if its entire relational path cannot duplicate a source row.
+        // The proof is observational: caller DDL is not live DB metadata.
+        let cteRelations =
+            if dialect <> SqlAgentToolType.MsSqlServer then Map.empty
+            else
+                let seen = HashSet<string>(StringComparer.Ordinal)
+                let mutable proven: Map<string, Relation> = Map.empty
+                let cteSource = function
+                    | NamedTable(name, alias) -> create 0 name alias
+                    | CteTable(name, alias) ->
+                        match Identifier.parts name with
+                        | [part] ->
+                            Map.tryFind (keyPart dialect part) proven
+                            |> Option.map (fun relation ->
+                                { relation with Qualifiers = sourceQualifiers dialect name alias })
+                        | _ -> None
+                    | DerivedTable _ | LateralDerivedTable _ -> None
+                for cte in ctes do
+                    RewriteResourceBudget.checkpoint ()
+                    let name = keyPart dialect cte.Name
+                    if not (seen.Add name) then
+                        // Duplicate CTE names must never revive old proof.
+                        proven <- Map.remove name proven
+                    else
+                        let query = cte.Query
+                        let head = query.Head
+                        let source =
+                            if cte.RecursiveScope
+                               || not query.SetOperations.IsEmpty
+                               || not head.Ctes.IsEmpty
+                               || not head.Joins.IsEmpty
+                               || not head.GroupBy.IsEmpty
+                               || head.Having.IsSome
+                               || head.DistinctMode <> SelectDistinct.AllRows
+                               || query.FetchWithTies then None
+                            else head.From |> Option.bind cteSource
+                        match source with
+                        | None -> ()
+                        | Some input ->
+                            let items = head.Projection
+                            let aliases = cte.ColumnAliases
+                            if (aliases.IsEmpty || aliases.Length = items.Length)
+                               && not input.UniqueKeys.IsEmpty then
+                                let projected =
+                                    items
+                                    |> List.mapi (fun index item ->
+                                        RewriteResourceBudget.checkpoint ()
+                                        let column =
+                                            match Expr.unspan item.Expression with
+                                            | Column identifier
+                                            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                                                let parts = Identifier.parts identifier
+                                                let physical = parts |> List.last |> keyPart dialect
+                                                let qualifierMatches =
+                                                    if parts.Length = 1 then true
+                                                    else
+                                                        let qualifier =
+                                                            parts
+                                                            |> List.take (parts.Length - 1)
+                                                            |> List.map (keyPart dialect >> escaped)
+                                                            |> String.concat "."
+                                                        input.Qualifiers.Contains qualifier
+                                                if qualifierMatches && input.Columns.Contains physical then
+                                                    Some physical
+                                                else None
+                                            | _ -> None
+                                        let output =
+                                            if not aliases.IsEmpty then Some(keyPart dialect aliases.[index])
+                                            else
+                                                match item.Alias, column with
+                                                | Some alias, _ -> Some(keyPart dialect alias)
+                                                | None, Some field -> Some field
+                                                | _ -> None
+                                        match column, output with
+                                        | Some inputName, Some outputName -> Some(inputName, outputName)
+                                        | _ -> None)
+                                // Any unknown expression breaks lineage for
+                                // the entire query. No inference from display
+                                // name, CAST, arithmetic or SQL text.
+                                if projected |> List.forall Option.isSome then
+                                    let mapping = projected |> List.choose id
+                                    let seenOutput = HashSet<string>(StringComparer.Ordinal)
+                                    if mapping |> List.forall (fun (_, o) -> seenOutput.Add o) then
+                                        let rename values =
+                                            values
+                                            |> Seq.choose (fun original ->
+                                                mapping
+                                                |> List.tryFind (fun (i, _) -> i = original)
+                                                |> Option.map snd)
+                                            |> Set.ofSeq
+                                        let keys =
+                                            input.UniqueKeys
+                                            |> List.choose (fun key ->
+                                                let translated =
+                                                    key
+                                                    |> List.map (fun k ->
+                                                        mapping
+                                                        |> List.tryFind (fun (i, _) -> i = k)
+                                                        |> Option.map snd)
+                                                if translated |> List.forall Option.isSome then
+                                                    Some(translated |> List.choose id)
+                                                else None)
+                                        if not keys.IsEmpty then
+                                            let relation =
+                                                { Position = 0
+                                                  Qualifiers = Set.empty
+                                                  Columns = mapping |> List.map snd |> Set.ofList
+                                                  NonNullColumns = rename input.NonNullColumns
+                                                  ExactIntColumns = rename input.ExactIntColumns
+                                                  OracleNumberColumns = Set.empty
+                                                  SqliteIntegerColumns = Set.empty
+                                                  UniqueKeys = keys }
+                                            proven <- Map.add name relation proven
+                proven
         let targetRelation = create 0 target targetAlias
         let readRelations =
             sources
@@ -274,6 +393,15 @@ module internal RewriteMutationSourceMatchProof =
                 RewriteResourceBudget.checkpoint ()
                 match source with
                 | NamedTable(name, alias) -> create (index + 1) name alias
+                | CteTable(name, alias) when dialect = SqlAgentToolType.MsSqlServer ->
+                    match Identifier.parts name with
+                    | [part] ->
+                        Map.tryFind (keyPart dialect part) cteRelations
+                        |> Option.map (fun relation ->
+                            { relation with
+                                Position = index + 1
+                                Qualifiers = sourceQualifiers dialect name alias })
+                    | _ -> None
                 | CteTable _ | DerivedTable _ | LateralDerivedTable _ -> None)
         if targetRelation.IsNone || (readRelations |> List.exists Option.isNone) then
             SqlMutationSourceMatchCardinality.Unverified
@@ -393,10 +521,10 @@ module internal RewriteMutationSourceMatchProof =
         match (Bound.value bound).Statement with
         | UpdateStatement update when not update.From.IsEmpty ->
             if canClassify && state.IsClosedWorld then
-                proof dialect state update.Target update.TargetAlias update.From update.Where
+                proof dialect state update.Ctes update.Target update.TargetAlias update.From update.Where
             else SqlMutationSourceMatchCardinality.Unverified
         | DeleteStatement delete when not delete.Using.IsEmpty ->
             if canClassify && state.IsClosedWorld then
-                proof dialect state delete.Target delete.TargetAlias delete.Using delete.Where
+                proof dialect state delete.Ctes delete.Target delete.TargetAlias delete.Using delete.Where
             else SqlMutationSourceMatchCardinality.Unverified
         | _ -> SqlMutationSourceMatchCardinality.NotApplicable
