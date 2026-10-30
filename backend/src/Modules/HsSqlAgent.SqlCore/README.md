@@ -338,6 +338,20 @@ schema/type policies remain mandatory. This compiler-local cardinality
 gate does not upgrade the independent public SourceMatchCardinality
 analysis or authorize execution.
 
+## MySQL 8.0 statement-level WITH DELETE (native, single-table subset)
+
+MySQL 8.0+ accepts read-only non-recursive CTEs preceding a single-table
+DELETE through the existing F# `Delete.Ctes` model. Multiple CTEs,
+explicit output aliases and WHERE subqueries retain bound Query graphs,
+physical read/write allowlists, typed Catalog checks, selective DELETE WHERE
+policy, source/target capability proofs, parameterization, resource limits
+and static physical-table effects. No new executor or public Tool exists.
+
+MySQL 5.7 source and target profiles fail closed. Recursive/data-modifying
+CTEs, MySQL multi-table DELETE / DELETE USING, RETURNING and cross-provider
+WITH DELETE lowering remain unproven and denied. Real MySQL 8 tests compare
+native and compiled affected rows and unchanged records.
+
 ## SQLite statement-level WITH DELETE (native, strict source subset)
 
 SQLite read-only non-recursive CTEs can now prefix DELETE FROM in the closed

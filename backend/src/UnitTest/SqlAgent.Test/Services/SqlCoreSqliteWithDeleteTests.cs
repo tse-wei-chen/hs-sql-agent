@@ -133,7 +133,6 @@ public sealed class SqlCoreSqliteWithDeleteTests
     }
 
     [Theory]
-    [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     [InlineData(SqlAgentToolType.Oracle)]
     [InlineData(SqlAgentToolType.Firebird)]

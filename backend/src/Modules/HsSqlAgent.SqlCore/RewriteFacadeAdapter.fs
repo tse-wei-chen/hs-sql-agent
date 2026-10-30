@@ -359,6 +359,15 @@ module internal RewriteFacadeAdapter =
                 + string sourceProfile.ServerVersion + "."
              else null)
             |> sourceCapabilityProof
+          MySqlWithDeleteCte =
+            (if source = SqlAgentToolType.MySQL
+                && not (isNull sourceProfile)
+                && not (isNull sourceProfile.ServerVersion)
+                && sourceProfile.ServerVersion.CompareTo(Version(8, 0)) < 0 then
+                "SQL capability 'mysql.with_delete' requires MySQL source ServerVersion 8.0+; declared version is "
+                + string sourceProfile.ServerVersion + "."
+             else null)
+            |> sourceCapabilityProof
           SqliteWithDeleteCte =
             (if source = SqlAgentToolType.Sqlite
                 && not (isNull sourceProfile)
