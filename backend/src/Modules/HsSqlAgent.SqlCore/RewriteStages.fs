@@ -412,7 +412,7 @@ module internal RewriteStages =
                && query.Head.Ctes.IsEmpty
                && query.Head.Joins.IsEmpty
                && (query.Head.From.IsNone
-                   || query.Head.From |> Option.exists isSingletonCteSource) then
+                   || Option.exists isSingletonCteSource query.Head.From) then
                 singleton.Add(cte.Name.Value) |> ignore
 
         // One syntactically bound CTE source at most. Physical tables,
