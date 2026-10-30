@@ -3,6 +3,7 @@ using System.Globalization;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using Microsoft.Data.SqlClient;
 using Xunit;
 
@@ -78,12 +79,18 @@ public sealed class SqlCoreSqlServerWithInsertSelectLiveParityTests
                 : await Execute(db, statement(nativeTarget), [], token);
 
             var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            var validation = new SqlPlanValidationContext("sqlserver-cte-insert-live",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { source, compiledTarget });
+            // The integration fixture created this isolated target table
+            // with no triggers. Do not relax production's OUTPUT assurance
+            // contract; attest only this table and INSERT operation.
+            if (output)
+                validation = validation.WithDmlResultRowAssurance(
+                    DmlResultRowAssurance.NoEnabledTriggers(compiledTarget, DmlOperation.Insert));
             var compiled = SqlCoreFacade.CompileDml(statement(compiledTarget),
                 SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                new SqlPlanValidationContext("sqlserver-cte-insert-live",
-                    new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                    { source, compiledTarget }),
-                new DmlCompilationPolicy(), profile, profile,
+                validation, new DmlCompilationPolicy(), profile, profile,
                 new DmlConflictTargetAssurance(ImmutableArray<string>.Empty));
 
             Assert.Equal(SqlStatementKind.Insert, compiled.Kind);

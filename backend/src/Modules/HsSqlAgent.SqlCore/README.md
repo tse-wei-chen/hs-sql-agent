@@ -2829,8 +2829,11 @@ and DELETE; no driver is added to SqlCore itself.
 SQL Server (2005 / ServerVersion 9.0+) now accepts native top-level
 `WITH cte AS (SELECT ...) INSERT INTO table(columns) SELECT ... FROM cte`
 using the existing closed `Insert(QuerySource)` AST and mutation compiler.
-Multiple nonrecursive CTEs, explicit CTE output aliases and
-`OUTPUT INSERTED.column` reuse the proven INSERT renderer. The CTE is
+Multiple nonrecursive CTEs and explicit CTE output aliases reuse
+the proven INSERT renderer. `OUTPUT INSERTED.column` additionally
+requires the existing target-table- and operation-specific
+`DmlResultRowAssurance.NoEnabledTriggers` proof; absent or mismatched
+assurance is rejected before rendering. The CTE is
 emitted before `INSERT INTO`; this is *not* MySQL's `INSERT INTO ...
 WITH ... SELECT` source grammar.
 

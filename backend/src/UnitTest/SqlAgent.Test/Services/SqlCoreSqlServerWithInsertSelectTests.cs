@@ -3,6 +3,7 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using HsSqlAgent.SqlCore.Script;
 using Xunit;
 
@@ -47,8 +48,14 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
         var statement = Assert.Single(analysis.Statements);
         Assert.True(statement.Effects.HasFlag(SqlEffectKind.WriteData));
 
-        var command = Compile(sql, new SqlPlanValidationContext("sqlserver-cte-insert",
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        var validation = new SqlPlanValidationContext("sqlserver-cte-insert",
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" });
+        // A SQL Server OUTPUT without INTO requires a no-enabled-triggers
+        // assurance for the exact physical INSERT target and operation.
+        if (sql.Contains("OUTPUT ", StringComparison.OrdinalIgnoreCase))
+            validation = validation.WithDmlResultRowAssurance(
+                DmlResultRowAssurance.NoEnabledTriggers("users", DmlOperation.Insert));
+        var command = Compile(sql, validation);
         Assert.Equal(SqlStatementKind.Insert, command.Kind);
         Assert.StartsWith("WITH ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.True(command.Sql.IndexOf("WITH ", StringComparison.OrdinalIgnoreCase)
@@ -57,6 +64,20 @@ public sealed class SqlCoreSqlServerWithInsertSelectTests
         Assert.DoesNotContain("SELECT 7", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(sql.Contains("OUTPUT INSERTED.id", StringComparison.Ordinal),
             command.Sql.Contains("OUTPUT ", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void InsertOutputWithoutNoEnabledTriggerAssuranceFailsClosed()
+    {
+        const string sql = "WITH picked AS (SELECT 7 AS id) " +
+            "INSERT INTO users(id) OUTPUT INSERTED.id SELECT id FROM picked";
+        var result = SqlCoreFacade.TryCompileDml(sql,
+            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("sqlserver-cte-insert-output-unproven",
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "users" }));
+        Assert.False(result.Success);
+        Assert.Contains(result.TypedDiagnostics, diagnostic =>
+            diagnostic.Message.Contains("enabled trigger", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
