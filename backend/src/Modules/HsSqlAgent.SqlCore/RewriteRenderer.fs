@@ -422,6 +422,9 @@ module internal RewriteRenderer =
         | ScalarValue.Integer value when value >= int64 Int32.MinValue && value <= int64 Int32.MaxValue -> box (int value)
         | ScalarValue.Integer value -> box (decimal value)
         | ScalarValue.Decimal value -> box value
+        | ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(
+                "Exact NUMERIC values require a provider-proven, explicitly cast bound-text parameter."))
         | ScalarValue.Floating value -> box value
         | ScalarValue.Text value -> box value
         | ScalarValue.Date value -> box (value.ToDateTime(TimeOnly.MinValue))
@@ -434,6 +437,13 @@ module internal RewriteRenderer =
     let private renderLiteral (ctx: RenderContext) value =
         let bind scalar = ctx.Bind(scalarObject scalar)
         match ctx.Provider, value with
+        | PostgreSql, ScalarValue.ExactNumeric number ->
+            // A text parameter is never a SQL fragment. PostgreSQL performs
+            // the explicit exact-numeric cast on the server; CLR decimal or
+            // double conversion would silently alter the supplied value.
+            "CAST(" + ctx.Bind(box (ExactNumeric.bindingText number)) + " AS NUMERIC)"
+        | _, ScalarValue.ExactNumeric _ ->
+            raise (SqlCompilationException(capabilityError ctx.Provider "numeric.exact_literal"))
         | PostgreSql, ScalarValue.OffsetDateTime offset ->
             ctx.Bind(box (offset.ToUniversalTime()))
         | Firebird, ScalarValue.Text text ->
