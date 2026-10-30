@@ -50,8 +50,7 @@ public sealed class SqlCoreDecimalCastCapabilityProofTests
         SqlAgentToolType source, string type, string limit)
     {
         var diagnostic = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.ParseScript(Sql(type), source,
-                TestContext.Current.CancellationToken));
+            CoreSqlTextParser.ParseQuery(Sql(type), source));
         Assert.Equal("SQL_SOURCE_TYPE_REJECTED", diagnostic.Diagnostic?.Code);
         Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Diagnostic?.Stage);
         Assert.Contains(limit, diagnostic.Message, StringComparison.OrdinalIgnoreCase);
@@ -103,8 +102,7 @@ public sealed class SqlCoreDecimalCastCapabilityProofTests
         const string type = "DECIMAL(20,4)";
         var sourceSql = Sql(type);
         var sourceError = Assert.Throws<SqlParseException>(() =>
-            SqlCoreFacade.ParseScript(sourceSql, SqlAgentToolType.Firebird,
-                TestContext.Current.CancellationToken));
+            CoreSqlTextParser.ParseQuery(sourceSql, SqlAgentToolType.Firebird));
         Assert.Contains("numeric.decimal_extended", sourceError.Message,
             StringComparison.OrdinalIgnoreCase);
 
@@ -131,6 +129,32 @@ public sealed class SqlCoreDecimalCastCapabilityProofTests
             new SqlPlanValidationContext("decimal-firebird4-cross-v1"),
             new SqlExecutionPlanPolicy(), v4);
         Assert.Contains(type, cross.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    public void UnboundedPostgreSqlNumeric_DoesNotAcquireImplicitTargetPrecision(
+        SqlAgentToolType target)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(SqlAgentToolType.Postgres, target, "NUMERIC"));
+        Assert.Contains("Unbounded", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("precision", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ScriptClassification_RecordsInvalidSourceCastWithoutThrowing()
+    {
+        const string sql = "SELECT CAST(amount AS DECIMAL(39,0)) FROM orders; SELECT 1";
+        var result = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(2, result.Statements.Count);
+        Assert.Equal(HsSqlAgent.SqlCore.Script.SqlScriptParseStatus.Invalid,
+            result.Statements[0].Status);
+        Assert.Equal("SQL_SOURCE_TYPE_REJECTED", result.Statements[0].Diagnostic?.Code);
+        Assert.Equal(HsSqlAgent.SqlCore.Script.SqlScriptParseStatus.Parsed,
+            result.Statements[1].Status);
     }
 
     [Fact]
