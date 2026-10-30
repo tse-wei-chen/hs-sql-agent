@@ -378,6 +378,10 @@ module internal RewriteCapabilityValidation =
             if FunctionName.isQualified call.Name then
                 requireExpressionCapability expressionProofs.QualifiedFunction
         | Cast(_, targetType) ->
+            // Validate invariant decimal bounds before optional/versioned
+            // Firebird feature proofs, so a 39-digit shape reports the
+            // actual 38-digit type limit even when the profile is absent.
+            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
             match targetRuntime, CastType.semantic targetType with
             | FirebirdRuntime, Some(SqlDecimal(Some precision, _)) when precision > 18 ->
                 // Firebird 3 and older lack extended exact-numeric types.
@@ -395,7 +399,6 @@ module internal RewriteCapabilityValidation =
             | _, Some _ -> ()
             | _, None ->
                 invalidOp "Compatibility raw CAST type reached target capability validation before semantic normalization."
-            RewriteCastTypes.validateTarget (TargetRuntime.provider targetRuntime) targetType
         | _ -> ()
 
     let private proveTargetGraph targetRuntime targetProfile expressionProofs root =
