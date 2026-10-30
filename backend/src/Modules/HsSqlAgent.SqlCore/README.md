@@ -236,9 +236,13 @@ and server-equivalence proofs.
 
 Positive and negative Query/DML tests cover both targets, and separate
 database-backed tests compare the actual MySQL and SQL Server results
-after driver binding with exact expected decimal text. Those live tests
-read `TEST_MYSQL_CONNECTION` and `TEST_SQLSERVER_CONNECTION` (required
-in CI) and do not modify database state. The readback is explicitly
+after driver binding with exact expected decimal text. These live cases
+run in **separate CI shards**: `sqlagent-test` enforces MySQL parity via
+`TEST_MYSQL_CONNECTION`, while `sqlagent-fence-sqlserver` enforces SQL
+Server parity via `TEST_SQLSERVER_CONNECTION`. The selected provider is
+declared by `SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER`; a missing required
+connection fails its designated CI job, not silently skips the proof.
+The tests are read-only and do not modify database state. The readback is explicitly
 stringified *on the server* to avoid CLR decimal deserialization limits.
 
 ## P6: isolated 256 KiB capability and deep-DML stack gate
