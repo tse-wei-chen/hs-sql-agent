@@ -405,46 +405,49 @@ type SqlCapabilityMatrix private () =
                 "SQL capability 'select.lateral_derived' has no proven native support for "
                 + string provider + "."
 
+        // Stream capability construction instead of compiling one giant
+        // list expression into the 256 KiB caller's native stack frame.
+        // Preserve deterministic ordering, emitted details, and CLR results.
         let capabilities : SqlCapability list =
-            [
-                cap("provider.target_profile","provider",supported,
+            seq {
+                yield cap("provider.target_profile","provider",supported,
                     "Core accepts optional target runtime metadata including server version, compatibility level, session modes, and session settings. Undeclared target-profile-dependent capabilities remain fail-closed; SQL Server REGEXP_LIKE is enabled only by a declared target profile at compatibility level 170+, SQL Server canonical string concatenation requires runtime proof (ServerVersion 17.x with compatibility level 170+ emits native ||; ServerVersion 14.x+ or an explicit CONCAT_NULL_YIELDS_NULL=ON contract uses +), SQLite RIGHT/FULL OUTER JOIN requires ServerVersion 3.39+, SQLite deterministic ON CONFLICT UPSERT requires ServerVersion 3.24+, SQLite DML RETURNING requires ServerVersion 3.35+, portable multi-row Firebird DSQL RETURNING requires ServerVersion 5.0+, and conditional MySQL assured ON DUPLICATE KEY UPDATE lowering requires ServerVersion 8.0.19+ so Core can use proposed-row aliases instead of deprecated VALUES(column).")
-                cap("provider.source_profile","provider",supported,
+                yield cap("provider.source_profile","provider",supported,
                     "Raw SQL compilation accepts a separate optional source runtime profile for session-dependent and version-dependent source semantics. The source profile provider must match the parsed source dialect and never authorizes target capabilities. MySQL source || is resolved as concatenation only when PIPES_AS_CONCAT or ANSI is explicitly declared; MySQL double-quoted identifiers are accepted only when ANSI_QUOTES or ANSI is explicitly declared. MySQL backslash-containing single-quoted strings and quoted identifiers use ordinary-character semantics only when NO_BACKSLASH_ESCAPES is explicitly declared; ANSI does not imply NO_BACKSLASH_ESCAPES. Under NO_BACKSLASH_ESCAPES, raw MySQL LIKE is accepted only when the source declares an explicit single-character ESCAPE clause; omitting that contract remains fail-closed rather than guessing pattern escape semantics. Raw SQL Server || source spelling remains fail-closed, including SQL Server 2025, until the Core source parser has an explicit T-SQL 17.x precedence/grammar contract. Raw SQLite RIGHT/FULL OUTER JOIN requires source ServerVersion 3.39+, raw SQLite ON CONFLICT UPSERT requires source ServerVersion 3.24+, raw SQLite RETURNING requires source ServerVersion 3.35+, and portable multi-row Firebird DSQL RETURNING requires source ServerVersion 5.0+. Absent or unrelated modes and versions remain fail-closed rather than guessing runtime semantics.")
-                cap("provider.unique_key_metadata","provider",supported,
+                yield cap("provider.unique_key_metadata","provider",supported,
                     "Provider metadata readers inventory PRIMARY and UNIQUE conflict sources across PostgreSQL, MySQL, SQLite, SQL Server, Oracle, and Firebird. Simple enforced full-column keys are distinguishable from partial, expression/computed, prefix, disabled/invalid, or otherwise richer key shapes, and richer enforced keys remain visible instead of being filtered out. This metadata is an assurance prerequisite only; it does not by itself authorize a SQL lowering.")
-                SqlCapabilityMatrix.ApplyCapability(provider, profile)
-                cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
-                cap("select.distinct_on","query",(if provider = SqlAgentToolType.Postgres then supported else rejected),
+                yield SqlCapabilityMatrix.ApplyCapability(provider, profile)
+                yield cap("select.basic","query",translated,"SELECT/WHERE/GROUP BY/HAVING/ORDER BY and JOIN are represented structurally.")
+                yield cap("select.distinct_on","query",(if provider = SqlAgentToolType.Postgres then supported else rejected),
                     if provider = SqlAgentToolType.Postgres then
                         "PostgreSQL DISTINCT ON expressions are represented structurally, bound and validated with the SELECT scope, and emitted natively."
                     else
                         "PostgreSQL first-row-per-group DISTINCT ON semantics have no proven cross-provider lowering and remain fail-closed.")
-                cap("join.right","query",rightJoinStatus,
+                yield cap("join.right","query",rightJoinStatus,
                     if provider = SqlAgentToolType.Sqlite && rightJoinStatus = translated then "SQLite 3.39+ RIGHT JOIN runtime contract is satisfied." else "RIGHT JOIN follows provider capability rules.")
-                cap("join.full","query",fullJoinStatus,
+                yield cap("join.full","query",fullJoinStatus,
                     if provider = SqlAgentToolType.Sqlite && fullJoinStatus = translated then "SQLite 3.39+ FULL OUTER JOIN runtime contract is satisfied." else "FULL JOIN follows provider capability rules.")
-                cap("join.natural","query",(if SqlNaturalJoinCapabilityRules.SupportsNative(provider) then translated else rejected),
+                yield cap("join.natural","query",(if SqlNaturalJoinCapabilityRules.SupportsNative(provider) then translated else rejected),
                     if SqlNaturalJoinCapabilityRules.SupportsNative(provider) then
                         "NATURAL JOIN implicit common-column semantics are preserved natively; Core does not invent or expand the schema-dependent predicate."
                     elif provider = SqlAgentToolType.Firebird then
                         "Firebird NATURAL JOIN remains fail-closed until the capability profile proves the database SQL dialect is not Dialect 1."
                     else
                         "SQL Server has no native NATURAL JOIN syntax and Core does not expand schema-dependent common columns without metadata proof.")
-                cap("join.using","query",(if SqlUsingJoinCapabilityRules.Supports(provider) then translated else rejected),
+                yield cap("join.using","query",(if SqlUsingJoinCapabilityRules.Supports(provider) then translated else rejected),
                     if SqlUsingJoinCapabilityRules.Supports(provider) then
                         "Named-column JOIN ... USING is represented explicitly in the Core AST and emitted natively for PostgreSQL, MySQL, SQLite, Oracle, and Firebird."
                     else
                         "SQL Server has no native JOIN ... USING form; lowering to ON remains fail-closed until Core proves merged-column projection semantics.")
-                cap("select.row_limit","query",translated,
+                yield cap("select.row_limit","query",translated,
                     "Structured Core row-count limits are translated to provider-native target syntax. Raw LIMIT spelling is accepted only for PostgreSQL, MySQL, and SQLite source dialects. PostgreSQL LIMIT ALL is canonicalized to no row-count limit, including LIMIT ALL OFFSET n where only the offset remains; MySQL and SQLite reject LIMIT ALL. MySQL and SQLite additionally accept native LIMIT offset,row_count and canonicalize the first integer to OFFSET and the second to LIMIT; PostgreSQL comma-form LIMIT is rejected. Raw bare OFFSET remains valid PostgreSQL syntax; MySQL and SQLite accept OFFSET only after LIMIT, and comma-form LIMIT cannot be combined with a separate OFFSET clause. PostgreSQL, Oracle, and Firebird raw source may use the modeled SQL-standard integer OFFSET ... ROW(S) and FETCH FIRST/NEXT ... ROW(S) ONLY forms, including FETCH without OFFSET; PostgreSQL may omit ROW/ROWS after OFFSET and may omit the FETCH count, which canonicalizes to one row. Explicit LIMIT and FETCH clauses remain mutually exclusive at the raw source boundary, including LIMIT ALL, matching PostgreSQL's alternative-syntax grammar. SQL Server raw OFFSET/FETCH requires statement-level ORDER BY, FETCH requires a preceding OFFSET, and TOP cannot share the same query scope. Oracle FETCH ... PERCENT is modeled separately by select.fetch_percent as a typed native percentage; percentage expressions beyond numeric literals and non-integer row-count expressions remain fail-closed. FETCH ... WITH TIES is modeled separately by select.fetch_with_ties because its result cardinality can exceed the FETCH count.")
-                cap("select.fetch_percent","query",fetchPercentStatus,fetchPercentDetail)
-                cap("select.fetch_with_ties","query",fetchWithTiesStatus,fetchWithTiesDetail)
-                cap("select.lateral_derived","query",lateralStatus,lateralDetail)
-                cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")
-                cap("select.cte_set","query",translated,"Root CTEs and set operations are represented structurally.")
-                cap("select.recursive_cte","query",recursiveCteStatus,recursiveCteDetail)
-                cap("set.intersect_all","query",
+                yield cap("select.fetch_percent","query",fetchPercentStatus,fetchPercentDetail)
+                yield cap("select.fetch_with_ties","query",fetchWithTiesStatus,fetchWithTiesDetail)
+                yield cap("select.lateral_derived","query",lateralStatus,lateralDetail)
+                yield cap("select.singleton","query",translated,"SELECT without FROM preserves singleton-row semantics.")
+                yield cap("select.cte_set","query",translated,"Root CTEs and set operations are represented structurally.")
+                yield cap("select.recursive_cte","query",recursiveCteStatus,recursiveCteDetail)
+                yield cap("set.intersect_all","query",
                     (if isNull (SqlSetAllCapabilityRules.TargetValidationError("INTERSECT", provider, profile)) then
                         (if provider = SqlAgentToolType.Oracle then translated else supported)
                      else rejected),
@@ -454,7 +457,7 @@ type SqlCapabilityMatrix private () =
                         "Oracle 21c+ INTERSECT ALL requires target ServerVersion 21.0+ and NLS_SORT=BINARY; source and target profiles are independently validated."
                     else
                         "Duplicate-preserving INTERSECT ALL remains fail-closed for this target provider until a provider/version-specific semantic contract is declared.")
-                cap("set.except_all","query",
+                yield cap("set.except_all","query",
                     (if isNull (SqlSetAllCapabilityRules.TargetValidationError("EXCEPT", provider, profile)) then
                         (if provider = SqlAgentToolType.Oracle then translated else supported)
                      else rejected),
@@ -464,11 +467,11 @@ type SqlCapabilityMatrix private () =
                         "Oracle 21c+ MINUS ALL / EXCEPT ALL requires target ServerVersion 21.0+ and NLS_SORT=BINARY. Canonical lowering preserves duplicate and NULL cardinalities without guessing collation equivalence."
                     else
                         "Duplicate-preserving EXCEPT ALL remains fail-closed for this target provider until a provider/version-specific semantic contract is declared.")
-                cap("select.cte_derived","query",nestedStatus, if nestedStatus=translated then "Derived-table-local CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")
-                cap("select.cte_set_branch","query",nestedStatus, if nestedStatus=translated then "Set-operation branch CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")
-                cap("select.cte_scalar_root","query",nestedStatus,
+                yield cap("select.cte_derived","query",nestedStatus, if nestedStatus=translated then "Derived-table-local CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")
+                yield cap("select.cte_set_branch","query",nestedStatus, if nestedStatus=translated then "Set-operation branch CTEs preserve lexical scope." else "Nested CTE form remains fail-closed.")
+                yield cap("select.cte_scalar_root","query",nestedStatus,
                     if nestedStatus=translated then "Scalar and EXISTS root CTE set queries preserve correlated outer references, combined output name ordering, and output ordinal ordering." else "Nested CTE form remains fail-closed.")
-                cap("select.cte_definition_local","query",nestedStatus,
+                yield cap("select.cte_definition_local","query",nestedStatus,
                     if nestedStatus=translated then
                         "A CTE body may declare its own local WITH scope. Core recursively validates and renders each nested scope directly from the canonical AST without hoisting local definitions. Same-name shadowing, positional binding order, and local set-operation bodies with outer ORDER BY/LIMIT/OFFSET are preserved; CTE definitions have no parent correlation scope in the Core binder."
                     else
@@ -476,14 +479,14 @@ type SqlCapabilityMatrix private () =
                         | SqlAgentToolType.Oracle -> "Oracle does not support nesting a WITH clause inside another WITH query block in the Core target profile, so CTE-definition-local WITH fails closed."
                         | SqlAgentToolType.MsSqlServer -> "SQL Server has no declared portable nested-WITH-inside-a-CTE-definition contract in the Core target profile, so this shape fails closed."
                         | _ -> "Firebird CTE-definition-local WITH remains fail-closed until a target-profile contract is modeled and integration-tested.")
-                cap("select.cte_scope","query",rejected,
+                yield cap("select.cte_scope","query",rejected,
                     "For PostgreSQL, MySQL, and SQLite scalar/EXISTS root CTE set queries, Core preserves correlated outer scope for outer ORDER BY/LIMIT/OFFSET when ORDER BY references only combined output names or output ordinals. Richer set-result ORDER BY expressions remain fail-closed because removing the generated _set wrapper is not yet proven scope- and ordering-equivalent for those expressions. Provider-specific nested-WITH support is declared separately by select.cte_derived, select.cte_set_branch, select.cte_scalar_root, and select.cte_definition_local.")
-                cap("expression.arithmetic","expression",translated,"Arithmetic operators are preserved structurally.")
-                cap("expression.unary_numeric","expression",translated,
+                yield cap("expression.arithmetic","expression",translated,"Arithmetic operators are preserved structurally.")
+                yield cap("expression.unary_numeric","expression",translated,
                     "Unary numeric +expr and -expr are represented structurally for non-literal operands across all providers; signed numeric literals preserve their existing literal representation. Unary plus is normalized as an identity operation and unary minus is emitted natively.")
-                cap("numeric.decimal_extended","numeric",decimalStatus,decimalDetail)
-                cap("expression.modulo","expression",modulo, if modulo=translated then "MOD(left, right) lowering preserves modulo semantics." else "Native modulo operator is supported.")
-                cap("expression.concat","expression",concatStatus,
+                yield cap("numeric.decimal_extended","numeric",decimalStatus,decimalDetail)
+                yield cap("expression.modulo","expression",modulo, if modulo=translated then "MOD(left, right) lowering preserves modulo semantics." else "Native modulo operator is supported.")
+                yield cap("expression.concat","expression",concatStatus,
                     match provider with
                     | SqlAgentToolType.MySQL ->
                         "Canonical string concatenation is translated to CONCAT(left, right). Raw MySQL source || is accepted as concatenation only when the separate source capability profile declares PIPES_AS_CONCAT or ANSI sql_mode; without that source-session contract it remains fail-closed because MySQL otherwise interprets || as logical OR. A target profile alone never authorizes the source spelling."
@@ -499,12 +502,12 @@ type SqlCapabilityMatrix private () =
                             "Unknown SQL Server concatenation runtime mode remains fail-closed."
                     | _ ->
                         "The provider-native || operator is emitted.")
-                cap("expression.like_escape","expression",translated,
+                yield cap("expression.like_escape","expression",translated,
                     "Explicit single-character literal LIKE ESCAPE is represented structurally and emitted for all target providers while the pattern remains parameterized. Dynamic, empty, multi-character, and control-character escape specifications fail-closed. MySQL NO_BACKSLASH_ESCAPES source requires the explicit escape contract for raw LIKE; target rendering does not rely on provider-default escape semantics.")
-                cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
-                cap("expression.boolean_literal_source","expression",translated,
+                yield cap("expression.boolean_select","expression",booleanProjection,"Boolean projection follows provider scalar-boolean capability.")
+                yield cap("expression.boolean_literal_source","expression",translated,
                     "Structured Core boolean values remain canonical. Raw SQL Server source rejects bare TRUE/FALSE before AST canonicalization because T-SQL bit constants use 0/1 and Core does not reinterpret those bare tokens as identifiers; quoted identifiers and numeric bit predicates remain available.")
-                cap("operator.is_distinct_from","expression",
+                yield cap("operator.is_distinct_from","expression",
                     (match provider with
                      | SqlAgentToolType.Postgres
                      | SqlAgentToolType.Sqlite
@@ -529,79 +532,79 @@ type SqlCapabilityMatrix private () =
                         "Oracle uses a CASE-based null-safe comparison built from ordinary target equality and IS NULL semantics. The lowering is allowed only for repeatable scalar operands so Core never duplicates volatile/subquery evaluation."
                     | _ ->
                         "Canonical null-safe comparison follows the provider-specific proven lowering.")
-                cap("function.quoted_identifier","function",supported,
+                yield cap("function.quoted_identifier","function",supported,
                     "Provider-native quoted function identifiers preserve per-part quote intent and case-sensitive identity for same-provider compilation. Cross-provider quoted function identity remains fail-closed because delimiter, case-folding, and namespace semantics are provider-bound.")
-                cap("function.qualified","function",(if provider=SqlAgentToolType.Sqlite then rejected else supported),
+                yield cap("function.qualified","function",(if provider=SqlAgentToolType.Sqlite then rejected else supported),
                     if provider=SqlAgentToolType.Sqlite then
                         "SQLite scalar function-call grammar uses an unqualified function-name; schema-qualified scalar function calls remain fail-closed."
                     else
                         "Provider-native qualified function identifiers preserve database/schema/package qualification for same-provider compilation. Cross-provider namespace identity remains fail-closed rather than being silently reinterpreted.")
-                cap("expression.cast","expression",translated,
+                yield cap("expression.cast","expression",translated,
                     "Standard CAST input is parsed into the closed algebraic SqlType model before normalization. Source spelling is retained only for same-provider preservation and compatibility projection; cross-provider lowering is selected from typed semantics. Provider-native types carry explicit source-provider identity and fail closed at TargetCapability when no equivalent target type is proven. Raw PostgreSQL :: cast spelling remains source-dialect gated and is accepted only when the declared source dialect is PostgreSQL.")
-                cap("expression.interval","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),
+                yield cap("expression.interval","expression",(if provider=SqlAgentToolType.Postgres then supported else rejected),
                     if provider=SqlAgentToolType.Postgres then
                         "PostgreSQL interval semantics are supported natively. Core canonicalizes INTERVAL 'literal' and emits the decoded interval value as a bound parameter cast to interval, so runtime data is kept out of target SQL text. Raw Core SQL accepts this PostgreSQL-style source literal only when the declared source dialect is PostgreSQL; structured Core input is independent of the raw source-syntax gate."
                     else
                         "PostgreSQL-style INTERVAL 'literal' has no declared target equivalent for this provider. Raw SQL that parses into this Core interval-literal shape is also rejected when the declared source dialect is non-PostgreSQL; provider-native interval forms such as MySQL INTERVAL expr unit require a separate structured translation contract.")
-                cap("expression.filter","expression",filterStatus,filterDetail)
-                cap("aggregate.string","aggregate",translated,"String aggregation lowers to provider-native syntax.")
-                cap("aggregate.string.ordering","aggregate",aggregateOrderingStatus,aggregateOrderingDetail)
-                cap("aggregate.string.dynamic_separator","aggregate",rejected,"Dynamic aggregate separators remain fail-closed.")
-                cap("temporal.typed_literals","temporal",translated,
+                yield cap("expression.filter","expression",filterStatus,filterDetail)
+                yield cap("aggregate.string","aggregate",translated,"String aggregation lowers to provider-native syntax.")
+                yield cap("aggregate.string.ordering","aggregate",aggregateOrderingStatus,aggregateOrderingDetail)
+                yield cap("aggregate.string.dynamic_separator","aggregate",rejected,"Dynamic aggregate separators remain fail-closed.")
+                yield cap("temporal.typed_literals","temporal",translated,
                     "Structured Core DATE, TIME, and TIMESTAMP values are represented as typed temporal values and bound as provider parameters. Raw typed-literal spelling is source-profiled before AST canonicalization: PostgreSQL accepts DATE, TIME, TIMESTAMP, TIMESTAMP WITH TIME ZONE, and TIMESTAMP WITHOUT TIME ZONE; TIME WITH TIME ZONE remains fail-closed because the Core scalar model has no offset-time representation. MySQL accepts the basic forms (DATE/TIME/TIMESTAMP) but not WITH/WITHOUT TIME ZONE qualifiers; SQLite rejects ANSI typed-literal spelling; Oracle accepts DATE and TIMESTAMP basic spelling but not standalone TIME or the Core TIMESTAMP WITH/WITHOUT TIME ZONE spelling; Firebird accepts basic DATE/TIME/TIMESTAMP spelling, with zone information carried inside the literal value rather than a WITH/WITHOUT TIME ZONE type qualifier; SQL Server rejects ANSI typed-literal spelling and uses string values with CAST/CONVERT instead.")
-                cap("temporal.standalone_time","temporal",standaloneTime,"Standalone TIME follows provider type capability.")
-                cap("temporal.offset_timestamp","temporal",offsetStatus,offsetDetail)
-                cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
-                cap("temporal.date_part.quarter","temporal",sharedQuarterDatePart,
+                yield cap("temporal.standalone_time","temporal",standaloneTime,"Standalone TIME follows provider type capability.")
+                yield cap("temporal.offset_timestamp","temporal",offsetStatus,offsetDetail)
+                yield cap("temporal.current_keywords","temporal",currentTemporal,"CURRENT_DATE/TIME/TIMESTAMP use provider translation where required.")
+                yield cap("temporal.date_part.quarter","temporal",sharedQuarterDatePart,
                     "QUARTER is represented canonically. PostgreSQL emits native EXTRACT, MySQL and SQL Server use native quarter/datepart semantics, and SQLite derives the quarter from the numeric month. Oracle and Firebird remain fail-closed until operand-type and provider-specific extraction semantics are proven.")
-                cap("temporal.date_part.clock","temporal",sharedClockDateParts,
+                yield cap("temporal.date_part.clock","temporal",sharedClockDateParts,
                     "HOUR, MINUTE, and SECOND are represented canonically for PostgreSQL, MySQL, SQL Server, and SQLite. Oracle and Firebird remain target-gated because the Core expression model does not yet prove the operand temporal type needed for their EXTRACT restrictions.")
-                cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
+                yield cap("temporal.date_part.postgres_extended","temporal",postgresNativeDateParts,
                     "PostgreSQL-native EXTRACT fields DOW, DOY, ISODOW, ISOYEAR, WEEK, EPOCH, CENTURY, DECADE, MILLENNIUM, JULIAN, MILLISECONDS, MICROSECONDS, TIMEZONE, TIMEZONE_HOUR, and TIMEZONE_MINUTE remain represented structurally and native-only for PostgreSQL targets.")
-                cap("temporal.date_arithmetic","temporal",translated,
+                yield cap("temporal.date_arithmetic","temporal",translated,
                     "Date-add units DAY, WEEK, MONTH, QUARTER, YEAR, HOUR, MINUTE, and SECOND are typed in the closed F# AST. PostgreSQL, MySQL, SQL Server, and Firebird have declared lowering for all eight units. Oracle and SQLite currently admit DAY, WEEK, HOUR, MINUTE, and SECOND only; MONTH, QUARTER, and YEAR remain fail-closed because Oracle YEAR-TO-MONTH interval arithmetic can reject invalid rollover dates while SQLite defaults to ceiling rollover and its semantics-preserving floor modifier requires a separately proven SQLite 3.46+ target profile. Raw source grammar includes SQL Server/Firebird DATEADD, MySQL TIMESTAMPADD, SQL Server DATEPART, PostgreSQL DATE_PART, and the existing DATEDIFF families. Cross-provider non-DAY date difference remains fail-closed because provider boundary-counting semantics are not proven equivalent.")
-                cap("temporal.date_only","temporal",(if provider=SqlAgentToolType.MySQL then supported else rejected),
+                yield cap("temporal.date_only","temporal",(if provider=SqlAgentToolType.MySQL then supported else rejected),
                     if provider = SqlAgentToolType.MySQL then
                         "MySQL DATE(expr) is canonicalized explicitly and lowered back to native DATE(expr)."
                     else
                         "MySQL DATE(expr) cross-dialect lowering remains fail-closed because untyped string coercion semantics are not proven equivalent.")
-                cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
-                cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
-                cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")
-                cap("json.operator.postgres_arrow","json",postgresJsonArrowStatus,postgresJsonArrowDetail)
-                cap("json.operator.mysql_arrow","json",mysqlJsonArrow,
+                yield cap("temporal.date_format","temporal",(if provider=SqlAgentToolType.Firebird then rejected else translated),"Date formatting uses declared provider lowering.")
+                yield cap("temporal.formatted_parse","temporal",(if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Oracle then translated else rejected),"Formatted parse uses declared provider lowering.")
+                yield cap("json.extract","json",jsonExtract,"Portable JSON extraction is provider-gated.")
+                yield cap("json.operator.postgres_arrow","json",postgresJsonArrowStatus,postgresJsonArrowDetail)
+                yield cap("json.operator.mysql_arrow","json",mysqlJsonArrow,
                     if provider = SqlAgentToolType.MySQL then
                         "MySQL source -> is accepted only with an explicit ServerVersion 5.7.9+ source profile, a JSON column identifier on the left, and a literal JSON path on the right; it canonicalizes to JSON_EXTRACT. The ->> text-result operator remains fail-closed until JSON_UNQUOTE result semantics are modeled."
                     else
                         "MySQL JSON -> source spelling is not valid for this provider.")
-                cap("json.path.simple","json",translated,"Portable JSON paths require constant paths beginning at $. Simple property chains remain portable wherever the enclosing JSON operation is supported.")
-                cap("json.path.array_index_extract","json",
+                yield cap("json.path.simple","json",translated,"Portable JSON paths require constant paths beginning at $. Simple property chains remain portable wherever the enclosing JSON operation is supported.")
+                yield cap("json.path.array_index_extract","json",
                     (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Sqlite then translated else rejected),
                     if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.Sqlite then
                         "Constant non-negative array indexes in JSON extraction paths are represented as typed path segments and lower to PostgreSQL JSONB_EXTRACT_PATH or native JSON_EXTRACT."
                     else
                         "Array-index JSON extraction has no declared target contract for this provider.")
-                cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated. Array-index mutation remains fail-closed because missing/out-of-range update semantics differ across providers.")
-                cap("regex.match","regex",regexStatus,regexDetail)
-                cap("function.oracle_sysdate","function",(if provider=SqlAgentToolType.Oracle then supported else rejected),
+                yield cap("json.set","json",jsonSet,"Portable JSON mutation is provider-gated. Array-index mutation remains fail-closed because missing/out-of-range update semantics differ across providers.")
+                yield cap("regex.match","regex",regexStatus,regexDetail)
+                yield cap("function.oracle_sysdate","function",(if provider=SqlAgentToolType.Oracle then supported else rejected),
                     if provider=SqlAgentToolType.Oracle then
                         "Oracle bare SYSDATE is represented as a dedicated server-clock DATE semantic and emitted natively without parentheses."
                     else
                         "Oracle SYSDATE is native-only because its server-clock DATE semantics are not interchangeable with provider current-timestamp functions.")
-                cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
-                cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
-                cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
-                cap("ordering.nulls","ordering",nullOrdering,
+                yield cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
+                yield cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
+                yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
+                yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
                         "Structured ASC NULLS FIRST and DESC NULLS LAST are canonicalized to the provider's identical native default ordering and the unsupported modifier is omitted. ASC NULLS LAST and DESC NULLS FIRST are translated with a CASE null-rank only when ORDER BY is a direct row-source column, including window ordering and nested DML SELECTs. DISTINCT statement tails, set-operation tails, projection alias references, and computed expressions remain fail-closed so Core does not duplicate arbitrary expression evaluation or violate provider ORDER BY select-list rules. Raw MySQL/SQL Server source syntax with NULLS modifiers is rejected at the source-dialect boundary."
                     else
                         "NULLS FIRST/LAST is emitted natively.")
-                cap("parameter.unbound","parameter",rejected,"Unbound SQL parameters are rejected.")
-                cap("dml.basic","dml",translated,"INSERT VALUES, UPDATE, and DELETE use the structured DML path.")
-                cap("dml.insert_implicit_columns","dml",supported,
+                yield cap("parameter.unbound","parameter",rejected,"Unbound SQL parameters are rejected.")
+                yield cap("dml.basic","dml",translated,"INSERT VALUES, UPDATE, and DELETE use the structured DML path.")
+                yield cap("dml.insert_implicit_columns","dml",supported,
                     "INSERT INTO table VALUES (...) and INSERT INTO table SELECT ... without an explicit target-column list are preserved only for same-provider native compilation. Core validates uniform implicit VALUES row width but does not guess target-table column order or source/target width for implicit INSERT ... SELECT, leaving the native provider to validate its own schema contract. Cross-provider translation and conflict handling without explicit target columns remain fail-closed.")
-                cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
-                cap("dml.target_alias","dml",
+                yield cap("dml.update_expression","dml",translated,"UPDATE SET accepts structured scalar expressions.")
+                yield cap("dml.target_alias","dml",
                     (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.Firebird then supported else rejected),
                     match provider with
                     | SqlAgentToolType.Postgres ->
@@ -610,7 +613,7 @@ type SqlCapabilityMatrix private () =
                         "Firebird UPDATE/DELETE target aliases are represented structurally and render with native AS alias syntax. Firebird requires the alias to replace the original target qualifier, matching the closed binder contract used for PostgreSQL; PostgreSQL and Firebird target aliases can therefore cross-lower within this proven intersection."
                     | _ ->
                         "DML target aliases remain target-gated until an equivalent provider-specific mutation alias contract is declared.")
-                cap("dml.update.from","dml",
+                yield cap("dml.update.from","dml",
                     (if provider=SqlAgentToolType.Postgres then translated
                      elif provider=SqlAgentToolType.MsSqlServer then supported
                      elif provider=SqlAgentToolType.Sqlite
@@ -645,8 +648,8 @@ type SqlCapabilityMatrix private () =
                         "Oracle UPDATE ... FROM requires an explicit target capability profile with ServerVersion 26.0 or newer."
                     | _ ->
                         "UPDATE ... FROM remains fail-closed for this target provider.")
-                cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
-                cap("dml.delete.using","dml",
+                yield cap("dml.update.boolean_assignment","dml",booleanUpdate,"Boolean UPDATE assignment follows scalar-boolean capability.")
+                yield cap("dml.delete.using","dml",
                     (if provider=SqlAgentToolType.Postgres || provider=SqlAgentToolType.MsSqlServer then translated
                      elif provider=SqlAgentToolType.Oracle
                           && SqlCapabilityMatrix.VersionAtLeast(
@@ -668,13 +671,13 @@ type SqlCapabilityMatrix private () =
                         "Oracle direct-join DELETE requires an explicit target capability profile with ServerVersion 26.0 or newer."
                     | _ ->
                         "Joined DELETE remains fail-closed for this target provider until an equivalent target-row contract is proven.")
-                cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")
-                cap("dml.insert_select.cte_scope","dml",translated,"Statement-root CTE INSERT SELECT placement is provider-aware.")
-                cap("dml.nested_cte_scope","dml",nestedStatus,
+                yield cap("dml.insert_select","dml",translated,"INSERT SELECT is supported for statically-known source width.")
+                yield cap("dml.insert_select.cte_scope","dml",translated,"Statement-root CTE INSERT SELECT placement is provider-aware.")
+                yield cap("dml.nested_cte_scope","dml",nestedStatus,
                     if nestedStatus=translated then "Nested DML CTEs use scope-preserving direct lowering, including output ordinal ordering." else "Nested DML CTE scope remains fail-closed.")
-                cap("dml.advanced","dml",rejected,
+                yield cap("dml.advanced","dml",rejected,
                     "Portable column-only DML RETURNING is tracked separately by dml.returning_output, deterministic explicit-target INSERT conflict handling by dml.upsert_merge, and metadata-assured single-row SQL Server MERGE by dml.merge.single_row. general MERGE with multi-row/table/query sources, Oracle MERGE, cross-provider MERGE lowering, MySQL any-unique-key ON DUPLICATE KEY lowering without a sole-enforced-key equivalence proof, and conflict-update predicates/functions/subqueries remain outside the proven contract.")
-                cap("dml.returning_output","dml",returningStatus,
+                yield cap("dml.returning_output","dml",returningStatus,
                     if returningStatus=translated then
                         match provider with
                         | SqlAgentToolType.Postgres ->
@@ -697,7 +700,7 @@ type SqlCapabilityMatrix private () =
                         | SqlAgentToolType.MySQL ->
                             "MySQL has no declared INSERT/UPDATE/DELETE RETURNING result-row equivalent in the Core MySQL 8.4 target profile."
                         | _ -> "DML RETURNING result rows remain fail-closed.")
-                cap("dml.returning.expression","dml",richReturningStatus,
+                yield cap("dml.returning.expression","dml",richReturningStatus,
                     if richReturningStatus=translated then
                         match provider with
                         | SqlAgentToolType.Postgres ->
@@ -715,7 +718,7 @@ type SqlCapabilityMatrix private () =
                             "Firebird rich DSQL RETURNING requires an explicit target capability profile with ServerVersion 5.0 or newer."
                         | _ ->
                             "Rich RETURNING expressions remain fail-closed for this target provider.")
-                cap("dml.conflict_do_nothing_any","dml",targetlessDoNothingStatus,
+                yield cap("dml.conflict_do_nothing_any","dml",targetlessDoNothingStatus,
                     if targetlessDoNothingStatus=translated then
                         match provider with
                         | SqlAgentToolType.Postgres ->
@@ -725,7 +728,7 @@ type SqlCapabilityMatrix private () =
                         | _ -> "Targetless conflict-ignore semantics are not modeled for this provider."
                     else
                         "Targetless ON CONFLICT DO NOTHING is available only for native PostgreSQL and version-proven SQLite; other providers remain fail-closed.")
-                cap("dml.merge.single_row","dml",rejected,
+                yield cap("dml.merge.single_row","dml",rejected,
                     match provider with
                     | SqlAgentToolType.MsSqlServer ->
                         "SQL Server has a conditional native MERGE path for one explicit USING (VALUES (...)) source row. The closed Core model admits at most one WHEN MATCHED action (UPDATE SET or DELETE) and one WHEN NOT MATCHED INSERT action. ON must be an AND-conjunction of target-alias = source-alias equality terms whose target columns exactly match a metadata-assured UNIQUE or PRIMARY KEY supplied through DmlConflictTargetAssurance. Source literals remain parameterized. The default matrix is Rejected because it has no per-statement key assurance; multi-row/table/query sources, richer action predicates/expressions, OUTPUT, cross-provider lowering, and typed approval execution remain fail-closed."
@@ -733,7 +736,7 @@ type SqlCapabilityMatrix private () =
                         "Oracle MERGE has distinct source/action/version semantics and is not yet admitted by the canonical source grammar; it remains fail-closed."
                     | _ ->
                         "Canonical MERGE lowering is currently proven only for native SQL Server single-row USING (VALUES ...) statements; this provider remains fail-closed.")
-                cap("dml.upsert_merge","dml",upsertStatus,
+                yield cap("dml.upsert_merge","dml",upsertStatus,
                     if upsertStatus=translated then
                         if provider=SqlAgentToolType.Postgres then
                             "PostgreSQL supports the deterministic Core explicit conflict-target contract, including INSERT VALUES and assurance-backed INSERT SELECT. Explicit-target DO NOTHING permits multiple proposed rows; DO UPDATE remains limited to exactly one proposed row unless cardinality metadata proves a broader contract. Direct target = EXCLUDED.source assignments retain the existing portable lowering path. Native PostgreSQL additionally admits a closed deterministic conflict-update scalar algebra over EXCLUDED columns, unqualified current-row target columns, parameterized literals, unary +/- and arithmetic +, -, *, /, %. Rich expressions remain native-only; functions, predicates, concatenation, casts, CASE, subqueries, named constraints, partial-index predicates, and typed approval execution remain fail-closed."
@@ -753,7 +756,7 @@ type SqlCapabilityMatrix private () =
                             "Oracle requires MERGE-style source and match semantics, but the Oracle source/action grammar and corresponding target guarantees are not yet represented by the canonical MERGE contract, so it remains fail-closed."
                         | _ ->
                             "This provider has no proven canonical MERGE lowering; upsert remains fail-closed.")
-            ]
+            } |> Seq.toList
 
         ProviderSqlCapabilities(
             SqlCapabilityMatrix.Version,

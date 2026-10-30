@@ -2757,3 +2757,23 @@ permissions, and query resource limits remains the responsibility of the hosting
 - SQL lowering is rendered directly from the validated canonical Core AST; SqlCore has no query-builder backend dependency.
 
 Project: https://github.com/tse-wei-chen/hs-sql-agent
+
+## MySQL native CTE queries and INSERT SELECT — version provenance
+
+MySQL's native nonrecursive CTE syntax is `WITH ... SELECT` for DQL,
+and `INSERT INTO target(columns) WITH ... SELECT ...` for DML.
+The PostgreSQL-style statement-leading `WITH ... INSERT` is **not**
+accepted for MySQL. The existing closed F# QuerySource AST, name binder,
+Mutation target allowlist, physical source read permissions and parameter
+renderer are shared; no SQL text is spliced into executable output.
+
+A declared MySQL source or target `ServerVersion` earlier than **8.0.1**
+cannot claim ordinary CTE support. The source parser and compilation stage
+independently enforce this, including when the CTE appears inside INSERT
+SELECT; versionless profiles retain the existing compatibility contract.
+CTE names are not physical tables, and a read-only CTE cannot bypass
+mutation approval, conflict policies, or source table permissions.
+
+Real MySQL integration tests compare native and compiled INSERT CTE
+results and parameter bindings. Cross-provider CTE semantics are not
+inferred from the MySQL-specific version proof.

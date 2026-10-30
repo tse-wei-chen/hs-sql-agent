@@ -149,7 +149,18 @@ public sealed class MySqlJsonArrowGrammarMatrixTests
         Assert.Equal("SQL_SOURCE_CAPABILITY_REJECTED", diagnostic.Code);
         Assert.Equal(SqlDiagnosticStage.SourceValidation, diagnostic.Stage);
         Assert.Equal(SqlDiagnosticCategory.Capability, diagnostic.Category);
-        Assert.Contains("5.7.9", error.Message, StringComparison.Ordinal);
+        // A MySQL 5.7 CTE is invalid before the inner JSON operator is
+        // considered. Preserve the independent 5.7.9 JSON proof on root
+        // and scalar-subquery cases, and check the stronger CTE gate here.
+        if (name == "5.7.8__cte")
+        {
+            Assert.Contains("select.cte", error.Message, StringComparison.Ordinal);
+            Assert.Contains("8.0.1", error.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("5.7.9", error.Message, StringComparison.Ordinal);
+        }
         Assert.NotNull(diagnostic.Span);
         Assert.True(diagnostic.Span.Length > 0, name);
     }

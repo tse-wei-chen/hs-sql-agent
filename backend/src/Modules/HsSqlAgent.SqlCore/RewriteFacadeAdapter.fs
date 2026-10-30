@@ -341,6 +341,9 @@ module internal RewriteFacadeAdapter =
           Joins = sourceJoinProofs source sourceProfile
           Expressions = sourceExpressionProofs source sourceProfile
           Dml = sourceDmlProofs source sourceProfile
+          MySqlOrdinaryCte =
+            SqlMySqlOrdinaryCteCapabilityRules.SourceValidationError(source, sourceProfile)
+            |> sourceCapabilityProof
           MySqlWithUpdateCte =
             (if source = SqlAgentToolType.MySQL
                 && not (isNull sourceProfile)

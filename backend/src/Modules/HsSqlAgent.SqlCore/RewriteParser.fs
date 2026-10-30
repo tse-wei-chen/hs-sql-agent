@@ -29,6 +29,7 @@ module internal RewriteParser =
           Joins: JoinProofs
           Expressions: ExpressionProofs
           Dml: DmlProofs
+          MySqlOrdinaryCte: CapabilityProof
           MySqlWithUpdateCte: CapabilityProof
           SqliteWithUpdateCte: CapabilityProof
           MySqlWithDeleteCte: CapabilityProof
@@ -92,6 +93,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              MySqlOrdinaryCte = ProvenCapability
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
               MySqlWithDeleteCte = ProvenCapability
@@ -121,6 +123,7 @@ module internal RewriteParser =
               Joins = permissiveJoins
               Expressions = permissiveExpressions
               Dml = permissiveDml
+              MySqlOrdinaryCte = ProvenCapability
               MySqlWithUpdateCte = ProvenCapability
               SqliteWithUpdateCte = ProvenCapability
               MySqlWithDeleteCte = ProvenCapability
@@ -351,6 +354,7 @@ module internal RewriteParser =
         member _.SourceJoins = semantics.Joins
         member _.SourceExpressions = semantics.Expressions
         member _.SourceDml = semantics.Dml
+        member _.SourceMySqlOrdinaryCte = semantics.MySqlOrdinaryCte
         member _.SourceMySqlWithUpdateCte = semantics.MySqlWithUpdateCte
         member _.SourceSqliteWithUpdateCte = semantics.SqliteWithUpdateCte
         member _.SourceMySqlWithDeleteCte = semantics.MySqlWithDeleteCte
@@ -1970,6 +1974,7 @@ module internal RewriteParser =
         (cursor: Cursor)
         (scheduleQuery: (Query -> unit) -> unit)
         (complete: Cte list -> unit) =
+        let withToken = cursor.Current
         if not (acceptKeyword "WITH" cursor) then complete []
         else
             let recursiveScope =
@@ -1980,6 +1985,9 @@ module internal RewriteParser =
                     true
                 else
                     false
+            // Recursive CTE has its own version and diagnostic contract.
+            if cursor.Dialect = SourceDialect.MySql && not recursiveScope then
+                requireSourceParseCapability withToken cursor.SourceMySqlOrdinaryCte
             let ctes = ResizeArray<Cte>()
             let rec scheduleOne () =
                 let start = cursor.Current.Start

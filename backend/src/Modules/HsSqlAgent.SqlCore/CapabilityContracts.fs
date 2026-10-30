@@ -685,6 +685,32 @@ module internal SqlJoinCapabilityRules =
         elif provider = SqlAgentToolType.Sqlite && (kind = "RIGHT" || kind = "FULL") then sqliteError kind targetProfile "target"
         else null
 
+/// An explicit MySQL version must never silently turn an unsupported ordinary
+/// CTE into a parsed/compiled statement. Missing profiles retain the legacy
+/// permissive contract; declaring a version below 8.0.1 rejects the syntax.
+module internal SqlMySqlOrdinaryCteCapabilityRules =
+    let MinimumVersion = Version(8, 0, 1)
+
+    let private validationError (provider: SqlAgentToolType)
+                                (profile: SqlProviderCapabilityProfile | null)
+                                (side: string) : string | null =
+        if provider <> SqlAgentToolType.MySQL then null
+        else
+            match profile with
+            | null -> null
+            | p when isNull p.ServerVersion -> null
+            | p when p.ServerVersion.CompareTo(MinimumVersion) >= 0 -> null
+            | p ->
+                "SQL capability 'select.cte' requires MySQL " + side
+                + " ServerVersion " + string MinimumVersion
+                + "+; declared version is " + string p.ServerVersion + "."
+
+    let SourceValidationError(provider, sourceProfile) =
+        validationError provider sourceProfile "source"
+
+    let TargetValidationError(provider, targetProfile) =
+        validationError provider targetProfile "target"
+
 module internal SqlRecursiveCteCapabilityRules =
     let PostgresMinimumVersion = Version(8,4)
     let MySqlMinimumVersion = Version(8,0,1)
