@@ -737,6 +737,10 @@ module internal RewriteParser =
                             message))
 
         match cursor.Dialect, CastType.semantic parsedType with
+        | SourceDialect.Firebird, Some(SqlDecimal(Some precision, _)) when precision > 18 ->
+            // Firebird 3 and earlier have no 19..38 precision SQL type.
+            // The declared source profile must prove the 4.0+ capability.
+            requireSourceCapability typeToken cursor.SourceExpressions.FirebirdExtendedDecimal
         | SourceDialect.Firebird, Some(SqlTime(_, true))
         | SourceDialect.Firebird, Some(SqlTimestamp(_, true)) ->
             requireSourceCapability typeToken cursor.SourceExpressions.FirebirdTimeZoneType
