@@ -577,9 +577,24 @@ module internal RewriteStages =
                     source = SqlAgentToolType.Sqlite && target = SqlAgentToolType.Sqlite
                 let nativeMySql =
                     source = SqlAgentToolType.MySQL && target = SqlAgentToolType.MySQL
-                if not nativePostgres && not nativeSqlite && not nativeMySql then
+                let nativeSqlServer =
+                    source = SqlAgentToolType.MsSqlServer && target = SqlAgentToolType.MsSqlServer
+                if not nativePostgres && not nativeSqlite && not nativeMySql && not nativeSqlServer then
                     raise (SqlCompilationException(
-                        "Statement-level WITH UPDATE is proven only for native PostgreSQL, SQLite or MySQL source and target; cross-provider lowering remains fail-closed."))
+                        "Statement-level WITH UPDATE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
+                if nativeSqlServer then
+                    if not update.From.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'sqlserver.with_update.from' is not proven for CTE-prefixed SQL Server UPDATE."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        let error =
+                            if side = "source" then
+                                SqlSqlServerWithMutationCteCapabilityRules.SourceValidationError(source, profile)
+                            else
+                                SqlSqlServerWithMutationCteCapabilityRules.TargetValidationError(target, profile)
+                        match error with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
                 if nativeMySql then
                     if not update.From.IsEmpty then
                         raise (SqlCompilationException(
@@ -632,9 +647,24 @@ module internal RewriteStages =
                     source = SqlAgentToolType.Sqlite && target = SqlAgentToolType.Sqlite
                 let nativeMySql =
                     source = SqlAgentToolType.MySQL && target = SqlAgentToolType.MySQL
-                if not nativePostgres && not nativeSqlite && not nativeMySql then
+                let nativeSqlServer =
+                    source = SqlAgentToolType.MsSqlServer && target = SqlAgentToolType.MsSqlServer
+                if not nativePostgres && not nativeSqlite && not nativeMySql && not nativeSqlServer then
                     raise (SqlCompilationException(
-                        "Statement-level WITH DELETE is proven only for native PostgreSQL, SQLite or MySQL source and target; cross-provider lowering remains fail-closed."))
+                        "Statement-level WITH DELETE is proven only for native PostgreSQL, SQLite, MySQL or SQL Server source and target; cross-provider lowering remains fail-closed."))
+                if nativeSqlServer then
+                    if not delete.Using.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'sqlserver.with_delete.from' is not proven for CTE-prefixed SQL Server DELETE."))
+                    for side, profile in [ "source", sourceProfile; "target", targetProfile ] do
+                        let error =
+                            if side = "source" then
+                                SqlSqlServerWithMutationCteCapabilityRules.SourceValidationError(source, profile)
+                            else
+                                SqlSqlServerWithMutationCteCapabilityRules.TargetValidationError(target, profile)
+                        match error with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
                 if nativeMySql then
                     if not delete.Using.IsEmpty then
                         raise (SqlCompilationException(
