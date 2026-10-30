@@ -227,6 +227,18 @@ module internal RewriteLexer =
                         detail,
                         SqlDiagnosticSpan(start, actualLength))))
 
+        // SQL numeric magnitudes are bounded by the canonical DecimalLiteral
+        // model. Never leak CLR OverflowException/FormatException out of
+        // lexing: failure is a typed, source-positioned syntax diagnostic.
+        let decimalLiteral text start finish =
+            match Decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture) with
+            | true, value -> add (DecimalLiteral value) start finish
+            | false, _ ->
+                lexicalError
+                    "SQL_LEXICAL_NUMERIC_OUT_OF_RANGE"
+                    "Numeric literal is outside the supported Decimal range."
+                    start (finish - start)
+
         let rejectBackslashIfAmbiguous kind start current =
             match semantics.Backslash with
             | BackslashIsLiteral -> ()
@@ -560,9 +572,9 @@ module internal RewriteLexer =
                 if not hasDot && not hasExponent then
                     match Int64.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture) with
                     | true, value -> add (IntegerLiteral value) start i
-                    | _ -> add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
+                    | _ -> decimalLiteral text start i
                 else
-                    add (DecimalLiteral(Decimal.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture))) start i
+                    decimalLiteral text start i
             elif isConfiguredIdentifierStart c then
                 let start = i
                 i <- i + 1
