@@ -52,7 +52,9 @@ public sealed class SqlCoreScriptSemicolonErrorIsolationTests
     public void ExtraClosingParenthesisCannotSwallowMultipleValidStatements()
     {
         const string sql = "SELECT 1); SELECT 2; SELECT 3;";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql,
+            new SqlScriptParseOptions(SqlAgentToolType.MsSqlServer,
+                TestContext.Current.CancellationToken));
 
         Assert.Equal(1, parsed.BatchCount);
         Assert.Equal(3, parsed.Statements.Count);
@@ -67,7 +69,9 @@ public sealed class SqlCoreScriptSemicolonErrorIsolationTests
     public void UnclosedOpeningParenthesisStillCannotBeRecoveredBySemicolon()
     {
         const string sql = "SELECT (1; SELECT 2";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql,
+            new SqlScriptParseOptions(SqlAgentToolType.MsSqlServer,
+                TestContext.Current.CancellationToken));
 
         var statement = Assert.Single(parsed.Statements);
         Assert.Equal(SqlScriptParseStatus.Invalid, statement.Status);
@@ -78,7 +82,9 @@ public sealed class SqlCoreScriptSemicolonErrorIsolationTests
     public void OpaqueProcedureStillOwnsItsInternalSemicolonsAfterMismatchedClose()
     {
         const string sql = "CREATE PROCEDURE p AS BEGIN SELECT 1); SELECT 2; END; SELECT 3";
-        var parsed = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.MsSqlServer);
+        var parsed = SqlCoreFacade.ParseScript(sql,
+            new SqlScriptParseOptions(SqlAgentToolType.MsSqlServer,
+                TestContext.Current.CancellationToken));
 
         var statement = Assert.Single(parsed.Statements);
         Assert.Equal(SqlScriptStatementKind.Procedural, statement.Kind);
