@@ -840,6 +840,13 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "dbo." + target, "dbo." + source };
             var policy = "sqlserver-chained-cte-v1";
+            // No live source/target proof: the closed F# compiler must
+            // reject the same complete chain under an identical profile.
+            Assert.Throws<SqlCompilationException>(() =>
+                SqlCoreFacade.CompileDml(
+                    parsed, SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext(policy, allowed),
+                    new DmlCompilationPolicy(), profile, null));
             var metadata = new Mock<IProviderMetadataReader>();
             metadata.Setup(x => x.GetSchemasAsync("metadata-test",
                     It.IsAny<CancellationToken>())).ReturnsAsync(["dbo"]);
@@ -907,6 +914,10 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
     [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = forwarded.key_id OR {target}.id = 1")]
     [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = CAST(forwarded.key_id AS INT)")]
     [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM picked WHERE {target}.id = forwarded.key_id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), hop2 AS (SELECT id FROM picked), hop3 AS (SELECT id FROM hop2), hop4 AS (SELECT id FROM hop3) UPDATE {target} SET label = 'x' FROM hop4 WHERE {target}.id = hop4.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), discarded AS (SELECT id FROM picked WHERE id > 0), hop3 AS (SELECT id FROM picked) UPDATE {target} SET label = 'x' FROM hop3 WHERE {target}.id = hop3.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), picked AS (SELECT id FROM picked) UPDATE {target} SET label = 'x' FROM picked WHERE {target}.id = picked.id")]
+    [InlineData("WITH picked AS (SELECT id FROM {source}), forwarded AS (SELECT id AS key_id FROM picked) UPDATE {target} SET label = 'x' FROM forwarded WHERE {target}.id = picked.id")]
     public async Task ChainedCteUnsafeLineageCannotMintLiveWriteAuthority(string template)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");

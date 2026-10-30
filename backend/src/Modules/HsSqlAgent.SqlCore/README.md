@@ -3286,3 +3286,42 @@ operational identity controls. Operators must grant the SQL Server
 metadata visibility required for `sys.database_recovery_status`;
 without that visibility this feature deliberately rejects compilation
 rather than falling back to unverified names.
+
+
+## SQL Server chained read-only CTE INT-key lineage (#466 stage 5)
+
+The F# DML compiler now recognizes an **ordered, linear 1–3 CTE** key
+lineage rooted in one physical SQL Server table with a live-attested
+enabled, unfiltered unique `INT` source key. Each additional CTE must
+read **exactly the preceding CTE** and project the same direct key
+column (optionally renaming it using `AS` or the CTE's column alias
+list). The mutation must use the final CTE as its sole joined source
+and an ordinary mandatory `physical_target.INT = final_cte.INT`
+predicate. Physical target identity, verified SQL Server 2005+ source
+and target profiles, strict target row identity, positive bounded
+affected row count and a real metadata connection remain mandatory.
+
+The closed F# AST compiler verifies the whole chain *independently* of
+the Host's typed CLR AST discovery, which mints the existing
+`SqlServerCteUniqueKeyAssurance` **only after live source/target
+INT/index metadata inspection**. A chain does not mint a new SQL
+index proof: its multiplicity bound is inherited from the one physical
+unique key, and each CTE hop must be a nonmultiplying direct projection.
+The existing physical server/database GUID proof identity, immutable
+command/approval fingerprints and transaction-held `IsCurrent`
+checks remain unchanged. No new MCP tools or compiler-owned drivers.
+
+Recursive CTEs, a fourth hop, duplicate or skipped CTE names,
+joins, other read tables, self-references, DISTINCT, aggregates,
+GROUP BY, set operations, derived tables, computed/cast key
+expressions, ambiguous qualifiers, OR-bound key equality and
+CTE write targets **still fail closed**. Conditions inside a
+single-source SELECT may filter rows but cannot increase cardinality.
+This feature does not authorize composite unique keys or any joined
+CTE capability for the other five SQL dialects.
+
+SQL Server 2022 live tests exercise two-/three-hop projection with
+direct and column-list aliases, `UPDATE` and `DELETE`, automatic
+Host proof creation, CTE-preserving match preview, approved commit
+and physical row parity. Explicit negative cases cover computed,
+multiplying, wrong-scope and non-equality lineage.
