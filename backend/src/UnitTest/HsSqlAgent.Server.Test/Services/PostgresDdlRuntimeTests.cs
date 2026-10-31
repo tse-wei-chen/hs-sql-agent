@@ -81,6 +81,7 @@ public sealed class PostgresDdlRuntimeTests
             previewOnly: false, approvalProvider: null,
             TestContext.Current.CancellationToken);
         Assert.Equal(DdlRuntimeStatus.Rejected, result.Status);
+        provider.VerifyGet(x => x.Type, Times.Once);
         provider.VerifyNoOtherCalls();
     }
 

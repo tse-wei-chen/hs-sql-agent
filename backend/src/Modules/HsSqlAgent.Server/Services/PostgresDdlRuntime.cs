@@ -63,7 +63,7 @@ public sealed class PostgresDdlRuntime(
                     "Live DDL requires an explicit schema.table, not an unqualified search_path target.");
             schema = change.ObjectIdentity.Parts[0];
             table = change.ObjectIdentity.Parts[1];
-            if (!_options.AllowedSchemas.Contains(schema)
+            if (!_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || schema is "pg_catalog" or "information_schema"
                 || schema.StartsWith("pg_temp", StringComparison.Ordinal))
                 return Rejected("ddl.schema_denied", "Target schema is not explicitly allowlisted for DDL.");
@@ -148,12 +148,14 @@ public sealed class PostgresDdlRuntime(
                 return new DdlRuntimeResult(DdlRuntimeStatus.Pending, preview,
                     "DDL approval pending. This ephemeral request cannot be resumed to execute.");
             if (decision.State != DdlApprovalState.Approved
-                || string.IsNullOrWhiteSpace(decision.ApproverIdentity))
+                || string.IsNullOrWhiteSpace(decision.ApproverIdentity)
+                || string.Equals(decision.ApproverIdentity, actor.PrincipalIdentity, StringComparison.Ordinal))
                 return Rejected("ddl.approval_denied", "DDL approval was not independently granted.", preview);
             if (_time.GetUtcNow() >= expiry)
                 return Rejected("ddl.approval_expired", "DDL approval expired. Re-preview required.", preview);
             if (!string.Equals(policy, PolicyMaterial(), StringComparison.Ordinal)
-                || !_options.Enabled || !_options.AllowedSchemas.Contains(schema)
+                || !_options.Enabled
+                || !_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || !AllowedOperation(plan.Changes[0].Operation))
                 return Rejected("ddl.policy_changed", "DDL Host policy changed after approval.", preview);
 
@@ -371,7 +373,8 @@ public sealed class PostgresDdlRuntime(
                 (before.Columns.Concat(defs).ToArray(), before.Indexes),
             DdlSchemaOperation.CreateIndex =>
                 (before.Columns, before.Indexes.Concat([
-                    new DdlPhysicalIndex(change.IndexName,
+                    new DdlPhysicalIndex(change.IndexName
+                        ?? throw new InvalidOperationException("An index name is required."),
                         change.Columns.ToArray(), false, false, false)]).ToArray()),
             _ => throw new InvalidOperationException("Unsupported closed DDL operation.")
         };
@@ -532,16 +535,17 @@ public sealed class PostgresDdlRuntime(
             "SELECT current_database()::text, "
             + "(SELECT oid::text FROM pg_catalog.pg_database WHERE datname = current_database()), "
             + "current_user::text, inet_server_addr()::text, inet_server_port(), "
-            + "pg_is_in_recovery(), current_setting('server_version_num')::text");
+            + "pg_is_in_recovery(), current_setting('server_version_num')::text, "
+            + "(pg_catalog.pg_control_system()).system_identifier::text");
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)
             || reader.IsDBNull(1) || reader.IsDBNull(3) || reader.IsDBNull(4)
-            || reader.GetBoolean(5))
+            || reader.IsDBNull(7) || reader.GetBoolean(5))
             throw new InvalidOperationException("Physical PostgreSQL server identity is unavailable or server is read-only.");
         var databaseName = reader.GetString(0);
         var identity = string.Join("|", reader.GetString(1), reader.GetString(2),
             reader.GetString(3), reader.GetInt32(4).ToString(System.Globalization.CultureInfo.InvariantCulture),
-            reader.GetString(6));
+            reader.GetString(6), reader.GetString(7));
         return (identity, databaseName);
     }
 

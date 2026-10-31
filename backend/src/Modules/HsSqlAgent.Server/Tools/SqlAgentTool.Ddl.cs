@@ -62,6 +62,20 @@ public partial class SqlAgentTool
                 || providerType != SqlAgentToolType.Postgres)
                 throw new UnauthorizedAccessException("DDL is restricted to PostgreSQL.");
             var provider = _sqlProviderFactory.GetProvider(providerType);
+            // A durable request audit must succeed BEFORE any possible
+            // schema mutation, even if the outcome audit later fails.
+            await _auditService.WriteEventAsync(
+                "mcp.ddl.requested",
+                actor.TargetIdentity,
+                "requested",
+                new AuditEventContext
+                {
+                    ToolName = McpBuiltInTools.ExecuteDdlSql,
+                    Operation = previewOnly ? "preview" : "execute",
+                    DurationMs = watch.ElapsedMilliseconds
+                },
+                "Independent DDL permission, approval and live schema proof required.",
+                cancellationToken);
             await using var lease = await _sqlConcurrencyLimiter.TryAcquireAsync(cancellationToken);
             if (lease is null)
                 throw new InvalidOperationException("DDL concurrency limit exceeded.");
