@@ -143,6 +143,15 @@ module internal RewriteDdlPreview =
                             DdlPreviewPreconditionStatus.ContradictedByCallerCatalog
                         else DdlPreviewPreconditionStatus.Unverified
                     status, projected DdlObjectPresence.Unknown emptyColumns emptyIndexes
+            | DdlSchemaOperation.DropTable ->
+                // A virtual Catalog never proves physical emptiness, dependencies,
+                // privileges or transactional DROP safety. Even Known remains
+                // conditional until Host completes the live destructive proof.
+                let status =
+                    if beforePresence = DdlObjectPresence.Absent || view.IsSome then
+                        DdlPreviewPreconditionStatus.ContradictedByCallerCatalog
+                    else DdlPreviewPreconditionStatus.Unverified
+                status, projected DdlObjectPresence.Absent emptyColumns emptyIndexes
             | _ -> invalidOp "Unrecognized closed DDL schema operation."
 
         let deps = dependencyImpact catalog identity
@@ -150,6 +159,8 @@ module internal RewriteDdlPreview =
         warnings.Add("This is a caller-declared virtual Catalog, not a live database/schema identity or freshness proof.")
         warnings.Add("ExpectedAfter is hypothetical; DDL execution requires live metadata, independent DDL permission and approval.")
         warnings.Add("Physical dependency graph completeness, affected rows and lock duration are unknown.")
+        if plan.Impact.MayLoseData then
+            warnings.Add("Destructive DDL can permanently delete table schema and data; only a live, transaction-locked empty table and a separately authorized high-risk approval may execute.")
         if plan.Impact.MayLockSchema then
             warnings.Add("The DDL may acquire schema/metadata locks; the lock duration is unknown.")
         if plan.TransactionBehavior = DdlTransactionBehavior.ImplicitCommit then
