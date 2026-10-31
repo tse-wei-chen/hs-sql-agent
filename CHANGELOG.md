@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
-### SQL Core G1/G2 and PostgreSQL G3 DDL (feature branch)
+### SQL Core G1/G2, PostgreSQL G3 and SQLite/SQL Server G4 DDL
 
 - Introduce a separate closed F# `CompileDdl` / `TryCompileDdl` compiler,
   typed Schema Plan, native six-dialect SQL renderer, deterministic fingerprint,
@@ -15,7 +15,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - Introduce `PreviewDdl` / `TryPreviewDdl` for immutable hypothetical
   Before/After Schema Diff, physical preconditions, dependency impacts, risks
   and explicit unknown states; virtual Catalog is not live authorization.
-- Add opt-in **PostgreSQL-only** `execute_ddl_sql` with read-only preview,
+- Add opt-in **PostgreSQL** `execute_ddl_sql` with read-only preview,
   independent access-key permission and DDL Approval, physical database/cluster
   and schema identity, transactional recheck, native-compiled DDL execution,
   post-execution verification, fail-closed audit and OutcomeUnknown.
@@ -25,7 +25,15 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - Real PostgreSQL 16 tests cover approved CREATE TABLE / ADD COLUMN / INDEX,
   Preview and rejected Approval without writes, schema drift and forged
   approval fingerprints. Six-provider DQL/DML compatibility gates remain
-  mandatory; other five providers need independent Host DDL adapters.
+  mandatory.
+- G4 SQLite supports an independent opt-in file-backed transactional DDL adapter
+  with main-schema identity and schema-cookie freshness proof.
+- G4 SQL Server 2022 adds an independent, default-disabled CREATE TABLE-only Host
+  path with explicit schema allowlist, bounded simple INT columns, separate
+  DDL approval, SQL Server physical metadata proof, transaction recheck and
+  OutcomeUnknown handling. Neither Host adapter inherits DML permissions.
+  SQL Server ALTER/INDEX and all Firebird/MySQL/Oracle DDL Host execution
+  remain disabled pending distinct live safety proof.
 
 ### PostgreSQL old-worker cutover verification
 
