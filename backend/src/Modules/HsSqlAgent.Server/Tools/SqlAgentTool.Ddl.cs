@@ -36,15 +36,15 @@ public partial class SqlAgentTool
     }
 
     [McpServerTool(UseStructuredContent = true, ReadOnly = false), Description(@"
-        Preview or execute exactly one explicitly allowed, PostgreSQL, SQLite, a restricted SQL Server, or a restricted Firebird or MySQL DDL statement.
+        Preview or execute exactly one explicitly allowed, PostgreSQL, SQLite, a restricted SQL Server, or a restricted Firebird, MySQL or Oracle DDL statement.
         With previewOnly=true, inspect live metadata and return a schema diff without changing data.
         With previewOnly=false, execution REQUIRES separately configured DDL approval, fresh physical
-        database/schema evidence and a provider-specific verified transaction. DML approval does not grant
+        database/schema evidence and a provider-specific proven execution policy. DML approval does not grant
         DDL permission. The tool is disabled and hidden by default. Unsupported or destructive
         DDL, dynamic SQL and other database providers are always rejected.
     ")]
     public async Task<McpDdlToolResult> ExecuteDdlSql(
-        [Description("One strictly additive PostgreSQL, SQLite, SQL Server, Firebird or MySQL DDL statement. Firebird/MySQL require unqualified table names.")]
+        [Description("One strictly additive PostgreSQL, SQLite, SQL Server, Firebird, MySQL or Oracle DDL statement. Firebird/MySQL/Oracle require unqualified table names.")]
         string sql,
         [Description("True to inspect and preview only, without DDL approval or mutation.")]
         bool previewOnly = true,
@@ -56,6 +56,7 @@ public partial class SqlAgentTool
         SqlServerDdlRuntimeResult? sqlServerOutcome = null;
         FirebirdDdlRuntimeResult? firebirdOutcome = null;
         MySqlDdlRuntimeResult? mySqlOutcome = null;
+        OracleDdlRuntimeResult? oracleOutcome = null;
         try
         {
             var actor = RequireDdlGrant();
@@ -69,6 +70,7 @@ public partial class SqlAgentTool
                 SqlAgentToolType.MsSqlServer => _sqlServerDdlRuntime is { Enabled: true },
                 SqlAgentToolType.Firebird => _firebirdDdlRuntime is { Enabled: true },
                 SqlAgentToolType.MySQL => _mySqlDdlRuntime is { Enabled: true },
+                SqlAgentToolType.Oracle => _oracleDdlRuntime is { Enabled: true },
                 _ => false
             };
             if (!configured)
@@ -119,6 +121,13 @@ public partial class SqlAgentTool
                     previewOnly, _ddlApprovalProvider, cancellationToken);
                 return McpDdlToolResult.FromMySqlRuntime(mySqlOutcome);
             }
+            if (providerType == SqlAgentToolType.Oracle)
+            {
+                oracleOutcome = await _oracleDdlRuntime!.RunAsync(
+                    provider, config.ConnectionString, sql, actor,
+                    previewOnly, _ddlApprovalProvider, cancellationToken);
+                return McpDdlToolResult.FromOracleRuntime(oracleOutcome);
+            }
             outcome = await _postgresDdlRuntime!.RunAsync(
                 provider, config.ConnectionString, sql, actor,
                 previewOnly, _ddlApprovalProvider, cancellationToken);
@@ -159,9 +168,11 @@ public partial class SqlAgentTool
                                 : firebirdOutcome?.Preview?.Before is { } firebird
                                     ? firebird.TableName
                                     : mySqlOutcome?.Preview?.Before is { } mysql
-                                        ? mysql.DatabaseName + "." + mysql.TableName : "ddl",
+                                        ? mysql.DatabaseName + "." + mysql.TableName
+                                        : oracleOutcome?.Preview?.Before is { } oracle
+                                            ? oracle.PdbName + "." + oracle.SchemaName + "." + oracle.TableName : "ddl",
                     (outcome?.Status ?? sqliteOutcome?.Status ?? sqlServerOutcome?.Status
-                        ?? firebirdOutcome?.Status ?? mySqlOutcome?.Status)?.ToString().ToLowerInvariant() ?? "rejected",
+                        ?? firebirdOutcome?.Status ?? mySqlOutcome?.Status ?? oracleOutcome?.Status)?.ToString().ToLowerInvariant() ?? "rejected",
                     new AuditEventContext
                     {
                         ToolName = McpBuiltInTools.ExecuteDdlSql,
@@ -170,18 +181,20 @@ public partial class SqlAgentTool
                             ?? sqlServerOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? firebirdOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? mySqlOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
+                            ?? oracleOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? "denied",
                         DurationMs = watch.ElapsedMilliseconds,
                         Definition = outcome?.Preview?.HumanReadableDiff ?? sqliteOutcome?.Preview?.HumanReadableDiff
                             ?? sqlServerOutcome?.Preview?.HumanReadableDiff
                             ?? firebirdOutcome?.Preview?.HumanReadableDiff
-                            ?? mySqlOutcome?.Preview?.HumanReadableDiff,
+                            ?? mySqlOutcome?.Preview?.HumanReadableDiff
+                            ?? oracleOutcome?.Preview?.HumanReadableDiff,
                         ErrorCategory = outcome?.ErrorCode ?? sqliteOutcome?.ErrorCode
                             ?? sqlServerOutcome?.ErrorCode ?? firebirdOutcome?.ErrorCode
-                            ?? mySqlOutcome?.ErrorCode
+                            ?? mySqlOutcome?.ErrorCode ?? oracleOutcome?.ErrorCode
                     },
                     outcome?.Message ?? sqliteOutcome?.Message ?? sqlServerOutcome?.Message
-                        ?? firebirdOutcome?.Message ?? mySqlOutcome?.Message
+                        ?? firebirdOutcome?.Message ?? mySqlOutcome?.Message ?? oracleOutcome?.Message
                         ?? "Denied at DDL Host access boundary.",
                     CancellationToken.None);
             }
