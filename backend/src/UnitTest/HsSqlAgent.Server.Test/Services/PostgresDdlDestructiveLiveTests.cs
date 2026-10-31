@@ -190,6 +190,25 @@ public sealed class PostgresDdlDestructiveLiveTests(PostgresDdlLiveFixture fixtu
             Assert.True(await ExistsAsync(schema));
             await ExecAsync("DROP VIEW \"" + schema + "\".dependent");
 
+            // Reject physical schema dependencies even when no data rows exist.
+            await ExecAsync("CREATE INDEX idx_drop_guard ON \"" + schema + "\".widgets(id)");
+            var indexed = await Runtime(schema, true).RunAsync(
+                Provider(), fixture.ConnectionString, sql, Actor(), false,
+                Approval(DdlApprovalState.Approved), ct);
+            Assert.Equal(DdlRuntimeStatus.Rejected, indexed.Status);
+            Assert.True(await ExistsAsync(schema));
+            await ExecAsync("DROP INDEX \"" + schema + "\".idx_drop_guard");
+
+            await ExecAsync("ALTER TABLE \"" + schema
+                + "\".widgets ADD COLUMN with_default INTEGER DEFAULT 9");
+            var defaulted = await Runtime(schema, true).RunAsync(
+                Provider(), fixture.ConnectionString, sql, Actor(), false,
+                Approval(DdlApprovalState.Approved), ct);
+            Assert.Equal(DdlRuntimeStatus.Rejected, defaulted.Status);
+            Assert.True(await ExistsAsync(schema));
+            await ExecAsync("ALTER TABLE \"" + schema + "\".widgets DROP COLUMN with_default");
+
+
             // Independent database behavior oracle: PostgreSQL DROP is
             // transactional; a direct rollback must restore the table.
             await using var c = new NpgsqlConnection(fixture.ConnectionString);

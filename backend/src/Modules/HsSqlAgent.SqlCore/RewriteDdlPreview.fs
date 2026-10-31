@@ -160,7 +160,7 @@ module internal RewriteDdlPreview =
         warnings.Add("ExpectedAfter is hypothetical; DDL execution requires live metadata, independent DDL permission and approval.")
         warnings.Add("Physical dependency graph completeness, affected rows and lock duration are unknown.")
         if plan.Impact.MayLoseData then
-            warnings.Add("Destructive DDL can permanently delete table schema and data; only a live, transaction-locked empty table and a separately authorized high-risk approval may execute.")
+            warnings.Add("Destructive DDL has permanent data loss risk: table schema and data may be deleted after COMMIT. Only a live, transaction-locked empty table with separate high-risk approval may execute.")
         if plan.Impact.MayLockSchema then
             warnings.Add("The DDL may acquire schema/metadata locks; the lock duration is unknown.")
         if plan.TransactionBehavior = DdlTransactionBehavior.ImplicitCommit then

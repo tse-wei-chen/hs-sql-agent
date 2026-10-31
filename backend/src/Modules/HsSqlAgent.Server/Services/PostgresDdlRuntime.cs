@@ -436,7 +436,7 @@ public sealed class PostgresDdlRuntime(
               + "No data rows may exist: verified at preview and rechecked under "
               + "ACCESS EXCLUSIVE lock before DROP TABLE RESTRICT. "
               + "Object privileges and application dependencies may be impacted. "
-              + "The operation requires separate destructive opt-in and independent approval.\\n"
+              + "The operation requires separate destructive opt-in and independent approval.\n"
             : string.Empty;
         return destructive + "DDL change: " + plan.Changes[0].Operation + "\n"
             + "Physical target: " + before.DatabaseName + "/"
