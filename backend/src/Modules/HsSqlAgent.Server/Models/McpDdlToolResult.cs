@@ -79,6 +79,35 @@ public sealed record McpDdlToolResult(
         };
     }
 
+    /// <summary>
+    /// Firebird physical identity contains only digests; never leak a database path
+    /// or a live GUID through the MCP response.
+    /// </summary>
+    public FirebirdDdlPhysicalSnapshot? FirebirdBefore { get; init; }
+
+    public static McpDdlToolResult FromFirebirdRuntime(FirebirdDdlRuntimeResult result)
+    {
+        var preview = result.Preview;
+        return new McpDdlToolResult(
+            result.Status == DdlRuntimeStatus.OutcomeUnknown
+                ? "outcome_unknown" : result.Status.ToString().ToLowerInvariant(),
+            result.CommitConfirmed,
+            "Firebird",
+            preview?.StaticPreview.PlanFingerprint,
+            preview?.StaticPreview.Plan.Command.Sql,
+            null,
+            preview?.ExpectedColumns,
+            preview?.RequestId,
+            result.Message,
+            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
+                or DdlRuntimeStatus.OutcomeUnknown
+                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
+                : null)
+        {
+            FirebirdBefore = preview?.Before
+        };
+    }
+
     public static McpDdlToolResult FromRuntime(DdlRuntimeResult result)
     {
         var preview = result.Preview;
