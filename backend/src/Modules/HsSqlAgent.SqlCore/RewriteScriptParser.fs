@@ -154,7 +154,9 @@ module internal RewriteScriptParser =
                 else SqlDiagnosticSpan(absoluteStart + original.Span.Start, original.Span.Length)
             SqlDiagnostic(original.Code, original.Stage, original.Category, original.Message, span)
 
-    let parse (sql: string) sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) =
+    /// The standalone ParseScript API publishes only its original immutable syntax DTO.
+    /// AnalyzeScript additionally keeps typed statements privately, by visible ordinal.
+    let private parseCore captureTyped (sql: string) sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) =
         ArgumentNullException.ThrowIfNull(sql)
         RewriteResourceBudget.withCompilation (fun () ->
             let tokens =
@@ -163,6 +165,8 @@ module internal RewriteScriptParser =
                 |> List.toArray
             let result = ResizeArray<SqlScriptStatementSyntax>()
             let diagnostics = ResizeArray<SqlDiagnostic>()
+            let captured =
+                if captureTyped then Some(ResizeArray<ParsedSql option>()) else None
             // Visible batch ordinals exclude empty physical GO segments.
             // Only a segment that emitted at least one statement advances the index.
             let mutable batch = 0
@@ -216,6 +220,7 @@ module internal RewriteScriptParser =
                     let length = last.Start + last.Length - absoluteStart
                     let text = sql.Substring(absoluteStart, length)
                     let family = classify tokens start sourceDialect
+                    let mutable typed: ParsedSql option = None
                     let actualFamily, status, diagnostic =
                         match family with
                         | Query | Mutation ->
@@ -226,6 +231,7 @@ module internal RewriteScriptParser =
                                 // WITH is a lexical prefix, not reliable Query
                                 // evidence. Only the closed, parsed F# AST
                                 // determines the public DQL/DML statement kind.
+                                if captureTyped then typed <- Some parsed
                                 let parsedFamily =
                                     match (Typestate.Parsed.value parsed).Statement with
                                     | Statement.QueryStatement _ -> Query
@@ -260,6 +266,9 @@ module internal RewriteScriptParser =
                             SqlDiagnosticSpan(absoluteStart, length),
                             text,
                             Option.defaultValue Unchecked.defaultof<SqlDiagnostic> diagnostic))
+                    match captured with
+                    | Some statements -> statements.Add typed
+                    | None -> ()
                     batchHasStatements <- true
                 start <- -1
                 nesting <- 0
@@ -307,4 +316,13 @@ module internal RewriteScriptParser =
             let errors : IReadOnlyList<SqlDiagnostic> =
                 Array.AsReadOnly(diagnostics.ToArray())
             let batchCount = batch + (if batchHasStatements then 1 else 0)
-            SqlScriptParseResult(batchCount, statements, errors))
+            SqlScriptParseResult(batchCount, statements, errors),
+            (captured |> Option.map (fun statements -> statements.ToArray())))
+
+    let parse (sql: string) sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) =
+        parseCore false sql sourceDialect sourceProfile |> fst
+
+    /// Private AST sidecar; never an executable token, public DTO or cross-call cache.
+    let parseForAnalysis (sql: string) sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) =
+        let result, documents = parseCore true sql sourceDialect sourceProfile
+        result, Option.get documents
