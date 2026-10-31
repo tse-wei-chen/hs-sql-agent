@@ -359,6 +359,7 @@ public sealed partial class PostgresDdlRuntime(
             _options.AllowCreateIndex,
             _options.AllowDropEmptyTable,
             _options.AllowCreateTableBatch,
+            _options.AllowDependentDdlBatch,
             batchPrincipals = _options.AllowedBatchPrincipals.OrderBy(
                 principal => principal, StringComparer.Ordinal).ToArray(),
             destructivePrincipals = _options.AllowedDropPrincipals.OrderBy(

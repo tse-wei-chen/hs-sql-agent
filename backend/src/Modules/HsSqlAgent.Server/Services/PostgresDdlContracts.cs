@@ -21,6 +21,9 @@ public sealed class PostgresDdlExecutionOptions
     // Separate allowlisted key and operation gate. Existing single CREATE
     // or destructive permissions never implicitly enable a whole batch.
     public bool AllowCreateTableBatch { get; init; }
+    // A dependent staged batch has a separate fail-closed startup gate.
+    // Ordinary independent CREATE batches do not inherit this permission.
+    public bool AllowDependentDdlBatch { get; init; }
     public IReadOnlySet<string> AllowedBatchPrincipals { get; init; } =
         new HashSet<string>(StringComparer.Ordinal);
     // Tiered key authorization: these are authenticated MCP principal IDs,
