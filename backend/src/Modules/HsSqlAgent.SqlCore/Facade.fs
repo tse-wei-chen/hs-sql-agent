@@ -405,7 +405,7 @@ type SqlCoreFacade private () =
     static member TryCompileDdl(
         sql: string,
         options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlPlan> =
-        SqlCoreTry.capture (fun () -> SqlCoreFacade.CompileDdl(sql, options))
+        FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdl(sql, options))
 
     static member CompileQuery(
         parsed: ParsedStatement,

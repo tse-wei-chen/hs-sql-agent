@@ -71,7 +71,7 @@ module internal RewriteDdlCompiler =
     /// constraints, conditionals, cascading/partial schema updates, DDL
     /// batches and destructive operations have no construction path.
     let private bind (ParsedDdl operation) =
-        let boundedColumns columns =
+        let boundedColumns (columns: SqlCatalogColumn list) =
             if List.isEmpty columns || List.length columns > 128 then
                 policy "DDL column count exceeds the explicitly bounded subset."
             for column in columns do
@@ -102,7 +102,7 @@ module internal RewriteDdlCompiler =
         | _ ->
             policy "Executable DDL subset is additive CREATE TABLE, nullable ADD COLUMN, or ordinary CREATE INDEX only."
 
-    let private validate options (BoundDdl operation) =
+    let private validate (options: DdlCompilationOptions) (BoundDdl operation) =
         if options.SourceDialect <> options.TargetDialect then
             capability "Cross-dialect DDL translation requires a distinct proven native semantic mapping."
         if not (isNull options.SourceProfile) then
@@ -144,8 +144,6 @@ module internal RewriteDdlCompiler =
         let columnDefinition (column: SqlCatalogColumn) =
             q column.Name + " " + column.TypeName
             + (if column.Nullable then " NULL" else " NOT NULL")
-        let parameters : IReadOnlyList<SqlParameterValue> =
-            Array.Empty<SqlParameterValue>() :> IReadOnlyList<SqlParameterValue>
         match operation with
         | Create(table, columns, [], false) ->
             let sql = "CREATE TABLE " + qualified table + " ("

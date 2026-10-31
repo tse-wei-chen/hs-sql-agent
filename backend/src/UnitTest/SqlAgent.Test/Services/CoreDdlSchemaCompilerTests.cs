@@ -137,7 +137,8 @@ public sealed class CoreDdlSchemaCompilerTests
     public void FingerprintTiesToSchemaOperationAndProvider(SqlAgentToolType provider)
     {
         var table = SqlCoreFacade.CompileDdl("CREATE TABLE widgets (id " + (provider == SqlAgentToolType.MsSqlServer ? "INT" : "INTEGER") + ")", Options(provider));
-        var another = SqlCoreFacade.CompileDdl("CREATE TABLE other_widgets (id INTEGER)", Options(provider));
+        var another = SqlCoreFacade.CompileDdl("CREATE TABLE other_widgets (id " +
+            (provider == SqlAgentToolType.MsSqlServer ? "INT" : "INTEGER") + ")", Options(provider));
         Assert.NotEqual(table.PlanFingerprint, another.PlanFingerprint);
         Assert.True(table.Changes[0].ObjectIdentity.Parts.Count >= 1);
         Assert.True(table.Evidence.RequiresPhysicalPreconditions);
