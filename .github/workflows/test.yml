@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -1100,6 +1100,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Verify Oracle 26ai Host implicit-commit DDL, independent approval and live PDB metadata
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~OracleDdlLiveTests|FullyQualifiedName~OracleDdlVersionProofTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+          TEST_ORACLE_ADMIN_CONNECTION: "User Id=system;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify real Oracle 26ai Catalog, joined DML and LATERAL DQL parity
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
