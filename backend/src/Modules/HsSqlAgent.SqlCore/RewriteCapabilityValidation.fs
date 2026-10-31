@@ -333,7 +333,26 @@ module internal RewriteCapabilityValidation =
     let private proveFilterQuery capabilityMessage expressionProofs query =
         proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityQuery query)
 
-    let proveFilterDocument capabilityMessage expressionProofs document =
+    /// This pass only requires capabilities; it does not construct semantic
+    /// evidence, normalize expressions or perform policy checks. If every
+    /// capability checked by proveFilterNode/Predicate is already proven, the
+    /// visitor cannot reject anything and its full-graph walk is redundant.
+    /// Rejected proofs still use the exact original first-error walk.
+    let private allFilterCapabilitiesProven (proofs: ExpressionProofs) =
+        let accepted = function
+            | ProvenCapability -> true
+            | RejectedCapability _ -> false
+        accepted proofs.ILike
+        && accepted proofs.DistinctFrom
+        && accepted proofs.IntervalLiteral
+        && accepted proofs.AggregateFilter
+        && accepted proofs.QuotedFunction
+        && accepted proofs.QualifiedFunction
+        && accepted proofs.FilterPredicate.OuterReference
+        && accepted proofs.FilterPredicate.Subquery
+        && accepted proofs.FilterPredicate.WindowFunction
+
+    let private proveFilterDocumentWhenRequired capabilityMessage expressionProofs document =
         match document.Statement with
         | QueryStatement query ->
             proveFilterQuery capabilityMessage expressionProofs query
@@ -365,6 +384,10 @@ module internal RewriteCapabilityValidation =
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
                 mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
+
+    let proveFilterDocument capabilityMessage expressionProofs document =
+        if not (allFilterCapabilitiesProven expressionProofs) then
+            proveFilterDocumentWhenRequired capabilityMessage expressionProofs document
 
     // Oracle CASE-based null-safe lowering may evaluate operands more
     // than once. Reject any unproven/volatile construct, but traverse
