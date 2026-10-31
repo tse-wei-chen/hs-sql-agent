@@ -322,7 +322,9 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
             });
             var committed = await runtime.RunAsync(Provider(), fixture.ConnectionString,
                 sql, Actor(), previewOnly: false, approval, ct);
-            Assert.Equal(DdlRuntimeStatus.Committed, committed.Status);
+            Assert.True(committed.Status == DdlRuntimeStatus.Committed,
+                "Dependent chain should Commit, actual " + committed.Status
+                + " (" + committed.ErrorCode + "): " + committed.Message);
             Assert.True(committed.CommitConfirmed);
             Assert.Equal(1, approvals);
             Assert.True(await ExistsAsync(schema, "pipeline"));
