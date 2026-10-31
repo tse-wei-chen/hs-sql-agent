@@ -54,6 +54,24 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Explicit file-backed SQLite-only DDL Host. Shares only the existing
+    /// DDL approval interface and MCP tool; transactional semantics are
+    /// proven separately from PostgreSQL. Default runtime never registers it.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentSqliteDdl(
+        this IServiceCollection services, SqliteDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled
+            || !(options.AllowCreateTable || options.AllowAddColumn || options.AllowCreateIndex))
+            throw new ArgumentException("SQLite DDL requires Enabled=true and an explicit operation allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<SqliteDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)

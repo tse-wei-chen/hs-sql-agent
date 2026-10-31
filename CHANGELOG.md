@@ -68,6 +68,21 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   including `WHERE 1=1`, are denied unless full-table authority is explicit.
 - Compiler input/token resource ceilings reject previously accepted oversized SQL.
 
+### G4: SQLite native DDL and live transactional Host adapter
+
+- Fix the SQLite F# native `CREATE INDEX` renderer to place the `main`
+  qualifier on the index name, not the `ON` table (SQLite rejects
+  `CREATE INDEX idx ON main.table`). Validate against a real SQLite engine.
+- Add a separate, default-disabled, file-backed SQLite DDL Host adapter
+  reusing the existing `execute_ddl_sql` tool and independent
+  `IDdlApprovalProvider`. No additional MCP tools or inherited DML consent.
+- Enforce actual `main` file identity, schema cookie/physical SQL snapshot,
+  SQLite ASCII-NOCASE identifiers, BEGIN IMMEDIATE transaction freshness,
+  exact typed postconditions, explicit rollback and OutcomeUnknown reporting.
+- Exercise live CREATE TABLE, nullable ADD COLUMN, plain CREATE INDEX,
+  Preview, reject/forged approval, schema drift, case-conflict, and native
+  transaction rollback. SQL Server/Firebird DDL execution remain disabled.
+
 ### SQL compiler, DML integrity and reliability
 
 - Add opt-in schema-aware name/type proofing and six-provider native DML schema

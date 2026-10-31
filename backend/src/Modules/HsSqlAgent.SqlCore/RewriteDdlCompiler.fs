@@ -163,7 +163,15 @@ module internal RewriteDdlCompiler =
             DdlPrecondition.RequireTablePresentAndColumnAbsent,
             [column.Name], null, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false), [column]
         | CreateIndex(table, indexName, columns, false) ->
-            let sql = "CREATE INDEX " + q indexName + " ON " + qualified table
+            // SQLite: schema-qualified ON table is syntactically illegal.
+            // The index itself must carry the database schema; ON uses the
+            // unqualified table name from the same selected schema.
+            let indexIdentity, tableIdentity =
+                if options.TargetDialect = SqlAgentToolType.Sqlite
+                   && table.Parts.Count = 2 then
+                    q table.Parts.[0] + "." + q indexName, q table.Parts.[1]
+                else q indexName, qualified table
+            let sql = "CREATE INDEX " + indexIdentity + " ON " + tableIdentity
                       + " (" + (columns |> List.map q |> String.concat ", ") + ")"
             sql, table, DdlSchemaOperation.CreateIndex,
             DdlPrecondition.RequireTableAndColumnsPresentAndIndexAbsent,

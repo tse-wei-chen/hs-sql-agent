@@ -358,3 +358,47 @@ graph are not magically proven by the table-local metadata snapshot.
 The Host does not claim global cross-client atomic CAS, known lock duration
 or affected row counts; other database adapters require independent G4/G5
 transaction/capability proofs. SqlCore remains driver-free.
+
+## G4 SQLite — independent, file-backed transactional DDL adapter
+
+SQLite DDL shares **the same** existing `execute_ddl_sql` MCP tool and
+independent `IDdlApprovalProvider` interface, but **not** PostgreSQL's
+physical OID, schema-lock or runtime proof. It must be explicitly opted in:
+
+```csharp
+services.AddHsSqlAgentSqliteDdl(new SqliteDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowAddColumn = true,
+    AllowCreateIndex = true,
+    PolicyRevision = "sqlite-ddl-policy-2026-10"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Also grant execute_ddl_sql explicitly on the MCP access key.
+```
+
+Only **file-backed SQLite 3.35+**, no attached DB, no `:memory:`, no
+TEMP and **explicit `main.table`** target. The authenticated database
+identity must be the target's absolute file path; the public preview
+provides only its SHA-256 identity, schema cookie, typed columns/indexes
+and Before/ExpectedAfter. Qualified `CREATE INDEX` must render
+`CREATE INDEX "main"."index" ON "table" (...)` (SQLite forbids a
+schema-qualified ON table). No second parser and no user SQL execution.
+
+The SQLite-specific adapter checks file identity, `PRAGMA main.schema_version`,
+the complete target table SQL, table columns and physical index keys.
+It releases the preview connection before human approval, binds the
+physical snapshot and actor/policy into an expiring single-request
+fingerprint, then starts a **BEGIN IMMEDIATE** transactional writer
+reservation before rechecking metadata. Only the F# compiled command
+is executed, with expected schema-cookie delta and typed postcondition
+verification before COMMIT; failed or uncertain rollbacks are not
+reported as committed, and an unknown COMMIT is **OutcomeUnknown**.
+
+No DML permission or consent is inherited. Startup opt-in,
+`execute_ddl_sql` key grant, separate DDL approval provider and durable
+pre-execution audit are all required. Only the G1 additive operations
+are executable; unknown operations, expression/partial indexes,
+unmodeled virtual targets, schema drift and implicit name resolution
+fail closed. SQL Server and Firebird have NOT been enabled.
