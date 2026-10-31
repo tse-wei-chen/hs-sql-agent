@@ -803,16 +803,12 @@ module internal RewriteSchemaValidation =
     let verifyVirtualPrepared dialect
                               (projection: RewriteVirtualCatalogProjection.Projection)
                               (bound: BoundSql) =
-        let physical =
-            projection.Physical
-            |> List.map (fun (name, columns) ->
+        let normalizedNames relations =
+            relations |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
                 RewriteResourceBudget.checkpoint ()
-                name, columns |> List.map fst)
-        let viewNames =
-            projection.ReadableViews
-            |> List.map (fun (name, columns) ->
-                RewriteResourceBudget.checkpoint ()
-                name, columns |> List.map fst)
+                relation.Key, relation.Names)
+        let physical = normalizedNames projection.Physical
+        let viewNames = normalizedNames projection.ReadableViews
         let readable = physical @ viewNames
         if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
            || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
