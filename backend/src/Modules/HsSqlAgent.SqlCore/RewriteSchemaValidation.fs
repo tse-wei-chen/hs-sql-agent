@@ -797,7 +797,10 @@ module internal RewriteSchemaValidation =
         (createValidation ()) catalog (Bound.value bound)
         bound
 
-    let private verifyProjectedNameRows dialect physical readable (bound: BoundSql) =
+    let private verifyProjectedNameRows dialect
+                                        (physical: (string * string list) list)
+                                        (readable: (string * string list) list)
+                                        (bound: BoundSql) =
         if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
            || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
             invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
