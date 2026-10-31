@@ -51,7 +51,7 @@ public sealed partial class PostgresDdlRuntime
             plan = SqlCoreFacade.CompileDdlBatch(sql,
                 new DdlCompilationOptions(SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
             schema = plan.Plans[0].Changes[0].ObjectIdentity.Parts[0];
-            if (!_options.AllowedSchemas.Contains(schema)
+            if (!_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || schema is "pg_catalog" or "information_schema"
                 || schema.StartsWith("pg_temp", StringComparison.Ordinal))
                 return BatchRejected("ddl.schema_denied",
@@ -176,7 +176,7 @@ public sealed partial class PostgresDdlRuntime
                 return BatchRejected("ddl.approval_expired", "Batch approval expired.", preview);
             if (!_options.Enabled || !_options.AllowCreateTable || !_options.AllowCreateTableBatch
                 || !_options.AllowedBatchPrincipals.Contains(actor.PrincipalIdentity)
-                || !_options.AllowedSchemas.Contains(schema)
+                || !_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || policy != PolicyMaterial())
                 return BatchRejected("ddl.batch_policy_changed",
                     "DDL batch operation, principal allowlist or Host policy changed.", preview);
@@ -246,7 +246,9 @@ public sealed partial class PostgresDdlRuntime
                     || approvedPolicy != PolicyMaterial()
                     || !_options.Enabled || !_options.AllowCreateTable
                     || !_options.AllowCreateTableBatch
-                    || !_options.AllowedBatchPrincipals.Contains(actor.PrincipalIdentity))
+                    || !_options.AllowedBatchPrincipals.Contains(actor.PrincipalIdentity)
+                    || !_options.AllowedSchemas.Any(allowed =>
+                        String.Equals(allowed, old.SchemaName, StringComparison.Ordinal)))
                     throw new InvalidOperationException("Atomic batch precondition or policy drift.");
                 var denied = await VerifyPreconditionAsync(connection, transaction, fresh,
                     preview.Plan.Plans[i], cancellationToken);

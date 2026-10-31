@@ -161,7 +161,9 @@ public partial class SqlAgentTool
             {
                 await _auditService.WriteEventAsync(
                     "mcp.ddl.attempted",
-                    outcome?.Preview?.Before is { } target
+                    outcome?.BatchPreview is { } batch
+                        ? string.Join(",", batch.Before.Select(s => s.SchemaName + "." + s.TableName))
+                        : outcome?.Preview?.Before is { } target
                         ? target.SchemaName + "." + target.TableName
                         : sqliteOutcome?.Preview?.Before is { } sqlite
                             ? sqlite.SchemaName + "." + sqlite.TableName

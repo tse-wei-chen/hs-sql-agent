@@ -189,6 +189,71 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
     }
 
     [Fact]
+    public async Task RealConcurrentNameConflictDuringSecondNativeCreate_RollsBackFirst()
+    {
+        var schema = await SetupAsync();
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            var script = Script(schema, "a", "b");
+            // Rival session owns an uncommitted 'b' definition. In normal
+            // READ COMMITTED preview and precondition reads it remains absent,
+            // but native CREATE b must wait for rival DDL to COMMIT and fail.
+            await using var rival = new NpgsqlConnection(fixture.ConnectionString);
+            await rival.OpenAsync(ct);
+            await using var rivalTransaction = await rival.BeginTransactionAsync(ct);
+            var held = false;
+            var release = Task.CompletedTask;
+            var approval = new Approver(async (request, token) =>
+            {
+                await using var rivalCreate = new NpgsqlCommand(
+                    $"CREATE TABLE \"{schema}\".\"b\" (rival TEXT)", rival, rivalTransaction);
+                await rivalCreate.ExecuteNonQueryAsync(token);
+                held = true;
+
+                // Release exactly when PostgreSQL reports the Host blocked on
+                // the native CREATE b conflict. Not an arbitrary timing race.
+                release = Task.Run(async () =>
+                {
+                    await using var monitor = new NpgsqlConnection(fixture.ConnectionString);
+                    await monitor.OpenAsync(ct);
+                    for (var i = 0; i < 100; i++)
+                    {
+                        await using var probe = new NpgsqlCommand(
+                            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity "
+                            + "WHERE datname=current_database() AND pid<>pg_backend_pid() "
+                            + "AND state='active' AND wait_event_type='Lock' "
+                            + "AND query LIKE @target)", monitor);
+                        probe.Parameters.AddWithValue("target",
+                            "%CREATE TABLE%\"" + schema + "\".\"b\"%");
+                        if ((bool)(await probe.ExecuteScalarAsync(ct))!)
+                        {
+                            await rivalTransaction.CommitAsync(ct);
+                            return;
+                        }
+                        await Task.Delay(100, ct);
+                    }
+                    // If the Host never reaches native statement 2, abort the
+                    // rival transaction so cleanup is never left blocked.
+                    await rivalTransaction.RollbackAsync(CancellationToken.None);
+                    throw new TimeoutException(
+                        "Host never reached the expected PostgreSQL native DDL lock race.");
+                }, ct);
+                return new DdlApprovalDecision(DdlApprovalState.Approved,
+                    request.RequestId, request.ApprovalFingerprint, "human:reviewer");
+            });
+            var result = await Runtime(schema).RunAsync(Provider(), fixture.ConnectionString,
+                script, Actor(), false, approval, ct);
+            if (held) await release;
+            Assert.Equal(DdlRuntimeStatus.Failed, result.Status);
+            Assert.Equal("ddl.batch_rolled_back", result.ErrorCode);
+            Assert.False(await ExistsAsync(schema, "a"));
+            Assert.True(await ExistsAsync(schema, "b"));
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
+    [Fact]
     public async Task FailedSecondStatementRollsBackFirstAtDatabaseTransactionBoundary()
     {
         var schema = await SetupAsync();
