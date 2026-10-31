@@ -139,9 +139,11 @@ public sealed class OracleDdlLiveTests
 
             var committed = await runtime.RunAsync(provider, cs, before, actor,
                 false, Decision(DdlApprovalState.Approved), ct);
+            var physicalFailureDetail = committed.Status == DdlRuntimeStatus.Committed
+                ? string.Empty : " | POSTCONDITION: " + await ReadOnlyCreatedTableMetadata(db, name, ct);
             Assert.True(committed.Status == DdlRuntimeStatus.Committed,
-                "Expected Committed, got " + committed.Status + " (" + committed.ErrorCode + "): " + committed.Message
-                + " | POSTCONDITION: " + await ReadOnlyCreatedTableMetadata(db, name, ct));
+                "Expected Committed, got " + committed.Status + " (" + committed.ErrorCode + "): "
+                + committed.Message + physicalFailureDetail);
             Assert.True(committed.CommitConfirmed);
             Assert.Equal(1, Convert.ToInt32(await Scalar(db,
                 "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + name + "'", ct)));
