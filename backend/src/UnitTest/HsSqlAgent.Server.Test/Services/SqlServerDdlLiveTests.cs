@@ -139,7 +139,9 @@ public sealed class SqlCoreSqlServerDdlHostLiveTests
 
             var committed = await runtime.RunAsync(provider, target, sql,
                 actor, false, Approve(), token);
-            Assert.Equal(DdlRuntimeStatus.Committed, committed.Status);
+            Assert.True(committed.Status == DdlRuntimeStatus.Committed,
+                "Expected Committed, got " + committed.Status + " (code="
+                + committed.ErrorCode + "): " + committed.Message);
             Assert.True(committed.CommitConfirmed);
             await using (var verify = new SqlConnection(target))
             {
