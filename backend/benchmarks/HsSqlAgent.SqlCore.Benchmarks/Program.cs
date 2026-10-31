@@ -36,7 +36,7 @@ if (scriptMode)
             workload.Sql, provider, SqlCatalogState.KnownEmpty());
         string Signature(SqlScriptAnalysisResult analysis) => JsonSerializer.Serialize(
             analysis.Statements.Select(statement => new {
-                statement.Syntax.Kind, statement.Syntax.Status, statement.Status,
+                statement.Syntax.Kind, ParseStatus = statement.Syntax.Status, statement.Status,
                 statement.CatalogBinding, statement.NameBinding, statement.TypeBinding,
                 statement.Certainty, statement.EffectCoverage,
                 Diagnostics = statement.Diagnostics.Select(d => d.Code).ToArray(),
@@ -73,15 +73,15 @@ if (scriptMode)
             MeanAllocatedBytes = Math.Round(allocated.Average(), 1)
         });
     }
-    var report = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
+    var scriptReport = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
         new JsonSerializerOptions { WriteIndented = true });
     if (options.Output is { } destination)
     {
         var full = Path.GetFullPath(destination);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, report);
+        File.WriteAllText(full, scriptReport);
     }
-    else Console.WriteLine(report);
+    else Console.WriteLine(scriptReport);
     return;
 }
 var cases = new[]
