@@ -23,6 +23,15 @@ public sealed class OracleDdlRuntime(
 {
     private readonly OracleDdlExecutionOptions _options = options ?? new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+
+    // Only stable proof stages and Oracle numeric codes leave this boundary;
+    // never surface driver messages, SQL, connection strings, DBIDs or GUIDs.
+    private sealed class PhysicalProofFailure(string stage, string kind, Exception inner)
+        : Exception("Oracle metadata stage not proven.", inner)
+    {
+        public string Stage { get; } = stage;
+        public string Kind { get; } = kind;
+    }
     public bool Enabled => _options.Enabled;
 
     public async Task<OracleDdlRuntimeResult> RunAsync(
@@ -170,6 +179,12 @@ public sealed class OracleDdlRuntime(
             return Deny("ddl.cancelled_before_execution",
                 "Oracle DDL cancelled before native execution.");
         }
+        catch (PhysicalProofFailure ex)
+        {
+            return Deny("ddl.preview_failed",
+                "Oracle PDB identity or metadata unproven (stage: " + ex.Stage
+                + ", kind: " + ex.Kind + ").");
+        }
         catch (Exception)
         {
             return Deny("ddl.preview_failed",
@@ -255,6 +270,9 @@ public sealed class OracleDdlRuntime(
     private async Task<OracleDdlPhysicalSnapshot> SnapshotAsync(
         DbConnection connection, string table, CancellationToken token)
     {
+        var stage = "session";
+        try
+        {
         string dbName, dbUnique, pdb, schema, role, service, version;
         string cdbId, pdbId, guid;
         await using (var command = Command(connection,
@@ -283,6 +301,7 @@ public sealed class OracleDdlRuntime(
                 throw new InvalidOperationException("Oracle PDB, schema or role is not proven.");
         }
 
+        stage = "version";
         // The sole supported executable version is Oracle Database 23.26
         // (marketed as 26ai), not Oracle 19c or an arbitrary compatible dialect.
         await using (var command = Command(connection,
@@ -296,6 +315,7 @@ public sealed class OracleDdlRuntime(
                 throw new InvalidOperationException("Oracle 26ai engine version proof missing.");
         }
 
+        stage = "cdb";
         await using (var command = Command(connection,
             "SELECT TO_CHAR(DBID) FROM V$DATABASE"))
         {
@@ -304,6 +324,7 @@ public sealed class OracleDdlRuntime(
             if (string.IsNullOrWhiteSpace(cdbId))
                 throw new InvalidOperationException("Oracle root database DBID unproven.");
         }
+        stage = "pdb";
         await using (var command = Command(connection,
             "SELECT TO_CHAR(DBID), RAWTOHEX(GUID), OPEN_MODE FROM V$PDBS "
             + "WHERE CON_ID=TO_NUMBER(SYS_CONTEXT('USERENV','CON_ID'))"))
@@ -320,6 +341,7 @@ public sealed class OracleDdlRuntime(
                 throw new InvalidOperationException("Ambiguous Oracle PDB identity.");
         }
 
+        stage = "ddl-triggers";
         // Missing dictionary grants must cause a hard failure; ALL_TRIGGERS
         // does not prove absence of database-scoped triggers owned by others.
         await using (var command = Command(connection,
@@ -334,6 +356,7 @@ public sealed class OracleDdlRuntime(
                 throw new InvalidOperationException("Enabled Oracle DDL triggers are unsupported.");
         }
 
+        stage = "objects";
         bool exists = false;
         await using (var command = Command(connection,
             "SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME=:table",
@@ -349,6 +372,7 @@ public sealed class OracleDdlRuntime(
             }
         }
 
+        stage = "columns";
         var columns = new List<DdlPhysicalColumn>();
         if (exists)
         {
@@ -399,6 +423,7 @@ public sealed class OracleDdlRuntime(
                 }
             }
         }
+        stage = "fingerprint";
         var physical = Digest(JsonSerializer.Serialize(new
         {
             dbName, dbUnique, pdb, schema, role, service, version, cdbId, pdbId, guid
@@ -406,6 +431,13 @@ public sealed class OracleDdlRuntime(
         var fp = Digest(JsonSerializer.Serialize(new { physical, table, exists, columns }));
         return new(physical, pdb, schema, table, Digest(schema), exists,
             columns.AsReadOnly(), fp);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            var kind = ex is OracleException ora ? "ORA-" + ora.Number.ToString(CultureInfo.InvariantCulture)
+                : ex.GetType().Name;
+            throw new PhysicalProofFailure(stage, kind, ex);
+        }
     }
 
     internal static bool IsProvenOracle26Ai(string? fullVersion)
