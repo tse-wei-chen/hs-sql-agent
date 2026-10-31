@@ -85,6 +85,29 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   rejected/forged approval, nonempty and concurrent inserts, dependent
   views, exact absence and independent transactional rollback.
 
+### G6 S16: PostgreSQL atomic CREATE-only DDL Batch
+
+- Introduce an independent, **default-denied** PostgreSQL 12+ whole-batch
+  execution boundary on the existing `execute_ddl_sql` tool. A caller must
+  explicitly opt into `AllowCreateTableBatch`, list the authenticated MCP
+  key under `AllowedBatchPrincipals`, grant the existing DDL tool, and use
+  the independent `IDdlApprovalProvider`.
+- Reuse the F# Script lexer and single-statement Schema Compiler to compile
+  **2–4 independent schema-qualified CREATE TABLE statements** into one
+  ordered immutable plan fingerprint. Preview remains non-authoritative and
+  does not write. Exactly one approval binds every native SQL command,
+  source order, database/cluster/schema identity, fresh physical absence,
+  principal, policy revision, expiration and a one-use request nonce.
+- A fresh PostgreSQL transaction takes cooperative advisory locks in
+  deterministic order, rechecks all physical preconditions, runs only
+  closed compiled commands and verifies every typed postcondition before
+  COMMIT. Confirmed rollback prevents partial application. Uncertain COMMIT
+  or rollback is `outcome_unknown` and is never automatically retried.
+- Cross-statement dependencies, ALTER, DROP, mixing query/DML/transaction
+  statements, five other provider batches and MySQL/Oracle implicit-commit
+  partial-outcome modeling remain **unsupported and rejected**. This is
+  a proven transactional subset, **not** general multi-DDL execution.
+
 ### PostgreSQL old-worker cutover verification
 
 - Introduce a fail-closed, read-only PostgreSQL old-role verifier that

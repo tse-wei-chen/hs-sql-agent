@@ -645,9 +645,73 @@ commits. A confirmed rollback prevents reported success. Lost COMMIT
 or rollback outcomes are `outcome_unknown`; **never retry automatically**.
 The risk warning explicitly states that after COMMIT the schema
 definition is permanently deleted. No nonempty tables, CASCADE,
-`IF EXISTS`, multi-table DROP, MySQL/Oracle DROP or DDL batch are enabled.
+`IF EXISTS`, multi-table DROP, or MySQL/Oracle DROP are enabled.
 
 The four default read-only MCP tools remain selected. DML and DDL
 remain unselected by default. Rollback of the feature switch means
 disabling `AllowDropEmptyTable`; it does not restore a table already
 committed as deleted.
+
+## G6 S16 — PostgreSQL atomic 2–4 statement CREATE TABLE Batch (opt-in)
+
+The existing `execute_ddl_sql` MCP tool now recognizes an intentionally
+limited **single-schema PostgreSQL atomic batch**: 2–4 independently
+compiled `CREATE TABLE schema.name (…)` statements, each with a different
+table name. There are **no cross-statement dependencies** in this first
+proven subset. No new MCP tools, SQL parsers, DML approval or inferred
+permissions are introduced. The F# batch plan is not a promise of
+atomicity until PostgreSQL actually commits the transaction.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowCreateTableBatch = true,  // false by default, distinct from single DDL
+    AllowedBatchPrincipals = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "mcp-key:123" // authenticated MCP key ID, not caller SQL
+    },
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "staging_cleanup"
+    },
+    PolicyRevision = "postgres-g6-atomic-batch-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Also separately grant execute_ddl_sql to the designated MCP access key.
+// Do not select DML/DDL tools by default.
+```
+
+Example input for the **same existing** `execute_ddl_sql` tool:
+
+```sql
+CREATE TABLE staging_cleanup.import_a (id INTEGER NOT NULL);
+CREATE TABLE staging_cleanup.import_b (id INTEGER NOT NULL);
+```
+
+`previewOnly=true` returns the ordered compiled SQL statements, one
+batch plan fingerprint, every physical Before observation and every
+hypothetical After plus a human-readable whole-batch diff. Preview
+never executes SQL or obtains approval. On `previewOnly=false`, the
+Host first requires the **batch-only key allowlist**, then one independent
+human approval bound to the **entire ordered plan**. A new PostgreSQL
+connection rechecks the original server, schema identity, object absence,
+approval expiry and policy. Every compiled native CREATE and its physical
+postcondition execute under **one PostgreSQL transaction**; the Host
+confirms every final table before COMMIT. A confirmed rollback restores
+the state when execution fails. A lost COMMIT or uncertain rollback
+returns `outcome_unknown`, not a false success/failure, and must **never
+be retried automatically**.
+
+Cross-schema targets, repeated table names, statement counts outside
+2–4, ALTER/INDEX/DROP, dependencies between statements, data-writing
+CTAS, DML, `GO` and other Provider DDL batches remain blocked. In
+particular, MySQL and Oracle **implicit commits prohibit claiming this
+PostgreSQL atomic batch contract**. This Host opt-in does not change
+the four default read-only tool selections or the default-unselected
+DML/DDL choices. Disable `AllowCreateTableBatch` to stop *future*
+batches; already-committed schema changes are not undone.
