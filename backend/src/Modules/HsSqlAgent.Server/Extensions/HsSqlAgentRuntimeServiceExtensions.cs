@@ -89,6 +89,24 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Explicit Firebird 5 CREATE TABLE-only Host. A real physical GUID allowlist,
+    /// independent human approval and per-key execute_ddl_sql grant are mandatory.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentFirebirdDdl(
+        this IServiceCollection services, FirebirdDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable
+            || options.AllowedDatabaseGuids.Count == 0)
+            throw new ArgumentException(
+                "Firebird DDL requires Enabled=true, CREATE TABLE opt-in and physical GUID allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<FirebirdDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)
