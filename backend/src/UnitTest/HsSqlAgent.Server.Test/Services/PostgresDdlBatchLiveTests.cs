@@ -41,12 +41,16 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
         new Approver((request, _) => ValueTask.FromResult(
             new DdlApprovalDecision(state, request.RequestId,
                 request.ApprovalFingerprint, "human:independent-reviewer")));
-    private static PostgresDdlRuntime Runtime(string schema, bool batchEnabled = true) =>
+    private static PostgresDdlRuntime Runtime(string schema, bool batchEnabled = true,
+        bool dependentEnabled = false) =>
         new(new PostgresDdlExecutionOptions
         {
             Enabled = true,
             AllowCreateTable = true,
             AllowCreateTableBatch = batchEnabled,
+            AllowDependentDdlBatch = dependentEnabled,
+            AllowAddColumn = dependentEnabled,
+            AllowCreateIndex = dependentEnabled,
             AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { schema },
             AllowedBatchPrincipals = new HashSet<string>(StringComparer.Ordinal) { "mcp-key:777" },
             PolicyRevision = "g6-s16-atomic-test"
@@ -277,4 +281,145 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
         }
         finally { await CleanupAsync(schema); }
     }
+
+    private static string DependentScript(string schema) =>
+        $"CREATE TABLE {schema}.pipeline (id INTEGER NOT NULL);" +
+        $" ALTER TABLE {schema}.pipeline ADD COLUMN extra INTEGER NULL;" +
+        $" CREATE INDEX ix_pipeline_extra ON {schema}.pipeline(extra)";
+
+    [Fact]
+    public async Task DependentCreateThenAddThenIndex_OneApprovalOnePhysicalAtomicCommit()
+    {
+        var schema = await SetupAsync();
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            var sql = DependentScript(schema);
+            var runtime = Runtime(schema, dependentEnabled: true);
+            var preview = await runtime.RunAsync(Provider(), fixture.ConnectionString,
+                sql, Actor(), previewOnly: true, approvalProvider: null, ct);
+            Assert.Equal(DdlRuntimeStatus.Preview, preview.Status);
+            Assert.NotNull(preview.BatchPreview);
+            Assert.Equal(HsSqlAgent.SqlCore.Ddl.DdlBatchTopology.DependentCreateChain,
+                preview.BatchPreview.Plan.Topology);
+            Assert.Equal(3, preview.BatchPreview.Steps.Count);
+            Assert.Equal(1, preview.BatchPreview.ExpectedColumns[0].Count);
+            Assert.Equal(2, preview.BatchPreview.ExpectedColumns[1].Count);
+            Assert.Equal(2, preview.BatchPreview.ExpectedColumns[2].Count);
+            Assert.Contains("hypothetical", preview.BatchPreview.HumanReadableDiff,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.False(await ExistsAsync(schema, "pipeline"));
+
+            var approvals = 0;
+            var approval = new Approver((request, _) =>
+            {
+                approvals++;
+                Assert.Contains("ADD COLUMN", request.HumanReadableDiff);
+                Assert.Contains("CREATE INDEX", request.HumanReadableDiff);
+                return ValueTask.FromResult(new DdlApprovalDecision(
+                    DdlApprovalState.Approved, request.RequestId,
+                    request.ApprovalFingerprint, "human:separate-reviewer"));
+            });
+            var committed = await runtime.RunAsync(Provider(), fixture.ConnectionString,
+                sql, Actor(), previewOnly: false, approval, ct);
+            Assert.Equal(DdlRuntimeStatus.Committed, committed.Status);
+            Assert.True(committed.CommitConfirmed);
+            Assert.Equal(1, approvals);
+            Assert.True(await ExistsAsync(schema, "pipeline"));
+
+            await using var c = new NpgsqlConnection(fixture.ConnectionString);
+            await c.OpenAsync(ct);
+            await using var cmd = new NpgsqlCommand(
+                "SELECT (SELECT count(*) FROM pg_catalog.pg_attribute a "
+                + "JOIN pg_catalog.pg_class c ON c.oid=a.attrelid "
+                + "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                + "WHERE n.nspname=@schema AND c.relname='pipeline' AND a.attnum>0 "
+                + "AND NOT a.attisdropped) = 2 "
+                + "AND EXISTS (SELECT 1 FROM pg_catalog.pg_class c "
+                + "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                + "WHERE n.nspname=@schema AND c.relname='ix_pipeline_extra' "
+                + "AND c.relkind='i')", c);
+            cmd.Parameters.AddWithValue("schema", schema);
+            Assert.True((bool)(await cmd.ExecuteScalarAsync(ct))!);
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
+    [Fact]
+    public async Task DependentBatchRequiresExtraGateAndIndependentApproval()
+    {
+        var schema = await SetupAsync();
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            var sql = DependentScript(schema);
+            var off = await Runtime(schema).RunAsync(Provider(), fixture.ConnectionString,
+                sql, Actor(), false, Decision(DdlApprovalState.Approved), ct);
+            Assert.Equal(DdlRuntimeStatus.Rejected, off.Status);
+            Assert.Equal("ddl.batch_dependency_disabled", off.ErrorCode);
+            var denied = await Runtime(schema, dependentEnabled: true).RunAsync(
+                Provider(), fixture.ConnectionString, sql, Actor(), false,
+                Decision(DdlApprovalState.Rejected), ct);
+            Assert.Equal(DdlRuntimeStatus.Rejected, denied.Status);
+            var forged = await Runtime(schema, dependentEnabled: true).RunAsync(
+                Provider(), fixture.ConnectionString, sql, Actor(), false,
+                new Approver((request, _) => ValueTask.FromResult(new DdlApprovalDecision(
+                    DdlApprovalState.Approved, request.RequestId, new string('F', 64),
+                    "human:reviewer"))), ct);
+            Assert.Equal(DdlRuntimeStatus.Rejected, forged.Status);
+            Assert.False(await ExistsAsync(schema, "pipeline"));
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
+    [Fact]
+    public async Task DependentBatchExternalSchemaDriftRejectsEntireChainWithoutWrite()
+    {
+        var schema = await SetupAsync();
+        try
+        {
+            var sql = DependentScript(schema);
+            var result = await Runtime(schema, dependentEnabled: true).RunAsync(
+                Provider(), fixture.ConnectionString, sql, Actor(), false,
+                new Approver(async (request, _) =>
+                {
+                    await CommandAsync("CREATE TABLE \"" + schema + "\".pipeline (outside TEXT)");
+                    return new DdlApprovalDecision(DdlApprovalState.Approved,
+                        request.RequestId, request.ApprovalFingerprint, "human:reviewer");
+                }), TestContext.Current.CancellationToken);
+            Assert.Equal(DdlRuntimeStatus.Rejected, result.Status);
+            Assert.True(await ExistsAsync(schema, "pipeline"));
+            await using var c = new NpgsqlConnection(fixture.ConnectionString);
+            await c.OpenAsync(TestContext.Current.CancellationToken);
+            await using var cmd = new NpgsqlCommand(
+                "SELECT COUNT(*) FROM pg_catalog.pg_attribute a "
+                + "JOIN pg_catalog.pg_class c ON c.oid=a.attrelid "
+                + "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                + "WHERE n.nspname=@schema AND c.relname='pipeline' AND a.attnum>0 "
+                + "AND NOT a.attisdropped", c);
+            cmd.Parameters.AddWithValue("schema", schema);
+            Assert.Equal(1L, (long)(await cmd.ExecuteScalarAsync(
+                TestContext.Current.CancellationToken))!);
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
+    [Fact]
+    public async Task DependentBatchExistingIndexNameNeverLeavesPartialSchema()
+    {
+        var schema = await SetupAsync();
+        try
+        {
+            await CommandAsync("CREATE TABLE \"" + schema + "\".other (id INTEGER)");
+            await CommandAsync("CREATE INDEX ix_pipeline_extra ON \"" + schema + "\".other(id)");
+            var result = await Runtime(schema, dependentEnabled: true).RunAsync(
+                Provider(), fixture.ConnectionString, DependentScript(schema),
+                Actor(), false, Decision(DdlApprovalState.Approved),
+                TestContext.Current.CancellationToken);
+            Assert.True(result.Status is DdlRuntimeStatus.Rejected or DdlRuntimeStatus.Failed);
+            Assert.False(await ExistsAsync(schema, "pipeline"));
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
 }
