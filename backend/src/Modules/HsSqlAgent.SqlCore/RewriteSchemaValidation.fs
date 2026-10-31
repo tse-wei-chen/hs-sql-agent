@@ -797,19 +797,7 @@ module internal RewriteSchemaValidation =
         (createValidation ()) catalog (Bound.value bound)
         bound
 
-    /// The Name proof is intentionally independent of TypeValidation. Only
-    /// immutable column labels/relations are shared; a validated name cannot
-    /// silently become an executable plan or an inferred type.
-    let verifyVirtualPrepared dialect
-                              (projection: RewriteVirtualCatalogProjection.Projection)
-                              (bound: BoundSql) =
-        let normalizedNames relations =
-            relations |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
-                RewriteResourceBudget.checkpoint ()
-                relation.Key, relation.Names)
-        let physical = normalizedNames projection.Physical
-        let viewNames = normalizedNames projection.ReadableViews
-        let readable = physical @ viewNames
+    let private verifyProjectedNameRows dialect physical readable (bound: BoundSql) =
         if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
            || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
             invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
@@ -821,7 +809,45 @@ module internal RewriteSchemaValidation =
         (createValidation ()) catalog (Bound.value bound)
         bound
 
-    /// Standalone internal entry point retains the same validation contract.
+    /// Name and Type validation stay independent. The shared projection
+    /// carries only canonical labels and immutable, untyped DDL column objects.
+    let verifyVirtualPrepared dialect
+                              (projection: RewriteVirtualCatalogProjection.Projection)
+                              (bound: BoundSql) =
+        let normalizedNames relations =
+            relations |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
+                RewriteResourceBudget.checkpoint ()
+                relation.Key, relation.Names)
+        let physical = normalizedNames projection.Physical
+        let readable = physical @ normalizedNames projection.ReadableViews
+        verifyProjectedNameRows dialect physical readable bound
+
+    /// Single-stage Name-only callers (notably SQLite's dynamic-affinity
+    /// guard) should not allocate shared Type-stage relation records at all.
+    /// This is the original strict projection with identical collision and
+    /// physical-vs-View binding checks, not an alternative name resolver.
     let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
-        RewriteVirtualCatalogProjection.prepare dialect state bound
-        |> fun projection -> verifyVirtualPrepared dialect projection bound
+        if not state.IsClosedWorld
+           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
+            invalidArg "state" "Strict catalog binding requires a complete known closed-world catalog."
+        let physical =
+            state.Tables
+            |> Seq.map (fun table ->
+                RewriteResourceBudget.checkpoint ()
+                table.QualifiedName.BinderKey,
+                (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
+            |> Seq.toList
+        let readable =
+            seq {
+                yield! physical
+                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+                for view in RewriteMutationAnalyzer.readableViews dialect state bound do
+                    RewriteResourceBudget.checkpoint ()
+                    yield view.QualifiedName.BinderKey,
+                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
+            }
+            |> Seq.toList
+        verifyProjectedNameRows dialect physical readable bound
