@@ -590,3 +590,52 @@ and requires live DBA reconciliation. The Host's cooperative session
 lock does **not** prevent unrelated Oracle clients from changing objects.
 Independent access-key grant, DDL approval, pre-execution durable audit,
 and DB permission checks are all required; install alone enables nothing.
+
+## G6 PostgreSQL — separately approved high-risk DROP of an empty table
+
+The existing `execute_ddl_sql` can now **optionally** accept a single
+`DROP TABLE schema.table RESTRICT`. This is a destructive operation and
+is **not enabled** by `AllowCreateTable`, ordinary DML permission,
+or a default DDL installation. Enable it only for an isolated, dedicated
+PostgreSQL 12+ application schema, and explicitly grant `execute_ddl_sql`
+to the intended MCP access key.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "staging_cleanup" },
+    AllowDropEmptyTable = true, // false by default, independent from additive DDL
+    PolicyRevision = "postgres-g6-drop-empty-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql to the desired MCP key.
+```
+
+**This is not a general DROP TABLE permission.** Preview and execution
+both demand an actual **empty** ordinary PostgreSQL table with 1–16
+INTEGER columns, direct owner privilege, no secondary indexes,
+constraints, dependent views, triggers, defaults/identity,
+inherited/partitioned tables, RLS, publication or unproven schema
+effects. Preview is read-only; any change in those properties before
+execution is rejected. The approved statement, schema identity,
+physical PostgreSQL cluster, actor, policy and short-lived nonce are
+bound to one independent human approval challenge.
+
+Execution acquires an `ACCESS EXCLUSIVE` lock inside a real
+PostgreSQL transaction, rechecks the exact table OID, permissions,
+dependencies and zero-row condition, issues the **F#-compiled native
+RESTRICT command only once**, checks that the table is absent, then
+commits. A confirmed rollback prevents reported success. Lost COMMIT
+or rollback outcomes are `outcome_unknown`; **never retry automatically**.
+The risk warning explicitly states that after COMMIT the schema
+definition is permanently deleted. No nonempty tables, CASCADE,
+`IF EXISTS`, multi-table DROP, MySQL/Oracle DROP or DDL batch are enabled.
+
+The four default read-only MCP tools remain selected. DML and DDL
+remain unselected by default. Rollback of the feature switch means
+disabling `AllowDropEmptyTable`; it does not restore a table already
+committed as deleted.
