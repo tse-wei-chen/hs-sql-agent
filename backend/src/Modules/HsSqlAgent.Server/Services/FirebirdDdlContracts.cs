@@ -22,7 +22,7 @@ public sealed class FirebirdDdlExecutionOptions
 /// connection credentials and raw system metadata are never sent to MCP clients.
 /// </summary>
 public sealed record FirebirdDdlPhysicalSnapshot(
-    string DatabaseGuid,
+    string DatabaseGuidFingerprint,
     string PhysicalIdentity,
     string PrincipalIdentity,
     string TableName,
