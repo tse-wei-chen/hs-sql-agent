@@ -9,9 +9,94 @@ using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Script;
 using HsSqlAgent.SqlCore.Models;
+using Microsoft.FSharp.Core;
+using System.Reflection;
 
 if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
+
+// Opt-in isolated lookup benchmark; the same reflection-bound method is used
+// against the exact base and PR assemblies, outside the timed loop. This
+// complements (not replaces) the full six-dialect Script acceptance corpus.
+if (args.Contains("--catalog-lookup", StringComparer.Ordinal))
+{
+    var lookupOptions = BenchmarkOptions.Parse(
+        args.Where(arg => arg != "--catalog-lookup").ToArray());
+    var module = typeof(SqlCoreFacade).Assembly.GetType(
+        "HsSqlAgent.SqlCore.Rewrite.RewriteCatalogModel", throwOnError: true)!;
+    var method = module.GetMethod("lookup",
+        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)!;
+    var lookup = method.CreateDelegate<
+        Func<SqlCatalogState, SqlCatalogQualifiedName, FSharpOption<SqlCatalogTable>>>();
+    var absent = SqlCoreFacade.AnalyzeScript(
+        "CREATE TABLE missing_target (id INTEGER);", SqlAgentToolType.Postgres,
+        SqlCatalogState.KnownEmpty()).FinalCatalog.Tables[0].QualifiedName;
+    var rows = new List<object>();
+    foreach (var count in new[] { 96, 256 })
+    {
+        var catalog = SqlCoreFacade.AnalyzeScript(
+            CatalogScript(count), SqlAgentToolType.Postgres,
+            SqlCatalogState.KnownEmpty()).FinalCatalog;
+        if (!catalog.IsClosedWorld || catalog.Tables.Count != count)
+            throw new InvalidOperationException("Incomplete Catalog lookup benchmark fixture.");
+        var names = catalog.Tables.Select(t => t.QualifiedName).ToArray();
+        var probes = Enumerable.Range(0, 512)
+            .Select(index => index % 5 == 0
+                ? absent : names[(index * 97 + index / 7) % count]).ToArray();
+        int Scan()
+        {
+            var found = 0;
+            foreach (var key in probes)
+            {
+                var result = lookup(catalog, key);
+                if (result is not null)
+                {
+                    if (result.Value.QualifiedName.Key != key.Key)
+                        throw new InvalidOperationException("Catalog lookup matched the wrong identity.");
+                    found++;
+                }
+            }
+            return found;
+        }
+        var expected = Scan();
+        if (expected != probes.Length - probes.Count(p => ReferenceEquals(p, absent)))
+            throw new InvalidOperationException("Catalog absent-name lookup is not exact.");
+        for (var i = 0; i < lookupOptions.Warmup; i++)
+            if (Scan() != expected) throw new InvalidOperationException("Lookup changed on warmup.");
+        var samples = new long[lookupOptions.Iterations];
+        var allocated = new long[lookupOptions.Iterations];
+        for (var i = 0; i < lookupOptions.Iterations; i++)
+        {
+            var startBytes = GC.GetAllocatedBytesForCurrentThread();
+            var started = Stopwatch.GetTimestamp();
+            var actual = Scan();
+            samples[i] = Stopwatch.GetTimestamp() - started;
+            allocated[i] = GC.GetAllocatedBytesForCurrentThread() - startBytes;
+            if (actual != expected) throw new InvalidOperationException("Catalog lookup drift.");
+        }
+        Array.Sort(samples);
+        rows.Add(new
+        {
+            Provider = "CatalogModel", Case = $"lookup-{count}",
+            OutputDigest = Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes($"{count}|{expected}|{catalog.Tables[0].QualifiedName.Key}"))),
+            MeanMicroseconds = Math.Round(samples.Average() * 1_000_000.0 / Stopwatch.Frequency, 3),
+            P95Microseconds = Math.Round(samples[(int)Math.Ceiling(samples.Length * .95) - 1]
+                * 1_000_000.0 / Stopwatch.Frequency, 3),
+            MeanAllocatedBytes = Math.Round(allocated.Average(), 1)
+        });
+    }
+    var json = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
+        new JsonSerializerOptions { WriteIndented = true });
+    if (lookupOptions.Output is { } destination)
+    {
+        var full = Path.GetFullPath(destination);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, json);
+    }
+    else Console.WriteLine(json);
+    return;
+}
 
 var catalogStress = args.Contains("--catalog-stress", StringComparer.Ordinal);
 var scriptMode = catalogStress || args.Contains("--script-analysis", StringComparer.Ordinal);
