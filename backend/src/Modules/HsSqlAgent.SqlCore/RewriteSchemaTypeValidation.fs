@@ -1082,7 +1082,9 @@ module internal RewriteSchemaTypeValidation =
         // The output of NameValidation was checked for collisions already.
         // Physical assignment targets remain distinct from readable Views.
         let physical = typed projection.Physical
-        let readable = typed projection.Readable
+        let readable =
+            Map.fold (fun result name columns -> Map.add name columns result)
+                physical (typed projection.ReadableViews)
         let virtualCatalog : Catalog =
             { Dialect = dialect; Tables = physical; ReadRelations = readable
               ProvenInsertColumnOrder = true }
