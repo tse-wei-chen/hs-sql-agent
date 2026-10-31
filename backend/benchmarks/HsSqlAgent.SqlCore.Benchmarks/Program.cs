@@ -8,6 +8,7 @@ using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Script;
+using HsSqlAgent.SqlCore.Models;
 
 if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
@@ -39,8 +40,13 @@ if (scriptMode)
     foreach (var provider in Enum.GetValues<SqlAgentToolType>())
     foreach (var workload in workloads)
     {
+        var profile = catalogStress && provider == SqlAgentToolType.MsSqlServer
+            ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
+            : null;
         SqlScriptAnalysisResult Analyze() => SqlCoreFacade.AnalyzeScript(
-            workload.Sql, provider, SqlCatalogState.KnownEmpty());
+            workload.Sql, provider, SqlCatalogState.KnownEmpty(), profile);
         string Signature(SqlScriptAnalysisResult analysis) => JsonSerializer.Serialize(
             analysis.Statements.Select(statement => new {
                 statement.Syntax.Kind, ParseStatus = statement.Syntax.Status, statement.Status,
