@@ -16,7 +16,7 @@ namespace HsSqlAgent.Server.Services;
 /// fallback, or shared DML/DDL transaction policy. Physical state is read on a
 /// live connection and rechecked under transaction locks before one statement.
 /// </summary>
-public sealed class PostgresDdlRuntime(
+public sealed partial class PostgresDdlRuntime(
     PostgresDdlExecutionOptions? options = null,
     TimeProvider? timeProvider = null)
 {
@@ -48,6 +48,29 @@ public sealed class PostgresDdlRuntime(
             return Rejected("ddl.context_missing", "A complete DDL SQL, database and actor identity is required.");
         if (!previewOnly && approvalProvider is null)
             return Rejected("ddl.approval_required", "An independent DDL approval provider is required.");
+
+        // Reuse the already-existing Script lexer to identify a true
+        // multi-statement SQL script. A trailing semicolon is NOT a batch.
+        // No manual SQL splitting, alternate parser or provider SQL fallback.
+        if (sql.Contains(';', StringComparison.Ordinal))
+        {
+            try
+            {
+                var syntax = SqlCoreFacade.ParseScript(sql, SqlAgentToolType.Postgres, cancellationToken);
+                if (syntax.Statements.Count > 1 || syntax.BatchCount > 1)
+                    return await RunBatchAsync(provider, connectionString, sql, actor,
+                        previewOnly, approvalProvider, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return Rejected("ddl.cancelled_before_execute", "DDL batch parsing was cancelled.");
+            }
+            catch (Exception)
+            {
+                return Rejected("ddl.batch_parse_denied",
+                    "DDL batch boundaries or syntax could not be proven.");
+            }
+        }
 
         CompiledDdlPlan plan;
         string schema, table;
@@ -318,6 +341,7 @@ public sealed class PostgresDdlRuntime(
     {
         if (_options.AllowedSchemas.Count == 0
             || (_options.AllowDropEmptyTable && _options.AllowedDropPrincipals.Count == 0)
+            || (_options.AllowCreateTableBatch && _options.AllowedBatchPrincipals.Count == 0)
             || _options.ApprovalLifetime <= TimeSpan.Zero
             || _options.ApprovalLifetime > TimeSpan.FromMinutes(5)
             || _options.ExecutionTimeout <= TimeSpan.Zero
@@ -334,6 +358,9 @@ public sealed class PostgresDdlRuntime(
             _options.AllowAddColumn,
             _options.AllowCreateIndex,
             _options.AllowDropEmptyTable,
+            _options.AllowCreateTableBatch,
+            batchPrincipals = _options.AllowedBatchPrincipals.OrderBy(
+                principal => principal, StringComparer.Ordinal).ToArray(),
             destructivePrincipals = _options.AllowedDropPrincipals.OrderBy(
                 principal => principal, StringComparer.Ordinal).ToArray(),
             _options.PolicyRevision,
