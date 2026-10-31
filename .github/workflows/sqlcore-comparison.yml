@@ -163,6 +163,51 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
               file.write(report)
           PY
+      - name: Compare exact Catalog lookup cost on 96 and 256 table snapshots
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --catalog-lookup --iterations 150 --warmup 20 --output "artifacts/catalog-lookup-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          measurements = {}
+          for side in ("base", "head"):
+              measurements[side] = []
+              for run in (1, 2, 3):
+                  data = json.loads((root / f"catalog-lookup-{side}-{run}.json").read_text())
+                  rows = {r["Case"]: r for r in data["results"]}
+                  assert set(rows) == {"lookup-96", "lookup-256"}, (side, run, set(rows))
+                  measurements[side].append(rows)
+          lines = ["### Catalog lookup microbenchmark (512 exact probes, median of 3 paired runs)",
+                   "| Catalog | Candidate/base allocation | Candidate/base mean time |",
+                   "|---|---:|---:|"]
+          for case in ("lookup-96", "lookup-256"):
+              previous = [item[case] for item in measurements["base"]]
+              candidate = [item[case] for item in measurements["head"]]
+              assert len({item["OutputDigest"] for item in previous + candidate}) == 1, case
+              ratios = []
+              for measure in ("MeanAllocatedBytes", "MeanMicroseconds"):
+                  base = statistics.median(item[measure] for item in previous)
+                  head = statistics.median(item[measure] for item in candidate)
+                  assert base > 0 and head >= 0, (case, measure, base, head)
+                  ratios.append(f"{head / base:.3f}x")
+              lines.append(f"| {case} tables | {ratios[0]} | {ratios[1]} |")
+          report = "\n".join(lines) + "\n"
+          print(report)
+          (root / "catalog-lookup-comparison.md").write_text(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(report)
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4
