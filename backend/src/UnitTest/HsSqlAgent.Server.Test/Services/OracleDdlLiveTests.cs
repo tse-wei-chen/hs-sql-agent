@@ -87,6 +87,24 @@ public sealed class OracleDdlLiveTests
         }
 
         var ct = TestContext.Current.CancellationToken;
+        var adminCs = Environment.GetEnvironmentVariable("TEST_ORACLE_ADMIN_CONNECTION");
+        if (string.IsNullOrWhiteSpace(adminCs))
+            throw new InvalidOperationException(
+                "Oracle G5 acceptance requires a privileged test-only metadata grant connection.");
+        // Exact dictionary visibility is mandatory: ALL_TRIGGERS cannot prove
+        // that the target PDB has no DDL triggers created by other principals.
+        await using (var admin = new OracleConnection(adminCs))
+        {
+            await admin.OpenAsync(ct);
+            foreach (var grant in new[]
+            {
+                "GRANT SELECT ON SYS.V_$DATABASE TO SQLCORE",
+                "GRANT SELECT ON SYS.V_$PDBS TO SQLCORE",
+                "GRANT SELECT ON SYS.DBA_TRIGGERS TO SQLCORE",
+                "GRANT EXECUTE ON SYS.DBMS_LOCK TO SQLCORE"
+            })
+                await Exec(admin, grant, ct);
+        }
         await using var db = new OracleConnection(cs);
         await db.OpenAsync(ct);
         var schema = (await Scalar(db, "SELECT SYS_CONTEXT('USERENV','SESSION_USER') FROM DUAL", ct))?.ToString();
