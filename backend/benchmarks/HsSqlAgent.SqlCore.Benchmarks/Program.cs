@@ -45,8 +45,13 @@ if (scriptMode)
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
             : null;
+        var script = catalogStress && provider == SqlAgentToolType.MsSqlServer
+            ? workload.Sql.Replace("CREATE TABLE t_", "CREATE TABLE dbo.t_", StringComparison.Ordinal)
+                .Replace("(id INTEGER)", "(id INT)", StringComparison.Ordinal)
+                .Replace("FROM t_000", "FROM dbo.t_000", StringComparison.Ordinal)
+            : workload.Sql;
         SqlScriptAnalysisResult Analyze() => SqlCoreFacade.AnalyzeScript(
-            workload.Sql, provider, SqlCatalogState.KnownEmpty(), profile);
+            script, provider, SqlCatalogState.KnownEmpty(), profile);
         string Signature(SqlScriptAnalysisResult analysis) => JsonSerializer.Serialize(
             analysis.Statements.Select(statement => new {
                 statement.Syntax.Kind, ParseStatus = statement.Syntax.Status, statement.Status,
