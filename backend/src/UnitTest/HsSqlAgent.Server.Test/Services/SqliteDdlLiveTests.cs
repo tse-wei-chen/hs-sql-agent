@@ -218,6 +218,63 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
         Assert.False(await HasTableAsync("widgets"));
     }
 
+    [Fact]
+    public async Task PhysicalObjectCollision_DiffersOnlyByAsciiCase_IsRejected()
+    {
+        await using (var db = new SqliteConnection(_connectionString))
+        {
+            await db.OpenAsync(TestContext.Current.CancellationToken);
+            await using var setup = db.CreateCommand();
+            setup.CommandText = "CREATE TABLE widgets (id INTEGER NOT NULL)";
+            await setup.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        var runtime = new SqliteDdlRuntime(Enabled());
+        var result = await runtime.RunAsync(_provider.Object, _connectionString,
+            "CREATE TABLE main.WIDGETS (id INTEGER)", Actor(), false, Approved(),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(DdlRuntimeStatus.Rejected, result.Status);
+        Assert.Equal("ddl.physical_precondition", result.ErrorCode);
+        var duplicateColumn = await runtime.RunAsync(_provider.Object, _connectionString,
+            "ALTER TABLE main.widgets ADD COLUMN ID INTEGER", Actor(), false, Approved(),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(DdlRuntimeStatus.Rejected, duplicateColumn.Status);
+        Assert.Equal("ddl.physical_precondition", duplicateColumn.ErrorCode);
+        Assert.True(await HasTableAsync("WIDGETS"));
+    }
+
+    [Fact]
+    public async Task NativeCompiledDdl_InBeginImmediateRollback_RestoresSchemaCookie()
+    {
+        var plan = SqlCoreFacade.CompileDdl(
+            "CREATE TABLE main.rollback_target (id INTEGER NOT NULL)",
+            new DdlCompilationOptions(SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite));
+        await using var db = new SqliteConnection(_connectionString);
+        await db.OpenAsync(TestContext.Current.CancellationToken);
+        async Task<long> CookieAsync()
+        {
+            await using var query = db.CreateCommand();
+            query.CommandText = "PRAGMA main.schema_version";
+            return Convert.ToInt64(
+                await query.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+        }
+        var before = await CookieAsync();
+        await using (var tx = await db.BeginTransactionAsync(
+            System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken))
+        {
+            await using var execute = db.CreateCommand();
+            execute.Transaction = tx;
+            execute.CommandText = plan.Command.Sql;
+            await execute.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            await tx.RollbackAsync(TestContext.Current.CancellationToken);
+        }
+        Assert.Equal(before, await CookieAsync());
+        await using var existence = db.CreateCommand();
+        existence.CommandText =
+            "SELECT COUNT(*) FROM main.sqlite_schema WHERE name='ROLLBACK_TARGET'";
+        Assert.Equal(0L, Convert.ToInt64(
+            await existence.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+    }
+
     [Theory]
     [InlineData("CREATE TABLE widgets (id INTEGER)")]
     [InlineData("DROP TABLE main.widgets")]
