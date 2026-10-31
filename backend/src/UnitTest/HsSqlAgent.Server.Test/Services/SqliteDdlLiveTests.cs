@@ -262,7 +262,7 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
             System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken))
         {
             await using var execute = db.CreateCommand();
-            execute.Transaction = tx;
+            execute.Transaction = (SqliteTransaction)tx;
             execute.CommandText = plan.Command.Sql;
             await execute.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
             await tx.RollbackAsync(TestContext.Current.CancellationToken);
