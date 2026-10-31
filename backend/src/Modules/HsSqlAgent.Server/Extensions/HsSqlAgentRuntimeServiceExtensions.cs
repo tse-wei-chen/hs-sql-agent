@@ -72,6 +72,23 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Explicit SQL Server 2022 CREATE TABLE-only Host opt-in. No automatic
+    /// registration, and no implicit inheritance from Query or DML grants.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentSqlServerDdl(
+        this IServiceCollection services, SqlServerDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable || options.AllowedSchemas.Count == 0)
+            throw new ArgumentException(
+                "SQL Server DDL requires Enabled=true, an explicit CREATE TABLE operation and a schema allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<SqlServerDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)
