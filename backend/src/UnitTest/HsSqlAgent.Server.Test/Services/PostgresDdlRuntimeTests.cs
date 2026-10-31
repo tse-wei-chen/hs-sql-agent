@@ -85,6 +85,33 @@ public sealed class PostgresDdlRuntimeTests
         provider.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public async Task OtherFiveProviders_CannotReachLiveDdlConnection(SqlAgentToolType providerType)
+    {
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(providerType);
+        var options = new PostgresDdlExecutionOptions
+        {
+            Enabled = true,
+            AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "app" },
+            AllowCreateTable = true
+        };
+        var result = await new PostgresDdlRuntime(options).RunAsync(
+            provider.Object, "Host=unused", "CREATE TABLE app.widgets (id INTEGER)",
+            new DdlActorContext("mcp-key:1", "db-management:2", "appdb"),
+            previewOnly: false, approvalProvider: null,
+            TestContext.Current.CancellationToken);
+        Assert.Equal(DdlRuntimeStatus.Rejected, result.Status);
+        Assert.Equal("ddl.provider_denied", result.ErrorCode);
+        provider.VerifyGet(x => x.Type, Times.Once);
+        provider.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public void ToolCatalog_DdlNeverSelectedAndExistingFourDefaultsUnchanged()
     {

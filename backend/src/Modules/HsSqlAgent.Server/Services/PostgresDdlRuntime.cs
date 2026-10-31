@@ -563,7 +563,9 @@ public sealed class PostgresDdlRuntime(
         var identity = string.Join("|", reader.GetString(1), reader.GetString(2),
             reader.GetString(3), reader.GetInt32(4).ToString(System.Globalization.CultureInfo.InvariantCulture),
             reader.GetString(6), reader.GetString(7));
-        return (identity, databaseName);
+        // Opaque 256-bit binding: do not expose server address, login or
+        // PostgreSQL cluster system identifier in MCP preview responses.
+        return (Digest(identity), databaseName);
     }
 
     private static async Task<object?> ScalarAsync(

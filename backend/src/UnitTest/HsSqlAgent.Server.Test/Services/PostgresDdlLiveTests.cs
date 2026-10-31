@@ -119,6 +119,9 @@ public sealed class PostgresDdlLiveTests(PostgresDdlLiveFixture fixture)
             Assert.Equal(DdlRuntimeStatus.Preview, preview.Status);
             Assert.False(preview.CommitConfirmed);
             Assert.Null(preview.Preview?.Before.TableOid);
+            Assert.NotNull(preview.Preview?.Before.SchemaOid);
+            Assert.Equal(64, preview.Preview!.Before.ServerIdentity.Length);
+            Assert.True(preview.Preview!.Before.ServerIdentity.All(Uri.IsHexDigit));
             Assert.False(await TableExistsAsync(schema));
 
             var rejected = await runtime.RunAsync(Provider(), fixture.ConnectionString,
