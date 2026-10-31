@@ -254,4 +254,47 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.Equal(3, result.Statements[6].CatalogAfter.Tables.Count);
         Assert.Equal(2, result.Statements[7].CatalogAfter.Tables.Count);
     }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void CatalogFindsFirstMiddleAndLastIdentityThroughOrderedMutations(SqlAgentToolType provider)
+    {
+        var prefix = provider == SqlAgentToolType.MsSqlServer ? "dbo." : "";
+        var columnType = provider == SqlAgentToolType.MsSqlServer ? "INT" : "INTEGER";
+        var statements = Enumerable.Range(0, 32).Reverse()
+            .Select(i => $"CREATE TABLE {prefix}t_{i:000} (id {columnType});")
+            .ToList();
+        statements.Add($"DROP TABLE {prefix}t_000;");
+        statements.Add($"DROP TABLE {prefix}t_016;");
+        statements.Add($"DROP TABLE {prefix}t_031;");
+        statements.Add($"CREATE TABLE {prefix}t_016 (id {columnType});");
+        var profile = provider == SqlAgentToolType.MsSqlServer
+            ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
+            : null;
+        var result = SqlCoreFacade.AnalyzeScript(
+            string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile);
+
+        Assert.Equal(36, result.Statements.Count);
+        Assert.All(result.Statements, statement =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
+        Assert.Equal(32, result.Statements[31].CatalogAfter.Tables.Count);
+        Assert.Equal(31, result.Statements[32].CatalogAfter.Tables.Count);
+        Assert.Equal(30, result.Statements[33].CatalogAfter.Tables.Count);
+        Assert.Equal(29, result.Statements[34].CatalogAfter.Tables.Count);
+        Assert.Equal(30, result.FinalCatalog.Tables.Count);
+        Assert.True(result.FinalCatalog.IsClosedWorld);
+        var names = result.FinalCatalog.Tables.Select(t => t.QualifiedName.Key).ToArray();
+        Assert.Equal(names.OrderBy(x => x, StringComparer.Ordinal), names);
+        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_000", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_031", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_016", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(32, result.Statements[31].CatalogAfter.Tables.Count);
+    }
 }
