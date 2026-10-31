@@ -8,32 +8,50 @@ using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Script;
+using HsSqlAgent.SqlCore.Models;
 
 if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
 
-var scriptMode = args.Contains("--script-analysis", StringComparer.Ordinal);
+var catalogStress = args.Contains("--catalog-stress", StringComparer.Ordinal);
+var scriptMode = catalogStress || args.Contains("--script-analysis", StringComparer.Ordinal);
 var options = BenchmarkOptions.Parse(scriptMode
-    ? args.Where(arg => arg != "--script-analysis").ToArray()
+    ? args.Where(arg => arg is not ("--script-analysis" or "--catalog-stress")).ToArray()
     : args);
 if (scriptMode)
 {
     // Opt-in same-runner base/head measurement, never part of SQL compiler timings.
     // Both revisions get this identical harness from the candidate checkout.
-    var workloads = new[]
-    {
-        (Name: "four-queries", Sql: "SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c; SELECT 4 AS d;"),
-        (Name: "catalog-dml-effects",
-            Sql: "CREATE TABLE users(id INTEGER, name VARCHAR(40));" +
-                 " SELECT id FROM users; INSERT INTO users(id) VALUES(1);" +
-                 " UPDATE users SET name='Ada' WHERE id=1; DELETE FROM users WHERE id=1;")
-    };
+    var workloads = catalogStress
+        ? new[]
+        {
+            (Name: "catalog-create-24", Sql: CatalogScript(24)),
+            (Name: "catalog-create-96", Sql: CatalogScript(96))
+        }
+        : new[]
+        {
+            (Name: "four-queries", Sql: "SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c; SELECT 4 AS d;"),
+            (Name: "catalog-dml-effects",
+                Sql: "CREATE TABLE users(id INTEGER, name VARCHAR(40));" +
+                     " SELECT id FROM users; INSERT INTO users(id) VALUES(1);" +
+                     " UPDATE users SET name='Ada' WHERE id=1; DELETE FROM users WHERE id=1;")
+        };
     var rows = new List<object>();
     foreach (var provider in Enum.GetValues<SqlAgentToolType>())
     foreach (var workload in workloads)
     {
+        var profile = catalogStress && provider == SqlAgentToolType.MsSqlServer
+            ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
+            : null;
+        var script = catalogStress && provider == SqlAgentToolType.MsSqlServer
+            ? workload.Sql.Replace("CREATE TABLE t_", "CREATE TABLE dbo.t_", StringComparison.Ordinal)
+                .Replace("(id INTEGER)", "(id INT)", StringComparison.Ordinal)
+                .Replace("FROM t_000", "FROM dbo.t_000", StringComparison.Ordinal)
+            : workload.Sql;
         SqlScriptAnalysisResult Analyze() => SqlCoreFacade.AnalyzeScript(
-            workload.Sql, provider, SqlCatalogState.KnownEmpty());
+            script, provider, SqlCatalogState.KnownEmpty(), profile);
         string Signature(SqlScriptAnalysisResult analysis) => JsonSerializer.Serialize(
             analysis.Statements.Select(statement => new {
                 statement.Syntax.Kind, ParseStatus = statement.Syntax.Status, statement.Status,
@@ -46,6 +64,16 @@ if (scriptMode)
                           Dependencies = e.Dependencies.ToArray() }).ToArray()
             }).ToArray());
         var expected = Analyze();
+        if (catalogStress)
+        {
+            var expectedTables = workload.Name == "catalog-create-24" ? 24 : 96;
+            if (!expected.FinalCatalog.IsClosedWorld
+                || expected.FinalCatalog.Tables.Count != expectedTables
+                || expected.Statements.Take(expectedTables).Any(statement =>
+                    statement.Status != SqlStatementAnalysisStatus.Analyzed))
+                throw new InvalidOperationException(
+                    $"Catalog stress workload is not a proven DDL transition: {provider}/{workload.Name}.");
+        }
         var digest = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(Signature(expected))));
         for (var warmup = 0; warmup < options.Warmup; warmup++) Analyze();
@@ -162,6 +190,11 @@ else
 {
     Console.WriteLine(output);
 }
+
+static string CatalogScript(int tableCount) =>
+    string.Join(" ", Enumerable.Range(0, tableCount).Reverse()
+        .Select(index => $"CREATE TABLE t_{index:000} (id INTEGER);")) +
+    " SELECT id FROM t_000;";
 
 static string NestedDerived(int depth)
 {

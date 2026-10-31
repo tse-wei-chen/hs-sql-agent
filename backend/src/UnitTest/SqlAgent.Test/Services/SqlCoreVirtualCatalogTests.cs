@@ -3,6 +3,7 @@ using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Script;
+using HsSqlAgent.SqlCore.Models;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -180,5 +181,77 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.Equal("OrderId", Assert.Single(Assert.Single(analysis.FinalCatalog.Tables).Columns).Name);
         Assert.Equal(statement.Syntax.Span.Start, Assert.Single(statement.Changes).Span.Start);
         Assert.True(statement.Syntax.Span.Start > 0);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void GrowingCatalogPreservesOrderedSnapshotsAndStructuredKeys(SqlAgentToolType provider)
+    {
+        // Reverse insertion order deliberately exercises the middle/front
+        // insertion path, not only the append-fast path.
+        var statements = Enumerable.Range(0, 32).Reverse()
+            .Select(index => provider == SqlAgentToolType.MsSqlServer
+                ? $"CREATE TABLE dbo.t_{index:000} (id INT);"
+                : $"CREATE TABLE t_{index:000} (id INTEGER);");
+        var profile = provider == SqlAgentToolType.MsSqlServer
+            ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
+            : null;
+        var result = SqlCoreFacade.AnalyzeScript(
+            string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile);
+
+        Assert.Equal(32, result.Statements.Count);
+        Assert.All(result.Statements, statement =>
+            Assert.Equal(SqlStatementAnalysisStatus.Analyzed, statement.Status));
+        Assert.True(result.FinalCatalog.IsClosedWorld);
+        Assert.Equal(SqlCatalogKnowledge.Known, result.FinalCatalog.Knowledge);
+        Assert.Equal(32, result.FinalCatalog.Tables.Count);
+
+        var keys = result.FinalCatalog.Tables.Select(table => table.QualifiedName.Key).ToArray();
+        Assert.Equal(keys.OrderBy(key => key, StringComparer.Ordinal), keys);
+
+        // Each statement must expose its own persistent pre/post Catalog.
+        for (var index = 0; index < result.Statements.Count; index++)
+        {
+            Assert.Equal(index, result.Statements[index].CatalogBefore.Tables.Count);
+            Assert.Equal(index + 1, result.Statements[index].CatalogAfter.Tables.Count);
+        }
+        Assert.Empty(result.Statements[0].CatalogBefore.Tables);
+        Assert.Single(result.Statements[0].CatalogAfter.Tables);
+
+        // A structured key is immutable and allocated only once per identity.
+        var identity = result.FinalCatalog.Tables[0].QualifiedName;
+        Assert.Same(identity.Key, identity.Key);
+    }
+
+    [Fact]
+    public void CatalogOrderedUpdatePreservesReplacementDeletionAndRollback()
+    {
+        var result = Analyze(
+            "CREATE TABLE z (id INTEGER);" +
+            "CREATE TABLE a (id INTEGER);" +
+            "CREATE TABLE m (id INTEGER);" +
+            "ALTER TABLE m ADD COLUMN note TEXT;" +
+            "DROP TABLE z;" +
+            "BEGIN; CREATE TABLE b (id INTEGER); ROLLBACK;" +
+            "CREATE TABLE b (id INTEGER);");
+        Assert.Empty(result.Diagnostics);
+        Assert.Equal(new[] { "a", "b", "m" },
+            result.FinalCatalog.Tables.Select(table => table.Name));
+        Assert.Equal(new[] { "id", "note" },
+            result.FinalCatalog.Tables.Single(table => table.Name == "m").Columns.Select(column => column.Name));
+        Assert.Equal(new[] { "a", "m", "z" },
+            result.Statements[3].CatalogAfter.Tables.Select(table => table.Name));
+        Assert.Equal(new[] { "a", "m" },
+            result.Statements[7].CatalogAfter.Tables.Select(table => table.Name));
+        Assert.Equal(2, result.Statements[5].CatalogAfter.Tables.Count);
+        Assert.Equal(3, result.Statements[6].CatalogAfter.Tables.Count);
+        Assert.Equal(2, result.Statements[7].CatalogAfter.Tables.Count);
     }
 }

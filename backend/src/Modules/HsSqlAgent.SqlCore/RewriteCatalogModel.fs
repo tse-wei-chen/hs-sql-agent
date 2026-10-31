@@ -55,16 +55,44 @@ module internal RewriteCatalogModel =
     let isKnownAbsent (state: SqlCatalogState) name =
         state.IsClosedWorld && (lookup state name).IsNone
 
+    /// Table snapshots are always sorted by the exact structured Key. Insert,
+    /// replace and remove at the ordered position instead of sorting the full
+    /// Catalog again after every DDL statement. The original snapshot is never
+    /// modified (transaction rollback and per-statement proof rely on this).
     let private replace (state: SqlCatalogState) (name: SqlCatalogQualifiedName) (replacement: SqlCatalogTable option) =
-        let retained =
-            state.Tables |> Seq.filter (fun t -> not (sameIdentity t.QualifiedName name)) |> Seq.toArray
-        let tables =
-            match replacement with
-            | Some value -> Array.append retained [| value |]
-            | None -> retained
-        Array.sortInPlaceWith (fun (left: SqlCatalogTable) (right: SqlCatalogTable) ->
-            StringComparer.Ordinal.Compare(left.QualifiedName.Key, right.QualifiedName.Key)) tables
-        SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(tables), state.Views)
+        let tables = state.Tables
+        let key = name.Key
+        let mutable first = 0
+        let mutable last = tables.Count
+        while first < last do
+            RewriteResourceBudget.checkpoint ()
+            let middle = first + (last - first) / 2
+            if StringComparer.Ordinal.Compare(tables.[middle].QualifiedName.Key, key) < 0 then
+                first <- middle + 1
+            else
+                last <- middle
+        let found =
+            first < tables.Count
+            && StringComparer.Ordinal.Equals(tables.[first].QualifiedName.Key, key)
+        let size =
+            tables.Count +
+            (match replacement, found with
+             | Some _, false -> 1
+             | None, true -> -1
+             | _ -> 0)
+        let ordered = Array.zeroCreate<SqlCatalogTable> size
+        let mutable output = 0
+        for i = 0 to tables.Count do
+            if i = first then
+                match replacement with
+                | Some table ->
+                    ordered.[output] <- table
+                    output <- output + 1
+                | None -> ()
+            if i < tables.Count && (not found || i <> first) then
+                ordered.[output] <- tables.[i]
+                output <- output + 1
+        SqlCatalogState(state.IsClosedWorld, Array.AsReadOnly(ordered), state.Views)
 
     let withViewSources (state: SqlCatalogState)
                         (identity: SqlCatalogQualifiedName)
