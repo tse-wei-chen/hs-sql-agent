@@ -31,14 +31,18 @@ type SqlCatalogOperation =
 /// part, while schema.table has two; neither can collide in Key.
 [<Sealed; AllowNullLiteral>]
 type SqlCatalogQualifiedName internal (parts: IReadOnlyList<string>) =
+    // This immutable identity is reused across every Catalog snapshot.
+    // Cache its exact, reversible key once instead of allocating new strings
+    // for every table lookup, dependency check and sorted update.
+    let key =
+        parts |> Seq.map (fun part -> string part.Length + ":" + part)
+              |> String.concat ""
     member _.Parts = parts
     member _.IsQualified = parts.Count > 1
     /// Display only: never use this to look up identity or schema dependencies.
     member _.DisplayName = String.Join(".", parts)
     /// Unambiguous, reversible key for structured identifier parts.
-    member _.Key =
-        parts |> Seq.map (fun part -> string part.Length + ":" + part)
-              |> String.concat ""
+    member _.Key = key
     /// Key shared by strict AST virtual-catalog binders. Dot/backslash
     /// escaping is applied per identifier part, never to a flattened string.
     member _.BinderKey =
