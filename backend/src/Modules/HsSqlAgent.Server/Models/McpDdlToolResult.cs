@@ -39,7 +39,18 @@ public sealed record McpDdlToolResult(
                 or DdlRuntimeStatus.OutcomeUnknown
                 ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
                 : null)
-        { SqliteBefore = preview?.Before };
+        {
+            // sqlite_schema.sql can contain private DEFAULT literals.
+            // Host binds its full bytes into the approval fingerprint, but
+            // MCP only receives structured physical metadata.
+            SqliteBefore = preview?.Before is { } before
+                ? before with
+                {
+                    TableDefinition = before.TableDefinition is null
+                        ? null : "<schema-sql-redacted>"
+                }
+                : null
+        };
     }
 
     public static McpDdlToolResult FromRuntime(DdlRuntimeResult result)

@@ -1,5 +1,6 @@
 using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Server.Services;
+using HsSqlAgent.Server.Models;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Ddl;
 using HsSqlAgent.SqlCore.Enums;
@@ -165,6 +166,9 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
             Assert.Equal(DdlRuntimeStatus.Committed, committed.Status);
             Assert.True(committed.CommitConfirmed);
             Assert.NotNull(committed.Preview);
+            var publicMcp = McpDdlToolResult.FromSqliteRuntime(committed);
+            if (committed.Preview!.Before.TableDefinition is not null)
+                Assert.Equal("<schema-sql-redacted>", publicMcp.SqliteBefore!.TableDefinition);
         }
         Assert.True(await HasTableAsync("widgets"));
         await using var db = new SqliteConnection(_connectionString);

@@ -38,7 +38,7 @@ public sealed class SqliteDdlRuntime(
         if (provider.Type != SqlAgentToolType.Sqlite)
             return Deny("ddl.provider_denied", "SQLite DDL requires the SQLite provider.");
         if (string.IsNullOrWhiteSpace(connectionString) || string.IsNullOrWhiteSpace(sql)
-            || actor is null || string.IsNullOrWhiteSpace(actor.PrincipalIdentity)
+            || actor?.PrincipalIdentity is null || string.IsNullOrWhiteSpace(actor.PrincipalIdentity)
             || string.IsNullOrWhiteSpace(actor.TargetIdentity)
             || string.IsNullOrWhiteSpace(actor.DatabaseName))
             return Deny("ddl.context_missing", "Complete SQL, physical DB and actor identity required.");
@@ -442,6 +442,8 @@ public sealed class SqliteDdlRuntime(
                             "Generated or hidden SQLite column metadata not supported.");
                     columns.Add(new DdlPhysicalColumn(rdr.GetString(0),
                         Normalize(rdr.GetString(1)), rdr.GetInt64(2) == 0));
+                    if (columns.Count > 128)
+                        throw new InvalidOperationException("SQLite live DDL column count exceeds the proven bound.");
                 }
             }
             var indexNames = new List<(string Name, bool Unique, bool Partial)>();
@@ -451,8 +453,12 @@ public sealed class SqliteDdlRuntime(
                 ("table", table)))
             await using (var rdr = await cmd.ExecuteReaderAsync(ct))
                 while (await rdr.ReadAsync(ct))
+                {
                     indexNames.Add((rdr.GetString(0), rdr.GetInt64(1) != 0,
                         rdr.GetInt64(3) != 0));
+                    if (indexNames.Count > 128)
+                        throw new InvalidOperationException("SQLite live DDL index metadata exceeds the proven bound.");
+                }
             foreach (var index in indexNames)
             {
                 if (index.Partial)
@@ -468,6 +474,8 @@ public sealed class SqliteDdlRuntime(
                             if (rdr.GetInt64(0) < 0 || rdr.IsDBNull(1))
                                 throw new InvalidOperationException("Expression SQLite indexes cannot be proven.");
                             keys.Add(rdr.GetString(1));
+                            if (keys.Count > 32)
+                                throw new InvalidOperationException("SQLite live DDL index key count exceeds the proven bound.");
                         }
                 if (keys.Count == 0)
                     throw new InvalidOperationException("SQLite physical index keys unknown.");
