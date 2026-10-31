@@ -119,6 +119,50 @@ jobs:
           with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as file:
               file.write(output + "\n")
           PY
+      - name: Compare dense Virtual Catalog updates with identical six-dialect Scripts
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --catalog-stress --iterations 16 --warmup 4 --output "artifacts/catalog-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          samples = {side: [] for side in ("base", "head")}
+          for side in samples:
+              for round in range(1, 4):
+                  data = json.loads((root / f"catalog-{side}-{round}.json").read_text())
+                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
+                  assert len(rows) == 12, (side, round, "Expected six dialects x two table counts")
+                  samples[side].append(rows)
+          lines = ["### Virtual Catalog stress comparison (median of three paired runs)",
+                   "| Dialect / workload | Candidate/base allocated | Candidate/base mean time |",
+                   "|---|---:|---:|"]
+          for key in sorted(samples["base"][0]):
+              old = [round[key] for round in samples["base"]]
+              new = [round[key] for round in samples["head"]]
+              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "Catalog analysis output changed")
+              ratios = []
+              for field in ("MeanAllocatedBytes", "MeanMicroseconds"):
+                  a = statistics.median(row[field] for row in old)
+                  b = statistics.median(row[field] for row in new)
+                  assert a > 0 and b > 0
+                  ratios.append(f"{b/a:.3f}x")
+              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
+          report = "\n".join(lines) + "\n"
+          print(report)
+          (root / "catalog-comparison.md").write_text(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
+              file.write(report)
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4
