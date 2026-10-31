@@ -115,7 +115,9 @@ public sealed class SqlCoreSqlServerDdlHostLiveTests
             var sql = "CREATE TABLE dbo.hsql_g4_widgets (id INT NOT NULL)";
             var preview = await runtime.RunAsync(provider, target, sql,
                 actor, true, null, token);
-            Assert.Equal(DdlRuntimeStatus.Preview, preview.Status);
+            Assert.True(preview.Status == DdlRuntimeStatus.Preview,
+                "Expected read-only Preview, got " + preview.Status
+                + " (code=" + preview.ErrorCode + "): " + preview.Message);
             Assert.False(preview.CommitConfirmed);
             await using (var verify = new SqlConnection(target))
             {
