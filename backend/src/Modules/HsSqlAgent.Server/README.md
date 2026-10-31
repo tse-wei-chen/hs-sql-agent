@@ -448,3 +448,49 @@ External schema changes or triggers without sufficient evidence fail closed.
 No public SQL Core DTO can authorize physical execution; the separate MCP
 grant, DDL approval, and durable pre-execution audit remain mandatory.
 The four default read-only tools remain selected; DML and DDL are not.
+
+## G4 Firebird 5 — CREATE TABLE-only transactional DDL (independent opt-in)
+
+The existing `execute_ddl_sql` tool also supports an **independently
+configured Firebird 5** Host. The first executable slice permits one
+**unqualified** `CREATE TABLE name (...)` with **1–16 simple INT/INTEGER
+columns**. No constraints, defaults, ALTER, INDEX, DROP, implicit schema,
+dynamic SQL, or batch statements are executable through this adapter.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+// Provision this GUID from an authenticated Firebird DBA session:
+// SELECT MON$GUID FROM MON$DATABASE
+services.AddHsSqlAgentFirebirdDdl(new FirebirdDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowedDatabaseGuids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "<approved-physical-firebird-database-guid>"
+    },
+    PolicyRevision = "firebird-ddl-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Grant execute_ddl_sql explicitly on the intended MCP access key.
+```
+
+The Host requires verifiable Firebird 5 engine identity, SQL dialect 3,
+physical `MON$GUID` / `MON$FILE_ID` / database creation metadata,
+the configured database GUID allowlist, reliable system catalog reads,
+an absent target, and **no active user database/DDL triggers**. Physical
+identifiers and paths are hashed before exposure to MCP. The preview is
+read-only and releases its connection before requesting a separately
+authorized human decision with an expiring, single-request fingerprint.
+
+A new connection starts a Firebird transaction, rechecks the same physical
+identity, policy, target absence and trigger boundary, executes **only**
+the compiled SqlCore native command, and compares exact physical columns
+before committing. A verified rollback cannot be reported as success;
+an uncertain COMMIT or rollback returns `outcome_unknown`, not an
+automatic retry. This does not promise a global compare-and-swap against
+unrelated Firebird DDL writers. The startup opt-in, explicit key grant,
+durable pre-execution audit, and independent `IDdlApprovalProvider`
+are mandatory. The four default read-only tools are unchanged; DML and
+DDL remain unselected.
