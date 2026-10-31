@@ -257,7 +257,11 @@ public sealed class SqlCoreAtomicMultiAlterTests
             create + "CREATE INDEX idx_users_id ON users (id,);",
             dialect, SqlCatalogState.KnownEmpty());
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, invalid.Statements[1].Status);
-        Assert.Empty(invalid.Statements[1].Changes);
+        // Unsupported syntax poisons the virtual Catalog with an explicit
+        // unknown effect; it must never pretend no schema change occurred.
+        var unknown = Assert.Single(invalid.Statements[1].Changes);
+        Assert.Equal(SqlCatalogOperation.Indeterminate, unknown.Operation);
+        Assert.Equal(SqlCatalogKnowledge.Unknown, unknown.Certainty);
         Assert.False(invalid.FinalCatalog.IsClosedWorld);
     }
 
