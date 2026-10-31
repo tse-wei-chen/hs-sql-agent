@@ -37,31 +37,79 @@ module internal RewriteCatalogModel =
             Some tables.[index]
         else None
 
+    /// Same exact ordinal structured-key contract as physical Table snapshots.
+    /// View replacement is a sorted insertion; no caller can insert an
+    /// unsorted View through the public Catalog API.
+    let private viewPosition (views: IReadOnlyList<SqlCatalogView>) (key: string) =
+        let mutable first = 0
+        let mutable last = views.Count
+        while first < last do
+            RewriteResourceBudget.checkpoint ()
+            let middle = first + (last - first) / 2
+            if StringComparer.Ordinal.Compare(views.[middle].QualifiedName.Key, key) < 0 then
+                first <- middle + 1
+            else
+                last <- middle
+        first
+
     let lookupView (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
-        state.Views |> Seq.tryFind (fun view ->
-            sameIdentity view.QualifiedName name)
+        let views = state.Views
+        let key = name.Key
+        let index = viewPosition views key
+        if index < views.Count
+           && StringComparer.Ordinal.Equals(views.[index].QualifiedName.Key, key) then
+            Some views.[index]
+        else None
 
     let dependentViews (state: SqlCatalogState) (targetKeys: Set<string>) =
-        // A least fixed-point closure over direct structured identities.
-        // Dependency cycles cannot be created through the supported
-        // CREATE VIEW grammar, but the closure remains cycle-safe.
-        let mutable known = targetKeys
-        let mutable discovered = Set.empty<string>
-        let discoveredInOrder = ResizeArray<SqlCatalogView>()
-        let mutable changed = true
-        while changed do
+        // A direct reverse-edge index eliminates repeated full-Catalog scans.
+        // The two sorted worklists retain EXACT original fixed-point scan
+        // order: when a newly found dependency is at a later View index it
+        // becomes reachable in the current pass; earlier indexes wait until
+        // the next pass. This preserves publicly observed CASCADE change order.
+        let views = state.Views
+        let reverse = Dictionary<string, ResizeArray<int>>(StringComparer.Ordinal)
+        for i = 0 to views.Count - 1 do
             RewriteResourceBudget.checkpoint ()
-            changed <- false
-            for view in state.Views do
+            for dependency in views.[i].Dependencies do
                 RewriteResourceBudget.checkpoint ()
-                if not (Set.contains view.QualifiedName.Key discovered)
-                   && (view.Dependencies |> Seq.exists (fun dependency ->
-                       Set.contains dependency.Key known)) then
-                    discovered <- Set.add view.QualifiedName.Key discovered
-                    discoveredInOrder.Add(view)
-                    known <- Set.add view.QualifiedName.Key known
-                    changed <- true
-        discoveredInOrder |> Seq.toList
+                match reverse.TryGetValue dependency.Key with
+                | true, indices -> indices.Add i
+                | false, _ ->
+                    let indices = ResizeArray<int>()
+                    indices.Add i
+                    reverse.Add(dependency.Key, indices)
+        let mutable current = SortedSet<int>()
+        let mutable following = SortedSet<int>()
+        let enqueue (frontier: SortedSet<int>) key =
+            match reverse.TryGetValue key with
+            | true, dependents ->
+                for index in dependents do
+                    RewriteResourceBudget.checkpoint ()
+                    frontier.Add index |> ignore
+            | false, _ -> ()
+        for key in targetKeys do enqueue current key
+        let discovered = HashSet<int>()
+        let ordered = ResizeArray<SqlCatalogView>()
+        while current.Count > 0 do
+            RewriteResourceBudget.checkpoint ()
+            let index = current.Min
+            current.Remove index |> ignore
+            if discovered.Add index then
+                let view = views.[index]
+                ordered.Add view
+                match reverse.TryGetValue view.QualifiedName.Key with
+                | true, dependents ->
+                    for dependent in dependents do
+                        RewriteResourceBudget.checkpoint ()
+                        if not (discovered.Contains dependent) then
+                            (if dependent > index then current else following).Add dependent
+                            |> ignore
+                | false, _ -> ()
+            if current.Count = 0 && following.Count > 0 then
+                current <- following
+                following <- SortedSet<int>()
+        ordered |> Seq.toList
 
     /// An unqualified name may resolve into an explicitly qualified table
     /// through a session search_path/default schema not modeled by Catalog.
@@ -123,13 +171,23 @@ module internal RewriteCatalogModel =
                            dependencies |> Array.AsReadOnly,
                            flattened |> Array.AsReadOnly,
                            exact |> Array.AsReadOnly)
+        let current = state.Views
+        let position = viewPosition current identity.Key
+        let exists = position < current.Count
+                     && StringComparer.Ordinal.Equals(
+                         current.[position].QualifiedName.Key, identity.Key)
         let next =
-            state.Views |> Seq.filter (fun existing ->
-                not (sameIdentity existing.QualifiedName identity))
-            |> Seq.append [view]
-            |> Seq.sortBy (fun item -> item.QualifiedName.Key)
-            |> Seq.toArray |> Array.AsReadOnly
-        SqlCatalogState(state.IsClosedWorld, state.Tables, next)
+            if exists then
+                Array.init current.Count (fun i ->
+                    RewriteResourceBudget.checkpoint ()
+                    if i = position then view else current.[i])
+            else
+                Array.init (current.Count + 1) (fun i ->
+                    RewriteResourceBudget.checkpoint ()
+                    if i < position then current.[i]
+                    elif i = position then view
+                    else current.[i - 1])
+        SqlCatalogState(state.IsClosedWorld, state.Tables, Array.AsReadOnly(next))
 
     /// Preserve existing direct-source usage without distributing flat
     /// column names over unrelated relations.
@@ -143,12 +201,22 @@ module internal RewriteCatalogModel =
                 SqlCatalogViewSourceBinding(relation, physicalNames))
         withViewSources state identity columns inputs
 
+    /// One immutable snapshot for an already authorized batch of View
+    /// removals. Proof/RESTRICT/cascade checks run against the ORIGINAL state;
+    /// this function only applies that proven set and never authorizes it.
+    let dropViews (state: SqlCatalogState) (keys: Set<string>) =
+        if Set.isEmpty keys then state
+        else
+            let next =
+                state.Views
+                |> Seq.filter (fun existing ->
+                    RewriteResourceBudget.checkpoint ()
+                    not (Set.contains existing.QualifiedName.Key keys))
+                |> Seq.toArray |> Array.AsReadOnly
+            SqlCatalogState(state.IsClosedWorld, state.Tables, next)
+
     let dropView (state: SqlCatalogState) (identity: SqlCatalogQualifiedName) =
-        let next =
-            state.Views |> Seq.filter (fun existing ->
-                not (sameIdentity existing.QualifiedName identity))
-            |> Seq.toArray |> Array.AsReadOnly
-        SqlCatalogState(state.IsClosedWorld, state.Tables, next)
+        dropViews state (Set.singleton identity.Key)
 
     let replaceTable state name columns (constraints: seq<SqlCatalogConstraint>) indexes =
         let cols = columns |> Seq.toArray |> Array.AsReadOnly
