@@ -97,6 +97,8 @@ public static class HsSqlAgentMcpServiceExtensions
                                     httpContext.RequestServices.GetService<PostgresDdlRuntime>() is { Enabled: true },
                                 string name when name.Equals("Sqlite", StringComparison.OrdinalIgnoreCase) =>
                                     httpContext.RequestServices.GetService<SqliteDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("MsSqlServer", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<SqlServerDdlRuntime>() is { Enabled: true },
                                 _ => false
                             };
                             if (!enabled || allowedNames is null
