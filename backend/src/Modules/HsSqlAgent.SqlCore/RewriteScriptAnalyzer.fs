@@ -1465,8 +1465,10 @@ module internal RewriteScriptAnalyzer =
                     let removal =
                         requested @ (if mode = Cascade then closure else [])
                     let next =
-                        removal |> List.fold (fun catalog view ->
-                            RewriteCatalogModel.dropView catalog view.QualifiedName) state
+                        removal
+                        |> List.map (fun view -> view.QualifiedName.Key)
+                        |> Set.ofList
+                        |> RewriteCatalogModel.dropViews state
                     let deltas =
                         removal |> List.map (fun view ->
                             changedExact syntax view.QualifiedName
@@ -1516,8 +1518,10 @@ module internal RewriteScriptAnalyzer =
                         let dropped =
                             view :: (dependencies |> List.map (fun d -> d.QualifiedName))
                         let next =
-                            dropped |> List.fold (fun catalog name ->
-                                RewriteCatalogModel.dropView catalog name) state
+                            dropped
+                            |> List.map (fun name -> name.Key)
+                            |> Set.ofList
+                            |> RewriteCatalogModel.dropViews state
                         let changes =
                             dropped |> List.map (fun name ->
                                 changedExact syntax name SqlCatalogOperation.DropView
@@ -1630,8 +1634,10 @@ module internal RewriteScriptAnalyzer =
                             RewriteCatalogModel.withConstraints catalog owner.QualifiedName retained
                         ) afterDrop
                     let nextWithViews =
-                        dependentViews |> List.fold (fun catalog view ->
-                            RewriteCatalogModel.dropView catalog view.QualifiedName) next
+                        dependentViews
+                        |> List.map (fun view -> view.QualifiedName.Key)
+                        |> Set.ofList
+                        |> RewriteCatalogModel.dropViews next
                     let tableDeltas =
                         existing |> List.map (fun name ->
                             changedExact syntax name SqlCatalogOperation.DropTable
