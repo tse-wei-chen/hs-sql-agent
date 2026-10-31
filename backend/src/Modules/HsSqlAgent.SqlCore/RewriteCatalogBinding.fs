@@ -74,19 +74,18 @@ module internal RewriteCatalogBinding =
 
     let verify sourceDialect (profile: SqlProviderCapabilityProfile | null)
                (scoped: RewriteCatalogSchemaResolution.SchemaScope)
-               (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax) =
+               (state: SqlCatalogState) (syntax: SqlScriptStatementSyntax)
+               (parsed: Typestate.ParsedSql) onBound =
         if not state.IsClosedWorld
            || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
             unverified syntax "SQL_CATALOG_BINDING_INCOMPLETE"
                 "Catalog is open or incomplete; referenced names and types cannot be proven."
         else
             try
-                let parsed =
-                    RewriteResourceBudget.withStage "CatalogParsing" SqlDiagnosticStage.Parse (fun () ->
-                        RewriteFacadeAdapter.parseSourceValidated syntax.Text sourceDialect profile)
                 let bound =
                     RewriteResourceBudget.withStage "CatalogBinding" SqlDiagnosticStage.Binding (fun () ->
                         RewriteBinder.bind sourceDialect parsed)
+                onBound bound
                 // The Source inspection AST visitor is iterative, does not
                 // recurse through CTEs/subqueries and includes Mutation targets.
                 let schemaScopeProven =
