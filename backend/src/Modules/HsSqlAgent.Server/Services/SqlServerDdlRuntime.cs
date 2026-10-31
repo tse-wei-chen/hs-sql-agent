@@ -50,7 +50,7 @@ public sealed class SqlServerDdlRuntime(
             ValidateOptions();
             plan = Compile(sql, null);
             var change = plan.Changes[0];
-            if (change.ObjectIdentity.Parts.Count != 2)
+            if (change.ObjectIdentity is null || change.ObjectIdentity.Parts.Count != 2)
                 return Deny("ddl.qualified_identity_required",
                     "SQL Server live DDL requires explicit schema.table.");
             schema = change.ObjectIdentity.Parts[0];
@@ -290,12 +290,14 @@ public sealed class SqlServerDdlRuntime(
             || !reader.GetString(5).Contains("_CI_", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("SQL Server 2022+ identity and CI collation proof required.");
         var serverIdentity = Digest(string.Join("|", reader.GetString(0),
-            reader.GetInt32(2), reader.GetInt32(3), reader.GetString(4),
+            Convert.ToInt32(reader.GetValue(2), System.Globalization.CultureInfo.InvariantCulture),
+            reader.GetInt32(3), reader.GetString(4),
             reader.GetString(5)));
         var database = reader.GetString(1);
-        var databaseId = reader.GetInt32(2);
-        var schemaId = reader.GetInt32(6);
-        int? objectId = reader.IsDBNull(7) ? null : reader.GetInt32(7);
+        var databaseId = Convert.ToInt32(reader.GetValue(2), System.Globalization.CultureInfo.InvariantCulture);
+        var schemaId = Convert.ToInt32(reader.GetValue(6), System.Globalization.CultureInfo.InvariantCulture);
+        int? objectId = reader.IsDBNull(7) ? null
+            : Convert.ToInt32(reader.GetValue(7), System.Globalization.CultureInfo.InvariantCulture);
         await reader.DisposeAsync();
 
         var columns = new List<DdlPhysicalColumn>();
@@ -366,8 +368,10 @@ public sealed class SqlServerDdlRuntime(
     }));
 
     private CompiledDdlPlan Compile(string sql, SqlProviderCapabilityProfile? profile) =>
-        SqlCoreFacade.CompileDdl(sql, new DdlCompilationOptions(
-            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, profile, profile));
+        SqlCoreFacade.CompileDdl(sql, profile is null
+            ? new DdlCompilationOptions(SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer)
+            : new DdlCompilationOptions(SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                profile, profile));
 
     private static bool IsSystemDatabase(string database) =>
         database.Equals("master", StringComparison.OrdinalIgnoreCase)
