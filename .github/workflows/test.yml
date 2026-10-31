@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -945,7 +945,7 @@ jobs:
         ports:
           - 5432:5432
       mysql:
-        image: mysql:8
+        image: mysql:8.4
         env:
           MYSQL_ROOT_PASSWORD: test
           MYSQL_DATABASE: test
@@ -958,6 +958,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Verify MySQL 8.4 implicit-commit DDL Host against real database
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~MySqlDdlLiveTests'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Run remaining SQL service tests
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
         env:

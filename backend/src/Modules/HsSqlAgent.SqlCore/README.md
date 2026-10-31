@@ -3466,3 +3466,24 @@ savepoint, rollback, DDL execution, approval, or live schema verification.
 G3 Host must capture actual DB identity and schema state, compare
 preconditions at approval and execution time, handle transactional behavior,
 audit, and independently authorize any `execute_ddl_sql` call.
+
+## G5 — MySQL 8.4 Host implicit-commit DDL (separate from SqlCore)
+
+SqlCore's G1 typed MySQL native DDL plan and G2 static Preview remain
+**non-authoritative**. A validated or Known virtual Catalog cannot grant
+permission to execute SQL. The separate opt-in Server Host now supports one
+unqualified MySQL 8.4 InnoDB CREATE TABLE (1–16 simple signed INT columns)
+only via the existing execute_ddl_sql MCP tool with an independently granted
+key scope, independent DDL approval, physical database allowlist, fresh
+MySQL server UUID + database + case-mode evidence, cooperative Host lock,
+and exact physical postcondition verification.
+
+MySQL 8.4 atomic DDL **is not** transactional DDL: it implicitly commits and
+cannot be reversed with caller ROLLBACK. The Host never creates a synthetic
+transaction, and a lost native response or unverifiable postcondition after
+execution starts is OutcomeUnknown, not proven failed/rolled back. The Host
+cannot claim a global compare-and-swap against unrelated MySQL clients.
+
+MySQL ALTER, INDEX, destructive DDL, TEMPORARY, CTAS and multi-statement DDL
+remain Host-disabled. Compile/AnalyzeScript capability is intentionally
+wider than the provider-specific executable safety proof.

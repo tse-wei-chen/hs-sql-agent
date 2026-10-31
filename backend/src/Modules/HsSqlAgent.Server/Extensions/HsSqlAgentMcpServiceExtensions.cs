@@ -101,6 +101,8 @@ public static class HsSqlAgentMcpServiceExtensions
                                     httpContext.RequestServices.GetService<SqlServerDdlRuntime>() is { Enabled: true },
                                 string name when name.Equals("Firebird", StringComparison.OrdinalIgnoreCase) =>
                                     httpContext.RequestServices.GetService<FirebirdDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("MySQL", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<MySqlDdlRuntime>() is { Enabled: true },
                                 _ => false
                             };
                             if (!enabled || allowedNames is null

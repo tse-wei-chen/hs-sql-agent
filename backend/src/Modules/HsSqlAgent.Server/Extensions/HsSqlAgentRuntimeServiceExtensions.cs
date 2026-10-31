@@ -107,6 +107,24 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// MySQL 8.4 InnoDB CREATE TABLE implicit-commit Host. Requires explicit
+    /// selected database allowlist, independent DDL approval and per-key grant.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentMySqlDdl(
+        this IServiceCollection services, MySqlDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable
+            || options.AllowedDatabases.Count == 0)
+            throw new ArgumentException(
+                "MySQL DDL requires Enabled=true, CREATE TABLE opt-in and database allowlist.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<MySqlDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)
