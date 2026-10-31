@@ -234,3 +234,53 @@ mean/P95 and allocation measurements and the independent grammar, live
 database, small-stack and policy tests. No new LOC-based hard rejection
 threshold is enabled. This closes the G0 **code delta evidence** gap only;
 it is not completion of the full G0 semantic-owner audit or G1 DDL compiler.
+
+## G0 R0: compiler-stage profiling and semantic-owner checkpoint
+
+The existing `SqlCore baseline comparison` now runs an independent
+**opt-in observational** `--stage-profile` pass on exactly the same 6-provider
+× 8-workload corpus and the same benchmark executable. It does not create
+another SQL grammar or special-case SQL compiler. The profile attaches to the
+*existing* `HsSqlAgent.SqlCore.Compiler` `StageCompleted` DiagnosticListener
+inside `RewriteResourceBudget.fs`, collecting per-stage elapsed microseconds,
+allocated bytes and metered work units. It verifies 48 workload/provider
+combinations, their deterministic output digests, successful stage completion,
+and complete per-iteration coverage of Parsing, Binding, Normalization,
+Validation, Policy and Rendering. Failure or missing telemetry is a CI failure,
+not counted as a zero-cost stage.
+
+Reproduce from repository root:
+
+```bash
+dotnet run -c Release --project backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- \
+  --stage-profile --iterations 5 --warmup 3 --output artifacts/stage-profile.json
+python3 .github/scripts/verify_sqlcore_stage_profile.py artifacts/stage-profile.json
+```
+
+This is diagnostic, **not** the paired timing baseline: DiagnosticListener
+subscription, reflection of telemetry payloads and per-case collection add
+observer overhead. Stage timings can be nested and must not be blindly summed
+to equal end-to-end elapsed time. Compare the normal three interleaved
+base/head runs for performance. Use the JSON profile to locate *candidates*
+for independent profiling before optimizing or deleting anything; never treat
+an absent stage as proof the semantic responsibility is dead.
+
+### Existing ownership boundaries reviewed (2026-10-31)
+
+| Concern | Existing authoritative code | Why not deduplicated blindly |
+| --- | --- | --- |
+| Source SQL lexing and grammar | `RewriteLexer.fs`, `RewriteParser.fs`, `RewriteSchemaAnalyzer.fs` for dialect-aware DDL | DDL syntax classification is not executable authorization |
+| Shared parsed/bound/normalized document | `RewritePipeline.fs`, `RewriteStages.fs`, `RewriteTypestate.fs` | Required provenance and stage order are distinct from Host execution |
+| Query policy and mutation policy | `RewriteQueryPolicy.fs`, `RewriteMutationPolicy.fs`, `RewritePolicy.fs` | Row-cap and mutation all-rows policy are *different* security contracts |
+| Source/target capability and rendering | `RewriteCapabilityValidation.fs`, `RewriteFacadeAdapter.fs`, `RewriteRenderer.fs` | Provider native proofs cannot be replaced by a generic SQL string switch |
+| DDL static effects | `RewriteSchemaAnalyzer.fs`, `RewriteScriptAnalyzer.fs`, `RewriteSchemaDependencies.fs` | Virtual Catalog / AnalyzeScript facts are not a live schema snapshot |
+| Synchronous resource budget and diagnostics | `RewriteResourceBudget.fs` | Existing single DiagnosticListener is reused, not duplicated |
+| Host security, approval and actual transactions | Host-side DML planning/approval/transaction code | SqlCore must not acquire DB/IO or mint an execution approval |
+
+This review identified **no independently verified unused production semantic
+path that is safe to delete in this telemetry-only PR**. No production-code
+deletion is claimed. The separate G1 Schema Compiler must reuse the sealed
+DDL operation and effects models, not re-parse or convert static `Known` into
+live evidence. This report closes the G0 *stage cost observability* gap only;
+it does not certify full dead-code elimination, optimized stage allocations,
+or completeness of G1.

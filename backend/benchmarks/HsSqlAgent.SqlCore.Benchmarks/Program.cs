@@ -22,20 +22,22 @@ var cases = new[]
     new BenchmarkCase("query-derived-32", NestedDerived(32), false),
     new BenchmarkCase("query-scalar-32", NestedScalar(32), false)
 };
+if (options.StageProfile)
+{
+    SqlCoreStageProfiler.Run(cases, options);
+    return;
+}
 var results = new List<BenchmarkResult>();
 foreach (var provider in Enum.GetValues<SqlAgentToolType>())
 {
     var context = new SqlPlanValidationContext("sqlcore-benchmark-v1");
     foreach (var benchmarkCase in cases)
     {
-        CompiledSqlCommand Compile() => benchmarkCase.IsDml
-            ? SqlCoreFacade.CompileDml(benchmarkCase.Sql, provider, provider, context)
-            : SqlCoreFacade.CompileQuery(
-                benchmarkCase.Sql, provider, provider, context, new SqlExecutionPlanPolicy(100));
+        CompiledSqlCommand Compile() => benchmarkCase.Compile(provider, context);
 
         var expected = Compile();
         for (var i = 0; i < options.Warmup; i++)
-            AssertEquivalent(expected, Compile(), provider, benchmarkCase.Name);
+            BenchmarkCase.AssertEquivalent(expected, Compile(), provider, benchmarkCase.Name);
 
         var measurements = new long[options.Iterations];
         var bytes = new long[options.Iterations];
@@ -46,7 +48,7 @@ foreach (var provider in Enum.GetValues<SqlAgentToolType>())
             var command = Compile();
             var afterTicks = Stopwatch.GetTimestamp();
             var afterBytes = GC.GetAllocatedBytesForCurrentThread();
-            AssertEquivalent(expected, command, provider, benchmarkCase.Name);
+            BenchmarkCase.AssertEquivalent(expected, command, provider, benchmarkCase.Name);
 
             measurements[i] = afterTicks - beforeTicks;
             bytes[i] = afterBytes - beforeBytes;
@@ -62,10 +64,7 @@ foreach (var provider in Enum.GetValues<SqlAgentToolType>())
             MeanMicroseconds: Math.Round(measurements.Average() * unit, 3),
             P95Microseconds: Math.Round(measurements[p95Index] * unit, 3),
             MeanAllocatedBytes: Math.Round(bytes.Average(), 1),
-            OutputDigest: Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-                JsonSerializer.Serialize(new { expected.Sql,
-                    Parameters = expected.Parameters.Select(p => new {
-                        Type = p.Value?.GetType().FullName, p.Value }) }))))));
+            OutputDigest: BenchmarkCase.OutputDigest(expected)));
     }
 }
 var report = new
@@ -91,21 +90,6 @@ else
     Console.WriteLine(output);
 }
 
-static void AssertEquivalent(
-    CompiledSqlCommand expected,
-    CompiledSqlCommand actual,
-    SqlAgentToolType provider,
-    string name)
-{
-    if (!string.Equals(expected.Sql, actual.Sql, StringComparison.Ordinal) ||
-        !expected.Parameters.Select(p => p.Value).SequenceEqual(actual.Parameters.Select(p => p.Value)) ||
-        !string.Equals(expected.PlanFingerprint, actual.PlanFingerprint, StringComparison.Ordinal))
-    {
-        throw new InvalidOperationException(
-            $"Non-deterministic SqlCore compilation: {provider}/{name}.");
-    }
-}
-
 static string NestedDerived(int depth)
 {
     var sql = "SELECT id FROM users WHERE id = 11";
@@ -122,7 +106,32 @@ static string NestedScalar(int depth)
     return sql;
 }
 
-internal sealed record BenchmarkCase(string Name, string Sql, bool IsDml);
+internal sealed record BenchmarkCase(string Name, string Sql, bool IsDml)
+{
+    public CompiledSqlCommand Compile(SqlAgentToolType provider, SqlPlanValidationContext context) =>
+        IsDml
+            ? SqlCoreFacade.CompileDml(Sql, provider, provider, context)
+            : SqlCoreFacade.CompileQuery(Sql, provider, provider, context, new SqlExecutionPlanPolicy(100));
+
+    public static string OutputDigest(CompiledSqlCommand command) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            JsonSerializer.Serialize(new { command.Sql,
+                Parameters = command.Parameters.Select(p => new {
+                    Type = p.Value?.GetType().FullName, p.Value }) }))));
+
+    public static void AssertEquivalent(
+        CompiledSqlCommand expected,
+        CompiledSqlCommand actual,
+        SqlAgentToolType provider,
+        string name)
+    {
+        if (!string.Equals(expected.Sql, actual.Sql, StringComparison.Ordinal) ||
+            !expected.Parameters.Select(p => p.Value).SequenceEqual(actual.Parameters.Select(p => p.Value)) ||
+            !string.Equals(expected.PlanFingerprint, actual.PlanFingerprint, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"Non-deterministic SqlCore compilation: {provider}/{name}.");
+    }
+}
 internal sealed record BenchmarkResult(
     string Provider,
     string Case,
@@ -132,17 +141,18 @@ internal sealed record BenchmarkResult(
     double MeanAllocatedBytes,
     string OutputDigest);
 
-internal sealed record BenchmarkOptions(int Iterations, int Warmup, string? Output)
+internal sealed record BenchmarkOptions(int Iterations, int Warmup, string? Output, bool StageProfile)
 {
     public static BenchmarkOptions Parse(string[] args)
     {
         var smoke = args.Contains("--smoke", StringComparer.Ordinal);
+        var stageProfile = args.Contains("--stage-profile", StringComparer.Ordinal);
         var iterations = smoke ? 2 : 500;
         var warmup = smoke ? 1 : 20;
         string? output = null;
         for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] == "--smoke") continue;
+            if (args[i] is "--smoke" or "--stage-profile") continue;
             if (args[i] == "--iterations" && i + 1 < args.Length &&
                 int.TryParse(args[++i], out var parsedIterations))
             {
@@ -159,12 +169,12 @@ internal sealed record BenchmarkOptions(int Iterations, int Warmup, string? Outp
             }
             else
             {
-                throw new ArgumentException("Usage: --smoke [--iterations N] [--warmup N] [--output path]");
+                throw new ArgumentException("Usage: [--smoke] [--stage-profile] [--iterations N] [--warmup N] [--output path]");
             }
         }
         if (iterations is < 1 or > 100_000 || warmup is < 0 or > 100_000)
             throw new ArgumentOutOfRangeException(nameof(args),
                 "Iterations must be 1..100000 and warmup must be 0..100000.");
-        return new BenchmarkOptions(iterations, warmup, output);
+        return new BenchmarkOptions(iterations, warmup, output, stageProfile);
     }
 }
