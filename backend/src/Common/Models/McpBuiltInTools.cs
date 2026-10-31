@@ -21,6 +21,7 @@ public static class McpBuiltInTools
     public const string GetSchemas = "get_schemas";
     public const string GetTables = "get_tables";
     public const string ExecuteDmlSql = "execute_dml_sql";
+    public const string ExecuteDdlSql = "execute_ddl_sql";
 
     public static IReadOnlyList<McpToolDescriptor> Catalog { get; } =
     [
@@ -28,7 +29,8 @@ public static class McpBuiltInTools
         new(GetTables, "Query", "Get tables", "low", true, true),
         new(GetColumns, "Query", "Get columns", "low", true, true),
         new(ExecuteQuerySql, "Query", "Execute query", "medium", true, true),
-        new(ExecuteDmlSql, "DML", "Execute DML", "high", true, false)
+        new(ExecuteDmlSql, "DML", "Execute DML", "high", true, false),
+        new(ExecuteDdlSql, "DDL", "Execute DDL", "critical", true, false)
     ];
 
     public static FrozenSet<string> Names { get; } = Catalog
