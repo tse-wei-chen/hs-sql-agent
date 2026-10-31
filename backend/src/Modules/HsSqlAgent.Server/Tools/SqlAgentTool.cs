@@ -22,7 +22,8 @@ public partial class SqlAgentTool(
     SqliteDdlRuntime? sqliteDdlRuntime = null,
     SqlServerDdlRuntime? sqlServerDdlRuntime = null,
     FirebirdDdlRuntime? firebirdDdlRuntime = null,
-    MySqlDdlRuntime? mySqlDdlRuntime = null)
+    MySqlDdlRuntime? mySqlDdlRuntime = null,
+    OracleDdlRuntime? oracleDdlRuntime = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
@@ -40,4 +41,5 @@ public partial class SqlAgentTool(
     private readonly SqlServerDdlRuntime? _sqlServerDdlRuntime = sqlServerDdlRuntime;
     private readonly FirebirdDdlRuntime? _firebirdDdlRuntime = firebirdDdlRuntime;
     private readonly MySqlDdlRuntime? _mySqlDdlRuntime = mySqlDdlRuntime;
+    private readonly OracleDdlRuntime? _oracleDdlRuntime = oracleDdlRuntime;
 }
