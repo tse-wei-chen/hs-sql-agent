@@ -286,18 +286,21 @@ public sealed class SqlServerDdlRuntime(
             + "SUSER_SNAME(), CAST(DATABASEPROPERTYEX(DB_NAME(),'Collation') AS nvarchar(128)), "
             + "SCHEMA_ID(@schema), "
             + "(SELECT o.object_id FROM sys.objects o "
-            + "WHERE o.schema_id=SCHEMA_ID(@schema) AND o.name=@table)",
+            + "WHERE o.schema_id=SCHEMA_ID(@schema) AND o.name=@table), "
+            + "CONVERT(nvarchar(33), (SELECT d.create_date FROM sys.databases d "
+            + "WHERE d.database_id=DB_ID()), 126)",
             ("schema", schema), ("table", table));
         await using var reader = await identity.ExecuteReaderAsync(token);
         if (!await reader.ReadAsync(token)
             || Enumerable.Range(0, 7).Any(reader.IsDBNull)
+            || reader.IsDBNull(8)
             || reader.GetInt32(3) < 16
             || !reader.GetString(5).Contains("_CI_", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("SQL Server 2022+ identity and CI collation proof required.");
         var serverIdentity = Digest(string.Join("|", reader.GetString(0),
             Convert.ToInt32(reader.GetValue(2), System.Globalization.CultureInfo.InvariantCulture),
             reader.GetInt32(3), reader.GetString(4),
-            reader.GetString(5)));
+            reader.GetString(5), reader.GetString(8)));
         var database = reader.GetString(1);
         var databaseId = Convert.ToInt32(reader.GetValue(2), System.Globalization.CultureInfo.InvariantCulture);
         var schemaId = Convert.ToInt32(reader.GetValue(6), System.Globalization.CultureInfo.InvariantCulture);
