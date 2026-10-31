@@ -235,4 +235,30 @@ public sealed class SqlCoreAtomicMultiAlterTests
         Assert.Empty(result.Statements[1].Changes);
         Assert.Single(Assert.Single(result.FinalCatalog.Tables).Columns);
     }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, "INTEGER")]
+    [InlineData(SqlAgentToolType.MySQL, "INT")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "INT")]
+    [InlineData(SqlAgentToolType.Sqlite, "INTEGER")]
+    [InlineData(SqlAgentToolType.Oracle, "NUMBER")]
+    [InlineData(SqlAgentToolType.Firebird, "INTEGER")]
+    public void PhysicalIndexColumnLists_PreserveNativeAcceptanceAndFailClosedOnTrailingComma(
+        SqlAgentToolType dialect, string columnType)
+    {
+        var create = $"CREATE TABLE users (id {columnType});";
+        var valid = SqlCoreFacade.AnalyzeScript(
+            create + "CREATE INDEX idx_users_id ON users (id);",
+            dialect, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, valid.Statements[1].Status);
+        Assert.Single(Assert.Single(valid.FinalCatalog.Tables).Indexes);
+
+        var invalid = SqlCoreFacade.AnalyzeScript(
+            create + "CREATE INDEX idx_users_id ON users (id,);",
+            dialect, SqlCatalogState.KnownEmpty());
+        Assert.Equal(SqlStatementAnalysisStatus.Unsupported, invalid.Statements[1].Status);
+        Assert.Empty(invalid.Statements[1].Changes);
+        Assert.False(invalid.FinalCatalog.IsClosedWorld);
+    }
+
 }
