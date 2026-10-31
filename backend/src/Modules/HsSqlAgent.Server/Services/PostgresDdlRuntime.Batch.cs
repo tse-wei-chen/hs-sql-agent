@@ -181,7 +181,8 @@ public sealed partial class PostgresDdlRuntime
                     : "Before/After are conditional; no database changes occur during Preview.\n")
                 + "No data loss, implicit commits or partial success claims.\n"
                 + string.Join("\n---\n", descriptions.Select((item, index) =>
-                    "Step " + (index + 1) + "/" + descriptions.Length + ":\n" + item));
+                    "Step " + (index + 1) + "/" + descriptions.Length + ":\n"
+                    + "Compiled native SQL: " + plan.Plans[index].Command.Sql + "\n" + item));
             var now = _time.GetUtcNow();
             var expiry = now + _options.ApprovalLifetime;
             var nonce = "ddl_batch_" + Guid.NewGuid().ToString("N");
@@ -222,6 +223,13 @@ public sealed partial class PostgresDdlRuntime
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return BatchRejected("ddl.approval_cancelled", "Batch approval was cancelled.", preview);
+            }
+            catch (Exception)
+            {
+                // A failed human-approval provider never executes DDL and
+                // must not be mislabeled as a physical preview failure.
+                return BatchRejected("ddl.approval_failed",
+                    "The independent whole-batch approval provider failed closed.", preview);
             }
             if (decision is null
                 || decision.RequestId != nonce
