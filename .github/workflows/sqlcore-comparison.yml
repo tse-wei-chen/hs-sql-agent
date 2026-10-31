@@ -40,6 +40,7 @@ jobs:
           # must compile with the same benchmark harness source. Its default
           # workload remains unchanged and executes neither probe path.
           cp head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/SqlCoreCapabilityStackProbe.cs base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/SqlCoreCapabilityStackProbe.cs
+          cp head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/SqlCoreStageProfiler.cs base/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks/SqlCoreStageProfiler.cs
           mkdir -p artifacts
           git -C base rev-parse HEAD > artifacts/base-sha.txt
           git -C head rev-parse HEAD > artifacts/head-sha.txt
@@ -54,6 +55,11 @@ jobs:
           # never the full repository history, and compare committed content.
           git -C head fetch --no-tags --depth=1 origin "$base_sha"
           python3 head/.github/scripts/sqlcore_code_delta.py head "$base_sha" "$head_sha" artifacts/code-delta.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Profile the existing six-provider SQL corpus by compiler stage
+        shell: bash
+        run: |
+          dotnet run -c Release --no-build --project head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --stage-profile --iterations 5 --warmup 3 --output artifacts/stage-profile.json
+          python3 head/.github/scripts/verify_sqlcore_stage_profile.py artifacts/stage-profile.json
       - name: Run three interleaved pairs on the same runner and runtime
         shell: bash
         env:
