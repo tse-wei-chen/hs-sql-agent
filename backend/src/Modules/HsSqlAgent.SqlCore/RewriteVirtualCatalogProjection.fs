@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Collections.Generic
 open HsSqlAgent.SqlCore.Catalog
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -10,12 +11,17 @@ open HsSqlAgent.SqlCore.Rewrite.Typestate
 /// DDL, transaction rollback and session scope change the visible catalog.
 module internal RewriteVirtualCatalogProjection =
 
-    /// Canonical binder column name paired with the original DDL type tag.
-    /// Type-family interpretation belongs exclusively to TypeValidation.
-    type RelationColumns = (string * string) list
+    /// Canonical names are materialized exactly once. Column objects are
+    /// immutable, so TypeValidation can read their original types only after
+    /// NameValidation succeeds. No per-column type tuple is allocated for
+    /// SQLite name-only checks.
+    type Relation =
+        { Key: string
+          Names: string list
+          Columns: IReadOnlyList<SqlCatalogColumn> }
     type Projection =
-        { Physical: (string * RelationColumns) list
-          ReadableViews: (string * RelationColumns) list }
+        { Physical: Relation list
+          ReadableViews: Relation list }
 
     let private catalogPart dialect (value: string) =
         RewriteResourceBudget.charge (max 1L (int64 value.Length))
@@ -25,12 +31,11 @@ module internal RewriteVirtualCatalogProjection =
         | _ -> value
 
     let private project dialect (name: SqlCatalogQualifiedName)
-                        (columns: seq<SqlCatalogColumn>) =
+                        (columns: IReadOnlyList<SqlCatalogColumn>) =
         RewriteResourceBudget.checkpoint ()
-        name.BinderKey,
-        (columns
-         |> Seq.map (fun column -> catalogPart dialect column.Name, column.TypeName)
-         |> Seq.toList)
+        { Key = name.BinderKey
+          Names = columns |> Seq.map (fun column -> catalogPart dialect column.Name) |> Seq.toList
+          Columns = columns }
 
     let prepare dialect (state: SqlCatalogState) (bound: BoundSql) =
         if not state.IsClosedWorld
