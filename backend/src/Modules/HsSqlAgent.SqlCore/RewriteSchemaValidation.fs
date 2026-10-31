@@ -797,9 +797,38 @@ module internal RewriteSchemaValidation =
         (createValidation ()) catalog (Bound.value bound)
         bound
 
-    /// Static analysis only. A complete Virtual Catalog is consumed directly,
-    /// without fabricating a runtime SqlSchemaSnapshot or execution proof.
-    /// The same scope/name/CTE algorithm as host-provided snapshots is used.
+    let private verifyProjectedNameRows dialect
+                                        (physical: (string * string list) list)
+                                        (readable: (string * string list) list)
+                                        (bound: BoundSql) =
+        if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
+           || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
+            invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
+        let catalog =
+            { Dialect = dialect
+              Tables = Map.ofList physical
+              ReadRelations = Map.ofList readable
+              ProvenInsertColumnOrder = true }
+        (createValidation ()) catalog (Bound.value bound)
+        bound
+
+    /// Name and Type validation stay independent. The shared projection
+    /// carries only canonical labels and immutable, untyped DDL column objects.
+    let verifyVirtualPrepared dialect
+                              (projection: RewriteVirtualCatalogProjection.Projection)
+                              (bound: BoundSql) =
+        let normalizedNames relations =
+            relations |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
+                RewriteResourceBudget.checkpoint ()
+                relation.Key, relation.Names)
+        let physical = normalizedNames projection.Physical
+        let readable = physical @ normalizedNames projection.ReadableViews
+        verifyProjectedNameRows dialect physical readable bound
+
+    /// Single-stage Name-only callers (notably SQLite's dynamic-affinity
+    /// guard) should not allocate shared Type-stage relation records at all.
+    /// This is the original strict projection with identical collision and
+    /// physical-vs-View binding checks, not an alternative name resolver.
     let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
         if not state.IsClosedWorld
            || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
@@ -811,9 +840,6 @@ module internal RewriteSchemaValidation =
                 table.QualifiedName.BinderKey,
                 (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
             |> Seq.toList
-        // The read map is permitted to contain proven View OUTPUT columns.
-        // The write map above intentionally does not: a View cannot become
-        // a physical INSERT/UPDATE/DELETE target through this feature.
         let readable =
             seq {
                 yield! physical
@@ -827,13 +853,4 @@ module internal RewriteSchemaValidation =
                           (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
             }
             |> Seq.toList
-        if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
-           || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
-            invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
-        let catalog =
-            { Dialect = dialect
-              Tables = Map.ofList physical
-              ReadRelations = Map.ofList readable
-              ProvenInsertColumnOrder = true }
-        (createValidation ()) catalog (Bound.value bound)
-        bound
+        verifyProjectedNameRows dialect physical readable bound

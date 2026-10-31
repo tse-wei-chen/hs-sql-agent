@@ -208,6 +208,51 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
               output.write(report)
           PY
+      - name: Compare shared Name Type Catalog projection against exact develop baseline
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --catalog-binding-stress --iterations 12 --warmup 3 --output "artifacts/binding-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          results = {}
+          for revision in ("base", "head"):
+              results[revision] = []
+              for run in (1, 2, 3):
+                  data = json.loads((root / f"binding-{revision}-{run}.json").read_text())
+                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
+                  assert len(rows) == 12, (revision, run, "six dialects x 24/96-table binding workloads")
+                  results[revision].append(rows)
+          lines = ["### Name/Type Binding shared Virtual Catalog projection (3 paired rounds)",
+                   "| Dialect / workload | Candidate/base allocation | Candidate/base mean latency |",
+                   "|---|---:|---:|"]
+          for key in sorted(results["base"][0]):
+              old = [round[key] for round in results["base"]]
+              new = [round[key] for round in results["head"]]
+              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "Analysis parity drift")
+              ratios = []
+              for metric in ("MeanAllocatedBytes", "MeanMicroseconds"):
+                  a = statistics.median(row[metric] for row in old)
+                  b = statistics.median(row[metric] for row in new)
+                  assert a > 0 and b >= 0, (key, metric, a, b)
+                  ratios.append(f"{b/a:.3f}x")
+              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
+          report = "\n".join(lines) + "\n"
+          print(report)
+          (root / "catalog-binding-comparison.md").write_text(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
+              file.write(report)
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4

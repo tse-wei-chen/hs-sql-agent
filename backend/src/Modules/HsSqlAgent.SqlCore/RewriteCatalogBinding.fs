@@ -130,9 +130,19 @@ module internal RewriteCatalogBinding =
                     unverified syntax "SQL_CATALOG_BINDING_IDENTIFIER_RULES_UNPROVEN"
                         "Provider identifier case/collation proof is absent or outside the restricted ASCII-safe subset; a normalized match is not authoritative."
                 else
-                    let namesChecked =
+                    let projection, namesChecked =
                         RewriteResourceBudget.withStage "CatalogNameValidation" SqlDiagnosticStage.Binding (fun () ->
-                            RewriteSchemaValidation.verifyVirtual sourceDialect catalogForBinding bound)
+                            if sourceDialect = SqlAgentToolType.Sqlite && physicalTableCount > 0 then
+                                // This branch never attempts static type proof:
+                                // preserve the exact lower-allocation Name-only path.
+                                None, RewriteSchemaValidation.verifyVirtual
+                                          sourceDialect catalogForBinding bound
+                            else
+                                let projection =
+                                    RewriteVirtualCatalogProjection.prepare sourceDialect catalogForBinding bound
+                                let namesChecked =
+                                    RewriteSchemaValidation.verifyVirtualPrepared sourceDialect projection bound
+                                Some projection, namesChecked)
                     if sourceDialect = SqlAgentToolType.Sqlite && physicalTableCount > 0 then
                         // SQLite storage classes have dynamic affinity: an
                         // INTEGER column does not establish static Numeric-only
@@ -145,7 +155,8 @@ module internal RewriteCatalogBinding =
                              else fallbackMatch syntax)
                     else
                         RewriteResourceBudget.withStage "CatalogTypeValidation" SqlDiagnosticStage.SemanticValidation (fun () ->
-                            RewriteSchemaTypeValidation.verifyVirtual sourceDialect catalogForBinding namesChecked)
+                            RewriteSchemaTypeValidation.verifyVirtualPrepared
+                                sourceDialect catalogForBinding (Option.get projection) namesChecked)
                         |> ignore
                         verified (RewriteMutationSourceMatchProof.classify
                                       sourceDialect profile catalogForBinding bound)

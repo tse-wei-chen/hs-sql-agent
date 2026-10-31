@@ -71,6 +71,7 @@
     <Compile Include="RewriteBinder.fs" />
     <Compile Include="RewriteQueryAnalyzer.fs" />
     <Compile Include="RewriteMutationAnalyzer.fs" />
+    <Compile Include="RewriteVirtualCatalogProjection.fs" />
     <Compile Include="RewriteSchemaValidation.fs" />
     <Compile Include="RewriteSchemaTypeValidation.fs" />
     <Compile Include="RewriteInspection.fs" />
