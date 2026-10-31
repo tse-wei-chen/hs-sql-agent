@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -1029,6 +1029,12 @@ jobs:
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
           SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MsSqlServer
+      - name: Verify SQL Server Host DDL real transactional CREATE TABLE proof
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~SqlCoreSqlServerDdlHostLiveTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
   sqlagent-firebird-ddl-parity:
     runs-on: ubuntu-latest
