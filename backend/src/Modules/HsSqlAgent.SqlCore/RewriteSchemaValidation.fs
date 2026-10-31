@@ -808,11 +808,12 @@ module internal RewriteSchemaValidation =
             |> List.map (fun (name, columns) ->
                 RewriteResourceBudget.checkpoint ()
                 name, columns |> List.map fst)
-        let readable =
-            projection.Readable
+        let viewNames =
+            projection.ReadableViews
             |> List.map (fun (name, columns) ->
                 RewriteResourceBudget.checkpoint ()
                 name, columns |> List.map fst)
+        let readable = physical @ viewNames
         if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
            || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
             invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
