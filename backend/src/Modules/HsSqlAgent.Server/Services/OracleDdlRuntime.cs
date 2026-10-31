@@ -247,11 +247,20 @@ public sealed class OracleDdlRuntime(
                 "Oracle CREATE TABLE implicitly committed and physical metadata was verified. "
                 + "Rollback is not available.");
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             if (beganNative)
+            {
+                var proofKind = ex switch
+                {
+                    PhysicalProofFailure proof => "metadata/" + proof.Stage + "/" + proof.Kind,
+                    OracleException ora => "oracle/ORA-" + ora.Number.ToString(CultureInfo.InvariantCulture),
+                    _ => "runtime/" + ex.GetType().Name
+                };
                 return Unknown(preview,
-                    "Oracle DDL may have committed despite a lost reply or metadata failure.");
+                    "Oracle DDL may have committed despite a lost reply or metadata failure ("
+                    + proofKind + ").");
+            }
             return Deny(startedRecheck ? "ddl.schema_drift" : "ddl.pre_execution_failed",
                 "Oracle metadata or permission could not be proven before native DDL.", preview);
         }
