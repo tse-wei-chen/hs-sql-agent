@@ -318,7 +318,7 @@ public sealed class SqlServerDdlRuntime(
             await using var columnReader = await columnCommand.ExecuteReaderAsync(token);
             while (await columnReader.ReadAsync(token))
             {
-                if (!columnReader.GetString(5).Equals("U", StringComparison.Ordinal)
+                if (!columnReader.GetString(5).TrimEnd().Equals("U", StringComparison.Ordinal)
                     || columnReader.GetBoolean(3) || columnReader.GetInt32(4) != 0)
                     throw new InvalidOperationException("Unmodeled target object/column effects.");
                 columns.Add(new DdlPhysicalColumn(columnReader.GetString(0),
