@@ -88,7 +88,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 
 ### G6 S16: PostgreSQL atomic CREATE-only DDL Batch
 
-- Introduce an independent, **default-denied** PostgreSQL 12+ whole-batch
+- Introduce an independent, **default-denied** PostgreSQL 16 whole-batch
   execution boundary on the existing `execute_ddl_sql` tool. A caller must
   explicitly opt into `AllowCreateTableBatch`, list the authenticated MCP
   key under `AllowedBatchPrincipals`, grant the existing DDL tool, and use

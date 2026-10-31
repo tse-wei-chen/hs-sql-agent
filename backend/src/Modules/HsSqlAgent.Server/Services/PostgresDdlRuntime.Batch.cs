@@ -73,9 +73,9 @@ public sealed partial class PostgresDdlRuntime
                 await connection.OpenAsync(cancellationToken);
                 profile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
                 if (profile.TargetProfile.ServerVersion is null
-                    || profile.TargetProfile.ServerVersion.Major < 12)
+                    || profile.TargetProfile.ServerVersion.Major != 16)
                     return BatchRejected("ddl.version_unproven",
-                        "PostgreSQL 12+ physical server version is required for atomic DDL batch.");
+                        "Only PostgreSQL 16 has a verified atomic DDL batch Host capability.");
                 var opts = new DdlCompilationOptions(SqlAgentToolType.Postgres,
                     SqlAgentToolType.Postgres, profile.TargetProfile, profile.TargetProfile);
                 plan = SqlCoreFacade.CompileDdlBatch(sql, opts);

@@ -655,7 +655,7 @@ committed as deleted.
 ## G6 S16 — PostgreSQL atomic 2–4 statement CREATE TABLE Batch (opt-in)
 
 The existing `execute_ddl_sql` MCP tool now recognizes an intentionally
-limited **single-schema PostgreSQL atomic batch**: 2–4 independently
+limited **single-schema PostgreSQL 16 atomic batch**: 2–4 independently
 compiled `CREATE TABLE schema.name (…)` statements, each with a different
 table name. There are **no cross-statement dependencies** in this first
 proven subset. No new MCP tools, SQL parsers, DML approval or inferred

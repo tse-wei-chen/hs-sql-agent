@@ -3560,7 +3560,7 @@ Console.WriteLine(batch.AuthorizesExecution); // false
 
 This is a **compile-only, non-authoritative** contract. Neither a Script
 parse result nor a virtual Catalog creates executable authority. The
-separate Host must prove physical database/schema absence, ownership
+separate Host (currently PostgreSQL **16** only) must prove physical database/schema absence, ownership
 scope, independent per-batch permission and human approval, then commit
 the entire batch inside one real PostgreSQL transaction. Individual DDL
 approvals cannot be combined into a batch approval.
