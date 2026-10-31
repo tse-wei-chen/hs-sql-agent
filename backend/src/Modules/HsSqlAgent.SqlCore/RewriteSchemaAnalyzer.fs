@@ -798,7 +798,7 @@ module internal RewriteSchemaAnalyzer =
                 let optionalConstraintName () =
                     if accept "CONSTRAINT" then Some(namePart ())
                     else None
-                 let makeConstraint cname kind members (remote: SqlCatalogQualifiedName) remoteMembers =
+                let makeConstraint cname kind members (remote: SqlCatalogQualifiedName) remoteMembers =
                     SqlCatalogConstraint(
                         (match cname with Some value -> value | None -> null),
                         kind, Array.AsReadOnly(List.toArray members),
@@ -871,6 +871,10 @@ module internal RewriteSchemaAnalyzer =
                 else Recognized(Create(table, members, deps, conditional))
         let parseDrop () =
             expect "DROP"
+            // Other dialects cannot use PostgreSQL multi-object DROP syntax.
+            let nextPostgresIdentity () =
+                if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
+                qualifiedName ()
             if accept "INDEX" then
                 // PostgreSQL index DROP and SQL Server 2016+ conditional
                 // DROP share the closed typed flag, not a generic SQL fallback.
@@ -882,13 +886,8 @@ module internal RewriteSchemaAnalyzer =
                         ifExists ()
                     else false
                 let indexIdentity = qualifiedName ()
-                let indexIdentities = ResizeArray<SqlCatalogQualifiedName>()
-                indexIdentities.Add(indexIdentity)
-                while symbol ',' do
-                    if sourceDialect <> SqlAgentToolType.Postgres then
-                        raise OutsideSubset
-                    RewriteResourceBudget.checkpoint ()
-                    indexIdentities.Add(qualifiedName ())
+                let indexIdentities =
+                    commaSeparated (fun () -> indexIdentity) nextPostgresIdentity
                 let target =
                     if accept "ON" then
                         match sourceDialect with
@@ -905,9 +904,9 @@ module internal RewriteSchemaAnalyzer =
                 if sourceDialect = SqlAgentToolType.Postgres then
                     accept "RESTRICT" |> ignore
                 endOfStatement ()
-                match sourceDialect, indexIdentities.Count, indexIdentity.Parts.Count with
+                match sourceDialect, List.length indexIdentities, indexIdentity.Parts.Count with
                 | SqlAgentToolType.Postgres, count, _ when count > 1 ->
-                    Recognized(DropIndexBatch(indexIdentities |> Seq.toList, conditional))
+                    Recognized(DropIndexBatch(indexIdentities, conditional))
                 | SqlAgentToolType.Postgres, 1, 2 ->
                     Recognized(DropQualifiedIndex(indexIdentity, conditional))
                 | _, 1, 1 ->
@@ -931,13 +930,7 @@ module internal RewriteSchemaAnalyzer =
                 if not (accept "TABLE") then raise OutsideSubset
                 let conditional = ifExists ()
                 let table = qualifiedName ()
-                let names = ResizeArray<SqlCatalogQualifiedName>()
-                names.Add(table)
-                while symbol ',' do
-                    if sourceDialect <> SqlAgentToolType.Postgres then
-                        raise OutsideSubset
-                    RewriteResourceBudget.checkpoint ()
-                    names.Add(qualifiedName ())
+                let names = commaSeparated (fun () -> table) nextPostgresIdentity
                 // All PostgreSQL CASCADE spellings use the graph-aware
                 // batch analyzer, including the single-table form.
                 let mode =
@@ -948,11 +941,11 @@ module internal RewriteSchemaAnalyzer =
                             Restrict
                     else Restrict
                 endOfStatement ()
-                match sourceDialect, names.Count, mode with
+                match sourceDialect, List.length names, mode with
                 | SqlAgentToolType.Postgres, _, Cascade ->
-                    Recognized(DropTableBatch(names |> Seq.toList, conditional, Cascade))
+                    Recognized(DropTableBatch(names, conditional, Cascade))
                 | SqlAgentToolType.Postgres, n, Restrict when n > 1 ->
-                    Recognized(DropTableBatch(names |> Seq.toList, conditional, Restrict))
+                    Recognized(DropTableBatch(names, conditional, Restrict))
                 | _, 1, Restrict -> Recognized(Drop(table, conditional))
                 | _ -> raise OutsideSubset
         let parseAlter () =
