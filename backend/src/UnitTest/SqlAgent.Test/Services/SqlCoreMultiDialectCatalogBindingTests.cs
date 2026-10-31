@@ -190,8 +190,9 @@ public sealed class SqlCoreMultiDialectCatalogBindingTests
     public void SharedProjectionCannotPromoteBadNameOrTypeIntoProof(
         SqlAgentToolType dialect, string numberType)
     {
+        var textType = dialect == SqlAgentToolType.Oracle ? "VARCHAR2(24)" : "VARCHAR(24)";
         var result = SqlCoreFacade.AnalyzeScript(
-            $"CREATE TABLE users(id {numberType}, name VARCHAR(24));" +
+            $"CREATE TABLE users(id {numberType}, name {textType});" +
             " SELECT id FROM users;" +
             " UPDATE users SET id = 'not-an-integer' WHERE id = 1;" +
             " SELECT missing FROM users;" +
