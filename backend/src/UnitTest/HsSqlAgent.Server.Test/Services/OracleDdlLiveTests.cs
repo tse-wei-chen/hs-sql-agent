@@ -222,7 +222,8 @@ public sealed class OracleDdlLiveTests
                 "SYS_CONTEXT('USERENV','DATABASE_ROLE'), " +
                 "SYS_CONTEXT('USERENV','SERVICE_NAME') FROM DUAL"),
             ("version", "SELECT VERSION_FULL FROM PRODUCT_COMPONENT_VERSION " +
-                "WHERE PRODUCT LIKE 'Oracle Database%' AND VERSION_FULL IS NOT NULL"),
+                "WHERE (PRODUCT LIKE 'Oracle Database%' " +
+                "OR PRODUCT LIKE 'Oracle AI Database%') AND VERSION_FULL IS NOT NULL"),
             ("database", "SELECT TO_CHAR(DBID) FROM V$DATABASE"),
             ("pdb", "SELECT TO_CHAR(DBID), RAWTOHEX(GUID), OPEN_MODE FROM V$PDBS " +
                 "WHERE CON_ID=TO_NUMBER(SYS_CONTEXT('USERENV','CON_ID'))"),
