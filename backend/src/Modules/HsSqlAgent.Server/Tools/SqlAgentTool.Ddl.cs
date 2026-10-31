@@ -36,7 +36,7 @@ public partial class SqlAgentTool
     }
 
     [McpServerTool(UseStructuredContent = true, ReadOnly = false), Description(@"
-        Preview or execute exactly one explicitly allowed, PostgreSQL or SQLite schema DDL statement.
+        Preview or execute exactly one explicitly allowed, PostgreSQL, SQLite, or a restricted SQL Server schema DDL statement.
         With previewOnly=true, inspect live metadata and return a schema diff without changing data.
         With previewOnly=false, execution REQUIRES separately configured DDL approval, fresh physical
         database/schema evidence and a provider-specific verified transaction. DML approval does not grant
@@ -44,7 +44,7 @@ public partial class SqlAgentTool
         DDL, dynamic SQL and other database providers are always rejected.
     ")]
     public async Task<McpDdlToolResult> ExecuteDdlSql(
-        [Description("One strictly additive PostgreSQL or SQLite DDL statement with explicit schema.table names.")]
+        [Description("One strictly additive PostgreSQL, SQLite, or SQL Server DDL statement with explicit schema.table names.")]
         string sql,
         [Description("True to inspect and preview only, without DDL approval or mutation.")]
         bool previewOnly = true,
@@ -53,6 +53,7 @@ public partial class SqlAgentTool
         var watch = Stopwatch.StartNew();
         DdlRuntimeResult? outcome = null;
         SqliteDdlRuntimeResult? sqliteOutcome = null;
+        SqlServerDdlRuntimeResult? sqlServerOutcome = null;
         try
         {
             var actor = RequireDdlGrant();
@@ -63,6 +64,7 @@ public partial class SqlAgentTool
             {
                 SqlAgentToolType.Postgres => _postgresDdlRuntime is { Enabled: true },
                 SqlAgentToolType.Sqlite => _sqliteDdlRuntime is { Enabled: true },
+                SqlAgentToolType.MsSqlServer => _sqlServerDdlRuntime is { Enabled: true },
                 _ => false
             };
             if (!configured)
@@ -91,6 +93,13 @@ public partial class SqlAgentTool
                     provider, config.ConnectionString, sql, actor,
                     previewOnly, _ddlApprovalProvider, cancellationToken);
                 return McpDdlToolResult.FromSqliteRuntime(sqliteOutcome);
+            }
+            if (providerType == SqlAgentToolType.MsSqlServer)
+            {
+                sqlServerOutcome = await _sqlServerDdlRuntime!.RunAsync(
+                    provider, config.ConnectionString, sql, actor,
+                    previewOnly, _ddlApprovalProvider, cancellationToken);
+                return McpDdlToolResult.FromSqlServerRuntime(sqlServerOutcome);
             }
             outcome = await _postgresDdlRuntime!.RunAsync(
                 provider, config.ConnectionString, sql, actor,
@@ -126,19 +135,23 @@ public partial class SqlAgentTool
                     outcome?.Preview?.Before is { } target
                         ? target.SchemaName + "." + target.TableName
                         : sqliteOutcome?.Preview?.Before is { } sqlite
-                            ? sqlite.SchemaName + "." + sqlite.TableName : "ddl",
-                    (outcome?.Status ?? sqliteOutcome?.Status)?.ToString().ToLowerInvariant() ?? "rejected",
+                            ? sqlite.SchemaName + "." + sqlite.TableName
+                            : sqlServerOutcome?.Preview?.Before is { } sqlserver
+                                ? sqlserver.SchemaName + "." + sqlserver.TableName : "ddl",
+                    (outcome?.Status ?? sqliteOutcome?.Status ?? sqlServerOutcome?.Status)?.ToString().ToLowerInvariant() ?? "rejected",
                     new AuditEventContext
                     {
                         ToolName = McpBuiltInTools.ExecuteDdlSql,
                         Operation = outcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? sqliteOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
+                            ?? sqlServerOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? "denied",
                         DurationMs = watch.ElapsedMilliseconds,
-                        Definition = outcome?.Preview?.HumanReadableDiff ?? sqliteOutcome?.Preview?.HumanReadableDiff,
-                        ErrorCategory = outcome?.ErrorCode ?? sqliteOutcome?.ErrorCode
+                        Definition = outcome?.Preview?.HumanReadableDiff ?? sqliteOutcome?.Preview?.HumanReadableDiff
+                            ?? sqlServerOutcome?.Preview?.HumanReadableDiff,
+                        ErrorCategory = outcome?.ErrorCode ?? sqliteOutcome?.ErrorCode ?? sqlServerOutcome?.ErrorCode
                     },
-                    outcome?.Message ?? sqliteOutcome?.Message ?? "Denied at DDL Host access boundary.",
+                    outcome?.Message ?? sqliteOutcome?.Message ?? sqlServerOutcome?.Message ?? "Denied at DDL Host access boundary.",
                     CancellationToken.None);
             }
             catch (Exception)

@@ -402,3 +402,49 @@ pre-execution audit are all required. Only the G1 additive operations
 are executable; unknown operations, expression/partial indexes,
 unmodeled virtual targets, schema drift and implicit name resolution
 fail closed. SQL Server and Firebird have NOT been enabled.
+
+## G4 SQL Server 2022 — restricted transactional DDL (independent opt-in)
+
+The existing **single** `execute_ddl_sql` MCP tool has a separate SQL
+Server adapter. Installation and ordinary Query/DML rights never enable it.
+Only a qualified `dbo.table` (or another explicitly allowlisted user schema)
+with **1–16 simple INT columns**, no constraints/defaults/identity, is in the
+initial SQL Server Host executable subset. `ALTER TABLE`, `CREATE INDEX`,
+`DROP`, conditional/batch DDL, unsupported types or effects are rejected.
+SQL Server parser / Catalog support is not evidence of Host execution support.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+services.AddHsSqlAgentSqlServerDdl(new SqlServerDdlExecutionOptions
+{
+    Enabled = true,
+    AllowedSchemas = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo" },
+    AllowCreateTable = true,
+    PolicyRevision = "sqlserver-ddl-approval-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql to the intended MCP access key.
+```
+
+The SQL Server 2022+ adapter is distinct from the PostgreSQL/SQLite runtimes.
+An enabled Host requires an actual non-system database, SQL Server 2022+
+version, proven case-insensitive database collation, existing schema ID,
+complete permission to inspect DDL triggers, and an absent target object.
+Preview reads physical `sys.*` metadata without mutations; an expiring,
+one-time independent approval binds database/server identity, schema/object
+snapshot, actor, compiled native plan, policy and readable Before/After.
+The approval connection is released before the human review. At execution,
+a new connection takes a transaction-owned application lock, rechecks live
+metadata inside a SERIALIZABLE transaction, executes **only** the SqlCore
+compiled native command, verifies actual column types/nullability before
+commit, then records the committed result. A failure with proven rollback
+is not success; uncertain COMMIT/rollback returns `outcome_unknown` and
+must be reconciled, **never automatically retried**.
+
+Transaction application locks coordinate this Host's requests; they are not
+a global compare-and-swap against unrelated external SQL Server DDL.
+External schema changes or triggers without sufficient evidence fail closed.
+No public SQL Core DTO can authorize physical execution; the separate MCP
+grant, DDL approval, and durable pre-execution audit remain mandatory.
+The four default read-only tools remain selected; DML and DDL are not.

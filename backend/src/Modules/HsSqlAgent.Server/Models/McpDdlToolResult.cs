@@ -53,6 +53,32 @@ public sealed record McpDdlToolResult(
         };
     }
 
+    /// <summary>Independent SQL Server DB_ID/schema_id/object_id contract.</summary>
+    public SqlServerDdlPhysicalSnapshot? SqlServerBefore { get; init; }
+
+    public static McpDdlToolResult FromSqlServerRuntime(SqlServerDdlRuntimeResult result)
+    {
+        var preview = result.Preview;
+        return new McpDdlToolResult(
+            result.Status == DdlRuntimeStatus.OutcomeUnknown
+                ? "outcome_unknown" : result.Status.ToString().ToLowerInvariant(),
+            result.CommitConfirmed,
+            "MsSqlServer",
+            preview?.StaticPreview.PlanFingerprint,
+            preview?.StaticPreview.Plan.Command.Sql,
+            null,
+            preview?.ExpectedColumns,
+            preview?.RequestId,
+            result.Message,
+            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
+                or DdlRuntimeStatus.OutcomeUnknown
+                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
+                : null)
+        {
+            SqlServerBefore = preview?.Before
+        };
+    }
+
     public static McpDdlToolResult FromRuntime(DdlRuntimeResult result)
     {
         var preview = result.Preview;
