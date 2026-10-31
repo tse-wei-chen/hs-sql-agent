@@ -276,7 +276,7 @@ public sealed class SqlServerDdlRuntime(
         }
     }
 
-    private static async Task<SqlServerDdlPhysicalSnapshot> SnapshotAsync(
+    private async Task<SqlServerDdlPhysicalSnapshot> SnapshotAsync(
         DbConnection connection, DbTransaction? tx, string schema, string table,
         CancellationToken token)
     {
@@ -335,7 +335,7 @@ public sealed class SqlServerDdlRuntime(
             schema, table, objectId, columns.AsReadOnly(), fingerprint);
     }
 
-    private static async Task EnsureNoDdlTriggersAsync(
+    private async Task EnsureNoDdlTriggersAsync(
         DbConnection connection, DbTransaction? tx, CancellationToken token)
     {
         // Without complete visibility a trigger may execute arbitrary SQL.
@@ -384,27 +384,27 @@ public sealed class SqlServerDdlRuntime(
         || database.Equals("msdb", StringComparison.OrdinalIgnoreCase)
         || database.Equals("tempdb", StringComparison.OrdinalIgnoreCase);
 
-    private static async Task<object?> ScalarAsync(DbConnection conn, DbTransaction? tx,
+    private async Task<object?> ScalarAsync(DbConnection conn, DbTransaction? tx,
         string sql, CancellationToken token, params (string Name, object Value)[] parameters)
     {
         await using var command = Command(conn, tx, sql, parameters);
         return await command.ExecuteScalarAsync(token);
     }
 
-    private static async Task ExecuteAsync(DbConnection conn, DbTransaction tx,
+    private async Task ExecuteAsync(DbConnection conn, DbTransaction tx,
         string sql, CancellationToken token)
     {
         await using var command = Command(conn, tx, sql);
         await command.ExecuteNonQueryAsync(token);
     }
 
-    private static DbCommand Command(DbConnection conn, DbTransaction? tx,
+    private DbCommand Command(DbConnection conn, DbTransaction? tx,
         string sql, params (string Name, object Value)[] parameters)
     {
         var command = conn.CreateCommand();
         command.Transaction = tx;
         command.CommandText = sql;
-        command.CommandTimeout = 15;
+        command.CommandTimeout = Math.Clamp((int)Math.Ceiling(_options.ExecutionTimeout.TotalSeconds), 1, 15);
         foreach (var (name, value) in parameters)
         {
             var p = command.CreateParameter();
