@@ -66,9 +66,10 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   `DROP TABLE schema.table RESTRICT` only for PostgreSQL. The plan explicitly
   records destructive risk, potential data loss and a physical emptiness
   precondition. Virtual Catalog Preview remains hypothetical.
-- Add `AllowDropEmptyTable` (**false by default**) to the opt-in PostgreSQL
-  Host. This requires the existing separately granted `execute_ddl_sql`
-  permission, independent human DDL approval, immutable physical evidence,
+- Add `AllowDropEmptyTable` (**false by default**) and a separate
+  `AllowedDropPrincipals` MCP-key identity allowlist (**empty by default**)
+  to the PostgreSQL Host. This requires the existing separately granted
+  `execute_ddl_sql` permission, independent human DDL approval, immutable physical evidence,
   policy revision and short-lived approval challenge.
 - Enforce an owned, ordinary, persistent, non-partitioned, non-replicated,
   RLS-free and privilege-safe table with 1–16 INTEGER columns and **zero

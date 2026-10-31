@@ -69,6 +69,10 @@ public sealed class PostgresDdlRuntime(
                 return Rejected("ddl.schema_denied", "Target schema is not explicitly allowlisted for DDL.");
             if (!AllowedOperation(change.Operation))
                 return Rejected("ddl.operation_denied", "This DDL operation is not enabled by the Host.");
+            if (change.Operation == DdlSchemaOperation.DropTable
+                && !_options.AllowedDropPrincipals.Contains(actor.PrincipalIdentity))
+                return Rejected("ddl.destructive_principal_denied",
+                    "This MCP key is not separately authorized for destructive DDL.");
             ValidateConfiguration();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -163,7 +167,9 @@ public sealed class PostgresDdlRuntime(
             if (!string.Equals(policy, PolicyMaterial(), StringComparison.Ordinal)
                 || !_options.Enabled
                 || !_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
-                || !AllowedOperation(plan.Changes[0].Operation))
+                || !AllowedOperation(plan.Changes[0].Operation)
+                || (plan.Changes[0].Operation == DdlSchemaOperation.DropTable
+                    && !_options.AllowedDropPrincipals.Contains(actor.PrincipalIdentity)))
                 return Rejected("ddl.policy_changed", "DDL Host policy changed after approval.", preview);
 
             // Do not use the preview connection for the commit. The connection
@@ -311,6 +317,7 @@ public sealed class PostgresDdlRuntime(
     private void ValidateConfiguration()
     {
         if (_options.AllowedSchemas.Count == 0
+            || (_options.AllowDropEmptyTable && _options.AllowedDropPrincipals.Count == 0)
             || _options.ApprovalLifetime <= TimeSpan.Zero
             || _options.ApprovalLifetime > TimeSpan.FromMinutes(5)
             || _options.ExecutionTimeout <= TimeSpan.Zero
@@ -327,6 +334,8 @@ public sealed class PostgresDdlRuntime(
             _options.AllowAddColumn,
             _options.AllowCreateIndex,
             _options.AllowDropEmptyTable,
+            destructivePrincipals = _options.AllowedDropPrincipals.OrderBy(
+                principal => principal, StringComparer.Ordinal).ToArray(),
             _options.PolicyRevision,
             schemas = _options.AllowedSchemas.OrderBy(s => s, StringComparer.Ordinal).ToArray(),
             _options.ApprovalLifetime,

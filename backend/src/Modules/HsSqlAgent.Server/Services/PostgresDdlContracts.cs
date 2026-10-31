@@ -18,6 +18,10 @@ public sealed class PostgresDdlExecutionOptions
     public bool AllowCreateIndex { get; init; }
     // Separate high-risk opt-in. Never inherited from additive DDL or DML grants.
     public bool AllowDropEmptyTable { get; init; }
+    // Tiered key authorization: these are authenticated MCP principal IDs,
+    // e.g. mcp-key:123, not caller-supplied SQL identities.
+    public IReadOnlySet<string> AllowedDropPrincipals { get; init; } =
+        new HashSet<string>(StringComparer.Ordinal);
     public string PolicyRevision { get; init; } = "ddl-policy-v1";
     public TimeSpan ApprovalLifetime { get; init; } = TimeSpan.FromMinutes(2);
     public TimeSpan ExecutionTimeout { get; init; } = TimeSpan.FromSeconds(15);

@@ -44,6 +44,10 @@ public sealed class PostgresDdlDestructiveLiveTests(PostgresDdlLiveFixture fixtu
             AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { schema },
             AllowCreateTable = true,
             AllowDropEmptyTable = enableDrop,
+            AllowedDropPrincipals = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "mcp-key:777"
+            },
             PolicyRevision = "g6-postgres-destructive-live"
         });
 
@@ -105,6 +109,13 @@ public sealed class PostgresDdlDestructiveLiveTests(PostgresDdlLiveFixture fixtu
             Assert.True(await ExistsAsync(schema));
 
             var runtime = Runtime(schema, enableDrop: true);
+            var otherKey = await runtime.RunAsync(Provider(), fixture.ConnectionString,
+                sql, new DdlActorContext("mcp-key:778", "db-management:99", "ddl_live"),
+                false, Approval(DdlApprovalState.Approved), ct);
+            Assert.Equal(DdlRuntimeStatus.Rejected, otherKey.Status);
+            Assert.Equal("ddl.destructive_principal_denied", otherKey.ErrorCode);
+            Assert.True(await ExistsAsync(schema));
+
             var preview = await runtime.RunAsync(Provider(), fixture.ConnectionString,
                 sql, Actor(), true, null, ct);
             Assert.Equal(DdlRuntimeStatus.Preview, preview.Status);

@@ -609,11 +609,20 @@ services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
     Enabled = true,
     AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "staging_cleanup" },
     AllowDropEmptyTable = true, // false by default, independent from additive DDL
+    AllowedDropPrincipals = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "mcp-key:123" // authenticated ID of the separately authorized MCP key
+    },
     PolicyRevision = "postgres-g6-drop-empty-governance-v1"
 });
 services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
 // Separately grant execute_ddl_sql to the desired MCP key.
 ```
+
+The Host also requires that the authenticated MCP key principal match
+`AllowedDropPrincipals`. Merely granting `execute_ddl_sql` to a key does
+**not** authorize destructive DROP; changing this allowlist invalidates
+outstanding approvals.
 
 The MCP preview exposes `Risk=Destructive`, `MayLoseData=true`, and the
 human-readable Before/After impact summary. None of these is an execution grant.
