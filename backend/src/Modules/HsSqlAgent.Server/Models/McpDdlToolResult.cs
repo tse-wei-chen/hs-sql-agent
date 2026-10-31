@@ -108,6 +108,29 @@ public sealed record McpDdlToolResult(
         };
     }
 
+    /// <summary>MySQL opaque physical server metadata; no raw UUID or credentials.</summary>
+    public MySqlDdlPhysicalSnapshot? MySqlBefore { get; init; }
+
+    public static McpDdlToolResult FromMySqlRuntime(MySqlDdlRuntimeResult result)
+    {
+        var preview = result.Preview;
+        return new McpDdlToolResult(
+            result.Status == DdlRuntimeStatus.OutcomeUnknown
+                ? "outcome_unknown" : result.Status.ToString().ToLowerInvariant(),
+            result.CommitConfirmed, "MySQL",
+            preview?.StaticPreview.PlanFingerprint,
+            preview?.StaticPreview.Plan.Command.Sql,
+            null, preview?.ExpectedColumns, preview?.RequestId, result.Message,
+            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
+                or DdlRuntimeStatus.OutcomeUnknown
+                ? new McpToolError(result.ErrorCode ?? "ddl.denied",
+                    result.Message, "DdlExecution")
+                : null)
+        {
+            MySqlBefore = preview?.Before
+        };
+    }
+
     public static McpDdlToolResult FromRuntime(DdlRuntimeResult result)
     {
         var preview = result.Preview;
