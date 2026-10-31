@@ -91,7 +91,7 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
             "CREATE INDEX idx_widgets_nick ON main.widgets (nick)", options);
         Assert.DoesNotContain("ON \"main\".\"widgets\"", index.Command.Sql,
             StringComparison.Ordinal);
-        Assert.Contains("ON \"widgets\"", index.Command.Sql, StringComparison.Ordinal);
+        Assert.Contains("ON \"WIDGETS\"", index.Command.Sql, StringComparison.Ordinal);
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
         using (var cmd = connection.CreateCommand())
@@ -170,10 +170,10 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
         await using var db = new SqliteConnection(_connectionString);
         await db.OpenAsync(TestContext.Current.CancellationToken);
         await using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('widgets') WHERE name IN ('id','nick')";
+        cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('widgets') WHERE name COLLATE NOCASE IN ('id','nick')";
         Assert.Equal(2L, Convert.ToInt64(
             await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
-        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name='idx_widgets_nick'";
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE type='index' AND name='idx_widgets_nick' COLLATE NOCASE";
         Assert.Equal(1L, Convert.ToInt64(
             await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
     }
@@ -238,7 +238,7 @@ public sealed class SqliteDdlLiveTests : IAsyncLifetime
         await using var db = new SqliteConnection(_connectionString);
         await db.OpenAsync(TestContext.Current.CancellationToken);
         await using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=@name)";
+        cmd.CommandText = "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE type='table' AND name=@name COLLATE NOCASE)";
         cmd.Parameters.AddWithValue("@name", table);
         return Convert.ToInt64(await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken)) == 1L;
     }

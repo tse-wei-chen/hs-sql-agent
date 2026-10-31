@@ -54,7 +54,7 @@ public sealed class SqliteDdlRuntime(
                 new DdlCompilationOptions(SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite));
             var change = plan.Changes[0];
             if (change.ObjectIdentity.Parts.Count != 2
-                || !string.Equals(change.ObjectIdentity.Parts[0], "main", StringComparison.Ordinal))
+                || !string.Equals(change.ObjectIdentity.Parts[0], "main", StringComparison.OrdinalIgnoreCase))
                 return Deny("ddl.main_identity_required",
                     "SQLite execution requires main.table, not TEMP, attached DB or an unresolved name.");
             table = change.ObjectIdentity.Parts[1];
@@ -331,7 +331,7 @@ public sealed class SqliteDdlRuntime(
         IReadOnlyList<DdlPhysicalColumn> actual, IReadOnlyList<DdlPhysicalColumn> expected) =>
         actual.Count == expected.Count
         && actual.Zip(expected).All(pair =>
-            pair.First.Name == pair.Second.Name
+            string.Equals(pair.First.Name, pair.Second.Name, StringComparison.OrdinalIgnoreCase)
             && Normalize(pair.First.TypeName) == Normalize(pair.Second.TypeName)
             && pair.First.Nullable == pair.Second.Nullable);
 
@@ -341,11 +341,11 @@ public sealed class SqliteDdlRuntime(
         var a = actual.OrderBy(x => x.Name, StringComparer.Ordinal).ToArray();
         var b = expected.OrderBy(x => x.Name, StringComparer.Ordinal).ToArray();
         return a.Length == b.Length && a.Zip(b).All(pair =>
-            pair.First.Name == pair.Second.Name
+            string.Equals(pair.First.Name, pair.Second.Name, StringComparison.OrdinalIgnoreCase)
             && pair.First.Unique == pair.Second.Unique
             && pair.First.Partial == pair.Second.Partial
             && pair.First.Expression == pair.Second.Expression
-            && pair.First.Columns.SequenceEqual(pair.Second.Columns));
+            && pair.First.Columns.SequenceEqual(pair.Second.Columns, StringComparer.OrdinalIgnoreCase));
     }
 
     private static SqliteDdlRuntimeResult Deny(
@@ -369,14 +369,15 @@ public sealed class SqliteDdlRuntime(
                 return snapshot.TableDefinition is null ? null : "Target SQLite relation already exists.";
             case DdlSchemaOperation.AddNullableColumn:
                 if (snapshot.TableDefinition is null) return "Target SQLite table missing.";
-                return snapshot.Columns.Any(c => c.Name == change.Columns[0])
+                return snapshot.Columns.Any(c => string.Equals(c.Name, change.Columns[0], StringComparison.OrdinalIgnoreCase))
                     ? "Target SQLite column already exists." : null;
             case DdlSchemaOperation.CreateIndex:
                 if (snapshot.TableDefinition is null) return "Target SQLite table missing.";
-                if (change.Columns.Any(name => snapshot.Columns.All(c => c.Name != name)))
+                if (change.Columns.Any(name => snapshot.Columns.All(c =>
+                    !string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))))
                     return "Index key column absent.";
                 await using (var cmd = Command(conn, tx,
-                    "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE name=@name)",
+                    "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema WHERE name=@name COLLATE NOCASE)",
                     ("name", change.IndexName ?? "")))
                     return Convert.ToInt64(await cmd.ExecuteScalarAsync(ct)) != 0
                         ? "SQLite index name already exists in main namespace." : null;
@@ -411,7 +412,7 @@ public sealed class SqliteDdlRuntime(
 
         string? tableDefinition = null;
         await using (var cmd = Command(conn, tx,
-            "SELECT type, sql FROM main.sqlite_schema WHERE name=@name", ("name", table)))
+            "SELECT type, sql FROM main.sqlite_schema WHERE name=@name COLLATE NOCASE", ("name", table)))
         await using (var reader = await cmd.ExecuteReaderAsync(ct))
         {
             if (await reader.ReadAsync(ct))
