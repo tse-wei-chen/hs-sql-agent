@@ -615,6 +615,9 @@ services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
 // Separately grant execute_ddl_sql to the desired MCP key.
 ```
 
+The MCP preview exposes `Risk=Destructive`, `MayLoseData=true`, and the
+human-readable Before/After impact summary. None of these is an execution grant.
+
 **This is not a general DROP TABLE permission.** Preview and execution
 both demand an actual **empty** ordinary PostgreSQL table with 1–16
 INTEGER columns, direct owner privilege, no secondary indexes,

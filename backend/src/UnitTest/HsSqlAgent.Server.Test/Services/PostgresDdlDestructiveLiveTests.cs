@@ -114,6 +114,12 @@ public sealed class PostgresDdlDestructiveLiveTests(PostgresDdlLiveFixture fixtu
                 preview.Preview.StaticPreview.Plan.Changes[0].Operation);
             Assert.Contains("DELETE", preview.Preview.HumanReadableDiff,
                 StringComparison.OrdinalIgnoreCase);
+            // The public MCP preview must expose destructive impact, not only
+            // the private human-approver and audit payload.
+            var mcpPreview = HsSqlAgent.Server.Models.McpDdlToolResult.FromRuntime(preview);
+            Assert.Equal("Destructive", mcpPreview.Risk);
+            Assert.True(mcpPreview.MayLoseData);
+            Assert.Contains("HIGH RISK", mcpPreview.HumanReadableDiff);
             Assert.True(await ExistsAsync(schema));
 
             var rejected = await runtime.RunAsync(Provider(), fixture.ConnectionString,
