@@ -15,7 +15,7 @@ module internal RewriteVirtualCatalogProjection =
     type RelationColumns = (string * string) list
     type Projection =
         { Physical: (string * RelationColumns) list
-          Readable: (string * RelationColumns) list }
+          ReadableViews: (string * RelationColumns) list }
 
     let private catalogPart dialect (value: string) =
         RewriteResourceBudget.charge (max 1L (int64 value.Length))
@@ -46,13 +46,12 @@ module internal RewriteVirtualCatalogProjection =
         // Physical DML targets must NEVER inherit read-only View identities.
         // Query/Mutation readable View selection retains its independent,
         // provider-specific proof from the bound closed AST.
-        let readable =
+        let readableViews =
             seq {
-                yield! physical
                 for view in RewriteQueryAnalyzer.readableViews dialect state bound do
                     yield project dialect view.QualifiedName view.Columns
                 for view in RewriteMutationAnalyzer.readableViews dialect state bound do
                     yield project dialect view.QualifiedName view.Columns
             }
             |> Seq.toList
-        { Physical = physical; Readable = readable }
+        { Physical = physical; ReadableViews = readableViews }
