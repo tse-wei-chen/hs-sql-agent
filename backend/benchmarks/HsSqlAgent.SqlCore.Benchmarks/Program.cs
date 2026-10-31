@@ -6,11 +6,84 @@ using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Script;
 
 if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
 
-var options = BenchmarkOptions.Parse(args);
+var scriptMode = args.Contains("--script-analysis", StringComparer.Ordinal);
+var options = BenchmarkOptions.Parse(scriptMode
+    ? args.Where(arg => arg != "--script-analysis").ToArray()
+    : args);
+if (scriptMode)
+{
+    // Opt-in same-runner base/head measurement, never part of SQL compiler timings.
+    // Both revisions get this identical harness from the candidate checkout.
+    var workloads = new[]
+    {
+        (Name: "four-queries", Sql: "SELECT 1 AS a; SELECT 2 AS b; SELECT 3 AS c; SELECT 4 AS d;"),
+        (Name: "catalog-dml-effects",
+            Sql: "CREATE TABLE users(id INTEGER, name VARCHAR(40));" +
+                 " SELECT id FROM users; INSERT INTO users(id) VALUES(1);" +
+                 " UPDATE users SET name='Ada' WHERE id=1; DELETE FROM users WHERE id=1;")
+    };
+    var rows = new List<object>();
+    foreach (var provider in Enum.GetValues<SqlAgentToolType>())
+    foreach (var workload in workloads)
+    {
+        SqlScriptAnalysisResult Analyze() => SqlCoreFacade.AnalyzeScript(
+            workload.Sql, provider, SqlCatalogState.KnownEmpty());
+        string Signature(SqlScriptAnalysisResult analysis) => JsonSerializer.Serialize(
+            analysis.Statements.Select(statement => new {
+                statement.Syntax.Kind, ParseStatus = statement.Syntax.Status, statement.Status,
+                statement.CatalogBinding, statement.NameBinding, statement.TypeBinding,
+                statement.Certainty, statement.EffectCoverage,
+                Diagnostics = statement.Diagnostics.Select(d => d.Code).ToArray(),
+                Changes = statement.Changes.Select(c => new { c.Operation, c.TableName, c.Certainty }).ToArray(),
+                Effects = statement.DetailedEffects.Select(e =>
+                    new { e.Kind, e.Operation, e.ObjectName, e.Certainty,
+                          Dependencies = e.Dependencies.ToArray() }).ToArray()
+            }).ToArray());
+        var expected = Analyze();
+        var digest = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(Signature(expected))));
+        for (var warmup = 0; warmup < options.Warmup; warmup++) Analyze();
+        var elapsed = new long[options.Iterations];
+        var allocated = new long[options.Iterations];
+        for (var iteration = 0; iteration < options.Iterations; iteration++)
+        {
+            var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+            var beforeTicks = Stopwatch.GetTimestamp();
+            var actual = Analyze();
+            var afterTicks = Stopwatch.GetTimestamp();
+            var afterBytes = GC.GetAllocatedBytesForCurrentThread();
+            if (actual.Statements.Count != expected.Statements.Count)
+                throw new InvalidOperationException("Script analysis statement count changed.");
+            elapsed[iteration] = afterTicks - beforeTicks;
+            allocated[iteration] = afterBytes - beforeBytes;
+        }
+        Array.Sort(elapsed);
+        var unit = 1_000_000.0 / Stopwatch.Frequency;
+        var p95Index = Math.Max(0, (int)Math.Ceiling(options.Iterations * 0.95) - 1);
+        rows.Add(new {
+            Provider = provider.ToString(), Case = workload.Name, OutputDigest = digest,
+            MeanMicroseconds = Math.Round(elapsed.Average() * unit, 3),
+            P95Microseconds = Math.Round(elapsed[p95Index] * unit, 3),
+            MeanAllocatedBytes = Math.Round(allocated.Average(), 1)
+        });
+    }
+    var scriptReport = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
+        new JsonSerializerOptions { WriteIndented = true });
+    if (options.Output is { } destination)
+    {
+        var full = Path.GetFullPath(destination);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, scriptReport);
+    }
+    else Console.WriteLine(scriptReport);
+    return;
+}
 var cases = new[]
 {
     new BenchmarkCase("query-filter-order", "SELECT id, name FROM users WHERE id >= 42 ORDER BY id", false),

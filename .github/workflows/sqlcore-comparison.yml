@@ -73,6 +73,52 @@ jobs:
                 --iterations 300 --warmup 100 --output "artifacts/$revision-$round.json"
             done
           done
+      - name: Compare Script analysis allocations and latency on identical source workloads
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --script-analysis --iterations 120 --warmup 24 --output "artifacts/script-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          samples = {side: [] for side in ("base", "head")}
+          for side in samples:
+              for run in range(1, 4):
+                  report = json.loads((root / f"script-{side}-{run}.json").read_text())
+                  rows = {(x["Provider"], x["Case"]): x for x in report["results"]}
+                  assert len(rows) == 12, (side, run, "Expected six dialects x two Script workloads")
+                  samples[side].append(rows)
+          keys = sorted(samples["base"][0])
+          lines = ["### Script analysis reuse (median of 3 same-runner rounds)",
+                   "| Dialect / workload | Candidate/base allocation | Candidate/base mean time |",
+                   "|---|---:|---:|"]
+          for key in keys:
+              old = [run[key] for run in samples["base"]]
+              new = [run[key] for run in samples["head"]]
+              assert len({r["OutputDigest"] for r in old + new}) == 1, (key, "Script result parity drift")
+              ratios = []
+              for metric in ("MeanAllocatedBytes", "MeanMicroseconds"):
+                  base = statistics.median(r[metric] for r in old)
+                  head = statistics.median(r[metric] for r in new)
+                  assert base > 0 and head > 0, (key, metric, base, head)
+                  ratios.append(f"{head/base:.3f}x")
+              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
+          output = "\n".join(lines)
+          print(output)
+          with open("artifacts/script-comparison.md", "w") as file:
+              file.write(output + "\n")
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as file:
+              file.write(output + "\n")
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4

@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.Collections.Generic;
 using System.Linq;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Catalog;
@@ -106,5 +108,63 @@ public sealed class SqlCoreStructuredStatementEffectsTests
         Assert.Equal(SqlStatementEffectOperation.Unknown, effect.Operation);
         Assert.Equal(SqlCatalogKnowledge.Unknown, effect.Certainty);
         Assert.Null(effect.ObjectIdentity);
+    }
+
+    private sealed class Listener<T>(Action<T> action) : IObserver<T>
+    {
+        public void OnNext(T value) => action(value);
+        public void OnCompleted() { }
+        public void OnError(Exception error) => throw error;
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void ScriptAnalysis_UsesParsedStatementWithoutRedundantCatalogParse(SqlAgentToolType dialect)
+    {
+        // The existing Source parser runs once for each visible Query/Mutation;
+        // strict Catalog proof and Effects must reuse its typed statement.
+        var owner = Environment.CurrentManagedThreadId;
+        var stages = new List<string>();
+        var listeners = new List<IDisposable>();
+        using (DiagnosticListener.AllListeners.Subscribe(new Listener<DiagnosticListener>(source =>
+        {
+            if (source.Name == "HsSqlAgent.SqlCore.Compiler")
+                listeners.Add(source.Subscribe(new Listener<KeyValuePair<string, object?>>(entry =>
+                {
+                    if (entry.Key == "StageCompleted" && Environment.CurrentManagedThreadId == owner
+                        && entry.Value is not null)
+                    {
+                        var stage = entry.Value.GetType().GetProperty("Stage")?.GetValue(entry.Value) as string;
+                        if (stage is not null) stages.Add(stage);
+                    }
+                })));
+        })))
+        {
+            try
+            {
+                var result = SqlCoreFacade.AnalyzeScript(
+                    "SELECT 1 AS first_value; SELECT 2 AS second_value;",
+                    dialect, SqlCatalogState.KnownEmpty());
+                Assert.Equal(2, result.Statements.Count);
+                Assert.All(result.Statements, statement =>
+                {
+                    Assert.Equal(SqlScriptParseStatus.Parsed, statement.Syntax.Status);
+                    Assert.Equal(SqlCatalogBindingStatus.Verified, statement.CatalogBinding);
+                    Assert.Equal(SqlEffectCoverage.Partial, statement.EffectCoverage);
+                    Assert.Single(statement.DetailedEffects);
+                });
+                Assert.Equal(2, stages.Count(stage => stage == "ScriptStatementParse"));
+                Assert.DoesNotContain("CatalogParsing", stages);
+            }
+            finally
+            {
+                foreach (var disposable in listeners) disposable.Dispose();
+            }
+        }
     }
 }

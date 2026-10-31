@@ -65,12 +65,11 @@ module internal RewriteStatementEffects =
         |> Seq.sortWith (fun a b -> StringComparer.Ordinal.Compare(a, b))
         |> Seq.toList
 
-    let private astEffects sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null)
-                           (syntax: SqlScriptStatementSyntax) =
-        // The Script parser already required the very same source parser to
-        // accept this statement. Reparse only to inspect the closed F# AST.
-        let parsed = RewriteFacadeAdapter.parseSourceValidated
-                         syntax.Text sourceDialect sourceProfile
+    let private astEffects sourceDialect
+                           (syntax: SqlScriptStatementSyntax)
+                           (parsed: ParsedSql) (boundEvidence: BoundSql option) =
+        // The Script parser's original typed AST is the sole parse for this
+        // statement; its evidence cannot authorize compilation or execution.
         let original = Typestate.Parsed.value parsed
         // Raw CTE references are still NamedTable before Binder resolves
         // lexical WITH scope. All three typed Mutation statements can carry
@@ -90,15 +89,18 @@ module internal RewriteStatementEffects =
             | _ -> false
         let document =
             if mutationHasCtes then
-                try
-                    RewriteBinder.bind sourceDialect parsed
-                    |> Typestate.Bound.value
-                with
-                | :? SqlCompilationException as ex
-                    when not (isNull ex.Diagnostic)
-                         && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
-                    reraise()
-                | :? InvalidOperationException -> original
+                match boundEvidence with
+                | Some bound -> Typestate.Bound.value bound
+                | None ->
+                    try
+                        RewriteBinder.bind sourceDialect parsed
+                        |> Typestate.Bound.value
+                    with
+                    | :? SqlCompilationException as ex
+                        when not (isNull ex.Diagnostic)
+                             && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                        reraise()
+                    | :? InvalidOperationException -> original
             else original
         let references = physicalReferences document
         let potential kind operation name dependencies =
@@ -154,7 +156,8 @@ module internal RewriteStatementEffects =
                  (proceduralIntents: IReadOnlyList<SqlProceduralIntent>)
                  (proceduralDefinitions: IReadOnlyList<SqlProceduralDefinition>)
                  (sessionOperation: SqlStatementEffectOperation)
-                 (provenance: SqlTransactionEffectProvenance) =
+                 (provenance: SqlTransactionEffectProvenance)
+                 (parsed: ParsedSql option) (boundEvidence: BoundSql option) =
         let coverage =
             match syntax.Kind, status, certainty with
             | SqlScriptStatementKind.Session, SqlStatementAnalysisStatus.Analyzed, SqlCatalogKnowledge.Known ->
@@ -196,7 +199,9 @@ module internal RewriteStatementEffects =
                 match syntax.Kind with
                 | SqlScriptStatementKind.Query
                 | SqlScriptStatementKind.Mutation when syntax.Status = SqlScriptParseStatus.Parsed ->
-                    astEffects sourceDialect sourceProfile syntax
+                    match parsed with
+                    | Some typed -> astEffects sourceDialect syntax typed boundEvidence
+                    | None -> invalidOp "Parsed Script statement is missing its typed AST."
                 | SqlScriptStatementKind.Schema -> schema
                 | SqlScriptStatementKind.Security when securityIntents.Count > 0 ->
                     securityIntents

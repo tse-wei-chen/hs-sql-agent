@@ -2658,7 +2658,7 @@ module internal RewriteScriptAnalyzer =
     let analyze sql sourceDialect (sourceProfile: SqlProviderCapabilityProfile | null) (initial: SqlCatalogState) =
         if Object.ReferenceEquals(initial, null) then nullArg "initialCatalog"
         RewriteResourceBudget.withCompilation (fun () ->
-            let parsed = RewriteScriptParser.parse sql sourceDialect sourceProfile
+            let parsed, parsedDocuments = RewriteScriptParser.parseForAnalysis sql sourceDialect sourceProfile
             let results = ResizeArray<SqlStatementAnalysis>()
             let errors = ResizeArray<SqlDiagnostic>()
             let mutable current = initial
@@ -2666,8 +2666,11 @@ module internal RewriteScriptAnalyzer =
             let mutable session = RewriteSessionAnalyzer.initial sourceDialect sourceProfile
 
             RewriteResourceBudget.withStage "ScriptAnalysis" SqlDiagnosticStage.SemanticValidation (fun () ->
-                for syntax in parsed.Statements do
+                for statementIndex = 0 to parsed.Statements.Count - 1 do
                     RewriteResourceBudget.checkpoint ()
+                    let syntax = parsed.Statements.[statementIndex]
+                    let typed = parsedDocuments.[statementIndex]
+                    let mutable boundForEffects : Typestate.BoundSql option = None
                     let before = current
                     let transactionBefore = RewriteTransactionAnalyzer.status transaction
                     let sessionBefore = RewriteSessionAnalyzer.snapshot session
@@ -2839,9 +2842,14 @@ module internal RewriteScriptAnalyzer =
                                 if syntax.Status = SqlScriptParseStatus.Parsed
                                    && (syntax.Kind = SqlScriptStatementKind.Query
                                        || syntax.Kind = SqlScriptStatementKind.Mutation) then
+                                    let document =
+                                        match typed with
+                                        | Some parsed -> parsed
+                                        | None -> invalidOp "Parsed Script statement is missing its typed AST."
                                     let binding, names, types, state, certainty, diagnostics, matchProof =
                                         RewriteCatalogBinding.verify sourceDialect sourceProfile
-                                            (RewriteSessionAnalyzer.scope session) current syntax
+                                            (RewriteSessionAnalyzer.scope session) current syntax document
+                                            (fun bound -> boundForEffects <- Some bound)
                                     sourceMatchCardinality <- matchProof
                                     binding, names, types, state, certainty, diagnostics
                                 else
@@ -2951,7 +2959,8 @@ module internal RewriteScriptAnalyzer =
                                 status runtimeCertainty effects (readOnly changes)
                                 (readOnly securityIntents) (readOnly securityDependencies)
                                 (readOnly utilityIntents) (readOnly proceduralIntents)
-                                (readOnly proceduralDefinitions) sessionOperation provenance)
+                                (readOnly proceduralDefinitions) sessionOperation provenance
+                                typed boundForEffects)
                     results.Add(
                         SqlStatementAnalysis(
                             syntax, status, effects,
