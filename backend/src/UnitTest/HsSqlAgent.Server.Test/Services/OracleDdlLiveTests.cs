@@ -227,6 +227,7 @@ public sealed class OracleDdlLiveTests
             ("database", "SELECT TO_CHAR(DBID) FROM V$DATABASE"),
             ("pdb", "SELECT TO_CHAR(DBID), RAWTOHEX(GUID), OPEN_MODE FROM V$PDBS " +
                 "WHERE CON_ID=TO_NUMBER(SYS_CONTEXT('USERENV','CON_ID'))"),
+            ("objects", "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = 'G5_PROBE_NONEXISTENT'"),
             ("triggers", "SELECT COUNT(*) FROM DBA_TRIGGERS WHERE STATUS = 'ENABLED' " +
                 "AND (BASE_OBJECT_TYPE IN ('DATABASE','PLUGGABLE DATABASE') " +
                 "OR (BASE_OBJECT_TYPE = 'SCHEMA' AND OWNER = 'SQLCORE'))")
@@ -267,6 +268,25 @@ public sealed class OracleDdlLiveTests
             {
                 results.Add(name + ":" + ex.GetType().Name);
             }
+        }
+        // Probe the pure F# phase separately from Oracle's physical metadata.
+        // Emit only the stage/error type; never SQL, DB identity, or credentials.
+        try
+        {
+            var profile = new HsSqlAgent.SqlCore.Models.SqlProviderCapabilityProfile(
+                SqlAgentToolType.Oracle, new Version(23, 26));
+            var options = new HsSqlAgent.SqlCore.Ddl.DdlCompilationOptions(
+                SqlAgentToolType.Oracle, SqlAgentToolType.Oracle, profile, profile);
+            HsSqlAgent.SqlCore.SqlCoreFacade.CompileDdl(
+                "CREATE TABLE G5_PROBE(ID INTEGER NOT NULL)", options);
+            results.Add("compile:ok");
+            HsSqlAgent.SqlCore.SqlCoreFacade.PreviewDdl(
+                "CREATE TABLE G5_PROBE(ID INTEGER NOT NULL)", options);
+            results.Add("static-preview:ok");
+        }
+        catch (Exception ex)
+        {
+            results.Add("core:" + ex.GetType().Name);
         }
         return string.Join(";", results);
     }
