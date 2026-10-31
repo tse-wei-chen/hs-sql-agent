@@ -297,3 +297,64 @@ Do not commit production keys. Supply HMAC/JWT keys and database credentials thr
 
 Full project documentation:
 https://github.com/tse-wei-chen/hs-sql-agent
+
+## G3: PostgreSQL-only transactional DDL, explicit opt-in
+
+The single MCP tool `execute_ddl_sql` is **disabled and hidden by default**
+and is never automatically selected or granted by DML permissions. Existing
+four metadata/Query tools remain selected; DML and DDL remain unselected.
+
+A Hosting application must independently enable it, allowlist schema(s) and
+operations, and register its own DDL approval provider *before building DI*:
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "app" },
+    AllowCreateTable = true,
+    AllowAddColumn = true,
+    AllowCreateIndex = true,
+    PolicyRevision = "ddl-governance-2026-10"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Implement the provider to obtain independent human approval; return
+// the exact request ID, evidence fingerprint and approver identity.
+// The MCP access key must separately grant "execute_ddl_sql".
+```
+
+Without this opt-in, an explicit key grant, valid PostgreSQL context and a
+separately configured `IDdlApprovalProvider`, execution is denied. The
+provider is **not** `IDmlApprovalProvider`; no DML consent or session is
+reused. `previewOnly=true` captures live metadata without execution or
+approval. Pending approvals cannot be resumed to execute: request a new
+preview and approval. The result distinguishes `preview`, `committed`,
+`rejected`, `pending`, `failed` (confirmed rollback) and
+`outcome_unknown` (commit/rollback reply unverified).
+
+Supported: PostgreSQL 12+ with **explicit qualified schema.table** and
+independently enabled operation: ordinary CREATE TABLE, nullable ADD COLUMN,
+nonunique simple-column CREATE INDEX. Cross-provider, unqualified
+search_path, IF EXISTS, CASCADE, DROP, TRUNCATE, CONCURRENTLY, dynamic
+SQL and multi-statement requests are unsupported. The PG account must read
+physical metadata and `pg_control_system()` for physical cluster identity
+(e.g. explicit pg_monitor privilege); unproven metadata fails closed.
+
+The Host verifies actual server/database/cluster identity, table OID,
+column types, nullability, index keys and schema namespace collisions.
+Approval fingerprints bind native G1 compiled SQL, typed effects, physical
+before-snapshot, principal/key, database, policy revision, request ID and
+expiry, plus a human-readable Before/ExpectedAfter diff. A fresh connection
+re-verifies the target under a PostgreSQL transaction, with a table lock for
+ALTER/INDEX, executes only the immutable compiled native SQL once and
+checks actual post-DDL metadata before COMMIT. The DDL attempt requires a
+durable pre-execution AuditLog write; outcome is audited separately.
+Unknown commit or rollback outcomes must be reconciled, never auto-retried.
+
+Exclusive locks, external DDL event triggers and the complete dependency
+graph are not magically proven by the table-local metadata snapshot.
+The Host does not claim global cross-client atomic CAS, known lock duration
+or affected row counts; other database adapters require independent G4/G5
+transaction/capability proofs. SqlCore remains driver-free.

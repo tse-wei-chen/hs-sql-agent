@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### SQL Core G1/G2 and PostgreSQL G3 DDL (feature branch)
+
+- Introduce a separate closed F# `CompileDdl` / `TryCompileDdl` compiler,
+  typed Schema Plan, native six-dialect SQL renderer, deterministic fingerprint,
+  capability checks and fail-closed limited additive DDL grammar.
+- Introduce `PreviewDdl` / `TryPreviewDdl` for immutable hypothetical
+  Before/After Schema Diff, physical preconditions, dependency impacts, risks
+  and explicit unknown states; virtual Catalog is not live authorization.
+- Add opt-in **PostgreSQL-only** `execute_ddl_sql` with read-only preview,
+  independent access-key permission and DDL Approval, physical database/cluster
+  and schema identity, transactional recheck, native-compiled DDL execution,
+  post-execution verification, fail-closed audit and OutcomeUnknown.
+- No executable DDL feature is enabled by default. Four existing read tools
+  remain selected; both DML and DDL are unselected. No cross-provider,
+  destructive, multi-statement, conditional or concurrent index DDL execution.
+- Real PostgreSQL 16 tests cover approved CREATE TABLE / ADD COLUMN / INDEX,
+  Preview and rejected Approval without writes, schema drift and forged
+  approval fingerprints. Six-provider DQL/DML compatibility gates remain
+  mandatory; other five providers need independent Host DDL adapters.
+
 ### PostgreSQL old-worker cutover verification
 
 - Introduce a fail-closed, read-only PostgreSQL old-role verifier that

@@ -85,6 +85,17 @@ public static class HsSqlAgentMcpServiceExtensions
 
                     foreach (var tool in allTools)
                     {
+                        if (tool.ProtocolTool.Name.Equals(McpBuiltInTools.ExecuteDdlSql,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            // No implicit exposure from missing AllowedTools
+                            // or ordinary DML permission, even if host opts in.
+                            var ddl = httpContext.RequestServices.GetService<PostgresDdlRuntime>();
+                            if (ddl is not { Enabled: true }
+                                || allowedNames is null
+                                || !allowedNames.Contains(McpBuiltInTools.ExecuteDdlSql))
+                                continue;
+                        }
                         if (allowedNames == null || allowedNames.Contains(tool.ProtocolTool.Name))
                             mcpOptions.ToolCollection.Add(tool);
                     }

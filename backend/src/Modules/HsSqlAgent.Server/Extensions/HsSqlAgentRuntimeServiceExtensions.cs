@@ -34,6 +34,26 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Explicit PostgreSQL-only DDL opt-in. Never registered by AddHsSqlAgentRuntime
+    /// or AddHsSqlAgentMcp by default; DDL approval also needs its OWN
+    /// independently registered IDdlApprovalProvider and per-key tool grant.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentPostgresDdl(
+        this IServiceCollection services, PostgresDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled
+            || options.AllowedSchemas.Count == 0
+            || !(options.AllowCreateTable || options.AllowAddColumn || options.AllowCreateIndex))
+            throw new ArgumentException(
+                "PostgreSQL DDL opt-in requires Enabled=true, explicit schema allowlist and at least one operation.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<PostgresDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)
