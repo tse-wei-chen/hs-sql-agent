@@ -432,11 +432,16 @@ public sealed class PostgresDdlRuntime(
         CancellationToken cancellationToken)
     {
         var change = plan.Changes[0];
-        var schemaExists = await ScalarAsync(connection, transaction,
-            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = @schema)",
-            cancellationToken, ("schema", snapshot.SchemaName));
-        if (schemaExists is not true)
+        if (snapshot.SchemaOid is null)
             return "Target PostgreSQL schema does not exist.";
+        // Unsupported event triggers can execute arbitrary SQL as a side
+        // effect of DDL. Refuse rather than claim the projected delta is
+        // complete. Rechecked in the commit transaction.
+        var eventTrigger = await ScalarAsync(connection, transaction,
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_event_trigger "
+            + "WHERE evtenabled <> 'D')", cancellationToken);
+        if (eventTrigger is true)
+            return "Enabled PostgreSQL DDL event triggers are outside the proven execution subset.";
         var name = change.IndexName;
         switch (change.Operation)
         {
@@ -467,19 +472,31 @@ public sealed class PostgresDdlRuntime(
         string schema, string table, CancellationToken cancellationToken)
     {
         var identity = await ReadIdentityAsync(connection, transaction, cancellationToken);
+        // One catalog statement proves namespace OID and relation OID
+        // together; unqualified search_path never participates.
         var relation = await ScalarAsync(connection, transaction,
-            "SELECT c.oid::text || ':' || c.relkind::text "
-            + "FROM pg_catalog.pg_class c "
-            + "JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
-            + "WHERE n.nspname = @schema AND c.relname = @table",
+            "SELECT n.oid::text || ':' || COALESCE(c.oid::text, '') "
+            + "|| ':' || COALESCE(c.relkind::text, '') "
+            + "FROM pg_catalog.pg_namespace n "
+            + "LEFT JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid "
+            + "AND c.relname = @table "
+            + "WHERE n.nspname = @schema",
             cancellationToken, ("schema", schema), ("table", table));
+        long? schemaOid = null;
         long? oid = null;
         if (relation is not null && relation is not DBNull)
         {
-            var parts = Convert.ToString(relation, System.Globalization.CultureInfo.InvariantCulture)!.Split(':');
-            if (parts.Length != 2 || parts[1] != "r")
-                throw new InvalidOperationException("Target is not a proven ordinary PostgreSQL physical table.");
-            oid = long.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            var parts = Convert.ToString(relation,
+                System.Globalization.CultureInfo.InvariantCulture)!.Split(':');
+            if (parts.Length != 3)
+                throw new InvalidOperationException("Incomplete physical PostgreSQL namespace identity.");
+            schemaOid = long.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture);
+            if (parts[1].Length > 0)
+            {
+                if (parts[2] != "r")
+                    throw new InvalidOperationException("Target is not an ordinary PostgreSQL physical table.");
+                oid = long.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture);
+            }
         }
 
         var columns = new List<DdlPhysicalColumn>();
@@ -521,11 +538,11 @@ public sealed class PostgresDdlRuntime(
 
         var normalized = JsonSerializer.Serialize(new
         {
-            identity.ServerIdentity, identity.DatabaseName, schema, table, oid,
+            identity.ServerIdentity, identity.DatabaseName, schema, schemaOid, table, oid,
             columns, indexes
         });
         return new DdlPhysicalSnapshot(identity.ServerIdentity, identity.DatabaseName,
-            schema, table, oid, columns.AsReadOnly(), indexes.AsReadOnly(), Digest(normalized));
+            schema, schemaOid, table, oid, columns.AsReadOnly(), indexes.AsReadOnly(), Digest(normalized));
     }
 
     private static async Task<(string ServerIdentity, string DatabaseName)> ReadIdentityAsync(

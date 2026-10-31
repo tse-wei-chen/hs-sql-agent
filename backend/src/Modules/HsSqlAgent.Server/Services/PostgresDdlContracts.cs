@@ -51,6 +51,7 @@ public sealed record DdlPhysicalSnapshot(
     string ServerIdentity,
     string DatabaseName,
     string SchemaName,
+    long? SchemaOid,
     string TableName,
     long? TableOid,
     IReadOnlyList<DdlPhysicalColumn> Columns,
