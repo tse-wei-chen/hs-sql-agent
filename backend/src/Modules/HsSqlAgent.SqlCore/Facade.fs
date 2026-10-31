@@ -407,6 +407,25 @@ type SqlCoreFacade private () =
         options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlPlan> =
         FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdl(sql, options))
 
+    /// Closed PostgreSQL multi-DDL compilation, never an atomic execution
+    /// claim or permission. The shared Script lexer owns statement splitting.
+    static member CompileDdlBatch(
+        sql: string,
+        options: DdlCompilationOptions) : CompiledDdlBatchPlan =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(options)
+        if not (isNull options.SourceProfile) then
+            FacadeCompile.validateProfile options.SourceDialect "sourceProfile" options.SourceProfile
+        if not (isNull options.TargetProfile) then
+            FacadeCompile.validateProfile options.TargetDialect "targetProfile" options.TargetProfile
+        RewriteResourceBudget.withCancellation options.CancellationToken (fun () ->
+            RewriteDdlCompiler.compileBatch options sql)
+
+    static member TryCompileDdlBatch(
+        sql: string,
+        options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlBatchPlan> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdlBatch(sql, options))
+
     /// Read-only virtual-Catalog schema diff. A Known Catalog supplied by the
     /// caller is NEVER a live database proof and can never authorize DDL.
     static member PreviewDdl(

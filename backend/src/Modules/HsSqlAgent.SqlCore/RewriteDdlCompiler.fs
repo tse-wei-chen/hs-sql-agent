@@ -10,6 +10,7 @@ open HsSqlAgent.SqlCore.Ddl
 open HsSqlAgent.SqlCore.Enums
 open HsSqlAgent.SqlCore.Models
 open HsSqlAgent.SqlCore.Rewrite.RewriteSchemaAnalyzer
+open HsSqlAgent.SqlCore.Script
 
 /// A third, strictly separate executable COMPILATION domain. Static DDL
 /// parsing and Catalog analysis alone can never construct PolicyCheckedDdl.
@@ -246,3 +247,54 @@ module internal RewriteDdlCompiler =
                 options.TargetDialect, changes, impact, risk, transaction,
                 DdlCompileEvidence(options.SourceDialect, options.TargetDialect,
                                    sourceVersion, targetVersion), fingerprint))
+
+    /// The existing Script lexer/dispatcher owns all statement boundaries.
+    /// The existing closed single-statement DDL compiler validates EVERY
+    /// item; a batch is not an authorization shortcut or a second parser.
+    let compileBatch (options: DdlCompilationOptions) (sql: string) =
+        ArgumentNullException.ThrowIfNull(options)
+        ArgumentNullException.ThrowIfNull(sql)
+        RewriteResourceBudget.withCompilation (fun () ->
+            if options.SourceDialect <> SqlAgentToolType.Postgres
+               || options.TargetDialect <> SqlAgentToolType.Postgres then
+                capability "DDL batch compilation requires independently proven PostgreSQL transactional semantics."
+            let script = RewriteScriptParser.parse sql options.SourceDialect options.SourceProfile
+            if script.BatchCount <> 1
+               || script.Statements.Count < 2 || script.Statements.Count > 4 then
+                policy "DDL batch requires exactly 2–4 statements in one physical script batch."
+            let plans =
+                script.Statements
+                |> Seq.map (fun statement ->
+                    RewriteResourceBudget.checkpoint()
+                    if statement.Kind <> SqlScriptStatementKind.Schema then
+                        sourceSyntax "DDL batch contains a non-schema or procedural statement."
+                    let plan = compile options statement.Text
+                    let change = plan.Changes.[0]
+                    if plan.Changes.Count <> 1
+                       || change.Operation <> DdlSchemaOperation.CreateTable
+                       || change.ObjectIdentity.Parts.Count <> 2
+                       || plan.Risk <> DdlExecutionRisk.Additive then
+                        policy "Executable DDL batch supports only independently created schema-qualified tables."
+                    plan)
+                |> Seq.toArray
+            let identities =
+                plans
+                |> Array.map (fun plan -> plan.Changes.[0].ObjectIdentity.Key)
+            if (identities |> Array.distinct |> Array.length) <> plans.Length then
+                policy "DDL batch contains a repeated physical object identity."
+            let schemas =
+                plans |> Array.map (fun p -> p.Changes.[0].ObjectIdentity.Parts.[0])
+            if schemas |> Array.exists (fun schema -> schema <> schemas.[0]) then
+                policy "DDL batch cannot cross schema boundaries."
+            let ordered =
+                plans
+                |> Array.mapi (fun i plan ->
+                    string i + ":" + plan.PlanFingerprint + ":" + plan.Command.Sql)
+            let fingerprint =
+                String.concat "\n" (Array.append [|"pg-atomic-ddl-batch-v1"|] ordered)
+                |> Encoding.UTF8.GetBytes
+                |> SHA256.HashData
+                |> Convert.ToHexString
+            CompiledDdlBatchPlan(
+                Array.AsReadOnly(plans) :> IReadOnlyList<CompiledDdlPlan>,
+                fingerprint))
