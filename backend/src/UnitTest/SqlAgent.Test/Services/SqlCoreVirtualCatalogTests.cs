@@ -292,9 +292,9 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.True(result.FinalCatalog.IsClosedWorld);
         var names = result.FinalCatalog.Tables.Select(t => t.QualifiedName.Key).ToArray();
         Assert.Equal(names.OrderBy(x => x, StringComparer.Ordinal), names);
-        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_000", StringComparison.Ordinal));
-        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_031", StringComparison.Ordinal));
-        Assert.Single(result.FinalCatalog.Tables.Where(t => t.Name.EndsWith("t_016", StringComparison.Ordinal)));
+        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_000", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_031", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(result.FinalCatalog.Tables, t => t.Name.EndsWith("t_016", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(32, result.Statements[31].CatalogAfter.Tables.Count);
     }
 }
