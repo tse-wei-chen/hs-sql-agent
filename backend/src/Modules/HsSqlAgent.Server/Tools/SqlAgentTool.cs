@@ -19,7 +19,8 @@ public partial class SqlAgentTool(
     IDmlApprovalCompletionSink? dmlApprovalCompletionSink = null,
     PostgresDdlRuntime? postgresDdlRuntime = null,
     IDdlApprovalProvider? ddlApprovalProvider = null,
-    SqliteDdlRuntime? sqliteDdlRuntime = null)
+    SqliteDdlRuntime? sqliteDdlRuntime = null,
+    SqlServerDdlRuntime? sqlServerDdlRuntime = null)
 {
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
@@ -34,4 +35,5 @@ public partial class SqlAgentTool(
     private readonly PostgresDdlRuntime? _postgresDdlRuntime = postgresDdlRuntime;
     private readonly IDdlApprovalProvider? _ddlApprovalProvider = ddlApprovalProvider;
     private readonly SqliteDdlRuntime? _sqliteDdlRuntime = sqliteDdlRuntime;
+    private readonly SqlServerDdlRuntime? _sqlServerDdlRuntime = sqlServerDdlRuntime;
 }
