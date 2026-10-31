@@ -11,6 +11,7 @@ open HsSqlAgent.SqlCore.SqlParsing
 open HsSqlAgent.SqlCore.Rewrite
 open HsSqlAgent.SqlCore.Script
 open HsSqlAgent.SqlCore.Catalog
+open HsSqlAgent.SqlCore.Ddl
 
 type private SqlCoreTryState<'T> =
     | CapturedSuccess of 'T
@@ -385,6 +386,26 @@ type SqlCoreFacade private () =
         | profile -> FacadeCompile.validateProfile sourceDialect "sourceProfile" profile
         RewriteResourceBudget.withCancellation cancellationToken (fun () ->
             RewriteScriptParser.parse sql sourceDialect sourceProfile)
+
+    /// Strictly additive, single-statement native DDL compilation ONLY.
+    /// This is not physical schema validation, Host permission or approval.
+    static member CompileDdl(
+        sql: string,
+        options: DdlCompilationOptions) : CompiledDdlPlan =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(options)
+        if not (isNull options.SourceProfile) then
+            FacadeCompile.validateProfile options.SourceDialect "sourceProfile" options.SourceProfile
+        if not (isNull options.TargetProfile) then
+            FacadeCompile.validateProfile options.TargetDialect "targetProfile" options.TargetProfile
+        RewriteResourceBudget.withCancellation options.CancellationToken (fun () ->
+            RewriteDdlCompiler.compile options sql)
+
+    /// Cancellation propagates; grammar, validation and policy denials return diagnostics.
+    static member TryCompileDdl(
+        sql: string,
+        options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlPlan> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdl(sql, options))
 
     static member CompileQuery(
         parsed: ParsedStatement,

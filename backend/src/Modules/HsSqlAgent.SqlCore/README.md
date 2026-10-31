@@ -3364,3 +3364,51 @@ direct and column-list aliases, `UPDATE` and `DELETE`, automatic
 Host proof creation, CTE-preserving match preview, approved commit
 and physical row parity. Explicit negative cases cover computed,
 multiplying, wrong-scope and non-equality lineage.
+
+## G1 — Strict additive DDL Schema Compiler (compile only)
+
+`SqlCoreFacade.CompileDdl(sql, new DdlCompilationOptions(sourceDialect, targetDialect))`
+returns a separate immutable `CompiledDdlPlan`, NOT a Query/DML
+`CompiledSqlCommand`. `TryCompileDdl` returns typed diagnostic failure
+without minting a plan. Native SQL is generated from the existing closed F#
+`RewriteSchemaAnalyzer.DdlOperation`; no raw SQL string is handed to a driver.
+
+The first bounded, single-statement, source==target provider subset works
+for PostgreSQL, SQLite, SQL Server, MySQL, Oracle and Firebird:
+- `CREATE TABLE widgets (id INTEGER NOT NULL, label VARCHAR(40))`
+  (SQL Server uses `INT`, Oracle `VARCHAR2(40)`).
+- `ALTER TABLE widgets ADD COLUMN label VARCHAR(40)` with each provider's
+  native syntax (Oracle parenthesized, SQL Server/Firebird bare).
+  Only nullable column addition is eligible.
+- `CREATE INDEX ix_label ON widgets (label)`, including simple composite
+  physical-column keys, nonunique and nonfunctional only.
+
+It rejects conditional/foreign-key/constraint/destructive DDL, defaults,
+computed columns, unique/partial/expression indexes, `AS SELECT`,
+multi-statements, cross-provider translation and other unsupported syntax.
+DCL, transaction control and procedural statements cannot render.
+
+`Changes` are expected effects with required physical preconditions, not a
+live database snapshot. `Certainty=Unknown`, `RequiresLiveValidation=true`
+and `AuthorizesExecution=false` always hold. Oracle/MySQL are classified
+as `ImplicitCommit`; others stay `Unknown` without runtime proof.
+The immutable fingerprint covers canonical SQL, provider/profile version,
+typed identity, operation, columns, preconditions and risk.
+
+```csharp
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Ddl;
+using HsSqlAgent.SqlCore.Enums;
+var options = new DdlCompilationOptions(
+    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+var plan = SqlCoreFacade.CompileDdl(
+    "CREATE TABLE audit_events (id INTEGER NOT NULL)", options);
+// Display plan.Command.Sql, Changes, Impact and Preconditions for review.
+// Do NOT execute without separate Host live identity/schema proof,
+// DDL permission, human approval and provider-aware transaction strategy.
+```
+
+This is G1 compilation, not G2 live preview or G3 DDL execution.
+SqlCore remains driver-free; `execute_ddl_sql` is NOT added. Six-provider
+syntax unit tests do not substitute for later provider-live transaction and
+schema outcome parity.
