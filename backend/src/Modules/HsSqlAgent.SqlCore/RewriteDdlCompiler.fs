@@ -296,7 +296,7 @@ module internal RewriteDdlCompiler =
                     // CREATE roots and interleaved independent objects have
                     // no executable batch construction path.
                     if changes.[0].Operation <> DdlSchemaOperation.CreateTable
-                       || identities |> Array.exists (fun key -> key <> identities.[0]) then
+                       || (identities |> Array.exists (fun key -> key <> identities.[0])) then
                         policy "Dependent batch requires one new CREATE root and a single exact physical table identity."
                     let known = HashSet<string>(changes.[0].Columns, StringComparer.Ordinal)
                     let mutable addCount = 0
