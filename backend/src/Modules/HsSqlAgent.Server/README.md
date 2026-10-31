@@ -697,6 +697,10 @@ CREATE TABLE staging_cleanup.import_b (id INTEGER NOT NULL);
 batch plan fingerprint, every physical Before observation and every
 hypothetical After plus a human-readable whole-batch diff. Preview
 never executes SQL or obtains approval. On `previewOnly=false`, the
+The entire batch execution transaction shares one configured `ExecutionTimeout`
+(maximum 15 seconds), including all statements and physical checks; an
+uncertain COMMIT remains `outcome_unknown`.
+
 Host first requires the **batch-only key allowlist**, then one independent
 human approval bound to the **entire ordered plan**. A new PostgreSQL
 connection rechecks the original server, schema identity, object absence,

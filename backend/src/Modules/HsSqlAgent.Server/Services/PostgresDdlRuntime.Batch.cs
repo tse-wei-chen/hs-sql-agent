@@ -202,6 +202,11 @@ public sealed partial class PostgresDdlRuntime
         string approvedVersion, string approvedPolicy,
         DdlActorContext actor, CancellationToken cancellationToken)
     {
+        // One aggregate execution deadline, not four independent per-command
+        // time windows. Interactive human approval is outside this budget.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_options.ExecutionTimeout);
+        var execToken = deadline.Token;
         DbConnection? connection = null;
         DbTransaction? transaction = null;
         var startedNative = false;
@@ -209,15 +214,15 @@ public sealed partial class PostgresDdlRuntime
         try
         {
             connection = provider.Connections.Create(connectionString);
-            await connection.OpenAsync(cancellationToken);
+            await connection.OpenAsync(execToken);
             RuntimeServerProfileVerifier.EnsureMatches(connection, approvedVersion);
             transaction = await connection.BeginTransactionAsync(
-                IsolationLevel.ReadCommitted, cancellationToken);
+                IsolationLevel.ReadCommitted, execToken);
             await ExecuteHostSqlAsync(connection, transaction,
-                "SET LOCAL lock_timeout = '3s'", cancellationToken);
+                "SET LOCAL lock_timeout = '3s'", execToken);
             var statementMs = Math.Clamp((int)_options.ExecutionTimeout.TotalMilliseconds, 1, 15000);
             await ExecuteHostSqlAsync(connection, transaction,
-                "SET LOCAL statement_timeout = '" + statementMs + "ms'", cancellationToken);
+                "SET LOCAL statement_timeout = '" + statementMs + "ms'", execToken);
 
             // Deterministic lock order prevents participating Host workers
             // deadlocking each other. Advisory locks do not exclude external
@@ -227,7 +232,7 @@ public sealed partial class PostgresDdlRuntime
             {
                 await ExecuteHostSqlAsync(connection, transaction,
                     "SELECT pg_advisory_xact_lock(hashtext(@schema), hashtext(@table))",
-                    cancellationToken, ("schema", approved[0].SchemaName), ("table", name));
+                    execToken, ("schema", approved[0].SchemaName), ("table", name));
             }
 
             // Re-prove EACH absent target inside the same transaction. If a
@@ -238,7 +243,7 @@ public sealed partial class PostgresDdlRuntime
             {
                 var old = approved[i];
                 var fresh = await ReadSnapshotAsync(connection, transaction,
-                    old.SchemaName, old.TableName, cancellationToken);
+                    old.SchemaName, old.TableName, execToken);
                 if (fresh.Fingerprint != old.Fingerprint
                     || fresh.ServerIdentity != old.ServerIdentity
                     || fresh.DatabaseName != actor.DatabaseName
@@ -251,7 +256,7 @@ public sealed partial class PostgresDdlRuntime
                         String.Equals(allowed, old.SchemaName, StringComparison.Ordinal)))
                     throw new InvalidOperationException("Atomic batch precondition or policy drift.");
                 var denied = await VerifyPreconditionAsync(connection, transaction, fresh,
-                    preview.Plan.Plans[i], cancellationToken);
+                    preview.Plan.Plans[i], execToken);
                 if (denied is not null)
                     throw new InvalidOperationException("Atomic batch live precondition was invalidated.");
             }
@@ -262,9 +267,9 @@ public sealed partial class PostgresDdlRuntime
                 // Native SQL originates only from typed F# compiled command.
                 startedNative = true;
                 await ExecuteHostSqlAsync(connection, transaction,
-                    plan.Command.Sql, cancellationToken);
+                    plan.Command.Sql, execToken);
                 var fresh = await ReadSnapshotAsync(connection, transaction,
-                    approved[i].SchemaName, approved[i].TableName, cancellationToken);
+                    approved[i].SchemaName, approved[i].TableName, execToken);
                 if (!MatchesExpected(fresh, plan, approved[i]))
                     throw new InvalidOperationException("DDL batch typed physical postcondition differs.");
             }
@@ -273,13 +278,13 @@ public sealed partial class PostgresDdlRuntime
             for (var i = 0; i < preview.Plan.Plans.Count; i++)
             {
                 var after = await ReadSnapshotAsync(connection, transaction,
-                    approved[i].SchemaName, approved[i].TableName, cancellationToken);
+                    approved[i].SchemaName, approved[i].TableName, execToken);
                 if (!MatchesExpected(after, preview.Plan.Plans[i], approved[i]))
                     throw new InvalidOperationException("DDL batch final physical state differs.");
             }
 
             startedCommit = true;
-            await transaction.CommitAsync(cancellationToken);
+            await transaction.CommitAsync(execToken);
             return new DdlRuntimeResult(DdlRuntimeStatus.Committed, null,
                 "All PostgreSQL DDL batch members committed atomically after physical verification.")
             { BatchPreview = preview };
