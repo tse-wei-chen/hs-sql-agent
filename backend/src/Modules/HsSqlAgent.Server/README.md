@@ -533,3 +533,60 @@ unrelated Firebird DDL writers. The startup opt-in, explicit key grant,
 durable pre-execution audit, and independent `IDdlApprovalProvider`
 are mandatory. The four default read-only tools are unchanged; DML and
 DDL remain unselected.
+
+
+## G5 Oracle 26ai — independently approved, implicit-commit CREATE TABLE
+
+This Host feature reuses the same disabled-by-default `execute_ddl_sql`
+MCP tool and F# `CompileDdl` native SQL renderer. The initial executable
+subset is **one unqualified CREATE TABLE with 1–16 simple INTEGER columns**
+in the exact current user schema. It excludes custom constraints, defaults,
+indexes, CTAS, ALTER, DROP, dynamic SQL, batch SQL and other Oracle versions.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentOracleDdl(new OracleDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowedPdbNames = new HashSet<string>(StringComparer.Ordinal) { "FREEPDB1" },
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "SQLCORE" },
+    PolicyRevision = "oracle-ddl-independent-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql to this MCP key.
+// All four default read-only tools remain selected; DML/DDL are not.
+```
+
+The designated Oracle Host account must be a **non-system user** with
+`CURRENT_SCHEMA = SESSION_USER`, connecting to an explicitly allowlisted,
+writable, primary Oracle 26ai (23.26+) PDB. Provision only the necessary
+dictionary and cooperative-lock privileges, using a DBA-owned deployment
+step (not an LLM-created or auto-granted privilege):
+
+```sql
+GRANT SELECT ON SYS.V_$DATABASE TO SQLCORE;
+GRANT SELECT ON SYS.V_$PDBS TO SQLCORE;
+GRANT SELECT ON SYS.DBA_TRIGGERS TO SQLCORE;
+GRANT EXECUTE ON SYS.DBMS_LOCK TO SQLCORE;
+```
+
+These `SELECT` grants are required to prove CDB/PDB identity and complete
+visibility of active schema/database DDL triggers. Missing access is a
+hard denial, not a fallback to `ALL_TRIGGERS`. The read-only Preview
+releases the first connection prior to separate human approval. A fresh
+connection takes a session-held cooperative `DBMS_LOCK` (which survives
+DDL implicit COMMIT), rechecks physical metadata, plan/policy/expiration,
+then executes only the typed compiled statement and verifies actual
+`USER_OBJECTS` / `USER_TAB_COLS` state.
+
+**Oracle DDL performs an implicit COMMIT before and after the statement.**
+This Host never uses `BeginTransaction`, never promises rollback, and
+never automatically retries an unknown outcome. After native execution
+starts, a lost response or postcondition mismatch is `outcome_unknown`
+and requires live DBA reconciliation. The Host's cooperative session
+lock does **not** prevent unrelated Oracle clients from changing objects.
+Independent access-key grant, DDL approval, pre-execution durable audit,
+and DB permission checks are all required; install alone enables nothing.

@@ -125,6 +125,24 @@ public static class HsSqlAgentRuntimeServiceExtensions
         return services;
     }
 
+    /// <summary>
+    /// Explicit Oracle 26ai implicit-commit CREATE TABLE Host. Does not register
+    /// under ordinary runtime/MCP and never inherits DML authorization.
+    /// </summary>
+    public static IServiceCollection AddHsSqlAgentOracleDdl(
+        this IServiceCollection services, OracleDdlExecutionOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.Enabled || !options.AllowCreateTable
+            || options.AllowedPdbNames.Count == 0 || options.AllowedSchemas.Count == 0)
+            throw new ArgumentException(
+                "Oracle DDL requires Enabled, CREATE TABLE, PDB and schema allowlists.");
+        services.TryAddSingleton(options);
+        services.TryAddSingleton<OracleDdlRuntime>();
+        return services;
+    }
+
     public static HsSqlAgentRegistrationBuilder AddHsSqlAgentRuntime(
         this HsSqlAgentRegistrationBuilder builder,
         Action<HsSqlAgentRuntimeOptions>? configure = null)

@@ -3487,3 +3487,23 @@ cannot claim a global compare-and-swap against unrelated MySQL clients.
 MySQL ALTER, INDEX, destructive DDL, TEMPORARY, CTAS and multi-statement DDL
 remain Host-disabled. Compile/AnalyzeScript capability is intentionally
 wider than the provider-specific executable safety proof.
+
+
+## G5 — Oracle 26ai Host implicit-commit DDL (distinct from pure SqlCore)
+
+The existing closed F# `CompileDdl` and `PreviewDdl` are pure
+**non-executable contracts**, not permissions or proof of a live schema.
+The separate, disabled-by-default Server Host can now execute one
+unqualified, own-schema `CREATE TABLE` with 1–16 basic INTEGER columns
+only on a live, explicitly allowlisted Oracle 26ai PDB, using verified
+CDB/PDB identity, visible database/schema DDL triggers, a cooperating
+session-held lock, independent approval and the existing MCP DDL grant.
+
+Oracle implicitly COMMITs before and after DDL. There is no synthetic
+transaction or Rollback, and any unverified outcome after native SQL was
+sent is `OutcomeUnknown` and must be reconciled without retry. The
+Host does not claim global concurrency exclusion against external DDL
+sessions. The F# SQL compiler has **no** Oracle provider dependency,
+connection access, audit or approval functionality. Oracle ALTER/INDEX,
+destructive/conditional/batch DDL and cross-provider executable lowering
+remain disabled.

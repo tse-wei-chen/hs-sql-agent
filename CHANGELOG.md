@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
-### SQL Core G1/G2, PostgreSQL G3, SQLite/SQL Server/Firebird G4 and MySQL G5 DDL
+### SQL Core G1/G2, PostgreSQL G3, SQLite/SQL Server/Firebird G4 and MySQL/Oracle G5 DDL
 
 - Introduce a separate closed F# `CompileDdl` / `TryCompileDdl` compiler,
   typed Schema Plan, native six-dialect SQL renderer, deterministic fingerprint,
@@ -32,8 +32,8 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   path with explicit schema allowlist, bounded simple INT columns, separate
   DDL approval, SQL Server physical metadata proof, transaction recheck and
   OutcomeUnknown handling. Neither Host adapter inherits DML permissions.
-  SQL Server ALTER/INDEX and Oracle DDL Host execution remain
-  disabled pending distinct live safety proof.
+  SQL Server ALTER/INDEX and unsupported DDL operations remain
+  disabled pending separate live safety proofs.
 - G4 Firebird 5 introduces a separately opt-in, one-table CREATE TABLE Host
   boundary: allowlisted live database GUID/file identity, simple INTEGER
   columns, no active database/DDL triggers, independent DDL approval,
@@ -48,7 +48,15 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   and a session-level cooperative DDL lock. There is NO user rollback:
   CREATE TABLE implicitly commits, and lost native execution replies are
   OutcomeUnknown and never retried automatically.
-  ALTER/INDEX/DROP/CTAS/TEMPORARY and all Oracle Host DDL remain disabled.
+  ALTER/INDEX/DROP/CTAS/TEMPORARY remain MySQL Host-disabled.
+
+- G5 Oracle 26ai adds independent, opt-in, own-schema, single-statement
+  CREATE TABLE for 1–16 INTEGER columns. Live PDB DBID/GUID, database role,
+  schema owner, engine version and DBA_TRIGGERS access are mandatory.
+  A cooperating session lock, fresh metadata and separate DDL approval
+  guard one F#-compiled command. Oracle implicitly commits DDL: no
+  synthetic rollback; lost result/invalid postcondition is OutcomeUnknown.
+  No new MCP tool, F# compiler, database driver or default tool grants.
 
 ### PostgreSQL old-worker cutover verification
 
