@@ -298,6 +298,56 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
               output.write(report)
           PY
+      - name: Compare six-provider Normalization AST walks on proven source capabilities
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --stage-profile --iterations 12 --warmup 4 --output "artifacts/regex-stage-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          samples = {}
+          for side in ("base", "head"):
+              samples[side] = []
+              for round in (1, 2, 3):
+                  data = json.loads((root / f"regex-stage-{side}-{round}.json").read_text())
+                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
+                  assert len(rows) == 48, (side, round, "six dialects x eight existing SQL shapes")
+                  samples[side].append(rows)
+          lines = ["### Proven source Regex stage fast-path (three paired rounds)",
+                   "| Provider / deep AST | Normalization allocation candidate/base | Normalization latency candidate/base |",
+                   "|---|---:|---:|"]
+          for key in sorted(samples["base"][0]):
+              old = [sample[key] for sample in samples["base"]]
+              new = [sample[key] for sample in samples["head"]]
+              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "Compile digest mismatch")
+              stages = lambda row: {stage["Name"]: stage for stage in row["Stages"]}
+              assert all(set(stages(row)) == set(stages(old[0])) for row in old + new), key
+              if key[1] not in ("query-derived-32", "query-scalar-32"):
+                  continue
+              ratios = []
+              for metric in ("MedianAllocatedBytes", "MedianMicroseconds"):
+                  before = statistics.median(stages(row)["Normalization"][metric] for row in old)
+                  after = statistics.median(stages(row)["Normalization"][metric] for row in new)
+                  assert before > 0 and after >= 0, (key, metric, before, after)
+                  ratios.append(f"{after/before:.3f}x")
+              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
+          assert len(lines) == 15, len(lines)
+          report = "\n".join(lines) + "\n"
+          print(report)
+          (root / "regex-normalization-comparison.md").write_text(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(report)
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4
