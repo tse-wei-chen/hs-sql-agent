@@ -37,6 +37,7 @@ public sealed class OracleDdlLiveTests
         Enabled = true,
         AllowCreateTable = true,
         AllowedSchemas = new HashSet<string>(StringComparer.Ordinal) { "SQLCORE" },
+        AllowedPdbNames = new HashSet<string>(StringComparer.Ordinal) { "FREEPDB1" },
         PolicyRevision = "oracle26ai-g5-test"
     });
 
@@ -90,7 +91,9 @@ public sealed class OracleDdlLiveTests
         await db.OpenAsync(ct);
         var schema = (await Scalar(db, "SELECT SYS_CONTEXT('USERENV','SESSION_USER') FROM DUAL", ct))?.ToString();
         Assert.Equal("SQLCORE", schema);
-        var actor = new DdlActorContext("mcp-key:14", "db-management:27", schema!);
+        var pdb = (await Scalar(db, "SELECT SYS_CONTEXT('USERENV','CON_NAME') FROM DUAL", ct))?.ToString();
+        Assert.Equal("FREEPDB1", pdb);
+        var actor = new DdlActorContext("mcp-key:14", "db-management:27", pdb!);
         var name = "G5O_" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
         var drift = "G5O_" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
         var before = "CREATE TABLE " + name + "(ID INTEGER NOT NULL)";
