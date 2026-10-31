@@ -31,6 +31,7 @@ jobs:
         run: |
           python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_perf_comparison.py
           python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_code_delta.py
+          python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_stage_profile.py
       - name: Use identical benchmark workload against both compiler revisions
         shell: bash
         run: |
