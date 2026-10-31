@@ -67,7 +67,7 @@ public sealed class FirebirdDdlRuntime(
             if (plan.Command.Parameters.Count != 0)
                 return Deny("ddl.parameters_denied", "DDL runtime parameters are unsupported.");
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return Deny("ddl.compile_denied", "SQL is outside the proven Firebird DDL subset.");
         }
