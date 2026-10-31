@@ -141,11 +141,15 @@ public sealed class CoreDdlPreviewTests
     public void KnownViewDependency_IsListedButNotClaimedCompleteInPhysicalDatabase()
     {
         const SqlAgentToolType provider = SqlAgentToolType.Postgres;
-        var catalog = SqlCoreFacade.AnalyzeScript(
-            "CREATE TABLE widgets (id INTEGER NOT NULL); " +
-            "CREATE VIEW public.v_widgets AS SELECT id FROM widgets",
-            provider, SqlCatalogState.KnownEmpty()).FinalCatalog;
-        var preview = SqlCoreFacade.PreviewDdl(Add(provider), Options(provider), catalog);
+        var analysis = SqlCoreFacade.AnalyzeScript(
+            "CREATE TABLE app.widgets (id INTEGER NOT NULL); " +
+            "CREATE VIEW app.v_widgets AS SELECT id FROM app.widgets",
+            provider, SqlCatalogState.KnownEmpty());
+        Assert.Empty(analysis.Diagnostics);
+        Assert.Single(analysis.FinalCatalog.Views);
+        var preview = SqlCoreFacade.PreviewDdl(
+            "ALTER TABLE app.widgets ADD COLUMN nick VARCHAR(40)",
+            Options(provider), analysis.FinalCatalog);
         Assert.Contains(preview.Dependencies,
             dependency => dependency.Kind == DdlDependencyKind.View);
         Assert.False(preview.DependenciesAreLiveVerified);
