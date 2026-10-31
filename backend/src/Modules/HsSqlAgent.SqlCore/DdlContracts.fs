@@ -118,14 +118,22 @@ type CompiledDdlPlan internal (
     member _.RequiresLiveValidation = true
     member _.AuthorizesExecution = false
 
+/// The only two independently proven PostgreSQL batch topologies.
+/// Topology is a closed compiler proof, not Host authorization.
+type DdlBatchTopology =
+    | IndependentCreates = 0
+    | DependentCreateChain = 1
+
 /// G6/S16: immutable, non-authoritative ordered script proof. Atomicity is
 /// UNKNOWN until a particular Host commits a real provider transaction.
 [<Sealed>]
 type CompiledDdlBatchPlan internal (
     plans: IReadOnlyList<CompiledDdlPlan>,
     sourceSpans: IReadOnlyList<SqlDiagnosticSpan>,
-    fingerprint: string) =
+    fingerprint: string,
+    topology: DdlBatchTopology) =
     member _.Plans = plans
+    member _.Topology = topology
     member _.SourceSpans = sourceSpans
     member _.PlanFingerprint = fingerprint
     member _.TransactionBehavior = DdlTransactionBehavior.Unknown
