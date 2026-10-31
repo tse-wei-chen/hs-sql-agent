@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open System.Collections.Generic
 open HsSqlAgent.SqlCore.Catalog
 
 /// Persistent, deterministic virtual catalog. It is never a database snapshot,
@@ -12,8 +13,29 @@ module internal RewriteCatalogModel =
     let private sameIdentity (a: SqlCatalogQualifiedName) (b: SqlCatalogQualifiedName) =
         sameName a.Key b.Key
 
+    /// All table snapshots are maintained in exact ordinal structured-Key
+    /// order. Reuse the same lower-bound lookup for reads and immutable
+    /// insertion/removal; do not scan every table per Catalog proof.
+    let private tablePosition (tables: IReadOnlyList<SqlCatalogTable>) (key: string) =
+        let mutable first = 0
+        let mutable last = tables.Count
+        while first < last do
+            RewriteResourceBudget.checkpoint ()
+            let middle = first + (last - first) / 2
+            if StringComparer.Ordinal.Compare(tables.[middle].QualifiedName.Key, key) < 0 then
+                first <- middle + 1
+            else
+                last <- middle
+        first
+
     let lookup (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
-        state.Tables |> Seq.tryFind (fun t -> sameIdentity t.QualifiedName name)
+        let tables = state.Tables
+        let key = name.Key
+        let index = tablePosition tables key
+        if index < tables.Count
+           && StringComparer.Ordinal.Equals(tables.[index].QualifiedName.Key, key) then
+            Some tables.[index]
+        else None
 
     let lookupView (state: SqlCatalogState) (name: SqlCatalogQualifiedName) =
         state.Views |> Seq.tryFind (fun view ->
@@ -62,15 +84,7 @@ module internal RewriteCatalogModel =
     let private replace (state: SqlCatalogState) (name: SqlCatalogQualifiedName) (replacement: SqlCatalogTable option) =
         let tables = state.Tables
         let key = name.Key
-        let mutable first = 0
-        let mutable last = tables.Count
-        while first < last do
-            RewriteResourceBudget.checkpoint ()
-            let middle = first + (last - first) / 2
-            if StringComparer.Ordinal.Compare(tables.[middle].QualifiedName.Key, key) < 0 then
-                first <- middle + 1
-            else
-                last <- middle
+        let first = tablePosition tables key
         let found =
             first < tables.Count
             && StringComparer.Ordinal.Equals(tables.[first].QualifiedName.Key, key)
