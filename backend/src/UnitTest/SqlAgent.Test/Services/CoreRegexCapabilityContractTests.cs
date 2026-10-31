@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
