@@ -140,7 +140,8 @@ public sealed class OracleDdlLiveTests
             var committed = await runtime.RunAsync(provider, cs, before, actor,
                 false, Decision(DdlApprovalState.Approved), ct);
             Assert.True(committed.Status == DdlRuntimeStatus.Committed,
-                "Expected Committed, got " + committed.Status + " (" + committed.ErrorCode + "): " + committed.Message);
+                "Expected Committed, got " + committed.Status + " (" + committed.ErrorCode + "): " + committed.Message
+                + " | POSTCONDITION: " + await ReadOnlyCreatedTableMetadata(db, name, ct));
             Assert.True(committed.CommitConfirmed);
             Assert.Equal(1, Convert.ToInt32(await Scalar(db,
                 "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + name + "'", ct)));
@@ -289,6 +290,47 @@ public sealed class OracleDdlLiveTests
             results.Add("core:" + ex.GetType().Name);
         }
         return string.Join(";", results);
+    }
+
+    // CI-only differential probe for this synthetic table. No SQL source,
+    // connection information, DBID, principal or user data is logged.
+    private static async Task<string> ReadOnlyCreatedTableMetadata(
+        OracleConnection db, string tableName, CancellationToken ct)
+    {
+        var queries = new (string Stage, string Sql)[]
+        {
+            ("table", "SELECT TEMPORARY, NESTED, IOT_TYPE, CLUSTER_NAME, PARTITIONED "
+                + "FROM USER_TABLES WHERE TABLE_NAME = :object_name"),
+            ("constraint", "SELECT CONSTRAINT_TYPE, GENERATED "
+                + "FROM USER_CONSTRAINTS WHERE TABLE_NAME = :object_name"),
+            ("column", "SELECT DATA_TYPE, DATA_PRECISION, DATA_SCALE, NULLABLE, "
+                + "DEFAULT_LENGTH, IDENTITY_COLUMN, VIRTUAL_COLUMN, HIDDEN_COLUMN "
+                + "FROM USER_TAB_COLS WHERE TABLE_NAME = :object_name")
+        };
+        var output = new List<string>();
+        foreach (var (stage, sql) in queries)
+        {
+            try
+            {
+                await using var command = new OracleCommand(sql, db) { BindByName = true };
+                command.Parameters.Add(new OracleParameter("object_name", tableName));
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                var count = 0;
+                while (await reader.ReadAsync(ct))
+                {
+                    count++;
+                    var fields = Enumerable.Range(0, reader.FieldCount)
+                        .Select(i => reader.IsDBNull(i) ? "null" : reader.GetValue(i).ToString());
+                    if (count <= 2) output.Add(stage + ":[" + string.Join(",", fields) + "]");
+                }
+                output.Add(stage + ":rows=" + count);
+            }
+            catch (OracleException ex)
+            {
+                output.Add(stage + ":ORA-" + ex.Number);
+            }
+        }
+        return string.Join(";", output);
     }
 
     private static async Task<object?> Scalar(OracleConnection c, string sql, CancellationToken token)
