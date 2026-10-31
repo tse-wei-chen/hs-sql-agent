@@ -297,4 +297,7 @@ module internal RewriteDdlCompiler =
                 |> Convert.ToHexString
             CompiledDdlBatchPlan(
                 Array.AsReadOnly(plans) :> IReadOnlyList<CompiledDdlPlan>,
+                Array.AsReadOnly(
+                    script.Statements |> Seq.map (fun item -> item.Span) |> Seq.toArray)
+                    :> IReadOnlyList<SqlDiagnosticSpan>,
                 fingerprint))

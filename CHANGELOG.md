@@ -21,9 +21,10 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   post-execution verification, fail-closed audit and OutcomeUnknown.
 - No executable DDL feature is enabled by default. Four existing read tools
   remain selected; both DML and DDL are unselected. No cross-provider,
-  multi-statement, conditional or concurrent index DDL execution. A separately
-  enabled, independently approved PostgreSQL G6 empty-table DROP is the only
-  narrowly proven destructive exception.
+  conditional or concurrent index DDL execution. A separately enabled,
+  independently approved PostgreSQL G6 empty-table DROP is the sole destructive
+  exception. PostgreSQL G6/S16 adds only a 2–4 independent CREATE TABLE batch
+  under a distinct default-disabled permission and atomic-transaction proof.
 - Real PostgreSQL 16 tests cover approved CREATE TABLE / ADD COLUMN / INDEX,
   Preview and rejected Approval without writes, schema drift and forged
   approval fingerprints. Six-provider DQL/DML compatibility gates remain

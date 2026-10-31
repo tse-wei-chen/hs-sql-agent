@@ -25,6 +25,13 @@ public sealed class CoreDdlBatchCompilerTests
         var script = string.Join(";\n", commands) + ";";
         var batch = SqlCoreFacade.CompileDdlBatch(script, Options(SqlAgentToolType.Postgres));
         Assert.Equal(count, batch.Plans.Count);
+        Assert.Equal(count, batch.SourceSpans.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var span = batch.SourceSpans[i];
+            Assert.Equal($"CREATE TABLE g6_stage.t{i + 1} (id INTEGER NOT NULL)",
+                script.Substring(span.Start, span.Length));
+        }
         Assert.Equal(64, batch.PlanFingerprint.Length);
         Assert.True(batch.RequiresLiveValidation);
         Assert.False(batch.AuthorizesExecution);

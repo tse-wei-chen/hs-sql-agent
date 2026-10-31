@@ -123,8 +123,10 @@ type CompiledDdlPlan internal (
 [<Sealed>]
 type CompiledDdlBatchPlan internal (
     plans: IReadOnlyList<CompiledDdlPlan>,
+    sourceSpans: IReadOnlyList<SqlDiagnosticSpan>,
     fingerprint: string) =
     member _.Plans = plans
+    member _.SourceSpans = sourceSpans
     member _.PlanFingerprint = fingerprint
     member _.TransactionBehavior = DdlTransactionBehavior.Unknown
     member _.RequiresLiveValidation = true
