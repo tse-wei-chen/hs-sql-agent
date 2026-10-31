@@ -1049,10 +1049,12 @@ module internal RewriteSchemaTypeValidation =
         (createValidation ()) catalog (Bound.value bound)
         bound
 
-    /// Never promote partial/unknown Virtual Catalog facts to typed binding.
-    /// This is a static copy of the already proven DDL column types, consumed
-    /// by the existing AST expression compatibility checker.
-    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+    /// Type-family checking remains an independent stage which runs only
+    /// after strict names were proven. The shared projection contains original
+    /// DDL type tags, not proof of any kind or execution authority.
+    let verifyVirtualPrepared dialect (state: SqlCatalogState)
+                              (projection: RewriteVirtualCatalogProjection.Projection)
+                              (bound: BoundSql) =
         if not state.IsClosedWorld
            || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
             invalidArg "state" "Typed catalog binding requires a complete known closed-world catalog."
@@ -1069,36 +1071,24 @@ module internal RewriteSchemaTypeValidation =
                          |> List.exists (fun prefix -> value.StartsWith(prefix, StringComparison.Ordinal)) ->
                 SqlSchemaValueKind.Text
             | _ -> SqlSchemaValueKind.Unknown
-        let physical =
-            state.Tables
-            |> Seq.map (fun table ->
+        let typed relations =
+            relations
+            |> List.map (fun (key, columns: RewriteVirtualCatalogProjection.RelationColumns) ->
                 RewriteResourceBudget.checkpoint ()
-                table.QualifiedName.BinderKey,
-                (table.Columns
-                 |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
-                 |> Seq.toList))
-            |> Map.ofSeq
-        // Reuse proven View output family metadata solely for read scopes.
-        // Assignment targets continue to consult the physical-only map.
-        let readable =
-            seq {
-                yield! Map.toSeq physical
-                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
+                key, columns |> List.map (fun (columnName, typeName) ->
                     RewriteResourceBudget.checkpoint ()
-                    yield view.QualifiedName.BinderKey,
-                          (view.Columns
-                           |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
-                           |> Seq.toList)
-                for view in RewriteMutationAnalyzer.readableViews dialect state bound do
-                    RewriteResourceBudget.checkpoint ()
-                    yield view.QualifiedName.BinderKey,
-                          (view.Columns
-                           |> Seq.map (fun col -> catalogPart dialect col.Name, typeKind col.TypeName)
-                           |> Seq.toList)
-            }
-            |> Map.ofSeq
+                    columnName, typeKind typeName))
+            |> Map.ofList
+        // The output of NameValidation was checked for collisions already.
+        // Physical assignment targets remain distinct from readable Views.
+        let physical = typed projection.Physical
+        let readable = typed projection.Readable
         let virtualCatalog : Catalog =
             { Dialect = dialect; Tables = physical; ReadRelations = readable
               ProvenInsertColumnOrder = true }
         (createValidation ()) virtualCatalog (Bound.value bound)
         bound
+
+    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+        let projection = RewriteVirtualCatalogProjection.prepare dialect state bound
+        verifyVirtualPrepared dialect state projection bound
