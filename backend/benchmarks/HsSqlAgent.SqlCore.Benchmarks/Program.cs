@@ -91,15 +91,15 @@ if (args.Contains("--view-cascade-stress", StringComparer.Ordinal))
             MeanAllocatedBytes = Math.Round(bytes.Average(), 1)
         });
     }
-    var report = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
+    var cascadeReport = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
         new JsonSerializerOptions { WriteIndented = true });
     if (viewOptions.Output is { } destination)
     {
         var full = Path.GetFullPath(destination);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, report);
+        File.WriteAllText(full, cascadeReport);
     }
-    else Console.WriteLine(report);
+    else Console.WriteLine(cascadeReport);
     return;
 }
 
