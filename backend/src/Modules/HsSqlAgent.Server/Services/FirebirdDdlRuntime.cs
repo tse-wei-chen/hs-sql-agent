@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Ddl;
 using HsSqlAgent.SqlCore.Enums;
@@ -287,8 +286,7 @@ public sealed class FirebirdDdlRuntime(
             if (string.IsNullOrWhiteSpace(guid) || string.IsNullOrWhiteSpace(fileId)
                 || string.IsNullOrWhiteSpace(dbName) || string.IsNullOrWhiteSpace(creation)
                 || string.IsNullOrWhiteSpace(principal)
-                || !Regex.IsMatch(engine, @"(?:^|[^0-9])5\.[0-9]+",
-                    RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100)))
+                || !IsProvenFirebird5Version(engine))
                 throw new InvalidOperationException("Firebird 5 GUID/file/version proof is missing.");
         }
 
@@ -366,6 +364,9 @@ public sealed class FirebirdDdlRuntime(
         return (new FirebirdDdlPhysicalSnapshot(guidHash, physicalIdentity,
             Digest(principal), table, exists, columns.AsReadOnly(), fingerprint), guid);
     }
+
+    internal static bool IsProvenFirebird5Version(string? engine) =>
+        Version.TryParse(engine, out var parsed) && parsed.Major == 5;
 
     private void ValidateOptions()
     {
