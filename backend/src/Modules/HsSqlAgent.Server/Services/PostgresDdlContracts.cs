@@ -16,6 +16,8 @@ public sealed class PostgresDdlExecutionOptions
     public bool AllowCreateTable { get; init; }
     public bool AllowAddColumn { get; init; }
     public bool AllowCreateIndex { get; init; }
+    // Separate high-risk opt-in. Never inherited from additive DDL or DML grants.
+    public bool AllowDropEmptyTable { get; init; }
     public string PolicyRevision { get; init; } = "ddl-policy-v1";
     public TimeSpan ApprovalLifetime { get; init; } = TimeSpan.FromMinutes(2);
     public TimeSpan ExecutionTimeout { get; init; } = TimeSpan.FromSeconds(15);
