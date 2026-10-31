@@ -401,7 +401,7 @@ No DML permission or consent is inherited. Startup opt-in,
 pre-execution audit are all required. Only the G1 additive operations
 are executable; unknown operations, expression/partial indexes,
 unmodeled virtual targets, schema drift and implicit name resolution
-fail closed. SQL Server and Firebird have NOT been enabled.
+fail closed. SQL Server and Firebird have separately opt-in, restricted Host adapters described below.
 
 ## G4 SQL Server 2022 — restricted transactional DDL (independent opt-in)
 
