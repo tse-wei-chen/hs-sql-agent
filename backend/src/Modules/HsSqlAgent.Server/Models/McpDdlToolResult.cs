@@ -15,6 +15,33 @@ public sealed record McpDdlToolResult(
     string Message,
     McpToolError? Error)
 {
+    /// <summary>
+    /// SQLite-specific physical snapshot. The PostgreSQL Before OID contract
+    /// must not be reused for SQLite's schema cookie.
+    /// </summary>
+    public SqliteDdlPhysicalSnapshot? SqliteBefore { get; init; }
+
+    public static McpDdlToolResult FromSqliteRuntime(SqliteDdlRuntimeResult result)
+    {
+        var preview = result.Preview;
+        return new McpDdlToolResult(
+            result.Status == DdlRuntimeStatus.OutcomeUnknown
+                ? "outcome_unknown" : result.Status.ToString().ToLowerInvariant(),
+            result.CommitConfirmed,
+            "Sqlite",
+            preview?.StaticPreview.PlanFingerprint,
+            preview?.StaticPreview.Plan.Command.Sql,
+            null,
+            preview?.ExpectedColumns,
+            preview?.RequestId,
+            result.Message,
+            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
+                or DdlRuntimeStatus.OutcomeUnknown
+                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
+                : null)
+        { SqliteBefore = preview?.Before };
+    }
+
     public static McpDdlToolResult FromRuntime(DdlRuntimeResult result)
     {
         var preview = result.Preview;

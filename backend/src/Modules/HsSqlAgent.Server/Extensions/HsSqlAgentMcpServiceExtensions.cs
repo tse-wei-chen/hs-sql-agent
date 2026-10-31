@@ -90,9 +90,16 @@ public static class HsSqlAgentMcpServiceExtensions
                         {
                             // No implicit exposure from missing AllowedTools
                             // or ordinary DML permission, even if host opts in.
-                            var ddl = httpContext.RequestServices.GetService<PostgresDdlRuntime>();
-                            if (ddl is not { Enabled: true }
-                                || allowedNames is null
+                            var provider = httpContext.Items[Common.Models.McpContextItemKeys.SqlProvider]?.ToString();
+                            var enabled = provider switch
+                            {
+                                string name when name.Equals("Postgres", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<PostgresDdlRuntime>() is { Enabled: true },
+                                string name when name.Equals("Sqlite", StringComparison.OrdinalIgnoreCase) =>
+                                    httpContext.RequestServices.GetService<SqliteDdlRuntime>() is { Enabled: true },
+                                _ => false
+                            };
+                            if (!enabled || allowedNames is null
                                 || !allowedNames.Contains(McpBuiltInTools.ExecuteDdlSql))
                                 continue;
                         }
