@@ -414,13 +414,17 @@ public sealed class OracleDdlRuntime(
             {
                 while (await reader.ReadAsync(token))
                 {
+                    // Oracle 26ai persists native INTEGER as NUMBER with scale 0;
+                    // USER_TAB_COLS may report precision NULL (the live G5 fixture)
+                    // or 38. Both are limited to this compiled INTEGER-only shape.
                     if (reader.IsDBNull(0) || reader.IsDBNull(1)
-                        || reader.IsDBNull(2) || reader.IsDBNull(3)
+                        || reader.IsDBNull(3)
                         || reader.IsDBNull(4) || reader.IsDBNull(6)
                         || reader.IsDBNull(7) || reader.IsDBNull(8)
                         || columns.Count == 16
                         || reader.GetString(1) != "NUMBER"
-                        || Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture) != 38
+                        || (!reader.IsDBNull(2)
+                            && Convert.ToInt32(reader.GetValue(2), CultureInfo.InvariantCulture) != 38)
                         || Convert.ToInt32(reader.GetValue(3), CultureInfo.InvariantCulture) != 0
                         || !reader.IsDBNull(5)
                         || reader.GetString(6) != "NO"
