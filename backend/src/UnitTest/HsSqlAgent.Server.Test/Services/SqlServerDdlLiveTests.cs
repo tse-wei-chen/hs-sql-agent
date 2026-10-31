@@ -174,7 +174,7 @@ public sealed class SqlCoreSqlServerDdlHostLiveTests
                     await using var external = new SqlConnection(target);
                     await external.OpenAsync(approvalToken);
                     await ExecuteAsync(external,
-                        "CREATE TABLE dbo.hsql_g4_drift (external NVARCHAR(32))",
+                        "CREATE TABLE dbo.hsql_g4_drift (outside_col NVARCHAR(32))",
                         approvalToken);
                     return new DdlApprovalDecision(DdlApprovalState.Approved,
                         request.RequestId, request.ApprovalFingerprint, "human:independent-reviewer");
