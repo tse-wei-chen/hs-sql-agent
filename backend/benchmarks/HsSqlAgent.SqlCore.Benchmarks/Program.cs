@@ -99,15 +99,22 @@ if (args.Contains("--catalog-lookup", StringComparer.Ordinal))
 }
 
 var catalogStress = args.Contains("--catalog-stress", StringComparer.Ordinal);
-var scriptMode = catalogStress || args.Contains("--script-analysis", StringComparer.Ordinal);
+var bindingStress = args.Contains("--catalog-binding-stress", StringComparer.Ordinal);
+var scriptMode = catalogStress || bindingStress || args.Contains("--script-analysis", StringComparer.Ordinal);
 var options = BenchmarkOptions.Parse(scriptMode
-    ? args.Where(arg => arg is not ("--script-analysis" or "--catalog-stress")).ToArray()
+    ? args.Where(arg => arg is not ("--script-analysis" or "--catalog-stress" or "--catalog-binding-stress")).ToArray()
     : args);
 if (scriptMode)
 {
     // Opt-in same-runner base/head measurement, never part of SQL compiler timings.
     // Both revisions get this identical harness from the candidate checkout.
-    var workloads = catalogStress
+    var workloads = bindingStress
+        ? new[]
+        {
+            (Name: "catalog-binding-24", Sql: CatalogBindingScript(24)),
+            (Name: "catalog-binding-96", Sql: CatalogBindingScript(96))
+        }
+        : catalogStress
         ? new[]
         {
             (Name: "catalog-create-24", Sql: CatalogScript(24)),
@@ -125,15 +132,15 @@ if (scriptMode)
     foreach (var provider in Enum.GetValues<SqlAgentToolType>())
     foreach (var workload in workloads)
     {
-        var profile = catalogStress && provider == SqlAgentToolType.MsSqlServer
+        var profile = (catalogStress || bindingStress) && provider == SqlAgentToolType.MsSqlServer
             ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
             : null;
-        var script = catalogStress && provider == SqlAgentToolType.MsSqlServer
+        var script = (catalogStress || bindingStress) && provider == SqlAgentToolType.MsSqlServer
             ? workload.Sql.Replace("CREATE TABLE t_", "CREATE TABLE dbo.t_", StringComparison.Ordinal)
                 .Replace("(id INTEGER)", "(id INT)", StringComparison.Ordinal)
-                .Replace("FROM t_000", "FROM dbo.t_000", StringComparison.Ordinal)
+                .Replace("FROM t_", "FROM dbo.t_", StringComparison.Ordinal)
             : workload.Sql;
         SqlScriptAnalysisResult Analyze() => SqlCoreFacade.AnalyzeScript(
             script, provider, SqlCatalogState.KnownEmpty(), profile);
@@ -149,9 +156,9 @@ if (scriptMode)
                           Dependencies = e.Dependencies.ToArray() }).ToArray()
             }).ToArray());
         var expected = Analyze();
-        if (catalogStress)
+        if (catalogStress || bindingStress)
         {
-            var expectedTables = workload.Name == "catalog-create-24" ? 24 : 96;
+            var expectedTables = workload.Name.EndsWith("-24", StringComparison.Ordinal) ? 24 : 96;
             if (!expected.FinalCatalog.IsClosedWorld
                 || expected.FinalCatalog.Tables.Count != expectedTables
                 || expected.Statements.Take(expectedTables).Any(statement =>
@@ -275,6 +282,11 @@ else
 {
     Console.WriteLine(output);
 }
+
+static string CatalogBindingScript(int count) =>
+    CatalogScript(count) + " " +
+    string.Join(" ", Enumerable.Range(0, 48)
+        .Select(index => $"SELECT id FROM t_{(index * 7) % count:000};"));
 
 static string CatalogScript(int tableCount) =>
     string.Join(" ", Enumerable.Range(0, tableCount).Reverse()
