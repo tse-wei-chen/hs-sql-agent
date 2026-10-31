@@ -112,25 +112,6 @@ public sealed class SqlCoreSqlServerDdlHostLiveTests
             var actor = new DdlActorContext("mcp-key:1", "db-management:2", database);
             var provider = Provider();
             var runtime = Runtime();
-            // Diagnostic probe is read-only, uses the exact Host physical
-            // metadata readers, and fails with the underlying DB exception.
-            // Remove this implementation-detail probe once CI identifies the
-            // SQL Server-specific validation failure.
-            await using (var diagnosticConnection = new SqlConnection(target))
-            {
-                await diagnosticConnection.OpenAsync(token);
-                var physicalReader = typeof(SqlServerDdlRuntime).GetMethod("SnapshotAsync",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-                var physicalTask = (Task<SqlServerDdlPhysicalSnapshot>)physicalReader.Invoke(
-                    null, [diagnosticConnection, null, "dbo", "hsql_g4_widgets", token])!;
-                var physical = await physicalTask;
-                Assert.Equal(database, physical.DatabaseName);
-                var triggerReader = typeof(SqlServerDdlRuntime).GetMethod("EnsureNoDdlTriggersAsync",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-                var triggerTask = (Task)triggerReader.Invoke(
-                    null, [diagnosticConnection, null, token])!;
-                await triggerTask;
-            }
             var sql = "CREATE TABLE dbo.hsql_g4_widgets (id INT NOT NULL)";
             var preview = await runtime.RunAsync(provider, target, sql,
                 actor, true, null, token);
