@@ -347,6 +347,70 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
         finally { await CleanupAsync(schema); }
     }
 
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(4)]
+    public async Task DependentTwoOrFourSteps_RealPhysicalBeforeAfterAndAtomicity(int count)
+    {
+        var schema = await SetupAsync();
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            var sql = $"CREATE TABLE {schema}.pipeline (id INTEGER NOT NULL);"
+                + $" ALTER TABLE {schema}.pipeline ADD COLUMN extra INTEGER NULL";
+            if (count == 4)
+                sql += $"; ALTER TABLE {schema}.pipeline ADD COLUMN more INTEGER NULL"
+                    + $"; CREATE INDEX ix_pipeline_extra ON {schema}.pipeline(extra, more)";
+            var runtime = Runtime(schema, dependentEnabled: true);
+            var preview = await runtime.RunAsync(Provider(), fixture.ConnectionString,
+                sql, Actor(), previewOnly: true, approvalProvider: null, ct);
+            Assert.Equal(DdlRuntimeStatus.Preview, preview.Status);
+            Assert.NotNull(preview.BatchPreview);
+            Assert.Equal(count, preview.BatchPreview.Plan.Plans.Count);
+            Assert.All(preview.BatchPreview.Before, before => Assert.Null(before.TableOid));
+            Assert.Equal(count == 4 ? 3 : 2,
+                preview.BatchPreview.ExpectedColumns[^1].Count);
+            Assert.False(await ExistsAsync(schema, "pipeline"));
+            var outcome = await runtime.RunAsync(Provider(), fixture.ConnectionString,
+                sql, Actor(), previewOnly: false, Decision(DdlApprovalState.Approved), ct);
+            Assert.True(outcome.Status == DdlRuntimeStatus.Committed,
+                "Expected fully committed dependent batch, got " + outcome.Status
+                + " (" + outcome.ErrorCode + "): " + outcome.Message);
+            Assert.True(outcome.CommitConfirmed);
+            Assert.True(await ExistsAsync(schema, "pipeline"));
+            await using var db = new NpgsqlConnection(fixture.ConnectionString);
+            await db.OpenAsync(ct);
+            await using var cmd = new NpgsqlCommand(
+                "SELECT COUNT(*) FROM pg_catalog.pg_attribute a "
+                + "JOIN pg_catalog.pg_class c ON c.oid=a.attrelid "
+                + "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                + "WHERE n.nspname=@schema AND c.relname='pipeline' "
+                + "AND a.attnum>0 AND NOT a.attisdropped", db);
+            cmd.Parameters.AddWithValue("schema", schema);
+            Assert.Equal(count == 4 ? 3L : 2L, (long)(await cmd.ExecuteScalarAsync(ct))!);
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
+    [Fact]
+    public async Task DependentBatchApprovalProviderFailureCannotWrite()
+    {
+        var schema = await SetupAsync();
+        try
+        {
+            var result = await Runtime(schema, dependentEnabled: true).RunAsync(
+                Provider(), fixture.ConnectionString, DependentScript(schema),
+                Actor(), false,
+                new Approver((_, _) => throw new InvalidOperationException("approval unavailable")),
+                TestContext.Current.CancellationToken);
+            Assert.Equal(DdlRuntimeStatus.Rejected, result.Status);
+            Assert.Equal("ddl.approval_failed", result.ErrorCode);
+            Assert.False(await ExistsAsync(schema, "pipeline"));
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
     [Fact]
     public async Task DependentBatchRequiresExtraGateAndIndependentApproval()
     {
