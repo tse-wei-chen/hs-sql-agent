@@ -120,7 +120,8 @@ public sealed class OracleDdlLiveTests
         try
         {
             var preview = await runtime.RunAsync(provider, cs, before, actor, true, null, ct);
-            Assert.Equal(DdlRuntimeStatus.Preview, preview.Status);
+            Assert.True(preview.Status == DdlRuntimeStatus.Preview,
+                "Expected Preview, got " + preview.Status + " (" + preview.ErrorCode + "): " + preview.Message);
             Assert.False(preview.CommitConfirmed);
             Assert.Equal(0, Convert.ToInt32(await Scalar(db,
                 "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + name + "'", ct)));
@@ -137,7 +138,8 @@ public sealed class OracleDdlLiveTests
 
             var committed = await runtime.RunAsync(provider, cs, before, actor,
                 false, Decision(DdlApprovalState.Approved), ct);
-            Assert.Equal(DdlRuntimeStatus.Committed, committed.Status);
+            Assert.True(committed.Status == DdlRuntimeStatus.Committed,
+                "Expected Committed, got " + committed.Status + " (" + committed.ErrorCode + "): " + committed.Message);
             Assert.True(committed.CommitConfirmed);
             Assert.Equal(1, Convert.ToInt32(await Scalar(db,
                 "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + name + "'", ct)));
