@@ -15,6 +15,94 @@ using System.Reflection;
 if (SqlCoreCapabilityStackProbe.TryRun(args)) return;
 if (SqlCoreDepthProbe.TryRun(args)) return;
 
+// A fixed, already-proven PostgreSQL Virtual Catalog isolates the real
+// DROP TABLE CASCADE graph+snapshot pipeline. CREATE VIEW fixture costs remain
+// OUTSIDE the timed region so we measure the optimization we actually made.
+if (args.Contains("--view-cascade-stress", StringComparer.Ordinal))
+{
+    var viewOptions = BenchmarkOptions.Parse(
+        args.Where(arg => arg != "--view-cascade-stress").ToArray());
+    var rows = new List<object>();
+    foreach (var count in new[] { 24, 48 })
+    {
+        var fixture = SqlCoreFacade.AnalyzeScript(
+            ReverseViewChainScript(count), SqlAgentToolType.Postgres,
+            SqlCatalogState.KnownEmpty());
+        if (fixture.Diagnostics.Count > 0 || !fixture.FinalCatalog.IsClosedWorld
+            || fixture.FinalCatalog.Tables.Count != 1
+            || fixture.FinalCatalog.Views.Count != count)
+            throw new InvalidOperationException("Reverse View chain fixture cannot be proven.");
+        SqlScriptAnalysisResult Analyze() => SqlCoreFacade.AnalyzeScript(
+            "DROP TABLE app.parent CASCADE;", SqlAgentToolType.Postgres,
+            fixture.FinalCatalog);
+        string Signature(SqlScriptAnalysisResult result) =>
+            JsonSerializer.Serialize(new
+            {
+                result.FinalCatalog.IsClosedWorld,
+                Tables = result.FinalCatalog.Tables.Select(t => t.QualifiedName.Key).ToArray(),
+                Views = result.FinalCatalog.Views.Select(v => v.QualifiedName.Key).ToArray(),
+                Statements = result.Statements.Select(statement => new
+                {
+                    statement.Status, statement.Certainty, statement.EffectCoverage,
+                    Diagnostics = statement.Diagnostics.Select(d => d.Code).ToArray(),
+                    Changes = statement.Changes.Select(change => new
+                    {
+                        change.TableName, change.Operation, change.Certainty,
+                        Identity = change.TableIdentity?.Key
+                    }).ToArray(),
+                    Effects = statement.DetailedEffects.Select(effect => new
+                    {
+                        effect.Kind, effect.Operation, effect.ObjectName, effect.Certainty
+                    }).ToArray()
+                }).ToArray()
+            });
+        var reference = Analyze();
+        var dropped = reference.Statements.Single();
+        if (reference.Diagnostics.Count > 0
+            || dropped.Status != SqlStatementAnalysisStatus.Analyzed
+            || dropped.EffectCoverage != SqlEffectCoverage.Complete
+            || dropped.Changes.Count != count + 1
+            || reference.FinalCatalog.Tables.Count != 0
+            || reference.FinalCatalog.Views.Count != 0)
+            throw new InvalidOperationException("View cascade has incomplete static proof.");
+        var digest = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(Signature(reference))));
+        for (var warmup = 0; warmup < viewOptions.Warmup; warmup++) Analyze();
+        var ticks = new long[viewOptions.Iterations];
+        var bytes = new long[viewOptions.Iterations];
+        for (var sample = 0; sample < viewOptions.Iterations; sample++)
+        {
+            var beforeBytes = GC.GetAllocatedBytesForCurrentThread();
+            var beforeTicks = Stopwatch.GetTimestamp();
+            var actual = Analyze();
+            ticks[sample] = Stopwatch.GetTimestamp() - beforeTicks;
+            bytes[sample] = GC.GetAllocatedBytesForCurrentThread() - beforeBytes;
+            if (Signature(actual) != Signature(reference))
+                throw new InvalidOperationException("View closure/ordered effect parity drift.");
+        }
+        Array.Sort(ticks);
+        rows.Add(new
+        {
+            Provider = "Postgres", Case = $"cascade-{count}", OutputDigest = digest,
+            MeanMicroseconds = Math.Round(ticks.Average() * 1_000_000.0 / Stopwatch.Frequency, 3),
+            P95Microseconds = Math.Round(
+                ticks[(int)Math.Ceiling(viewOptions.Iterations * 0.95) - 1]
+                * 1_000_000.0 / Stopwatch.Frequency, 3),
+            MeanAllocatedBytes = Math.Round(bytes.Average(), 1)
+        });
+    }
+    var cascadeReport = JsonSerializer.Serialize(new { schemaVersion = 1, results = rows },
+        new JsonSerializerOptions { WriteIndented = true });
+    if (viewOptions.Output is { } destination)
+    {
+        var full = Path.GetFullPath(destination);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        File.WriteAllText(full, cascadeReport);
+    }
+    else Console.WriteLine(cascadeReport);
+    return;
+}
+
 // Opt-in isolated lookup benchmark; the same reflection-bound method is used
 // against the exact base and PR assemblies, outside the timed loop. This
 // complements (not replaces) the full six-dialect Script acceptance corpus.
@@ -282,6 +370,12 @@ else
 {
     Console.WriteLine(output);
 }
+
+static string ReverseViewChainScript(int count) =>
+    "CREATE TABLE app.parent(id INTEGER);" +
+    string.Join(" ", Enumerable.Range(0, count).Reverse().Select(index =>
+        $"CREATE VIEW app.v_{index:000} AS SELECT id FROM " +
+        (index == count - 1 ? "app.parent" : $"app.v_{index + 1:000}") + ";"));
 
 static string CatalogBindingScript(int count) =>
     CatalogScript(count) + " " +

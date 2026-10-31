@@ -253,6 +253,51 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
               file.write(report)
           PY
+      - name: Compare proven reverse View cascade closure on identical base/head
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --view-cascade-stress --iterations 30 --warmup 5 --output "artifacts/view-cascade-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          samples = {}
+          for side in ("base", "head"):
+              samples[side] = []
+              for round in (1, 2, 3):
+                  rows = json.loads((root / f"view-cascade-{side}-{round}.json").read_text())["results"]
+                  keyed = {(row["Provider"], row["Case"]): row for row in rows}
+                  assert set(keyed) == {("Postgres", "cascade-24"), ("Postgres", "cascade-48")}, (side, round, keyed)
+                  samples[side].append(keyed)
+          lines = ["### Proven reversed View chain DROP TABLE CASCADE (3 paired rounds)",
+                   "| Chain depth | Candidate/base allocations | Candidate/base mean latency |",
+                   "|---|---:|---:|"]
+          for key in sorted(samples["base"][0]):
+              old = [round[key] for round in samples["base"]]
+              new = [round[key] for round in samples["head"]]
+              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "View cascade order/diagnostic drift")
+              ratios = []
+              for field in ("MeanAllocatedBytes", "MeanMicroseconds"):
+                  a = statistics.median(row[field] for row in old)
+                  b = statistics.median(row[field] for row in new)
+                  assert a > 0 and b > 0, (key, field, a, b)
+                  ratios.append(f"{b/a:.3f}x")
+              lines.append(f"| {key[1]} | {ratios[0]} | {ratios[1]} |")
+          report = "\n".join(lines) + "\n"
+          print(report)
+          (root / "view-cascade-comparison.md").write_text(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(report)
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4

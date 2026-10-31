@@ -292,4 +292,71 @@ public sealed class SqlCorePostgresViewDependencyGraphTests
         Assert.Equal(SqlStatementAnalysisStatus.Unsupported, Assert.Single(r.Statements).Status);
         Assert.False(r.FinalCatalog.IsClosedWorld);
     }
+
+    private static string ReversedKeyViewChain(int count) =>
+        "CREATE TABLE app.parent(id INTEGER);" +
+        string.Join(" ", Enumerable.Range(0, count).Reverse().Select(index =>
+            $"CREATE VIEW app.v_{index:000} AS SELECT id FROM " +
+            (index == count - 1 ? "app.parent" : $"app.v_{index + 1:000}") + ";"));
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(48)]
+    public void ReverseKeyViewChainRetainsExactCascadeOrderAndAtomicRestrict(int count)
+    {
+        // Dependencies run from the lexicographically LAST View toward the
+        // FIRST: the historical full-scan closure needs one pass per View.
+        var setup = ReversedKeyViewChain(count);
+        var restrict = Analyze(setup + "DROP TABLE app.parent RESTRICT;");
+        Assert.Equal(count, restrict.FinalCatalog.Views.Count);
+        var blocked = restrict.Statements[count + 1];
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, blocked.Status);
+        Assert.Empty(blocked.Changes);
+        Assert.Same(blocked.CatalogBefore, blocked.CatalogAfter);
+
+        var cascade = Analyze(setup + "DROP TABLE app.parent CASCADE;");
+        Assert.Empty(cascade.Diagnostics);
+        var drop = cascade.Statements[count + 1];
+        Assert.Equal(SqlStatementAnalysisStatus.Analyzed, drop.Status);
+        Assert.Equal(SqlEffectCoverage.Complete, drop.EffectCoverage);
+        var expected = new[] { "app.parent" }.Concat(
+            Enumerable.Range(0, count).Reverse().Select(i => $"app.v_{i:000}"));
+        Assert.Equal(expected, drop.Changes.Select(c => c.TableName));
+        Assert.All(drop.Changes, change =>
+            Assert.Equal(SqlCatalogKnowledge.Known, change.Certainty));
+        Assert.Empty(cascade.FinalCatalog.Views);
+        Assert.Empty(cascade.FinalCatalog.Tables);
+        Assert.True(cascade.FinalCatalog.IsClosedWorld);
+    }
+
+    [Fact]
+    public void BranchingViewClosurePreservesOriginalSortedPassOrderAndUnrelatedViews()
+    {
+        var setup =
+            "CREATE TABLE app.parent(id INTEGER);" +
+            "CREATE TABLE app.other(id INTEGER);" +
+            "CREATE VIEW app.a0 AS SELECT id FROM app.parent;" +
+            "CREATE VIEW app.z0 AS SELECT id FROM app.parent;" +
+            "CREATE VIEW app.a1 AS SELECT id FROM app.z0;" +
+            "CREATE VIEW app.z1 AS SELECT id FROM app.a0;" +
+            "CREATE VIEW app.m0 AS SELECT id FROM app.z1;" +
+            "CREATE VIEW app.unrelated AS SELECT id FROM app.other;";
+        var restricted = Analyze(setup + "DROP VIEW app.a0 RESTRICT;");
+        var denied = restricted.Statements[^1];
+        Assert.Equal(SqlStatementAnalysisStatus.Invalid, denied.Status);
+        Assert.Empty(denied.Changes);
+        Assert.Same(denied.CatalogBefore, denied.CatalogAfter);
+
+        var result = Analyze(setup + "DROP TABLE app.parent CASCADE;");
+        Assert.Empty(result.Diagnostics);
+        var cascade = result.Statements[^1];
+        Assert.Equal(
+            new[] { "app.parent", "app.a0", "app.z0", "app.z1", "app.a1", "app.m0" },
+            cascade.Changes.Select(change => change.TableName));
+        Assert.Single(result.FinalCatalog.Tables);
+        Assert.Equal("app.other", result.FinalCatalog.Tables[0].Name);
+        Assert.Single(result.FinalCatalog.Views);
+        Assert.Equal("app.unrelated", result.FinalCatalog.Views[0].Name);
+        Assert.True(result.FinalCatalog.IsClosedWorld);
+    }
 }
