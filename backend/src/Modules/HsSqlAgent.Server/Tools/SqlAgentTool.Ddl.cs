@@ -36,7 +36,7 @@ public partial class SqlAgentTool
     }
 
     [McpServerTool(UseStructuredContent = true, ReadOnly = false), Description(@"
-        Preview or execute exactly one explicitly allowed, PostgreSQL, SQLite, a restricted SQL Server, or a restricted Firebird schema DDL statement.
+        Preview or execute exactly one explicitly allowed, PostgreSQL, SQLite, a restricted SQL Server, or a restricted Firebird or MySQL DDL statement.
         With previewOnly=true, inspect live metadata and return a schema diff without changing data.
         With previewOnly=false, execution REQUIRES separately configured DDL approval, fresh physical
         database/schema evidence and a provider-specific verified transaction. DML approval does not grant
@@ -44,7 +44,7 @@ public partial class SqlAgentTool
         DDL, dynamic SQL and other database providers are always rejected.
     ")]
     public async Task<McpDdlToolResult> ExecuteDdlSql(
-        [Description("One strictly additive PostgreSQL, SQLite, SQL Server or Firebird DDL statement. Firebird requires an unqualified table name.")]
+        [Description("One strictly additive PostgreSQL, SQLite, SQL Server, Firebird or MySQL DDL statement. Firebird/MySQL require unqualified table names.")]
         string sql,
         [Description("True to inspect and preview only, without DDL approval or mutation.")]
         bool previewOnly = true,
@@ -55,6 +55,7 @@ public partial class SqlAgentTool
         SqliteDdlRuntimeResult? sqliteOutcome = null;
         SqlServerDdlRuntimeResult? sqlServerOutcome = null;
         FirebirdDdlRuntimeResult? firebirdOutcome = null;
+        MySqlDdlRuntimeResult? mySqlOutcome = null;
         try
         {
             var actor = RequireDdlGrant();
@@ -67,6 +68,7 @@ public partial class SqlAgentTool
                 SqlAgentToolType.Sqlite => _sqliteDdlRuntime is { Enabled: true },
                 SqlAgentToolType.MsSqlServer => _sqlServerDdlRuntime is { Enabled: true },
                 SqlAgentToolType.Firebird => _firebirdDdlRuntime is { Enabled: true },
+                SqlAgentToolType.MySQL => _mySqlDdlRuntime is { Enabled: true },
                 _ => false
             };
             if (!configured)
@@ -110,6 +112,13 @@ public partial class SqlAgentTool
                     previewOnly, _ddlApprovalProvider, cancellationToken);
                 return McpDdlToolResult.FromFirebirdRuntime(firebirdOutcome);
             }
+            if (providerType == SqlAgentToolType.MySQL)
+            {
+                mySqlOutcome = await _mySqlDdlRuntime!.RunAsync(
+                    provider, config.ConnectionString, sql, actor,
+                    previewOnly, _ddlApprovalProvider, cancellationToken);
+                return McpDdlToolResult.FromMySqlRuntime(mySqlOutcome);
+            }
             outcome = await _postgresDdlRuntime!.RunAsync(
                 provider, config.ConnectionString, sql, actor,
                 previewOnly, _ddlApprovalProvider, cancellationToken);
@@ -148,8 +157,11 @@ public partial class SqlAgentTool
                             : sqlServerOutcome?.Preview?.Before is { } sqlserver
                                 ? sqlserver.SchemaName + "." + sqlserver.TableName
                                 : firebirdOutcome?.Preview?.Before is { } firebird
-                                    ? firebird.TableName : "ddl",
-                    (outcome?.Status ?? sqliteOutcome?.Status ?? sqlServerOutcome?.Status ?? firebirdOutcome?.Status)?.ToString().ToLowerInvariant() ?? "rejected",
+                                    ? firebird.TableName
+                                    : mySqlOutcome?.Preview?.Before is { } mysql
+                                        ? mysql.DatabaseName + "." + mysql.TableName : "ddl",
+                    (outcome?.Status ?? sqliteOutcome?.Status ?? sqlServerOutcome?.Status
+                        ?? firebirdOutcome?.Status ?? mySqlOutcome?.Status)?.ToString().ToLowerInvariant() ?? "rejected",
                     new AuditEventContext
                     {
                         ToolName = McpBuiltInTools.ExecuteDdlSql,
@@ -157,16 +169,20 @@ public partial class SqlAgentTool
                             ?? sqliteOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? sqlServerOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? firebirdOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
+                            ?? mySqlOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? "denied",
                         DurationMs = watch.ElapsedMilliseconds,
                         Definition = outcome?.Preview?.HumanReadableDiff ?? sqliteOutcome?.Preview?.HumanReadableDiff
                             ?? sqlServerOutcome?.Preview?.HumanReadableDiff
-                            ?? firebirdOutcome?.Preview?.HumanReadableDiff,
+                            ?? firebirdOutcome?.Preview?.HumanReadableDiff
+                            ?? mySqlOutcome?.Preview?.HumanReadableDiff,
                         ErrorCategory = outcome?.ErrorCode ?? sqliteOutcome?.ErrorCode
                             ?? sqlServerOutcome?.ErrorCode ?? firebirdOutcome?.ErrorCode
+                            ?? mySqlOutcome?.ErrorCode
                     },
                     outcome?.Message ?? sqliteOutcome?.Message ?? sqlServerOutcome?.Message
-                        ?? firebirdOutcome?.Message ?? "Denied at DDL Host access boundary.",
+                        ?? firebirdOutcome?.Message ?? mySqlOutcome?.Message
+                        ?? "Denied at DDL Host access boundary.",
                     CancellationToken.None);
             }
             catch (Exception)
