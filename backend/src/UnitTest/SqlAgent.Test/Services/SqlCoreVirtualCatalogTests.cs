@@ -3,6 +3,7 @@ using HsSqlAgent.SqlCore.Catalog;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Script;
+using HsSqlAgent.SqlCore.Models;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -195,8 +196,13 @@ public sealed class SqlCoreVirtualCatalogTests
         // insertion path, not only the append-fast path.
         var statements = Enumerable.Range(0, 32).Reverse()
             .Select(index => $"CREATE TABLE t_{index:000} (id INTEGER);");
+        var profile = provider == SqlAgentToolType.MsSqlServer
+            ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                { ["CATALOG_COLLATION"] = "Latin1_General_100_CI_AS" })
+            : null;
         var result = SqlCoreFacade.AnalyzeScript(
-            string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty());
+            string.Join(" ", statements), provider, SqlCatalogState.KnownEmpty(), profile);
 
         Assert.Equal(32, result.Statements.Count);
         Assert.All(result.Statements, statement =>
@@ -241,8 +247,9 @@ public sealed class SqlCoreVirtualCatalogTests
         Assert.Equal(new[] { "a", "m", "z" },
             result.Statements[3].CatalogAfter.Tables.Select(table => table.Name));
         Assert.Equal(new[] { "a", "m" },
-            result.Statements[6].CatalogAfter.Tables.Select(table => table.Name));
-        Assert.Equal(3, result.Statements[5].CatalogAfter.Tables.Count);
-        Assert.Equal(2, result.Statements[6].CatalogAfter.Tables.Count);
+            result.Statements[7].CatalogAfter.Tables.Select(table => table.Name));
+        Assert.Equal(2, result.Statements[5].CatalogAfter.Tables.Count);
+        Assert.Equal(3, result.Statements[6].CatalogAfter.Tables.Count);
+        Assert.Equal(2, result.Statements[7].CatalogAfter.Tables.Count);
     }
 }
