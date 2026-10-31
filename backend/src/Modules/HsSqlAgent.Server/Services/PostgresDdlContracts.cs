@@ -18,6 +18,11 @@ public sealed class PostgresDdlExecutionOptions
     public bool AllowCreateIndex { get; init; }
     // Separate high-risk opt-in. Never inherited from additive DDL or DML grants.
     public bool AllowDropEmptyTable { get; init; }
+    // Separate allowlisted key and operation gate. Existing single CREATE
+    // or destructive permissions never implicitly enable a whole batch.
+    public bool AllowCreateTableBatch { get; init; }
+    public IReadOnlySet<string> AllowedBatchPrincipals { get; init; } =
+        new HashSet<string>(StringComparer.Ordinal);
     // Tiered key authorization: these are authenticated MCP principal IDs,
     // e.g. mcp-key:123, not caller-supplied SQL identities.
     public IReadOnlySet<string> AllowedDropPrincipals { get; init; } =
@@ -74,12 +79,27 @@ public sealed record DdlRuntimePreview(
     string RequestId,
     string HumanReadableDiff);
 
+/// <summary>
+/// One immutable whole-batch approval challenge; zero individual approvals
+/// can be replayed as authorization for another member or order.
+/// </summary>
+public sealed record DdlBatchRuntimePreview(
+    CompiledDdlBatchPlan Plan,
+    IReadOnlyList<DdlSchemaPreview> Steps,
+    IReadOnlyList<DdlPhysicalSnapshot> Before,
+    IReadOnlyList<IReadOnlyList<DdlPhysicalColumn>> ExpectedColumns,
+    string ApprovalFingerprint,
+    DateTimeOffset ExpiresAt,
+    string RequestId,
+    string HumanReadableDiff);
+
 public sealed record DdlRuntimeResult(
     DdlRuntimeStatus Status,
     DdlRuntimePreview? Preview,
     string Message,
     string? ErrorCode = null)
 {
+    public DdlBatchRuntimePreview? BatchPreview { get; init; }
     public bool CommitConfirmed => Status == DdlRuntimeStatus.Committed;
     public bool IsOutcomeUnknown => Status == DdlRuntimeStatus.OutcomeUnknown;
 }

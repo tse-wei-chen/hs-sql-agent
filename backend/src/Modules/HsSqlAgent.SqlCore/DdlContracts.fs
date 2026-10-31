@@ -117,3 +117,17 @@ type CompiledDdlPlan internal (
     member _.PlanFingerprint = planFingerprint
     member _.RequiresLiveValidation = true
     member _.AuthorizesExecution = false
+
+/// G6/S16: immutable, non-authoritative ordered script proof. Atomicity is
+/// UNKNOWN until a particular Host commits a real provider transaction.
+[<Sealed>]
+type CompiledDdlBatchPlan internal (
+    plans: IReadOnlyList<CompiledDdlPlan>,
+    sourceSpans: IReadOnlyList<SqlDiagnosticSpan>,
+    fingerprint: string) =
+    member _.Plans = plans
+    member _.SourceSpans = sourceSpans
+    member _.PlanFingerprint = fingerprint
+    member _.TransactionBehavior = DdlTransactionBehavior.Unknown
+    member _.RequiresLiveValidation = true
+    member _.AuthorizesExecution = false

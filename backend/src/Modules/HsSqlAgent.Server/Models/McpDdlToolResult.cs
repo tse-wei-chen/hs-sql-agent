@@ -15,6 +15,12 @@ public sealed record McpDdlToolResult(
     string Message,
     McpToolError? Error)
 {
+    /// <summary>One PostgreSQL atomic batch preview (not authorization).</summary>
+    public IReadOnlyList<string>? BatchStatements { get; init; }
+    public string? BatchPlanFingerprint { get; init; }
+    public bool BatchAtomicityProofRequired { get; init; }
+    public string? BatchHumanReadableDiff { get; init; }
+
     /// <summary>Risk evidence for human-facing DDL previews, never an execution grant.</summary>
     public string? Risk { get; init; }
     public bool MayLoseData { get; init; }
@@ -183,7 +189,11 @@ public sealed record McpDdlToolResult(
         {
             Risk = preview?.StaticPreview.Plan.Risk.ToString(),
             MayLoseData = preview?.StaticPreview.Plan.Impact.MayLoseData ?? false,
-            HumanReadableDiff = preview?.HumanReadableDiff
+            HumanReadableDiff = preview?.HumanReadableDiff,
+            BatchStatements = result.BatchPreview?.Plan.Plans.Select(p => p.Command.Sql).ToArray(),
+            BatchPlanFingerprint = result.BatchPreview?.Plan.PlanFingerprint,
+            BatchAtomicityProofRequired = result.BatchPreview is not null,
+            BatchHumanReadableDiff = result.BatchPreview?.HumanReadableDiff
         };
     }
 }

@@ -21,9 +21,10 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   post-execution verification, fail-closed audit and OutcomeUnknown.
 - No executable DDL feature is enabled by default. Four existing read tools
   remain selected; both DML and DDL are unselected. No cross-provider,
-  multi-statement, conditional or concurrent index DDL execution. A separately
-  enabled, independently approved PostgreSQL G6 empty-table DROP is the only
-  narrowly proven destructive exception.
+  conditional or concurrent index DDL execution. A separately enabled,
+  independently approved PostgreSQL G6 empty-table DROP is the sole destructive
+  exception. PostgreSQL G6/S16 adds only a 2–4 independent CREATE TABLE batch
+  under a distinct default-disabled permission and atomic-transaction proof.
 - Real PostgreSQL 16 tests cover approved CREATE TABLE / ADD COLUMN / INDEX,
   Preview and rejected Approval without writes, schema drift and forged
   approval fingerprints. Six-provider DQL/DML compatibility gates remain
@@ -84,6 +85,29 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - PostgreSQL 16 live tests cover preview/no-write, explicit opt-in,
   rejected/forged approval, nonempty and concurrent inserts, dependent
   views, exact absence and independent transactional rollback.
+
+### G6 S16: PostgreSQL atomic CREATE-only DDL Batch
+
+- Introduce an independent, **default-denied** PostgreSQL 16 whole-batch
+  execution boundary on the existing `execute_ddl_sql` tool. A caller must
+  explicitly opt into `AllowCreateTableBatch`, list the authenticated MCP
+  key under `AllowedBatchPrincipals`, grant the existing DDL tool, and use
+  the independent `IDdlApprovalProvider`.
+- Reuse the F# Script lexer and single-statement Schema Compiler to compile
+  **2–4 independent schema-qualified CREATE TABLE statements** into one
+  ordered immutable plan fingerprint. Preview remains non-authoritative and
+  does not write. Exactly one approval binds every native SQL command,
+  source order, database/cluster/schema identity, fresh physical absence,
+  principal, policy revision, expiration and a one-use request nonce.
+- A fresh PostgreSQL transaction takes cooperative advisory locks in
+  deterministic order, rechecks all physical preconditions, runs only
+  closed compiled commands and verifies every typed postcondition before
+  COMMIT. Confirmed rollback prevents partial application. Uncertain COMMIT
+  or rollback is `outcome_unknown` and is never automatically retried.
+- Cross-statement dependencies, ALTER, DROP, mixing query/DML/transaction
+  statements, five other provider batches and MySQL/Oracle implicit-commit
+  partial-outcome modeling remain **unsupported and rejected**. This is
+  a proven transactional subset, **not** general multi-DDL execution.
 
 ### PostgreSQL old-worker cutover verification
 

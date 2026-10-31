@@ -36,7 +36,8 @@ public partial class SqlAgentTool
     }
 
     [McpServerTool(UseStructuredContent = true, ReadOnly = false), Description(@"
-        Preview or execute exactly one explicitly allowed, PostgreSQL, SQLite, a restricted SQL Server, or a restricted Firebird, MySQL or Oracle DDL statement.
+        Preview or execute allowed SQL DDL. PostgreSQL also supports an explicitly enabled
+        2–4 statement atomic CREATE TABLE batch; other providers remain single-statement.
         With previewOnly=true, inspect live metadata and return a schema diff without changing data.
         With previewOnly=false, execution REQUIRES separately configured DDL approval, fresh physical
         database/schema evidence and a provider-specific proven execution policy. DML approval does not grant
@@ -45,7 +46,7 @@ public partial class SqlAgentTool
         other destructive DDL, dynamic SQL and unsupported operations are rejected.
     ")]
     public async Task<McpDdlToolResult> ExecuteDdlSql(
-        [Description("One proven DDL statement. PostgreSQL may also DROP a qualified, proven-empty table with separate destructive opt-in and approval; other providers allow only additive DDL. Firebird/MySQL/Oracle CREATE requires unqualified table names.")]
+        [Description("One proven DDL statement, or PostgreSQL only: 2–4 independent schema-qualified CREATE TABLE statements with one batch opt-in and approval. PostgreSQL DROP of proven-empty tables requires separate destructive permission; other providers remain single-statement additive DDL.")]
         string sql,
         [Description("True to inspect and preview only, without DDL approval or mutation.")]
         bool previewOnly = true,
@@ -160,7 +161,9 @@ public partial class SqlAgentTool
             {
                 await _auditService.WriteEventAsync(
                     "mcp.ddl.attempted",
-                    outcome?.Preview?.Before is { } target
+                    outcome?.BatchPreview is { } batch
+                        ? string.Join(",", batch.Before.Select(s => s.SchemaName + "." + s.TableName))
+                        : outcome?.Preview?.Before is { } target
                         ? target.SchemaName + "." + target.TableName
                         : sqliteOutcome?.Preview?.Before is { } sqlite
                             ? sqlite.SchemaName + "." + sqlite.TableName
@@ -177,7 +180,8 @@ public partial class SqlAgentTool
                     new AuditEventContext
                     {
                         ToolName = McpBuiltInTools.ExecuteDdlSql,
-                        Operation = outcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
+                        Operation = outcome?.BatchPreview is not null ? "AtomicCreateTableBatch"
+                            : outcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? sqliteOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? sqlServerOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? firebirdOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
@@ -185,7 +189,8 @@ public partial class SqlAgentTool
                             ?? oracleOutcome?.Preview?.StaticPreview.Plan.Changes[0].Operation.ToString()
                             ?? "denied",
                         DurationMs = watch.ElapsedMilliseconds,
-                        Definition = outcome?.Preview?.HumanReadableDiff ?? sqliteOutcome?.Preview?.HumanReadableDiff
+                        Definition = outcome?.BatchPreview?.HumanReadableDiff
+                            ?? outcome?.Preview?.HumanReadableDiff ?? sqliteOutcome?.Preview?.HumanReadableDiff
                             ?? sqlServerOutcome?.Preview?.HumanReadableDiff
                             ?? firebirdOutcome?.Preview?.HumanReadableDiff
                             ?? mySqlOutcome?.Preview?.HumanReadableDiff

@@ -3532,3 +3532,35 @@ ownership, dependencies, privileges or transaction safety. The Host must
 separately prove all of these before and during the approved transaction.
 Only the opt-in PostgreSQL Host's **empty** table subset is executable; all
 six dialects retain strict negative execution boundaries for everything else.
+
+## G6 S16 — PostgreSQL immutable DDL Batch compilation (no Host authority)
+
+`CompileDdlBatch` and `TryCompileDdlBatch` use the **existing F#
+Script lexer and statement dispatcher** and the same closed `CompileDdl`
+pipeline for every item. A 2–4 statement, same-schema PostgreSQL script
+with distinct, independent `CREATE TABLE` targets is accepted; all
+cross-statement dependencies, DROP, ALTER, INDEX, non-DDL statements,
+`GO`, multiple providers and implicit-commit batches are rejected.
+
+```csharp
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Ddl;
+using HsSqlAgent.SqlCore.Enums;
+
+var options = new DdlCompilationOptions(
+    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+var batch = SqlCoreFacade.CompileDdlBatch(
+    "CREATE TABLE staging.orders_new (id INTEGER NOT NULL);\n"
+    + "CREATE TABLE staging.lines_new (id INTEGER NOT NULL);", options);
+Console.WriteLine(batch.Plans.Count);       // 2
+Console.WriteLine(batch.PlanFingerprint);   // One ordered fingerprint
+Console.WriteLine(batch.TransactionBehavior); // Unknown: Host must prove atomicity
+Console.WriteLine(batch.AuthorizesExecution); // false
+```
+
+This is a **compile-only, non-authoritative** contract. Neither a Script
+parse result nor a virtual Catalog creates executable authority. The
+separate Host (currently PostgreSQL **16** only) must prove physical database/schema absence, ownership
+scope, independent per-batch permission and human approval, then commit
+the entire batch inside one real PostgreSQL transaction. Individual DDL
+approvals cannot be combined into a batch approval.
