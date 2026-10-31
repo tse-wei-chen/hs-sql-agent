@@ -109,6 +109,30 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   partial-outcome modeling remain **unsupported and rejected**. This is
   a proven transactional subset, **not** general multi-DDL execution.
 
+### G6/S16 continuation: PostgreSQL dependent CREATE → ADD → INDEX batch
+
+- Extend only the PostgreSQL 16 atomic Batch Host with a **separately
+  default-disabled** `AllowDependentDdlBatch` gate, in addition to the
+  existing independent `AllowCreateTableBatch`, `AllowAddColumn`,
+  `AllowCreateIndex`, exact MCP principal allowlist and human approval.
+- The F# Batch Compiler reuses the shared Script SourceSpans and closed
+  single-DDL Compiler to construct one of two **typed and fingerprinted**
+  topologies: previously supported unrelated CREATE-only batch, or a
+  *single newly created table* with one/two nullable ADD COLUMN effects
+  and an optional final ordinary CREATE INDEX referencing only materialized
+  column names. No duplicate column, existing table modification,
+  cross-target/interleaved CREATE, or unsupported DDL operations.
+- Preview retains only **real physical Before snapshots** as evidence;
+  cumulative intermediate Before/After are explicitly hypothetical effects
+  and must never be used to skip metadata checks. After one human approval,
+  each staged operation requires fresh real PostgreSQL metadata preconditions
+  and exact postconditions inside the same transaction, with whole-table
+  final readback before COMMIT and fail-closed rollback or OutcomeUnknown.
+- Tests: positive and adversarial grammar matrix; real PG16 preview/no-write,
+  independent approval, default-denied permission, external table drift,
+  index namespace collision, final column/index parity and transactional
+  rollback. Existing five-other-provider Batch requests stay rejected.
+
 ### PostgreSQL old-worker cutover verification
 
 - Introduce a fail-closed, read-only PostgreSQL old-role verifier that

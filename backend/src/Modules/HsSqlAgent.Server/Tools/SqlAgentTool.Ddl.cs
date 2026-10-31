@@ -36,8 +36,9 @@ public partial class SqlAgentTool
     }
 
     [McpServerTool(UseStructuredContent = true, ReadOnly = false), Description(@"
-        Preview or execute allowed SQL DDL. PostgreSQL also supports an explicitly enabled
-        2–4 statement atomic CREATE TABLE batch; other providers remain single-statement.
+        Preview or execute allowed SQL DDL. PostgreSQL also supports a separately enabled 2–4 statement atomic batch:
+        independent CREATE TABLE or one new CREATE→nullable ADD→optional final INDEX chain;
+        other providers remain single-statement.
         With previewOnly=true, inspect live metadata and return a schema diff without changing data.
         With previewOnly=false, execution REQUIRES separately configured DDL approval, fresh physical
         database/schema evidence and a provider-specific proven execution policy. DML approval does not grant
@@ -46,7 +47,7 @@ public partial class SqlAgentTool
         other destructive DDL, dynamic SQL and unsupported operations are rejected.
     ")]
     public async Task<McpDdlToolResult> ExecuteDdlSql(
-        [Description("One proven DDL statement, or PostgreSQL only: 2–4 independent schema-qualified CREATE TABLE statements with one batch opt-in and approval. PostgreSQL DROP of proven-empty tables requires separate destructive permission; other providers remain single-statement additive DDL.")]
+        [Description("One proven DDL statement, or PostgreSQL 16 only: 2–4 independent schema-qualified CREATE TABLE statements, or one new CREATE→nullable ADD→optional final INDEX chain under separate dependent-batch opt-in. PostgreSQL DROP of proven-empty tables requires separate destructive permission; other providers remain single-statement additive DDL.")]
         string sql,
         [Description("True to inspect and preview only, without DDL approval or mutation.")]
         bool previewOnly = true,

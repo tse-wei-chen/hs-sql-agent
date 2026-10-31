@@ -50,6 +50,12 @@ public sealed partial class PostgresDdlRuntime
             // prove every member before ANY database connection is opened.
             plan = SqlCoreFacade.CompileDdlBatch(sql,
                 new DdlCompilationOptions(SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
+            if (plan.Topology == DdlBatchTopology.DependentCreateChain
+                && (!_options.AllowDependentDdlBatch || !_options.AllowAddColumn
+                    || (plan.Plans.Any(p => p.Changes[0].Operation == DdlSchemaOperation.CreateIndex)
+                        && !_options.AllowCreateIndex)))
+                return BatchRejected("ddl.batch_dependency_disabled",
+                    "Dependent CREATE/ALTER/INDEX batch requires separately enabled operations.");
             schema = plan.Plans[0].Changes[0].ObjectIdentity.Parts[0];
             if (!_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || schema is "pg_catalog" or "information_schema"
@@ -79,6 +85,12 @@ public sealed partial class PostgresDdlRuntime
                 var opts = new DdlCompilationOptions(SqlAgentToolType.Postgres,
                     SqlAgentToolType.Postgres, profile.TargetProfile, profile.TargetProfile);
                 plan = SqlCoreFacade.CompileDdlBatch(sql, opts);
+                if (plan.Topology == DdlBatchTopology.DependentCreateChain
+                    && (!_options.AllowDependentDdlBatch || !_options.AllowAddColumn
+                        || (plan.Plans.Any(p => p.Changes[0].Operation == DdlSchemaOperation.CreateIndex)
+                            && !_options.AllowCreateIndex)))
+                    return BatchRejected("ddl.batch_dependency_disabled",
+                        "Dependent DDL batch Host operation gates are not all enabled.");
 
                 original = new DdlPhysicalSnapshot[plan.Plans.Count];
                 string? cluster = null;
@@ -96,28 +108,81 @@ public sealed partial class PostgresDdlRuntime
                             "The physical PostgreSQL cluster, database or namespace is inconsistent.");
                     cluster = before.ServerIdentity;
                     namespaceOid = before.SchemaOid;
-                    var denied = await VerifyPreconditionAsync(
-                        connection, null, before, plan.Plans[i], cancellationToken);
-                    if (denied is not null)
+                    // Every Preview.Before remains ACTUAL physical metadata.
+                    // An ALTER/INDEX that depends on this CREATE must *not*
+                    // be passed to the live present-table validator yet.
+                    var dependent = plan.Topology == DdlBatchTopology.DependentCreateChain;
+                    if (dependent && i > 0
+                        && before.Fingerprint != original[0].Fingerprint)
                         return BatchRejected("ddl.batch_physical_precondition",
-                            "One or more ordered batch targets are not proved absent and safe.");
+                            "Dependent batch root changed while collecting real metadata.");
+                    if (!dependent || i == 0)
+                    {
+                        var denied = await VerifyPreconditionAsync(
+                            connection, null, before, plan.Plans[i], cancellationToken);
+                        if (denied is not null)
+                            return BatchRejected("ddl.batch_physical_precondition",
+                                "One or more ordered batch targets are not proved absent and safe.");
+                    }
                     original[i] = before;
+                }
+                // INDEX is a schema-level relation, not only a table child:
+                // check its global namespace collision before approval.
+                if (plan.Topology == DdlBatchTopology.DependentCreateChain)
+                {
+                    var index = plan.Plans.Select(p => p.Changes[0])
+                        .FirstOrDefault(c => c.Operation == DdlSchemaOperation.CreateIndex);
+                    if (index is not null)
+                    {
+                        var collision = await ScalarAsync(connection, null,
+                            "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_class c "
+                            + "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                            + "WHERE n.nspname=@schema AND c.relname=@name)",
+                            cancellationToken, ("schema", schema), ("name", index.IndexName));
+                        if (collision is not false)
+                            return BatchRejected("ddl.batch_index_collision",
+                                "The dependent INDEX name is not proven absent.");
+                    }
                 }
             } // Release the preview connection BEFORE interactive approval.
 
             var steps = plan.Plans.Select(p => SqlCoreFacade.PreviewDdl(
                 p.Command.Sql, new DdlCompilationOptions(SqlAgentToolType.Postgres,
                     SqlAgentToolType.Postgres, profile.TargetProfile, profile.TargetProfile))).ToArray();
-            var expected = plan.Plans.Select((p, i) =>
-                (IReadOnlyList<DdlPhysicalColumn>)ProjectExpected(original[i], p).Columns).ToArray();
-            var descriptions = plan.Plans.Select((p, i) => HumanReadableDiff(
-                original[i], expected[i], Array.Empty<DdlPhysicalIndex>(), p)).ToArray();
-            var readable = "Atomic PostgreSQL DDL batch (2–4 independent CREATE TABLE operations)\n"
-                + "All statements are one approval and one real PostgreSQL transaction.\n"
-                + "Before/After are conditional; no database changes occur during Preview.\n"
-                + "No cross-statement references, data loss, implicit commits or partial success claims.\n"
+            // Pure in-memory plan projection, never promoted into the
+            // physical Before[] observations nor treated as table-OID proof.
+            // The -1 sentinel exists only for the human-readable projected
+            // intermediate state and is never used in database queries.
+            var expected = new IReadOnlyList<DdlPhysicalColumn>[plan.Plans.Count];
+            var descriptions = new string[plan.Plans.Count];
+            var virtualState = original[0];
+            for (var i = 0; i < plan.Plans.Count; i++)
+            {
+                var prior = plan.Topology == DdlBatchTopology.DependentCreateChain
+                    ? virtualState : original[i];
+                var projected = ProjectExpected(prior, plan.Plans[i]);
+                expected[i] = projected.Columns;
+                descriptions[i] = HumanReadableDiff(prior, projected.Columns,
+                    projected.Indexes, plan.Plans[i]);
+                if (plan.Topology == DdlBatchTopology.DependentCreateChain)
+                    virtualState = prior with
+                    {
+                        TableOid = -1L, Columns = projected.Columns,
+                        Indexes = projected.Indexes
+                    };
+            }
+            var chain = plan.Topology == DdlBatchTopology.DependentCreateChain;
+            var readable = chain
+                    ? "Atomic PostgreSQL DDL dependent CREATE -> nullable ADD -> optional INDEX batch\n"
+                    : "Atomic PostgreSQL DDL batch (2–4 independent CREATE TABLE operations)\n";
+            readable += "All statements are one approval and one real PostgreSQL transaction.\n"
+                + (chain
+                    ? "Projected intermediate Before/After are HYPOTHETICAL, not real table metadata.\n"
+                    : "Before/After are conditional; no database changes occur during Preview.\n")
+                + "No data loss, implicit commits or partial success claims.\n"
                 + string.Join("\n---\n", descriptions.Select((item, index) =>
-                    "Step " + (index + 1) + "/" + descriptions.Length + ":\n" + item));
+                    "Step " + (index + 1) + "/" + descriptions.Length + ":\n"
+                    + "Compiled native SQL: " + plan.Plans[index].Command.Sql + "\n" + item));
             var now = _time.GetUtcNow();
             var expiry = now + _options.ApprovalLifetime;
             var nonce = "ddl_batch_" + Guid.NewGuid().ToString("N");
@@ -126,6 +191,7 @@ public sealed partial class PostgresDdlRuntime
             {
                 version = "pg-atomic-ddl-batch-approval-v1",
                 plan.PlanFingerprint,
+                plan.Topology,
                 nativeSql = plan.Plans.Select(p => p.Command.Sql).ToArray(),
                 before = original.Select(s => s.Fingerprint).ToArray(),
                 serverIdentity = original[0].ServerIdentity,
@@ -158,6 +224,13 @@ public sealed partial class PostgresDdlRuntime
             {
                 return BatchRejected("ddl.approval_cancelled", "Batch approval was cancelled.", preview);
             }
+            catch (Exception)
+            {
+                // A failed human-approval provider never executes DDL and
+                // must not be mislabeled as a physical preview failure.
+                return BatchRejected("ddl.approval_failed",
+                    "The independent whole-batch approval provider failed closed.", preview);
+            }
             if (decision is null
                 || decision.RequestId != nonce
                 || decision.ApprovalFingerprint != fingerprint)
@@ -175,6 +248,10 @@ public sealed partial class PostgresDdlRuntime
             if (_time.GetUtcNow() >= expiry)
                 return BatchRejected("ddl.approval_expired", "Batch approval expired.", preview);
             if (!_options.Enabled || !_options.AllowCreateTable || !_options.AllowCreateTableBatch
+                || (plan.Topology == DdlBatchTopology.DependentCreateChain
+                    && (!_options.AllowDependentDdlBatch || !_options.AllowAddColumn
+                        || (plan.Plans.Any(p => p.Changes[0].Operation == DdlSchemaOperation.CreateIndex)
+                            && !_options.AllowCreateIndex)))
                 || !_options.AllowedBatchPrincipals.Contains(actor.PrincipalIdentity)
                 || !_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || policy != PolicyMaterial())
@@ -251,36 +328,81 @@ public sealed partial class PostgresDdlRuntime
                     || approvedPolicy != PolicyMaterial()
                     || !_options.Enabled || !_options.AllowCreateTable
                     || !_options.AllowCreateTableBatch
+                    || (preview.Plan.Topology == DdlBatchTopology.DependentCreateChain
+                        && (!_options.AllowDependentDdlBatch || !_options.AllowAddColumn
+                            || (preview.Plan.Plans.Any(p => p.Changes[0].Operation == DdlSchemaOperation.CreateIndex)
+                                && !_options.AllowCreateIndex)))
                     || !_options.AllowedBatchPrincipals.Contains(actor.PrincipalIdentity)
                     || !_options.AllowedSchemas.Any(allowed =>
                         String.Equals(allowed, old.SchemaName, StringComparison.Ordinal)))
                     throw new InvalidOperationException("Atomic batch precondition or policy drift.");
-                var denied = await VerifyPreconditionAsync(connection, transaction, fresh,
-                    preview.Plan.Plans[i], execToken);
-                if (denied is not null)
-                    throw new InvalidOperationException("Atomic batch live precondition was invalidated.");
+                // Only the CREATE root exists at transaction start for a
+                // dependent chain; later operations prove their real states
+                // after the previous native DDL, not against fabricated rows.
+                if (preview.Plan.Topology != DdlBatchTopology.DependentCreateChain || i == 0)
+                {
+                    var denied = await VerifyPreconditionAsync(connection, transaction, fresh,
+                        preview.Plan.Plans[i], execToken);
+                    if (denied is not null)
+                        throw new InvalidOperationException("Atomic batch live precondition was invalidated.");
+                }
             }
 
+            DdlPhysicalSnapshot? lastVerified = null;
             for (var i = 0; i < preview.Plan.Plans.Count; i++)
             {
                 var plan = preview.Plan.Plans[i];
+                var dependent = preview.Plan.Topology == DdlBatchTopology.DependentCreateChain;
+                DdlPhysicalSnapshot actualBefore;
+                if (dependent && i > 0)
+                {
+                    actualBefore = await ReadSnapshotAsync(connection, transaction,
+                        approved[0].SchemaName, approved[0].TableName, execToken);
+                    if (lastVerified is null
+                        || actualBefore.Fingerprint != lastVerified.Fingerprint
+                        || actualBefore.TableOid != lastVerified.TableOid)
+                        throw new InvalidOperationException(
+                            "Dependent batch previous staged physical effect changed.");
+                    var denied = await VerifyPreconditionAsync(
+                        connection, transaction, actualBefore, plan, execToken);
+                    if (denied is not null)
+                        throw new InvalidOperationException(
+                            "Dependent batch next physical operation is unproven.");
+                }
+                else
+                    actualBefore = approved[i];
+
                 // Native SQL originates only from typed F# compiled command.
                 startedNative = true;
                 await ExecuteHostSqlAsync(connection, transaction,
                     plan.Command.Sql, execToken);
-                var fresh = await ReadSnapshotAsync(connection, transaction,
+                var after = await ReadSnapshotAsync(connection, transaction,
                     approved[i].SchemaName, approved[i].TableName, execToken);
-                if (!MatchesExpected(fresh, plan, approved[i]))
+                if (!MatchesExpected(after, plan, actualBefore))
                     throw new InvalidOperationException("DDL batch typed physical postcondition differs.");
+                lastVerified = after;
             }
             // A final whole-batch readback is evidence for the complete set,
             // not just the last successful statement.
-            for (var i = 0; i < preview.Plan.Plans.Count; i++)
+            if (preview.Plan.Topology == DdlBatchTopology.DependentCreateChain)
             {
-                var after = await ReadSnapshotAsync(connection, transaction,
-                    approved[i].SchemaName, approved[i].TableName, execToken);
-                if (!MatchesExpected(after, preview.Plan.Plans[i], approved[i]))
-                    throw new InvalidOperationException("DDL batch final physical state differs.");
+                var final = await ReadSnapshotAsync(connection, transaction,
+                    approved[0].SchemaName, approved[0].TableName, execToken);
+                if (lastVerified is null || final.Fingerprint != lastVerified.Fingerprint
+                    || final.TableOid != lastVerified.TableOid
+                    || !final.Columns.SequenceEqual(preview.ExpectedColumns[^1]))
+                    throw new InvalidOperationException(
+                        "Dependent DDL batch final cumulative schema effect differs.");
+            }
+            else
+            {
+                for (var i = 0; i < preview.Plan.Plans.Count; i++)
+                {
+                    var after = await ReadSnapshotAsync(connection, transaction,
+                        approved[i].SchemaName, approved[i].TableName, execToken);
+                    if (!MatchesExpected(after, preview.Plan.Plans[i], approved[i]))
+                        throw new InvalidOperationException("DDL batch final physical state differs.");
+                }
             }
 
             startedCommit = true;

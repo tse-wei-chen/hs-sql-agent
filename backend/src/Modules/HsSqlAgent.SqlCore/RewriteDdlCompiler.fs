@@ -271,27 +271,69 @@ module internal RewriteDdlCompiler =
                     let plan = compile options statement.Text
                     let change = plan.Changes.[0]
                     if plan.Changes.Count <> 1
-                       || change.Operation <> DdlSchemaOperation.CreateTable
                        || change.ObjectIdentity.Parts.Count <> 2
-                       || plan.Risk <> DdlExecutionRisk.Additive then
-                        policy "Executable DDL batch supports only independently created schema-qualified tables."
+                       || plan.Risk = DdlExecutionRisk.Destructive then
+                        policy "DDL batch requires one bounded, qualified additive schema operation."
                     plan)
                 |> Seq.toArray
-            let identities =
-                plans
-                |> Array.map (fun plan -> plan.Changes.[0].ObjectIdentity.Key)
-            if (identities |> Array.distinct |> Array.length) <> plans.Length then
-                policy "DDL batch contains a repeated physical object identity."
-            let schemas =
-                plans |> Array.map (fun p -> p.Changes.[0].ObjectIdentity.Parts.[0])
+
+            let changes = plans |> Array.map (fun p -> p.Changes.[0])
+            let identities = changes |> Array.map (fun change -> change.ObjectIdentity.Key)
+            let schemas = changes |> Array.map (fun c -> c.ObjectIdentity.Parts.[0])
             if schemas |> Array.exists (fun schema -> schema <> schemas.[0]) then
                 policy "DDL batch cannot cross schema boundaries."
+
+            let topology =
+                if changes |> Array.forall (fun c -> c.Operation = DdlSchemaOperation.CreateTable) then
+                    if (identities |> Array.distinct |> Array.length) <> changes.Length then
+                        policy "Independent CREATE batch contains a repeated physical object identity."
+                    DdlBatchTopology.IndependentCreates
+                else
+                    // Closed, ordered effect proof: a freshly created table
+                    // may gain one or two nullable columns, then at most one
+                    // ordinary INDEX on *proven* materialized columns.
+                    // Existing-table ALTER, reordered effects, multiple
+                    // CREATE roots and interleaved independent objects have
+                    // no executable batch construction path.
+                    if changes.[0].Operation <> DdlSchemaOperation.CreateTable
+                       || (identities |> Array.exists (fun key -> key <> identities.[0])) then
+                        policy "Dependent batch requires one new CREATE root and a single exact physical table identity."
+                    let known = HashSet<string>(changes.[0].Columns, StringComparer.Ordinal)
+                    let mutable addCount = 0
+                    let mutable indexCount = 0
+                    for i = 1 to changes.Length - 1 do
+                        RewriteResourceBudget.checkpoint()
+                        let change = changes.[i]
+                        match change.Operation with
+                        | DdlSchemaOperation.AddNullableColumn ->
+                            if indexCount <> 0 || addCount = 2
+                               || change.Columns.Count <> 1
+                               || change.ColumnDefinitions.Count <> 1
+                               || not change.ColumnDefinitions.[0].Nullable
+                               || not (known.Add change.Columns.[0]) then
+                                policy "Dependent ADD must be unique, nullable, and precede the optional index."
+                            addCount <- addCount + 1
+                        | DdlSchemaOperation.CreateIndex ->
+                            if addCount = 0 || indexCount <> 0
+                               || i <> changes.Length - 1
+                               || String.IsNullOrEmpty(change.IndexName)
+                               || change.IndexName = changes.[0].ObjectIdentity.Parts.[1]
+                               || (change.Columns |> Seq.exists (fun name -> not (known.Contains name))) then
+                                policy "Dependent INDEX must be last and reference only materialized columns."
+                            indexCount <- indexCount + 1
+                        | _ ->
+                            policy "Dependent batch permits only CREATE, nullable ADD and final ordinary INDEX."
+                    if addCount = 0 then
+                        policy "Dependent batch requires a nullable ADD after the new CREATE."
+                    DdlBatchTopology.DependentCreateChain
+
             let ordered =
                 plans
                 |> Array.mapi (fun i plan ->
                     string i + ":" + plan.PlanFingerprint + ":" + plan.Command.Sql)
             let fingerprint =
-                String.concat "\n" (Array.append [|"pg-atomic-ddl-batch-v1"|] ordered)
+                String.concat "\n" (Array.append
+                    [| "pg-atomic-ddl-batch-v2"; string topology |] ordered)
                 |> Encoding.UTF8.GetBytes
                 |> SHA256.HashData
                 |> Convert.ToHexString
@@ -300,4 +342,4 @@ module internal RewriteDdlCompiler =
                 Array.AsReadOnly(
                     script.Statements |> Seq.map (fun item -> item.Span) |> Seq.toArray)
                     :> IReadOnlyList<SqlDiagnosticSpan>,
-                fingerprint))
+                fingerprint, topology))
