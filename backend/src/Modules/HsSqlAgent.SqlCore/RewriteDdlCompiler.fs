@@ -150,7 +150,7 @@ module internal RewriteDdlCompiler =
                       + (columns |> List.map columnDefinition |> String.concat ", ") + ")"
             sql, table, DdlSchemaOperation.CreateTable, DdlPrecondition.RequireObjectAbsent,
             (columns |> List.map (fun c -> c.Name)), null,
-            DdlExecutionRisk.Additive, DdlSchemaImpact(true, false)
+            DdlExecutionRisk.Additive, DdlSchemaImpact(true, false), columns
         | AlterColumns(table, [Add column]) when column.Nullable ->
             let definition = columnDefinition column
             let addition =
@@ -161,13 +161,13 @@ module internal RewriteDdlCompiler =
             let sql = "ALTER TABLE " + qualified table + addition
             sql, table, DdlSchemaOperation.AddNullableColumn,
             DdlPrecondition.RequireTablePresentAndColumnAbsent,
-            [column.Name], null, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false)
+            [column.Name], null, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false), [column]
         | CreateIndex(table, indexName, columns, false) ->
             let sql = "CREATE INDEX " + q indexName + " ON " + qualified table
                       + " (" + (columns |> List.map q |> String.concat ", ") + ")"
             sql, table, DdlSchemaOperation.CreateIndex,
             DdlPrecondition.RequireTableAndColumnsPresentAndIndexAbsent,
-            columns, indexName, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false)
+            columns, indexName, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false), []
         | _ ->
             reject SqlDiagnosticStage.RenderingInvariant SqlDiagnosticCategory.Invariant
                 "SQL_DDL_RENDER_INVARIANT" "DDL rendering received an operation that did not pass policy."
@@ -188,7 +188,7 @@ module internal RewriteDdlCompiler =
             let authorized =
                 RewriteResourceBudget.withStage "DdlPolicy" SqlDiagnosticStage.Policy
                     (fun () -> authorize validated)
-            let nativeSql, identity, operation, precondition, columns, indexName, risk, impact =
+            let nativeSql, identity, operation, precondition, columns, indexName, risk, impact, definitions =
                 RewriteResourceBudget.withStage "DdlRendering" SqlDiagnosticStage.RenderingInvariant
                     (fun () -> render options authorized)
             let sourceVersion =
@@ -212,7 +212,8 @@ module internal RewriteDdlCompiler =
             let changes : IReadOnlyList<DdlSchemaChange> =
                 Array.AsReadOnly([|DdlSchemaChange(
                     identity, operation, precondition,
-                    Array.AsReadOnly(List.toArray columns), indexName)|])
+                    Array.AsReadOnly(List.toArray columns), indexName,
+                    Array.AsReadOnly(List.toArray definitions))|])
             let transaction =
                 match options.TargetDialect with
                 | SqlAgentToolType.MySQL | SqlAgentToolType.Oracle ->

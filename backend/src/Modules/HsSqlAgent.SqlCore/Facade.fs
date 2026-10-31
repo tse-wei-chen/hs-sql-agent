@@ -407,6 +407,37 @@ type SqlCoreFacade private () =
         options: DdlCompilationOptions) : SqlCoreTryResult<CompiledDdlPlan> =
         FacadeResult.capture (fun () -> SqlCoreFacade.CompileDdl(sql, options))
 
+    /// Read-only virtual-Catalog schema diff. A Known Catalog supplied by the
+    /// caller is NEVER a live database proof and can never authorize DDL.
+    static member PreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions) : DdlSchemaPreview =
+        SqlCoreFacade.PreviewDdl(sql, options, SqlCatalogState.Unknown())
+
+    static member PreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions,
+        initialCatalog: SqlCatalogState) : DdlSchemaPreview =
+        ArgumentNullException.ThrowIfNull(sql)
+        ArgumentNullException.ThrowIfNull(options)
+        ArgumentNullException.ThrowIfNull(initialCatalog)
+        RewriteResourceBudget.withCancellation options.CancellationToken (fun () ->
+            RewriteResourceBudget.withCompilation (fun () ->
+                let plan = SqlCoreFacade.CompileDdl(sql, options)
+                RewriteResourceBudget.withStage "DdlPreview" SqlDiagnosticStage.SemanticValidation
+                    (fun () -> RewriteDdlPreview.project plan initialCatalog)))
+
+    static member TryPreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions) : SqlCoreTryResult<DdlSchemaPreview> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.PreviewDdl(sql, options))
+
+    static member TryPreviewDdl(
+        sql: string,
+        options: DdlCompilationOptions,
+        initialCatalog: SqlCatalogState) : SqlCoreTryResult<DdlSchemaPreview> =
+        FacadeResult.capture (fun () -> SqlCoreFacade.PreviewDdl(sql, options, initialCatalog))
+
     static member CompileQuery(
         parsed: ParsedStatement,
         targetProvider: SqlAgentToolType,
