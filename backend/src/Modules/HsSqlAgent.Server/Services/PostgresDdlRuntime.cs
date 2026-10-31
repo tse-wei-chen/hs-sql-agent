@@ -187,23 +187,25 @@ public sealed class PostgresDdlRuntime(
         DdlActorContext actor,
         CancellationToken cancellationToken)
     {
+        DbConnection? connection = null;
         DbTransaction? transaction = null;
         var nativeCommandStarted = false;
         var commitStarted = false;
         try
         {
-            await using var connection = provider.Connections.Create(connectionString);
+            connection = provider.Connections.Create(connectionString);
             await connection.OpenAsync(cancellationToken);
             RuntimeServerProfileVerifier.EnsureMatches(connection, approvedServerVersion);
             transaction = await connection.BeginTransactionAsync(IsolationLevel.ReadCommitted, cancellationToken);
-            await using (transaction)
             {
                 // Conservative locks, not a promise of external global CAS.
                 // For ALTER/INDEX the table lock is acquired BEFORE readback.
                 await ExecuteHostSqlAsync(connection, transaction,
                     "SET LOCAL lock_timeout = '3s'", cancellationToken);
+                var statementTimeoutMs = Math.Clamp(
+                    (int)_options.ExecutionTimeout.TotalMilliseconds, 1, 15000);
                 await ExecuteHostSqlAsync(connection, transaction,
-                    "SET LOCAL statement_timeout = '15000ms'", cancellationToken);
+                    "SET LOCAL statement_timeout = '" + statementTimeoutMs + "ms'", cancellationToken);
                 var schema = approvedBefore.SchemaName;
                 var table = approvedBefore.TableName;
                 await ExecuteHostSqlAsync(connection, transaction,
@@ -249,7 +251,7 @@ public sealed class PostgresDdlRuntime(
                     "PostgreSQL transaction committed after verifying the typed schema postcondition.");
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             // COMMIT reply loss is NEVER mapped to a proven failure/rollback.
             // Before COMMIT a successful explicit rollback is proof that
@@ -276,6 +278,15 @@ public sealed class PostgresDdlRuntime(
             }
             return Rejected("ddl.connection_failed",
                 "PostgreSQL connection failed before the DDL transaction began.", preview);
+        }
+        finally
+        {
+            // Disposal occurs AFTER the rollback catch, while the connection
+            // is still usable. Never infer rollback from disposal alone.
+            if (transaction is not null)
+                try { await transaction.DisposeAsync(); } catch (Exception) { }
+            if (connection is not null)
+                try { await connection.DisposeAsync(); } catch (Exception) { }
         }
     }
 

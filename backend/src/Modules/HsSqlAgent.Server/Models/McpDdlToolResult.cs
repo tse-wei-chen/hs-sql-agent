@@ -26,7 +26,7 @@ public sealed record McpDdlToolResult(
             },
             result.CommitConfirmed,
             "Postgres",
-            preview?.PlanFingerprint,
+            preview?.StaticPreview.PlanFingerprint,
             preview?.StaticPreview.Plan.Command.Sql,
             preview?.Before,
             preview?.ExpectedColumns,
