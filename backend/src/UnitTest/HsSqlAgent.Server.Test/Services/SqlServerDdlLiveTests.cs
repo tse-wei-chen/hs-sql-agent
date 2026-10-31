@@ -163,6 +163,25 @@ public sealed class SqlCoreSqlServerDdlHostLiveTests
                 actor, false, Approve(), token);
             Assert.Equal(DdlRuntimeStatus.Rejected, repeated.Status);
             Assert.False(repeated.CommitConfirmed);
+
+            // A real concurrent DDL writer acts after the human preview but
+            // before the Host transaction. An approved stale plan cannot
+            // overwrite or reinterpret the independently created table.
+            var drifted = await runtime.RunAsync(provider, target,
+                "CREATE TABLE dbo.hsql_g4_drift (id INT NOT NULL)",
+                actor, false, new Approver(async (request, approvalToken) =>
+                {
+                    await using var external = new SqlConnection(target);
+                    await external.OpenAsync(approvalToken);
+                    await ExecuteAsync(external,
+                        "CREATE TABLE dbo.hsql_g4_drift (external NVARCHAR(32))",
+                        approvalToken);
+                    return new DdlApprovalDecision(DdlApprovalState.Approved,
+                        request.RequestId, request.ApprovalFingerprint, "human:independent-reviewer");
+                }), token);
+            Assert.Equal(DdlRuntimeStatus.Rejected, drifted.Status);
+            Assert.Equal("ddl.schema_drift", drifted.ErrorCode);
+            Assert.False(drifted.CommitConfirmed);
         }
         finally
         {
