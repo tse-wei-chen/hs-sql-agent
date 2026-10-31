@@ -106,7 +106,6 @@ public sealed class CoreDdlSchemaCompilerTests
             "SELECT 1",
             "CREATE TABLE widgets (id INTEGER); DROP TABLE widgets",
             "CREATE TABLE widgets (id INTEGER); SELECT 1",
-            "CREATE TABLE widgets (id INTEGER);",
             "CREATE TABLE widgets (id INTEGER) /* comment */ SELECT 1"
         };
         foreach (var sql in rejected)
@@ -127,13 +126,17 @@ public sealed class CoreDdlSchemaCompilerTests
             "CREATE TABLE widgets (id INTEGER)", new DdlCompilationOptions(provider, other)).Success);
         Assert.False(SqlCoreFacade.TryCompileDdl(
             "CREATE TABLE widgets (id INTEGER", Options(provider)).Success);
+        var integerType = provider == SqlAgentToolType.MsSqlServer ? "INT" : "INTEGER";
+        Assert.Equal(
+            SqlCoreFacade.CompileDdl("CREATE TABLE widgets (id " + integerType + ")", Options(provider)).PlanFingerprint,
+            SqlCoreFacade.CompileDdl("CREATE TABLE widgets (id " + integerType + ");", Options(provider)).PlanFingerprint);
     }
 
     [Theory]
     [MemberData(nameof(Providers))]
     public void FingerprintTiesToSchemaOperationAndProvider(SqlAgentToolType provider)
     {
-        var table = SqlCoreFacade.CompileDdl("CREATE TABLE widgets (id INTEGER)", Options(provider));
+        var table = SqlCoreFacade.CompileDdl("CREATE TABLE widgets (id " + (provider == SqlAgentToolType.MsSqlServer ? "INT" : "INTEGER") + ")", Options(provider));
         var another = SqlCoreFacade.CompileDdl("CREATE TABLE other_widgets (id INTEGER)", Options(provider));
         Assert.NotEqual(table.PlanFingerprint, another.PlanFingerprint);
         Assert.True(table.Changes[0].ObjectIdentity.Parts.Count >= 1);

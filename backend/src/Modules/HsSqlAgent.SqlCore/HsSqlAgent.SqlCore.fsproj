@@ -41,6 +41,7 @@
     <Compile Include="QueryCompilationContracts.fs" />
     <Compile Include="LegacyDtoMapper.fs" />
     <Compile Include="CapabilityContracts.fs" />
+    <Compile Include="DdlContracts.fs" />
     <Compile Include="ScriptOptions.fs" />
     <Compile Include="CapabilityMatrix.fs" />
     <Compile Include="CompileEvidence.fs" />
@@ -83,6 +84,7 @@
     <Compile Include="RewriteFacadeAdapter.fs" />
     <Compile Include="RewriteScriptParser.fs" />
     <Compile Include="RewriteSchemaAnalyzer.fs" />
+    <Compile Include="RewriteDdlCompiler.fs" />
     <Compile Include="RewriteSchemaDependencies.fs" />
     <Compile Include="RewriteSessionAnalyzer.fs" />
     <Compile Include="RewriteTransactionAnalyzer.fs" />
