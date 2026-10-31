@@ -112,12 +112,12 @@ jobs:
                   assert base > 0 and head > 0, (key, metric, base, head)
                   ratios.append(f"{head/base:.3f}x")
               lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
-          output = "\\n".join(lines)
+          output = "\n".join(lines)
           print(output)
           with open("artifacts/script-comparison.md", "w") as file:
-              file.write(output + "\\n")
+              file.write(output + "\n")
           with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as file:
-              file.write(output + "\\n")
+              file.write(output + "\n")
           PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
