@@ -139,6 +139,11 @@ public sealed class SqlServerDdlRuntime(
             {
                 return Deny("ddl.approval_cancelled", "DDL approval cancelled.", preview);
             }
+            catch (Exception)
+            {
+                return Deny("ddl.approval_provider_failed",
+                    "Independent DDL approval provider failed; no native SQL executed.", preview);
+            }
             if (decision is null
                 || !string.Equals(decision.RequestId, nonce, StringComparison.Ordinal)
                 || !string.Equals(decision.ApprovalFingerprint, fingerprint, StringComparison.Ordinal))
