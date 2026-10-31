@@ -55,12 +55,15 @@ type DdlSchemaChange internal (
     operation: DdlSchemaOperation,
     precondition: DdlPrecondition,
     columns: IReadOnlyList<string>,
-    indexName: string | null) =
+    indexName: string | null,
+    columnDefinitions: IReadOnlyList<SqlCatalogColumn>) =
     member _.ObjectIdentity = objectIdentity
     member _.Operation = operation
     member _.Precondition = precondition
     member _.Columns = columns
     member _.IndexName = indexName
+    /// Typed from G1's closed DdlOperation, never parsed from rendered SQL.
+    member _.ColumnDefinitions = columnDefinitions
     member _.Certainty = SqlCatalogKnowledge.Unknown
 
 [<Sealed>]

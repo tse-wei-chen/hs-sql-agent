@@ -3412,3 +3412,57 @@ This is G1 compilation, not G2 live preview or G3 DDL execution.
 SqlCore remains driver-free; `execute_ddl_sql` is NOT added. Six-provider
 syntax unit tests do not substitute for later provider-live transaction and
 schema outcome parity.
+
+## G2 — Read-only DDL Schema Diff & Impact Preview
+
+`SqlCoreFacade.PreviewDdl(sql, options)` compiles using **the same** G1
+`DdlOperation` and native renderer, then projects a typed Before and
+**hypothetical** ExpectedAfter without executing or connecting to a database.
+`TryPreviewDdl` uses the existing typed-error return contract.
+
+Optionally pass a caller-declared virtual `SqlCatalogState` as a third
+argument to show matched known table columns, indexes, dependency graph
+(view and foreign-key references), and DDL preconditions; the default is
+`SqlCatalogState.Unknown()` and does not assume a database is empty.
+
+- `preview.Before.Presence` is `Unknown`, `Absent` or `Present` under
+  the **caller-declared** Catalog, never live physical metadata.
+- `preview.ExpectedAfter` shows typed columns and indexes when derivable
+  from the closed plan plus modeled Catalog; `IsConditional` is always true.
+  An unresolved ALTER target never fabricates a complete resulting table.
+- `preview.PreconditionStatus` distinguishes `Unverified`,
+  `ConsistentWithCallerCatalog`, and
+  `ContradictedByCallerCatalog`. A contradiction is not silent success,
+  while consistency is **not** sufficient to execute.
+- `preview.Dependencies` lists modeled View/ForeignKey dependents;
+  `DependenciesAreLiveVerified` is always false. Wider index name scope,
+  open-world Catalogs and unqualified session resolution remain unproven.
+- `preview.Warnings` disclose unknown lock durations and row impact,
+  implicit-commit providers, physical dependency completeness and actual
+  Host permission/approval requirements.
+- `preview.Plan.Command.Sql` contains fully compiled native DDL.
+  `RequiresLiveValidation` and `RequiresDdlApproval` are true,
+  `AuthorizesExecution` and `IsLiveVerified` are false.
+
+```csharp
+using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Catalog;
+using HsSqlAgent.SqlCore.Ddl;
+using HsSqlAgent.SqlCore.Enums;
+
+var options = new DdlCompilationOptions(
+    SqlAgentToolType.Postgres, SqlAgentToolType.Postgres);
+var preview = SqlCoreFacade.PreviewDdl(
+    "CREATE TABLE audit_events (id INTEGER NOT NULL)", options);
+Console.WriteLine(preview.Plan.Command.Sql);
+Console.WriteLine(preview.ExpectedAfter.Columns[0].TypeName);
+// Never execute just because a static precondition appeared consistent.
+```
+
+A virtual Catalog (even `KnownEmpty()` or a catalog produced by
+`AnalyzeScript`) is **not** server-identity-bound physical metadata. This
+G2 static/read-only preview deliberately does not attempt a transaction,
+savepoint, rollback, DDL execution, approval, or live schema verification.
+G3 Host must capture actual DB identity and schema state, compare
+preconditions at approval and execution time, handle transactional behavior,
+audit, and independently authorize any `execute_ddl_sql` call.
