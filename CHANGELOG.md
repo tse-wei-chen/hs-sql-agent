@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
-### SQL Core G1/G2, PostgreSQL G3 and SQLite/SQL Server/Firebird G4 DDL
+### SQL Core G1/G2, PostgreSQL G3, SQLite/SQL Server/Firebird G4 and MySQL G5 DDL
 
 - Introduce a separate closed F# `CompileDdl` / `TryCompileDdl` compiler,
   typed Schema Plan, native six-dialect SQL renderer, deterministic fingerprint,
@@ -32,7 +32,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   path with explicit schema allowlist, bounded simple INT columns, separate
   DDL approval, SQL Server physical metadata proof, transaction recheck and
   OutcomeUnknown handling. Neither Host adapter inherits DML permissions.
-  SQL Server ALTER/INDEX and MySQL/Oracle DDL Host execution remain
+  SQL Server ALTER/INDEX and Oracle DDL Host execution remain
   disabled pending distinct live safety proof.
 - G4 Firebird 5 introduces a separately opt-in, one-table CREATE TABLE Host
   boundary: allowlisted live database GUID/file identity, simple INTEGER
@@ -40,6 +40,15 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   transaction recheck, native SqlCore SQL only, typed postcondition, explicit
   rollback and OutcomeUnknown. ALTER/INDEX and destructive Firebird DDL remain
   disabled. No default MCP tool selection or DML approval policy changed.
+
+- G5 MySQL 8.4 LTS adds an independently approved, default-disabled,
+  one-statement InnoDB CREATE TABLE Host. Requires an explicitly allowed
+  physical database, verified MySQL UUID/version/case mode and InnoDB
+  default, live table absence, post-execution exact column metadata,
+  and a session-level cooperative DDL lock. There is NO user rollback:
+  CREATE TABLE implicitly commits, and lost native execution replies are
+  OutcomeUnknown and never retried automatically.
+  ALTER/INDEX/DROP/CTAS/TEMPORARY and all Oracle Host DDL remain disabled.
 
 ### PostgreSQL old-worker cutover verification
 
