@@ -1073,11 +1073,12 @@ module internal RewriteSchemaTypeValidation =
             | _ -> SqlSchemaValueKind.Unknown
         let typed relations =
             relations
-            |> List.map (fun (key, columns: RewriteVirtualCatalogProjection.RelationColumns) ->
+            |> List.map (fun (relation: RewriteVirtualCatalogProjection.Relation) ->
                 RewriteResourceBudget.checkpoint ()
-                key, columns |> List.map (fun (columnName, typeName) ->
+                relation.Key,
+                (relation.Names |> List.mapi (fun index name ->
                     RewriteResourceBudget.checkpoint ()
-                    columnName, typeKind typeName))
+                    name, typeKind relation.Columns.[index].TypeName)))
             |> Map.ofList
         // The output of NameValidation was checked for collisions already.
         // Physical assignment targets remain distinct from readable Views.
