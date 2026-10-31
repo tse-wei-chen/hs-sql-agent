@@ -3564,3 +3564,33 @@ separate Host (currently PostgreSQL **16** only) must prove physical database/sc
 scope, independent per-batch permission and human approval, then commit
 the entire batch inside one real PostgreSQL transaction. Individual DDL
 approvals cannot be combined into a batch approval.
+
+### Dependent PostgreSQL DDL Batch topology (G6/S16 continuation)
+
+The existing `CompileDdlBatch` and `TryCompileDdlBatch` now return
+`DdlBatchTopology.IndependentCreates` or
+`DdlBatchTopology.DependentCreateChain`, with ordering, source spans,
+native commands and dependency topology bound to one SHA-256 fingerprint.
+
+The dependent subset requires exactly **one newly created schema-qualified
+table**, followed by **one or two distinct nullable ADD COLUMN** operations
+and optionally **one ordinary CREATE INDEX as the final step**. Every
+referenced index column must already exist in the accumulated typed
+schema effect. Altering an existing table, mixing multiple table roots,
+unrelated CREATE interleaving, TRUNCATE/DROP, dynamic/procedural SQL,
+cross-schema names and non-PostgreSQL dependent DDL remain fail-closed.
+
+```csharp
+var batch = SqlCoreFacade.CompileDdlBatch(
+    "CREATE TABLE staging.new_data (id INTEGER NOT NULL);" +
+    "ALTER TABLE staging.new_data ADD COLUMN count INTEGER NULL;" +
+    "CREATE INDEX ix_new_data_count ON staging.new_data(count)",
+    new DdlCompilationOptions(SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
+Console.WriteLine(batch.Topology);           // DependentCreateChain
+Console.WriteLine(batch.AuthorizesExecution); // false
+```
+
+`CompiledDdlBatchPlan` has **no permission or atomicity proof** by itself.
+Host-only real PostgreSQL 16 snapshot, approval and transaction checks
+remain mandatory. No new parser, Script tokenizer, MCP tool or provider
+dependency has been added to SqlCore.

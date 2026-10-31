@@ -719,3 +719,61 @@ PostgreSQL atomic batch contract**. This Host opt-in does not change
 the four default read-only tool selections or the default-unselected
 DML/DDL choices. Disable `AllowCreateTableBatch` to stop *future*
 batches; already-committed schema changes are not undone.
+
+### G6/S16 dependent DDL Batch (PostgreSQL 16 only; additional opt-in)
+
+In addition to the existing **independent CREATE-only batch**, the same
+`execute_ddl_sql` tool can optionally execute a **single new empty table's
+dependent chain** under one approval and one PostgreSQL transaction:
+
+```sql
+CREATE TABLE staging_cleanup.new_data (id INTEGER NOT NULL);
+ALTER TABLE staging_cleanup.new_data ADD COLUMN count INTEGER NULL;
+CREATE INDEX ix_new_data_count ON staging_cleanup.new_data(count);
+```
+
+Enable it only for designated MCP keys and schema(s), in addition to the
+previous Batch grants:
+
+```csharp
+services.AddHsSqlAgentPostgresDdl(new PostgresDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowAddColumn = true,
+    AllowCreateIndex = true,
+    AllowCreateTableBatch = true,
+    AllowDependentDdlBatch = true, // default false; separately reviewed
+    AllowedBatchPrincipals = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "mcp-key:123"
+    },
+    AllowedSchemas = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "staging_cleanup"
+    },
+    PolicyRevision = "g6-dependent-create-chain-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Also grant execute_ddl_sql to this authenticated MCP key; no DML inheritance.
+```
+
+This capability **cannot ALTER or index an existing table**: the root
+CREATE must be the first operation of the same approved batch. Preview
+reads only actual physical metadata and explicitly labels all
+intermediate projections as **hypothetical**, not observed tables.
+All ordered effects are bound to the same short-lived approval,
+including the optional index name and columns. In the single transaction,
+the Host rechecks root absence and schema identity, then verifies actual
+physical columns, table OID and index metadata after each operation and
+at the end before COMMIT. Existing relations, index collisions,
+unapproved schemas/keys or policy/approval drift must fail closed;
+confirmed rollback cannot leave an intermediate table. Lost COMMIT or
+unproven rollback stays `outcome_unknown` and is **never automatically
+retried**.
+
+The existing independent CREATE batches remain available without this
+new gate. Other providers, arbitrary ALTER, multiple-target dependency
+graphs, DEFAULT/NOT NULL column additions, concurrent indexes and
+destructive DDL Batch are still not allowed. The front end still
+preselects four read-only tools and leaves DML/DDL unselected.
