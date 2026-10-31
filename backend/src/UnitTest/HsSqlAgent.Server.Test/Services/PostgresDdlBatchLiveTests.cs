@@ -471,6 +471,36 @@ public sealed class PostgresDdlBatchLiveTests(PostgresDdlLiveFixture fixture)
     }
 
     [Fact]
+    public async Task LateIndexCollisionAfterApproval_RollsBackCreateAndAddInSameTransaction()
+    {
+        var schema = await SetupAsync();
+        var ct = TestContext.Current.CancellationToken;
+        try
+        {
+            await CommandAsync("CREATE TABLE \"" + schema + "\".other (id INTEGER)");
+            var result = await Runtime(schema, dependentEnabled: true).RunAsync(
+                Provider(), fixture.ConnectionString, DependentScript(schema),
+                Actor(), false,
+                new Approver(async (request, _) =>
+                {
+                    // This object is created only AFTER live Preview has
+                    // proved the index name absent. Two native DDL steps
+                    // CREATE and ALTER must subsequently roll back when the
+                    // transaction-time final INDEX name fence rejects.
+                    await CommandAsync("CREATE INDEX ix_pipeline_extra ON \""
+                        + schema + "\".other(id)");
+                    return new DdlApprovalDecision(DdlApprovalState.Approved,
+                        request.RequestId, request.ApprovalFingerprint, "human:reviewer");
+                }), ct);
+            Assert.Equal(DdlRuntimeStatus.Failed, result.Status);
+            Assert.Equal("ddl.batch_rolled_back", result.ErrorCode);
+            Assert.False(await ExistsAsync(schema, "pipeline"));
+            Assert.True(await ExistsAsync(schema, "other"));
+        }
+        finally { await CleanupAsync(schema); }
+    }
+
+    [Fact]
     public async Task DependentBatchExistingIndexNameNeverLeavesPartialSchema()
     {
         var schema = await SetupAsync();
