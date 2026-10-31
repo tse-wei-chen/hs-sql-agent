@@ -195,7 +195,9 @@ public sealed class SqlCoreVirtualCatalogTests
         // Reverse insertion order deliberately exercises the middle/front
         // insertion path, not only the append-fast path.
         var statements = Enumerable.Range(0, 32).Reverse()
-            .Select(index => $"CREATE TABLE t_{index:000} (id INTEGER);");
+            .Select(index => provider == SqlAgentToolType.MsSqlServer
+                ? $"CREATE TABLE dbo.t_{index:000} (id INT);"
+                : $"CREATE TABLE t_{index:000} (id INTEGER);");
         var profile = provider == SqlAgentToolType.MsSqlServer
             ? new SqlProviderCapabilityProfile(provider, new Version(16, 0), default, null,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
