@@ -304,6 +304,45 @@ The single MCP tool `execute_ddl_sql` is **disabled and hidden by default**
 and is never automatically selected or granted by DML permissions. Existing
 four metadata/Query tools remain selected; DML and DDL remain unselected.
 
+## G5 MySQL 8.4 LTS — implicit-commit CREATE TABLE Host (opt-in)
+
+MySQL InnoDB atomic DDL is **not** user-transactional DDL. Only one
+unqualified CREATE TABLE (1–16 simple signed INT columns; no constraints,
+defaults, temporary tables or CTAS) can be approved through the already
+existing execute_ddl_sql MCP tool. All other MySQL Host DDL remains denied.
+
+```csharp
+using HsSqlAgent.Server.Extensions;
+using HsSqlAgent.Server.Services;
+
+services.AddHsSqlAgentMySqlDdl(new MySqlDdlExecutionOptions
+{
+    Enabled = true,
+    AllowCreateTable = true,
+    AllowedDatabases = new HashSet<string>(StringComparer.Ordinal) { "app_database" },
+    PolicyRevision = "mysql84-ddl-governance-v1"
+});
+services.AddSingleton<IDdlApprovalProvider, MyIndependentDdlApprovalProvider>();
+// Separately grant execute_ddl_sql on the intended MCP access key.
+```
+
+Requires real MySQL 8.4 (not MariaDB/Percona), a valid server UUID,
+the exact selected non-system database matching the access key and allowlist,
+case-sensitive table names mode 0, session default engine InnoDB, and complete
+read access to information_schema. A released preview connection never
+authorizes execution. The new execution connection obtains a cooperative
+session named lock (not a cross-client CAS), rechecks physical identity,
+policy, table absence and approval expiry, executes only the immutable
+compiled SQL **once**, and verifies exact InnoDB columns afterward.
+
+No BEGIN, COMMIT or ROLLBACK are issued by this Host. The single CREATE
+statement implicitly commits and cannot be undone by user ROLLBACK.
+When a native statement may have run but no conclusive response/postcondition
+can be proven, the result is outcome_unknown, NEVER a safe-to-retry failure.
+External clients are not prevented from altering schema by GET_LOCK. DML
+approval never authorizes DDL, startup opt-in alone does not expose the tool,
+and the four default read-only selections remain unchanged.
+
 A Hosting application must independently enable it, allowlist schema(s) and
 operations, and register its own DDL approval provider *before building DI*:
 
