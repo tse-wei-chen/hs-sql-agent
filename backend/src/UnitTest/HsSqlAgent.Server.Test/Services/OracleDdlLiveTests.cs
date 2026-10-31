@@ -160,26 +160,40 @@ public sealed class OracleDdlLiveTests
             Assert.Equal(DdlRuntimeStatus.Rejected, stale.Status);
             Assert.Equal("ddl.schema_drift", stale.ErrorCode);
 
-            // Oracle DDL is committed independently of any subsequent rollback.
+            // Oracle implicitly commits prior DML only on the SAME session.
+            // A Host DDL on a separate connection must never be mistaken for
+            // having committed an unrelated caller's DML transaction.
             var implicitName = "G5O_" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
+            var native = "G5O_" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
+            var hostCreated = "G5O_" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
             try
             {
                 await Exec(db, "CREATE TABLE " + implicitName + "(ID NUMBER)", ct);
                 await Exec(db, "INSERT INTO " + implicitName + " VALUES (7)", ct);
-                var other = "G5O_" + Guid.NewGuid().ToString("N")[..16].ToUpperInvariant();
-                try
-                {
-                    var created = await runtime.RunAsync(provider, cs,
-                        "CREATE TABLE " + other + "(ID INTEGER)", actor, false,
-                        Decision(DdlApprovalState.Approved), ct);
-                    Assert.Equal(DdlRuntimeStatus.Committed, created.Status);
-                    await Exec(db, "ROLLBACK", ct);
-                    Assert.Equal(1, Convert.ToInt32(await Scalar(db,
-                        "SELECT COUNT(*) FROM " + implicitName + " WHERE ID=7", ct)));
-                }
-                finally { await Exec(db, "DROP TABLE " + other + " PURGE", CancellationToken.None); }
+                // This direct DDL is the engine differential oracle, NOT a Host
+                // executable fallback. It runs on db, the same INSERT session.
+                await Exec(db, "CREATE TABLE " + native + "(ID NUMBER)", ct);
+                await Exec(db, "ROLLBACK", ct);
+                Assert.Equal(1, Convert.ToInt32(await Scalar(db,
+                    "SELECT COUNT(*) FROM " + implicitName + " WHERE ID=7", ct)));
+
+                var host = await runtime.RunAsync(provider, cs,
+                    "CREATE TABLE " + hostCreated + "(ID INTEGER)", actor, false,
+                    Decision(DdlApprovalState.Approved), ct);
+                Assert.Equal(DdlRuntimeStatus.Committed, host.Status);
+                // Oracle Host executes using its own fresh connection.
+                await Exec(db, "ROLLBACK", ct);
+                Assert.Equal(1, Convert.ToInt32(await Scalar(db,
+                    "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + hostCreated + "'", ct)));
             }
-            finally { await Exec(db, "DROP TABLE " + implicitName + " PURGE", CancellationToken.None); }
+            finally
+            {
+                foreach (var nameToDrop in new[] { hostCreated, native, implicitName })
+                    if (Convert.ToInt32(await Scalar(db,
+                        "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + nameToDrop + "'",
+                        CancellationToken.None)) > 0)
+                        await Exec(db, "DROP TABLE " + nameToDrop + " PURGE", CancellationToken.None);
+            }
         }
         finally
         {
