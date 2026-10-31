@@ -179,6 +179,7 @@ public sealed class SqlServerDdlRuntime(
         DbConnection? connection = null;
         DbTransaction? transaction = null;
         bool startedNative = false, startedCommit = false;
+        var phase = "precondition";
         try
         {
             connection = provider.Connections.Create(connectionString);
@@ -213,7 +214,9 @@ public sealed class SqlServerDdlRuntime(
                     "ddl.schema_drift", "Target, approval, policy or schema changed.", false);
 
             startedNative = true;
+            phase = "native_execution";
             await ExecuteAsync(connection, transaction, plan.Command.Sql, token);
+            phase = "postcondition_verification";
             var after = await SnapshotAsync(connection, transaction,
                 preview.Before.SchemaName, preview.Before.TableName, token);
             var correct = after.ObjectId.HasValue
@@ -241,8 +244,10 @@ public sealed class SqlServerDdlRuntime(
                 return Unknown(preview, "SQL Server COMMIT outcome is unconfirmed.");
             if (transaction is not null)
                 return await RollbackAsync(transaction, preview,
-                    startedNative ? "ddl.execution_rolled_back" : "ddl.commit_precondition",
-                    "SQL Server DDL failed or commit precondition rejected.", startedNative);
+                    !startedNative ? "ddl.commit_precondition"
+                        : phase == "native_execution" ? "ddl.native_execution_rolled_back"
+                        : "ddl.postcondition_verification_rolled_back",
+                    "SQL Server DDL failed within its " + phase + " stage.", startedNative);
             return Deny("ddl.connection_failed",
                 "SQL Server connection failed before opening a transaction.", preview);
         }
