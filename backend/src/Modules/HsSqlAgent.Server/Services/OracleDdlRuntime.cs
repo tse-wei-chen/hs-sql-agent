@@ -359,8 +359,8 @@ public sealed class OracleDdlRuntime(
         stage = "objects";
         bool exists = false;
         await using (var command = Command(connection,
-            "SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME=:table",
-            (":table", table)))
+            "SELECT OBJECT_TYPE FROM USER_OBJECTS WHERE OBJECT_NAME=:object_name",
+            (":object_name", table)))
         await using (var reader = await command.ExecuteReaderAsync(token))
         {
             if (await reader.ReadAsync(token))
@@ -378,7 +378,7 @@ public sealed class OracleDdlRuntime(
         {
             await using (var command = Command(connection,
                 "SELECT TEMPORARY, NESTED, IOT_TYPE, CLUSTER_NAME, PARTITIONED "
-                + "FROM USER_TABLES WHERE TABLE_NAME=:table", (":table", table)))
+                + "FROM USER_TABLES WHERE TABLE_NAME=:object_name", (":object_name", table)))
             await using (var reader = await command.ExecuteReaderAsync(token))
             {
                 if (!await reader.ReadAsync(token) || reader.GetString(0) != "N"
@@ -389,7 +389,7 @@ public sealed class OracleDdlRuntime(
             }
             await using (var command = Command(connection,
                 "SELECT CONSTRAINT_TYPE, GENERATED FROM USER_CONSTRAINTS "
-                + "WHERE TABLE_NAME=:table", (":table", table)))
+                + "WHERE TABLE_NAME=:object_name", (":object_name", table)))
             await using (var reader = await command.ExecuteReaderAsync(token))
             {
                 while (await reader.ReadAsync(token))
@@ -399,8 +399,8 @@ public sealed class OracleDdlRuntime(
             await using (var command = Command(connection,
                 "SELECT COLUMN_NAME, DATA_TYPE, DATA_PRECISION, DATA_SCALE, "
                 + "NULLABLE, DEFAULT_LENGTH, IDENTITY_COLUMN, VIRTUAL_COLUMN, HIDDEN_COLUMN "
-                + "FROM USER_TAB_COLS WHERE TABLE_NAME=:table ORDER BY INTERNAL_COLUMN_ID",
-                (":table", table)))
+                + "FROM USER_TAB_COLS WHERE TABLE_NAME=:object_name ORDER BY INTERNAL_COLUMN_ID",
+                (":object_name", table)))
             await using (var reader = await command.ExecuteReaderAsync(token))
             {
                 while (await reader.ReadAsync(token))
