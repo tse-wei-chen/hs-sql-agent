@@ -32,6 +32,9 @@ public sealed class MySqlDdlRuntime(
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        // The execution attachment must never enlist into an unrelated ambient transaction.
+        if (System.Transactions.Transaction.Current is not null)
+            return Deny("ddl.ambient_transaction_denied", "MySQL DDL cannot enlist in an ambient transaction.");
         if (!_options.Enabled)
             return Deny("ddl.disabled", "MySQL DDL is disabled by default.");
         if (provider.Type != SqlAgentToolType.MySQL)
@@ -251,13 +254,14 @@ public sealed class MySqlDdlRuntime(
         DbConnection connection, string table, CancellationToken token)
     {
         string uuid, database, version, versionComment, engine, user;
-        int caseMode;
+        int caseMode, autoCommit;
         await using (var command = Command(connection,
             "SELECT @@server_uuid, DATABASE(), VERSION(), @@version_comment, "
-            + "@@session.default_storage_engine, @@global.lower_case_table_names, CURRENT_USER()"))
+            + "@@session.default_storage_engine, @@global.lower_case_table_names, CURRENT_USER(), "
+            + "@@session.autocommit"))
         await using (var reader = await command.ExecuteReaderAsync(token))
         {
-            if (!await reader.ReadAsync(token) || Enumerable.Range(0, 7).Any(reader.IsDBNull))
+            if (!await reader.ReadAsync(token) || Enumerable.Range(0, 8).Any(reader.IsDBNull))
                 throw new InvalidOperationException("MySQL server identity is unproven.");
             uuid = reader.GetValue(0).ToString()!.Trim();
             database = reader.GetString(1);
@@ -266,10 +270,11 @@ public sealed class MySqlDdlRuntime(
             engine = reader.GetString(4);
             caseMode = Convert.ToInt32(reader.GetValue(5), CultureInfo.InvariantCulture);
             user = reader.GetString(6);
+            autoCommit = Convert.ToInt32(reader.GetValue(7), CultureInfo.InvariantCulture);
         }
         if (!Guid.TryParse(uuid, out _) || !IsProvenMySql84(version, versionComment)
             || !string.Equals(engine, "InnoDB", StringComparison.OrdinalIgnoreCase)
-            || caseMode != 0
+            || caseMode != 0 || autoCommit != 1
             || string.IsNullOrWhiteSpace(database) || string.IsNullOrWhiteSpace(user)
             || IsSystemDatabase(database))
             throw new InvalidOperationException(
@@ -326,7 +331,7 @@ public sealed class MySqlDdlRuntime(
 
         var identity = Digest(JsonSerializer.Serialize(new
         {
-            uuid, version, versionComment, database, engine, caseMode, user
+            uuid, version, versionComment, database, engine, caseMode, autoCommit, user
         }));
         var fingerprint = Digest(JsonSerializer.Serialize(new
         {
