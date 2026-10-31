@@ -245,7 +245,19 @@ public sealed class OracleDdlLiveTests
                 }
                 var markers = Enumerable.Range(0, reader.FieldCount)
                     .Select(index => reader.IsDBNull(index) ? "null" : "value");
-                results.Add(name + ":ok[" + string.Join(",", markers) + "]");
+                var stage = name switch
+                {
+                    "context" => "role-primary=" + (reader.GetValue(5)?.ToString() == "PRIMARY")
+                        + ";schema-owner=" + (reader.GetValue(3)?.ToString() == reader.GetValue(4)?.ToString())
+                        + ";pdb-user=" + (reader.GetValue(2)?.ToString() == "FREEPDB1"),
+                    "version" => "accepted=" +
+                        OracleDdlRuntime.IsProvenOracle26Ai(reader.GetValue(0)?.ToString()),
+                    "pdb" => "guid32=" + (reader.GetValue(1)?.ToString()?.Trim().Length == 32)
+                        + ";read-write=" + (reader.GetValue(2)?.ToString() == "READ WRITE"),
+                    "triggers" => "zero=" + (Convert.ToInt32(reader.GetValue(0)) == 0),
+                    _ => ""
+                };
+                results.Add(name + ":ok[" + string.Join(",", markers) + "]:" + stage);
             }
             catch (OracleException ex)
             {
