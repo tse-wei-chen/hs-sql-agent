@@ -131,6 +131,29 @@ public sealed record McpDdlToolResult(
         };
     }
 
+    /// <summary>Opaque Oracle PDB metadata, not raw DBID/GUID or principal.</summary>
+    public OracleDdlPhysicalSnapshot? OracleBefore { get; init; }
+
+    public static McpDdlToolResult FromOracleRuntime(OracleDdlRuntimeResult result)
+    {
+        var preview = result.Preview;
+        return new McpDdlToolResult(
+            result.Status == DdlRuntimeStatus.OutcomeUnknown
+                ? "outcome_unknown" : result.Status.ToString().ToLowerInvariant(),
+            result.CommitConfirmed, "Oracle",
+            preview?.StaticPreview.PlanFingerprint,
+            preview?.StaticPreview.Plan.Command.Sql,
+            null, preview?.ExpectedColumns, preview?.RequestId, result.Message,
+            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
+                or DdlRuntimeStatus.OutcomeUnknown
+                ? new McpToolError(result.ErrorCode ?? "ddl.denied",
+                    result.Message, "DdlExecution")
+                : null)
+        {
+            OracleBefore = preview?.Before
+        };
+    }
+
     public static McpDdlToolResult FromRuntime(DdlRuntimeResult result)
     {
         var preview = result.Preview;
