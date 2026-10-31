@@ -121,7 +121,8 @@ public sealed class OracleDdlLiveTests
         {
             var preview = await runtime.RunAsync(provider, cs, before, actor, true, null, ct);
             Assert.True(preview.Status == DdlRuntimeStatus.Preview,
-                "Expected Preview, got " + preview.Status + " (" + preview.ErrorCode + "): " + preview.Message);
+                "Expected Preview, got " + preview.Status + " (" + preview.ErrorCode + "): " + preview.Message
+                + " | DIAG: " + await ReadOnlyOracleProofDiagnostics(db, ct));
             Assert.False(preview.CommitConfirmed);
             Assert.Equal(0, Convert.ToInt32(await Scalar(db,
                 "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + name + "'", ct)));
@@ -204,6 +205,57 @@ public sealed class OracleDdlLiveTests
                     "SELECT COUNT(*) FROM USER_OBJECTS WHERE OBJECT_NAME = '" + table + "'", CancellationToken.None)) > 0)
                     await Exec(db, "DROP TABLE " + table + " PURGE", CancellationToken.None);
         }
+    }
+
+    // Test-only, read-only probes: report stage and Oracle error codes, never DBID,
+    // GUID, server address, principal, SQL source or credentials to CI logs.
+    private static async Task<string> ReadOnlyOracleProofDiagnostics(
+        OracleConnection db, CancellationToken ct)
+    {
+        var probes = new (string Name, string Sql)[]
+        {
+            ("context", "SELECT SYS_CONTEXT('USERENV','DB_NAME'), " +
+                "SYS_CONTEXT('USERENV','DB_UNIQUE_NAME'), " +
+                "SYS_CONTEXT('USERENV','CON_NAME'), " +
+                "SYS_CONTEXT('USERENV','SESSION_USER'), " +
+                "SYS_CONTEXT('USERENV','CURRENT_SCHEMA'), " +
+                "SYS_CONTEXT('USERENV','DATABASE_ROLE'), " +
+                "SYS_CONTEXT('USERENV','SERVICE_NAME') FROM DUAL"),
+            ("version", "SELECT VERSION_FULL FROM PRODUCT_COMPONENT_VERSION " +
+                "WHERE PRODUCT LIKE 'Oracle Database%' AND VERSION_FULL IS NOT NULL"),
+            ("database", "SELECT TO_CHAR(DBID) FROM V$DATABASE"),
+            ("pdb", "SELECT TO_CHAR(DBID), RAWTOHEX(GUID), OPEN_MODE FROM V$PDBS " +
+                "WHERE CON_ID=TO_NUMBER(SYS_CONTEXT('USERENV','CON_ID'))"),
+            ("triggers", "SELECT COUNT(*) FROM DBA_TRIGGERS WHERE STATUS = 'ENABLED' " +
+                "AND (BASE_OBJECT_TYPE IN ('DATABASE','PLUGGABLE DATABASE') " +
+                "OR (BASE_OBJECT_TYPE = 'SCHEMA' AND OWNER = 'SQLCORE'))")
+        };
+        var results = new List<string>();
+        foreach (var (name, sql) in probes)
+        {
+            try
+            {
+                await using var command = new OracleCommand(sql, db);
+                await using var reader = await command.ExecuteReaderAsync(ct);
+                if (!await reader.ReadAsync(ct))
+                {
+                    results.Add(name + ":empty");
+                    continue;
+                }
+                var markers = Enumerable.Range(0, reader.FieldCount)
+                    .Select(index => reader.IsDBNull(index) ? "null" : "value");
+                results.Add(name + ":ok[" + string.Join(",", markers) + "]");
+            }
+            catch (OracleException ex)
+            {
+                results.Add(name + ":ora-" + ex.Number);
+            }
+            catch (Exception ex)
+            {
+                results.Add(name + ":" + ex.GetType().Name);
+            }
+        }
+        return string.Join(";", results);
     }
 
     private static async Task<object?> Scalar(OracleConnection c, string sql, CancellationToken token)
