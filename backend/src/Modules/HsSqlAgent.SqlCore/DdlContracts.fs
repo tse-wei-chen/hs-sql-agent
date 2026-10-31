@@ -33,16 +33,19 @@ type DdlSchemaOperation =
     | CreateTable = 0
     | AddNullableColumn = 1
     | CreateIndex = 2
+    | DropTable = 3
 
 /// These are REQUIRED live preconditions, never claims that reality satisfies them.
 type DdlPrecondition =
     | RequireObjectAbsent = 0
     | RequireTablePresentAndColumnAbsent = 1
     | RequireTableAndColumnsPresentAndIndexAbsent = 2
+    | RequireTablePresentAndEmpty = 3
 
 type DdlExecutionRisk =
     | Additive = 0
     | PotentialLock = 1
+    | Destructive = 2
 
 /// Transaction behavior describes a general provider class, not runtime proof.
 type DdlTransactionBehavior =
