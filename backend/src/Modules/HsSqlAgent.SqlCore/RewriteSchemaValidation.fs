@@ -797,36 +797,22 @@ module internal RewriteSchemaValidation =
         (createValidation ()) catalog (Bound.value bound)
         bound
 
-    /// Static analysis only. A complete Virtual Catalog is consumed directly,
-    /// without fabricating a runtime SqlSchemaSnapshot or execution proof.
-    /// The same scope/name/CTE algorithm as host-provided snapshots is used.
-    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
-        if not state.IsClosedWorld
-           || (state.Tables |> Seq.exists (fun t -> t.Knowledge <> SqlCatalogKnowledge.Known)) then
-            invalidArg "state" "Strict catalog binding requires a complete known closed-world catalog."
+    /// The Name proof is intentionally independent of TypeValidation. Only
+    /// immutable column labels/relations are shared; a validated name cannot
+    /// silently become an executable plan or an inferred type.
+    let verifyVirtualPrepared dialect
+                              (projection: RewriteVirtualCatalogProjection.Projection)
+                              (bound: BoundSql) =
         let physical =
-            state.Tables
-            |> Seq.map (fun table ->
+            projection.Physical
+            |> List.map (fun (name, columns) ->
                 RewriteResourceBudget.checkpoint ()
-                table.QualifiedName.BinderKey,
-                (table.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList))
-            |> Seq.toList
-        // The read map is permitted to contain proven View OUTPUT columns.
-        // The write map above intentionally does not: a View cannot become
-        // a physical INSERT/UPDATE/DELETE target through this feature.
+                name, columns |> List.map fst)
         let readable =
-            seq {
-                yield! physical
-                for view in RewriteQueryAnalyzer.readableViews dialect state bound do
-                    RewriteResourceBudget.checkpoint ()
-                    yield view.QualifiedName.BinderKey,
-                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
-                for view in RewriteMutationAnalyzer.readableViews dialect state bound do
-                    RewriteResourceBudget.checkpoint ()
-                    yield view.QualifiedName.BinderKey,
-                          (view.Columns |> Seq.map (fun col -> catalogPart dialect col.Name) |> Seq.toList)
-            }
-            |> Seq.toList
+            projection.Readable
+            |> List.map (fun (name, columns) ->
+                RewriteResourceBudget.checkpoint ()
+                name, columns |> List.map fst)
         if physical.Length <> (physical |> List.map fst |> List.distinct |> List.length)
            || readable.Length <> (readable |> List.map fst |> List.distinct |> List.length) then
             invalidArg "state" "Virtual Catalog contains duplicate structured identifier identities."
@@ -837,3 +823,8 @@ module internal RewriteSchemaValidation =
               ProvenInsertColumnOrder = true }
         (createValidation ()) catalog (Bound.value bound)
         bound
+
+    /// Standalone internal entry point retains the same validation contract.
+    let verifyVirtual dialect (state: SqlCatalogState) (bound: BoundSql) =
+        RewriteVirtualCatalogProjection.prepare dialect state bound
+        |> fun projection -> verifyVirtualPrepared dialect projection bound
