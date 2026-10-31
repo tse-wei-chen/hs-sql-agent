@@ -3507,3 +3507,28 @@ sessions. The F# SQL compiler has **no** Oracle provider dependency,
 connection access, audit or approval functionality. Oracle ALTER/INDEX,
 destructive/conditional/batch DDL and cross-provider executable lowering
 remain disabled.
+
+## G6 S15 — PostgreSQL destructive DROP TABLE is a typed plan, not permission
+
+The closed F# `CompileDdl` now recognizes **only** PostgreSQL's single
+schema-qualified `DROP TABLE schema.table RESTRICT`, with no `IF EXISTS`,
+`CASCADE`, comma-separated objects, batch, `TRUNCATE` or `DROP COLUMN`.
+It emits `DdlSchemaOperation.DropTable`,
+`DdlPrecondition.RequireTablePresentAndEmpty`, a
+`DdlExecutionRisk.Destructive` tag and `Impact.MayLoseData = true`.
+
+```csharp
+var plan = SqlCoreFacade.CompileDdl(
+    "DROP TABLE approved_schema.disposable RESTRICT",
+    new DdlCompilationOptions(SqlAgentToolType.Postgres, SqlAgentToolType.Postgres));
+Console.WriteLine(plan.Risk);                  // Destructive
+Console.WriteLine(plan.Impact.MayLoseData);    // true
+Console.WriteLine(plan.AuthorizesExecution);  // false
+```
+
+`PreviewDdl` projects a **conditional** absent table and a data-loss warning,
+but even a `Known` virtual Catalog cannot prove live table emptiness,
+ownership, dependencies, privileges or transaction safety. The Host must
+separately prove all of these before and during the approved transaction.
+Only the opt-in PostgreSQL Host's **empty** table subset is executable; all
+six dialects retain strict negative execution boundaries for everything else.

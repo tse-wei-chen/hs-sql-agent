@@ -69,6 +69,10 @@ public sealed class PostgresDdlRuntime(
                 return Rejected("ddl.schema_denied", "Target schema is not explicitly allowlisted for DDL.");
             if (!AllowedOperation(change.Operation))
                 return Rejected("ddl.operation_denied", "This DDL operation is not enabled by the Host.");
+            if (change.Operation == DdlSchemaOperation.DropTable
+                && !_options.AllowedDropPrincipals.Contains(actor.PrincipalIdentity))
+                return Rejected("ddl.destructive_principal_denied",
+                    "This MCP key is not separately authorized for destructive DDL.");
             ValidateConfiguration();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -163,7 +167,9 @@ public sealed class PostgresDdlRuntime(
             if (!string.Equals(policy, PolicyMaterial(), StringComparison.Ordinal)
                 || !_options.Enabled
                 || !_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
-                || !AllowedOperation(plan.Changes[0].Operation))
+                || !AllowedOperation(plan.Changes[0].Operation)
+                || (plan.Changes[0].Operation == DdlSchemaOperation.DropTable
+                    && !_options.AllowedDropPrincipals.Contains(actor.PrincipalIdentity)))
                 return Rejected("ddl.policy_changed", "DDL Host policy changed after approval.", preview);
 
             // Do not use the preview connection for the commit. The connection
@@ -304,12 +310,14 @@ public sealed class PostgresDdlRuntime(
         DdlSchemaOperation.CreateTable => _options.AllowCreateTable,
         DdlSchemaOperation.AddNullableColumn => _options.AllowAddColumn,
         DdlSchemaOperation.CreateIndex => _options.AllowCreateIndex,
+        DdlSchemaOperation.DropTable => _options.AllowDropEmptyTable,
         _ => false
     };
 
     private void ValidateConfiguration()
     {
         if (_options.AllowedSchemas.Count == 0
+            || (_options.AllowDropEmptyTable && _options.AllowedDropPrincipals.Count == 0)
             || _options.ApprovalLifetime <= TimeSpan.Zero
             || _options.ApprovalLifetime > TimeSpan.FromMinutes(5)
             || _options.ExecutionTimeout <= TimeSpan.Zero
@@ -325,6 +333,9 @@ public sealed class PostgresDdlRuntime(
             _options.AllowCreateTable,
             _options.AllowAddColumn,
             _options.AllowCreateIndex,
+            _options.AllowDropEmptyTable,
+            destructivePrincipals = _options.AllowedDropPrincipals.OrderBy(
+                principal => principal, StringComparer.Ordinal).ToArray(),
             _options.PolicyRevision,
             schemas = _options.AllowedSchemas.OrderBy(s => s, StringComparer.Ordinal).ToArray(),
             _options.ApprovalLifetime,
@@ -383,6 +394,7 @@ public sealed class PostgresDdlRuntime(
                     new DdlPhysicalIndex(change.IndexName
                         ?? throw new InvalidOperationException("An index name is required."),
                         change.Columns.ToArray(), false, false, false)]).ToArray()),
+            DdlSchemaOperation.DropTable => ([], []),
             _ => throw new InvalidOperationException("Unsupported closed DDL operation.")
         };
     }
@@ -390,6 +402,11 @@ public sealed class PostgresDdlRuntime(
     private static bool MatchesExpected(DdlPhysicalSnapshot after,
         CompiledDdlPlan plan, DdlPhysicalSnapshot before)
     {
+        if (plan.Changes[0].Operation == DdlSchemaOperation.DropTable)
+            return after.SchemaOid == before.SchemaOid
+                && after.ServerIdentity == before.ServerIdentity
+                && before.TableOid.HasValue && !after.TableOid.HasValue
+                && after.Columns.Count == 0 && after.Indexes.Count == 0;
         if (after.SchemaOid != before.SchemaOid
             || !string.Equals(after.ServerIdentity, before.ServerIdentity, StringComparison.Ordinal)
             || after.TableOid is null
@@ -423,7 +440,14 @@ public sealed class PostgresDdlRuntime(
                 + (c.Nullable ? " NULL" : " NOT NULL")));
         static string Indexes(IEnumerable<DdlPhysicalIndex> items) =>
             string.Join(", ", items.Select(x => x.Name + "(" + string.Join(", ", x.Columns) + ")"));
-        return "DDL change: " + plan.Changes[0].Operation + "\n"
+        var destructive = plan.Changes[0].Operation == DdlSchemaOperation.DropTable
+            ? "HIGH RISK: DELETE the physical table definition permanently after COMMIT. "
+              + "No data rows may exist: verified at preview and rechecked under "
+              + "ACCESS EXCLUSIVE lock before DROP TABLE RESTRICT. "
+              + "Object privileges and application dependencies may be impacted. "
+              + "The operation requires separate destructive opt-in and independent approval.\n"
+            : string.Empty;
+        return destructive + "DDL change: " + plan.Changes[0].Operation + "\n"
             + "Physical target: " + before.DatabaseName + "/"
             + before.SchemaName + "." + before.TableName + "\n"
             + "Before columns: " + (before.TableOid is null ? "<table absent>" : Columns(before.Columns)) + "\n"
@@ -461,6 +485,8 @@ public sealed class PostgresDdlRuntime(
                 if (snapshot.Columns.Any(c => c.Name == change.Columns[0]))
                     return "Target column already exists.";
                 return null;
+            case DdlSchemaOperation.DropTable:
+                return await ProveEmptyDropAsync(connection, transaction, snapshot, cancellationToken);
             case DdlSchemaOperation.CreateIndex:
                 if (snapshot.TableOid is null) return "Target table does not exist.";
                 if (change.Columns.Any(n => snapshot.Columns.All(c => c.Name != n)))
@@ -474,6 +500,75 @@ public sealed class PostgresDdlRuntime(
             default:
                 return "DDL operation has no proven physical precondition.";
         }
+    }
+
+    /// <summary>
+    /// The G6 destructive capability is intentionally bounded to an ordinary,
+    /// empty, non-partitioned, owner-controlled 1–16 INTEGER-column table.
+    /// This proof is repeated after ACCESS EXCLUSIVE lock inside the commit
+    /// transaction. RESTRICT remains a final server-side dependency fence.
+    /// </summary>
+    private static async Task<string?> ProveEmptyDropAsync(
+        DbConnection connection, DbTransaction? transaction,
+        DdlPhysicalSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        if (snapshot.TableOid is not long oid
+            || snapshot.Columns.Count is < 1 or > 16
+            || snapshot.Columns.Any(c => c.TypeName != "integer")
+            || snapshot.Indexes.Count != 0)
+            return "Destructive DROP requires a simple 1–16 INTEGER-column table without indexes.";
+
+        // No implicit trust from SqlCore's virtual Catalog or from stale preview.
+        // Direct table ownership, persistence, RLS, grants and inheritance are
+        // proven using PostgreSQL's own catalog rather than parsing client SQL.
+        var simple = await ScalarAsync(connection, transaction,
+            "SELECT c.relkind='r' AND c.relpersistence='p' "
+            + "AND NOT c.relispartition AND NOT c.relhassubclass "
+            + "AND NOT c.relrowsecurity AND NOT c.relforcerowsecurity "
+            + "AND NOT c.relhastriggers AND c.relacl IS NULL "
+            + "AND c.relowner=(SELECT oid FROM pg_catalog.pg_roles WHERE rolname=current_user) "
+            + "FROM pg_catalog.pg_class c WHERE c.oid=@oid::oid",
+            cancellationToken, ("oid", oid));
+        if (simple is not true)
+            return "Destructive DROP table owner, persistence or security posture is unproven.";
+
+        var hazards = await ScalarAsync(connection, transaction,
+            "SELECT "
+            + "EXISTS(SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid=@oid::oid OR confrelid=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_index WHERE indrelid=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_inherits WHERE inhrelid=@oid::oid OR inhparent=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_policy WHERE polrelid=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_rewrite WHERE ev_class=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_attribute "
+            + "WHERE attrelid=@oid::oid AND attnum>0 AND NOT attisdropped "
+            + "AND (atthasdef OR attidentity<>'' OR attgenerated<>'')) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_depend d "
+            + "JOIN pg_catalog.pg_rewrite r ON r.oid=d.objid "
+            + "WHERE d.refobjid=@oid::oid AND d.classid='pg_catalog.pg_rewrite'::regclass "
+            + "AND r.ev_class<>@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_depend d "
+            + "JOIN pg_catalog.pg_class owned ON owned.oid=d.objid "
+            + "WHERE d.refobjid=@oid::oid AND owned.relkind='S') "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_depend d "
+            + "WHERE d.classid='pg_catalog.pg_class'::regclass "
+            + "AND d.objid=@oid::oid AND d.deptype='e') "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_publication_rel WHERE prrelid=@oid::oid) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_publication WHERE puballtables) "
+            + "OR EXISTS(SELECT 1 FROM pg_catalog.pg_publication_namespace WHERE pnnspid=@schemaoid::oid)",
+            cancellationToken, ("oid", oid),
+            ("schemaoid", snapshot.SchemaOid ?? throw new InvalidOperationException(
+                "Missing destructive target namespace.")));
+        if (hazards is not false)
+            return "Destructive DROP cannot prove the absence of dependent, replicated or special schema objects.";
+
+        // The name is from the F# verified simple-ASCII schema/table identity,
+        // not unchecked SQL. Commit-time ACCESS EXCLUSIVE locks out writers.
+        var hasRows = await ScalarAsync(connection, transaction,
+            "SELECT EXISTS(SELECT 1 FROM " + Quote(snapshot.SchemaName) + "."
+            + Quote(snapshot.TableName) + " LIMIT 1)", cancellationToken);
+        return hasRows is false ? null
+            : "Destructive DROP denied: real table must contain zero data rows.";
     }
 
     private static async Task<DdlPhysicalSnapshot> ReadSnapshotAsync(

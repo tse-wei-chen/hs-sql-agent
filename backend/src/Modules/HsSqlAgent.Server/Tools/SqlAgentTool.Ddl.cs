@@ -40,11 +40,12 @@ public partial class SqlAgentTool
         With previewOnly=true, inspect live metadata and return a schema diff without changing data.
         With previewOnly=false, execution REQUIRES separately configured DDL approval, fresh physical
         database/schema evidence and a provider-specific proven execution policy. DML approval does not grant
-        DDL permission. The tool is disabled and hidden by default. Unsupported or destructive
-        DDL, dynamic SQL and other database providers are always rejected.
+        DDL permission. The tool is disabled and hidden by default. Only PostgreSQL hosts with
+        separate destructive opt-in may DROP a proven-empty ordinary table with RESTRICT; all
+        other destructive DDL, dynamic SQL and unsupported operations are rejected.
     ")]
     public async Task<McpDdlToolResult> ExecuteDdlSql(
-        [Description("One strictly additive PostgreSQL, SQLite, SQL Server, Firebird, MySQL or Oracle DDL statement. Firebird/MySQL/Oracle require unqualified table names.")]
+        [Description("One proven DDL statement. PostgreSQL may also DROP a qualified, proven-empty table with separate destructive opt-in and approval; other providers allow only additive DDL. Firebird/MySQL/Oracle CREATE requires unqualified table names.")]
         string sql,
         [Description("True to inspect and preview only, without DDL approval or mutation.")]
         bool previewOnly = true,

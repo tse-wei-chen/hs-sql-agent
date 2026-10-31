@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
-### SQL Core G1/G2, PostgreSQL G3, SQLite/SQL Server/Firebird G4 and MySQL/Oracle G5 DDL
+### SQL Core G1/G2, PostgreSQL G3, SQLite/SQL Server/Firebird G4, MySQL/Oracle G5 and PostgreSQL G6 DDL
 
 - Introduce a separate closed F# `CompileDdl` / `TryCompileDdl` compiler,
   typed Schema Plan, native six-dialect SQL renderer, deterministic fingerprint,
@@ -21,7 +21,9 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   post-execution verification, fail-closed audit and OutcomeUnknown.
 - No executable DDL feature is enabled by default. Four existing read tools
   remain selected; both DML and DDL are unselected. No cross-provider,
-  destructive, multi-statement, conditional or concurrent index DDL execution.
+  multi-statement, conditional or concurrent index DDL execution. A separately
+  enabled, independently approved PostgreSQL G6 empty-table DROP is the only
+  narrowly proven destructive exception.
 - Real PostgreSQL 16 tests cover approved CREATE TABLE / ADD COLUMN / INDEX,
   Preview and rejected Approval without writes, schema drift and forged
   approval fingerprints. Six-provider DQL/DML compatibility gates remain
@@ -57,6 +59,31 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   guard one F#-compiled command. Oracle implicitly commits DDL: no
   synthetic rollback; lost result/invalid postcondition is OutcomeUnknown.
   No new MCP tool, F# compiler, database driver or default tool grants.
+
+### G6 S15: PostgreSQL high-risk empty-table DROP
+
+- Extend the same closed F# Schema Compiler with typed, qualified
+  `DROP TABLE schema.table RESTRICT` only for PostgreSQL. The plan explicitly
+  records destructive risk, potential data loss and a physical emptiness
+  precondition. Virtual Catalog Preview remains hypothetical.
+- Add `AllowDropEmptyTable` (**false by default**) and a separate
+  `AllowedDropPrincipals` MCP-key identity allowlist (**empty by default**)
+  to the PostgreSQL Host. This requires the existing separately granted
+  `execute_ddl_sql` permission, independent human DDL approval, immutable physical evidence,
+  policy revision and short-lived approval challenge.
+- Enforce an owned, ordinary, persistent, non-partitioned, non-replicated,
+  RLS-free and privilege-safe table with 1–16 INTEGER columns and **zero
+  rows**. Reject indexes, constraints, view dependencies, triggers,
+  identity/default columns, inheritance, owned sequences and other
+  unproven effects. Recheck all requirements under PostgreSQL
+  ACCESS EXCLUSIVE transaction lock before emitting one compiled native DROP.
+- Confirm physical absence before COMMIT; use proven rollback on failure
+  and `OutcomeUnknown` when COMMIT or rollback cannot be proven. Nothing
+  permits dropping data-bearing tables, using CASCADE, other providers,
+  TRUNCATE, DROP COLUMN, or multi-DDL batches.
+- PostgreSQL 16 live tests cover preview/no-write, explicit opt-in,
+  rejected/forged approval, nonempty and concurrent inserts, dependent
+  views, exact absence and independent transactional rollback.
 
 ### PostgreSQL old-worker cutover verification
 

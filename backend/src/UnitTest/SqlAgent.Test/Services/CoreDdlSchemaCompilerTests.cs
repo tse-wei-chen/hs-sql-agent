@@ -145,6 +145,61 @@ public sealed class CoreDdlSchemaCompilerTests
     }
 
     [Fact]
+    public void G6_PostgresDropTable_RequiresClosedDestructivePlanAndExplicitSchema()
+    {
+        var options = Options(SqlAgentToolType.Postgres);
+        foreach (var sql in new[]
+        {
+            "DROP TABLE safe_schema.disposable",
+            "DROP TABLE safe_schema.disposable RESTRICT",
+            "DROP TABLE safe_schema.disposable RESTRICT;"
+        })
+        {
+            var plan = SqlCoreFacade.CompileDdl(sql, options);
+            Assert.Equal(DdlSchemaOperation.DropTable, plan.Changes[0].Operation);
+            Assert.Equal(DdlPrecondition.RequireTablePresentAndEmpty, plan.Changes[0].Precondition);
+            Assert.Equal(DdlExecutionRisk.Destructive, plan.Risk);
+            Assert.True(plan.Impact.MayLoseData);
+            Assert.True(plan.Impact.MayLockSchema);
+            Assert.False(plan.AuthorizesExecution);
+            Assert.Equal("DROP TABLE \"safe_schema\".\"disposable\" RESTRICT", plan.Command.Sql);
+            Assert.Single(plan.Changes);
+            Assert.Empty(plan.Command.Parameters);
+        }
+        var preview = SqlCoreFacade.PreviewDdl("DROP TABLE safe_schema.disposable", options);
+        Assert.Equal(HsSqlAgent.SqlCore.Ddl.DdlObjectPresence.Unknown, preview.Before.Presence);
+        Assert.Equal(HsSqlAgent.SqlCore.Ddl.DdlObjectPresence.Absent, preview.ExpectedAfter.Presence);
+        Assert.True(preview.RequiresLiveValidation);
+        Assert.Contains(preview.Warnings, w => w.Contains("data loss", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void G6_DestructiveDdlNegativeGrammarMatrixRemainsFailClosed()
+    {
+        var postgres = Options(SqlAgentToolType.Postgres);
+        foreach (var sql in new[]
+        {
+            "DROP TABLE disposable",
+            "DROP TABLE IF EXISTS safe_schema.disposable",
+            "DROP TABLE safe_schema.disposable CASCADE",
+            "DROP TABLE safe_schema.disposable, safe_schema.other",
+            "DROP TABLE safe_schema.disposable; DROP TABLE safe_schema.other",
+            "TRUNCATE TABLE safe_schema.disposable",
+            "ALTER TABLE safe_schema.disposable DROP COLUMN x",
+            "DROP VIEW safe_schema.disposable",
+            "DROP INDEX safe_schema.disposable",
+            "DROP TABLE safe_schema.disposable RESTRICT; SELECT 1"
+        })
+            Assert.False(SqlCoreFacade.TryCompileDdl(sql, postgres).Success, sql);
+
+        foreach (var other in Enum.GetValues<SqlAgentToolType>()
+            .Where(x => x != SqlAgentToolType.Postgres))
+            Assert.False(SqlCoreFacade.TryCompileDdl(
+                "DROP TABLE safe_schema.disposable", Options(other)).Success,
+                other.ToString());
+    }
+
+    [Fact]
     public void OracleAndMySql_ImplicitCommitIsNotTransactionalRollback()
     {
         foreach (var provider in new[] { SqlAgentToolType.Oracle, SqlAgentToolType.MySQL })

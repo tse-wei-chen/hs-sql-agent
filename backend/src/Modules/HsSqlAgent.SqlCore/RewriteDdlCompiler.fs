@@ -99,8 +99,13 @@ module internal RewriteDdlCompiler =
             if List.distinct columns |> List.length <> List.length columns then
                 policy "Duplicate physical columns in DDL index."
             BoundDdl operation
+        | Drop(table, false) ->
+            ensureIdentity table
+            if table.Parts.Count <> 2 then
+                policy "Destructive DROP requires an exact qualified schema.table identity."
+            BoundDdl operation
         | _ ->
-            policy "Executable DDL subset is additive CREATE TABLE, nullable ADD COLUMN, or ordinary CREATE INDEX only."
+            policy "DDL must be additive or a separately proven qualified DROP TABLE RESTRICT."
 
     let private validate (options: DdlCompilationOptions) (BoundDdl operation) =
         if options.SourceDialect <> options.TargetDialect then
@@ -118,6 +123,10 @@ module internal RewriteDdlCompiler =
         if not (isNull sourceVersion)
            && (isNull targetVersion || targetVersion.CompareTo(sourceVersion) < 0) then
             capability "Source-version-dependent DDL cannot be lowered without an equal or newer verified target profile."
+        match operation with
+        | Drop _ when options.SourceDialect <> SqlAgentToolType.Postgres ->
+            capability "Destructive DROP TABLE requires PostgreSQL-specific transactional proof."
+        | _ -> ()
         // The parser owns the same-provider type whitelist and version gates;
         // preserve the strict typed operation rather than reconstructing type
         // interpretation from raw SQL or pretending catalog Known is live.
@@ -176,6 +185,11 @@ module internal RewriteDdlCompiler =
             sql, table, DdlSchemaOperation.CreateIndex,
             DdlPrecondition.RequireTableAndColumnsPresentAndIndexAbsent,
             columns, indexName, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false), []
+        | Drop(table, false) when options.TargetDialect = SqlAgentToolType.Postgres ->
+            let sql = "DROP TABLE " + qualified table + " RESTRICT"
+            sql, table, DdlSchemaOperation.DropTable,
+            DdlPrecondition.RequireTablePresentAndEmpty,
+            [], null, DdlExecutionRisk.Destructive, DdlSchemaImpact(true, true), []
         | _ ->
             reject SqlDiagnosticStage.RenderingInvariant SqlDiagnosticCategory.Invariant
                 "SQL_DDL_RENDER_INVARIANT" "DDL rendering received an operation that did not pass policy."

@@ -15,6 +15,11 @@ public sealed record McpDdlToolResult(
     string Message,
     McpToolError? Error)
 {
+    /// <summary>Risk evidence for human-facing DDL previews, never an execution grant.</summary>
+    public string? Risk { get; init; }
+    public bool MayLoseData { get; init; }
+    public string? HumanReadableDiff { get; init; }
+
     /// <summary>
     /// SQLite-specific physical snapshot. The PostgreSQL Before OID contract
     /// must not be reused for SQLite's schema cookie.
@@ -174,6 +179,11 @@ public sealed record McpDdlToolResult(
             result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
                 or DdlRuntimeStatus.OutcomeUnknown
                 ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
-                : null);
+                : null)
+        {
+            Risk = preview?.StaticPreview.Plan.Risk.ToString(),
+            MayLoseData = preview?.StaticPreview.Plan.Impact.MayLoseData ?? false,
+            HumanReadableDiff = preview?.HumanReadableDiff
+        };
     }
 }
