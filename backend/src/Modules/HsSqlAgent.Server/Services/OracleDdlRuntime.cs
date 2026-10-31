@@ -287,7 +287,8 @@ public sealed class OracleDdlRuntime(
         // (marketed as 26ai), not Oracle 19c or an arbitrary compatible dialect.
         await using (var command = Command(connection,
             "SELECT VERSION_FULL FROM PRODUCT_COMPONENT_VERSION "
-            + "WHERE PRODUCT LIKE 'Oracle Database%' AND VERSION_FULL IS NOT NULL"))
+            + "WHERE (PRODUCT LIKE 'Oracle Database%' " +
+                "OR PRODUCT LIKE 'Oracle AI Database%') AND VERSION_FULL IS NOT NULL"))
         {
             var raw = await command.ExecuteScalarAsync(token);
             version = raw?.ToString()?.Trim() ?? "";
