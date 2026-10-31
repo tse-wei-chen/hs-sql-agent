@@ -78,23 +78,30 @@ public sealed class PostgresDdlRuntime(
 
         try
         {
-            await using var connection = provider.Connections.Create(connectionString);
-            await connection.OpenAsync(cancellationToken);
-            var profile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
-            if (profile.TargetProfile.ServerVersion is null
-                || profile.TargetProfile.ServerVersion.Major < 12)
-                return Rejected("ddl.version_unproven", "PostgreSQL 12 or later runtime server-version proof is required.");
-            plan = SqlCoreFacade.CompileDdl(sql,
-                new DdlCompilationOptions(SqlAgentToolType.Postgres,
-                    SqlAgentToolType.Postgres, profile.TargetProfile, profile.TargetProfile));
-            var initial = await ReadSnapshotAsync(connection, null, schema, table, cancellationToken);
-            if (!string.Equals(initial.DatabaseName, actor.DatabaseName, StringComparison.Ordinal))
-                return Rejected("ddl.database_identity_mismatch",
-                    "Live database name does not match the authenticated MCP target database identity.");
-            var precondition = await VerifyPreconditionAsync(
-                connection, null, initial, plan, cancellationToken);
-            if (precondition is not null)
-                return Rejected("ddl.physical_precondition", precondition);
+            // Release the read-only preview connection BEFORE interactive
+            // approval. Approval can take minutes and must not consume an
+            // unnecessary PostgreSQL pool connection or transaction.
+            VerifiedRuntimeServerProfile profile;
+            DdlPhysicalSnapshot initial;
+            await using (var connection = provider.Connections.Create(connectionString))
+            {
+                await connection.OpenAsync(cancellationToken);
+                profile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
+                if (profile.TargetProfile.ServerVersion is null
+                    || profile.TargetProfile.ServerVersion.Major < 12)
+                    return Rejected("ddl.version_unproven", "PostgreSQL 12 or later runtime server-version proof is required.");
+                plan = SqlCoreFacade.CompileDdl(sql,
+                    new DdlCompilationOptions(SqlAgentToolType.Postgres,
+                        SqlAgentToolType.Postgres, profile.TargetProfile, profile.TargetProfile));
+                initial = await ReadSnapshotAsync(connection, null, schema, table, cancellationToken);
+                if (!string.Equals(initial.DatabaseName, actor.DatabaseName, StringComparison.Ordinal))
+                    return Rejected("ddl.database_identity_mismatch",
+                        "Live database name does not match the authenticated MCP target database identity.");
+                var precondition = await VerifyPreconditionAsync(
+                    connection, null, initial, plan, cancellationToken);
+                if (precondition is not null)
+                    return Rejected("ddl.physical_precondition", precondition);
+            }
 
             var projected = ProjectExpected(initial, plan);
             var staticPreview = SqlCoreFacade.PreviewDdl(sql,
@@ -383,7 +390,9 @@ public sealed class PostgresDdlRuntime(
     private static bool MatchesExpected(DdlPhysicalSnapshot after,
         CompiledDdlPlan plan, DdlPhysicalSnapshot before)
     {
-        if (after.TableOid is null
+        if (after.SchemaOid != before.SchemaOid
+            || !string.Equals(after.ServerIdentity, before.ServerIdentity, StringComparison.Ordinal)
+            || after.TableOid is null
             || (plan.Changes[0].Operation != DdlSchemaOperation.CreateTable
                 && after.TableOid != before.TableOid))
             return false;
