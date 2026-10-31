@@ -356,15 +356,21 @@ module internal RewriteSchemaAnalyzer =
                 else [| first |]
             SqlCatalogQualifiedName(Array.AsReadOnly(parts))
 
-        let columnNames () =
-            expectSymbol '('
-            let names = ResizeArray<string>()
-            names.Add(namePart ())
+        // One comma-list owner: keep the first item mandatory and charge
+        // the existing work budget once for each subsequent item.
+        let commaSeparated first next =
+            let items = ResizeArray<_>()
+            items.Add(first ())
             while symbol ',' do
                 RewriteResourceBudget.checkpoint ()
-                names.Add(namePart ())
+                items.Add(next ())
+            items |> Seq.toList
+
+        let columnNames () =
+            expectSymbol '('
+            let names = commaSeparated namePart namePart
             expectSymbol ')'
-            names |> Seq.toList
+            names
 
         let typeName () =
             let kind = word ()
@@ -470,13 +476,9 @@ module internal RewriteSchemaAnalyzer =
                     | _ -> namePart ()
                 let outputHeader =
                     if symbol '(' then
-                        let names = ResizeArray<string>()
-                        names.Add(viewHeaderPart ())
-                        while symbol ',' do
-                            RewriteResourceBudget.checkpoint ()
-                            names.Add(viewHeaderPart ())
+                        let names = commaSeparated viewHeaderPart viewHeaderPart
                         expectSymbol ')'
-                        Explicit(names |> Seq.toList)
+                        Explicit names
                     else Inferred
                 expect "AS"
                 expect "SELECT"
@@ -513,14 +515,11 @@ module internal RewriteSchemaAnalyzer =
                         match projectionItem () with
                         | Choice1Of2 name -> Wildcard(Some name)
                         | Choice2Of2 first ->
-                            let items = ResizeArray<ViewColumnProjection>()
-                            items.Add(first)
-                            while symbol ',' do
-                                RewriteResourceBudget.checkpoint ()
+                            let nextColumn () =
                                 match projectionItem () with
                                 | Choice1Of2 _ -> raise OutsideSubset
-                                | Choice2Of2 next -> items.Add(next)
-                            NamedColumns(items |> Seq.toList)
+                                | Choice2Of2 next -> next
+                            NamedColumns(commaSeparated (fun () -> first) nextColumn)
                 // Any trailing SELECT expression or implicit column alias
                 // is outside the closed proof. End-of-statement without FROM
                 // is malformed; all other additional query tokens are opaque.
@@ -784,13 +783,9 @@ module internal RewriteSchemaAnalyzer =
                         match (current ()).Kind with
                         | Identifier _ -> namePart ()
                         | _ -> raise OutsideSubset
-                    let cols = ResizeArray<string>()
-                    cols.Add(physical ())
-                    while symbol ',' do
-                        RewriteResourceBudget.checkpoint ()
-                        cols.Add(physical ())
+                    let cols = commaSeparated physical physical
                     expectSymbol ')'
-                    cols |> Seq.toList
+                    cols
                 endOfStatement ()
                 Recognized(CreateIndex(table, indexName, names, conditional))
             else
@@ -803,16 +798,7 @@ module internal RewriteSchemaAnalyzer =
                 let optionalConstraintName () =
                     if accept "CONSTRAINT" then Some(namePart ())
                     else None
-                let columnList () =
-                    expectSymbol '('
-                    let cols = ResizeArray<string>()
-                    cols.Add(namePart ())
-                    while symbol ',' do
-                        RewriteResourceBudget.checkpoint ()
-                        cols.Add(namePart ())
-                    expectSymbol ')'
-                    cols |> Seq.toList
-                let makeConstraint cname kind members (remote: SqlCatalogQualifiedName) remoteMembers =
+                 let makeConstraint cname kind members (remote: SqlCatalogQualifiedName) remoteMembers =
                     SqlCatalogConstraint(
                         (match cname with Some value -> value | None -> null),
                         kind, Array.AsReadOnly(List.toArray members),
@@ -822,7 +808,7 @@ module internal RewriteSchemaAnalyzer =
                     let remote = qualifiedName ()
                     // Omitted target column / implicit PK selection is deliberately
                     // not inferred: require an explicit column list.
-                    let remoteMembers = columnList ()
+                    let remoteMembers = columnNames ()
                     makeConstraint cname SqlCatalogConstraintKind.ForeignKey
                         members remote remoteMembers
                 let tableConstraint () =
@@ -830,13 +816,13 @@ module internal RewriteSchemaAnalyzer =
                     if accept "PRIMARY" then
                         expect "KEY"
                         makeConstraint cname SqlCatalogConstraintKind.PrimaryKey
-                            (columnList ()) null []
+                            (columnNames ()) null []
                     elif accept "UNIQUE" then
                         makeConstraint cname SqlCatalogConstraintKind.Unique
-                            (columnList ()) null []
+                            (columnNames ()) null []
                     elif accept "FOREIGN" then
                         expect "KEY"
-                        let members = columnList ()
+                        let members = columnNames ()
                         foreign cname members
                     else raise OutsideSubset
                 let element () =
@@ -862,7 +848,7 @@ module internal RewriteSchemaAnalyzer =
                         elif accept "REFERENCES" then
                             // REFERENCES was consumed by the inline grammar.
                             let remote = qualifiedName ()
-                            let remoteColumns = columnList ()
+                            let remoteColumns = columnNames ()
                             constraints.Add(
                                 makeConstraint cname SqlCatalogConstraintKind.ForeignKey
                                     [col.Name] remote remoteColumns)
@@ -931,19 +917,15 @@ module internal RewriteSchemaAnalyzer =
                 if sourceDialect <> SqlAgentToolType.Postgres then raise OutsideSubset
                 let conditional = ifExists ()
                 let view = qualifiedName ()
-                let names = ResizeArray<SqlCatalogQualifiedName>()
-                names.Add(view)
-                while symbol ',' do
-                    RewriteResourceBudget.checkpoint ()
-                    names.Add(qualifiedName ())
+                let names = commaSeparated (fun () -> view) qualifiedName
                 let mode =
                     if accept "CASCADE" then Cascade
                     else
                         accept "RESTRICT" |> ignore
                         Restrict
                 endOfStatement ()
-                if names.Count > 1 then
-                    Recognized(DropViewBatch(names |> Seq.toList, conditional, mode))
+                if List.length names > 1 then
+                    Recognized(DropViewBatch(names, conditional, mode))
                 else Recognized(DropView(view, conditional, mode))
             else
                 if not (accept "TABLE") then raise OutsideSubset
@@ -1048,14 +1030,11 @@ module internal RewriteSchemaAnalyzer =
                 Remove(namePart (), conditional)
             let parseRepeatedActions () =
                 let parseOne () =
-                    RewriteResourceBudget.checkpoint ()
                     if accept "ADD" then addAction ()
                     elif accept "DROP" then dropAction ()
                     else raise OutsideSubset
-                let actions = ResizeArray<AlterColumnAction>()
-                actions.Add(parseOne ())
-                while symbol ',' do actions.Add(parseOne ())
-                actions |> Seq.toList
+                RewriteResourceBudget.checkpoint ()
+                commaSeparated parseOne parseOne
             let mysqlForeignKeyDropAction () =
                 let names = ResizeArray<string>()
                 let columns = ResizeArray<string>()
@@ -1197,50 +1176,41 @@ module internal RewriteSchemaAnalyzer =
                         parseRepeatedActions ()
                     | SqlAgentToolType.MsSqlServer ->
                         if accept "ADD" then
-                            let actions = ResizeArray<AlterColumnAction>()
-                            actions.Add(addAction ())
-                            while symbol ',' do
-                                RewriteResourceBudget.checkpoint ()
-                                // T-SQL ADD expects a comma-separated column
-                                // definition, never another ALTER subcommand.
+                            // T-SQL ADD continuation is a column definition,
+                            // never another ALTER subcommand.
+                            let nextColumn () =
                                 if word () = "DROP" || word () = "ADD" then
                                     raise OutsideSubset
-                                actions.Add(Add(column ()))
-                            if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
+                                Add(column ())
+                            let actions = commaSeparated addAction nextColumn
+                            if actions |> List.exists (function Add col -> not col.Nullable | _ -> false) then
                                 raise OutsideSubset
-                            actions |> Seq.toList
+                            actions
                         elif accept "DROP" then
                             expect "COLUMN"
-                            let actions = ResizeArray<AlterColumnAction>()
-                            actions.Add(Remove(namePart (), false))
-                            while symbol ',' do
-                                RewriteResourceBudget.checkpoint ()
-                                actions.Add(Remove(namePart (), false))
-                            actions |> Seq.toList
+                            let dropName () = Remove(namePart (), false)
+                            commaSeparated dropName dropName
                         else raise OutsideSubset
                     | SqlAgentToolType.Oracle ->
                         if accept "ADD" then
                             if accept "COLUMN" then raise OutsideSubset
                             let parenthesized = symbol '('
-                            let actions = ResizeArray<AlterColumnAction>()
-                            actions.Add(Add(column ()))
-                            if parenthesized then
-                                while symbol ',' do
-                                    RewriteResourceBudget.checkpoint ()
-                                    actions.Add(Add(column ()))
-                                expectSymbol ')'
-                            if actions |> Seq.exists (function Add col -> not col.Nullable | _ -> false) then
+                            let addColumn () = Add(column ())
+                            let actions =
+                                if parenthesized then
+                                    let values = commaSeparated addColumn addColumn
+                                    expectSymbol ')'
+                                    values
+                                else [addColumn ()]
+                            if actions |> List.exists (function Add col -> not col.Nullable | _ -> false) then
                                 raise OutsideSubset
-                            actions |> Seq.toList
+                            actions
                         elif accept "DROP" then
                             if symbol '(' then
-                                let actions = ResizeArray<AlterColumnAction>()
-                                actions.Add(Remove(namePart (), false))
-                                while symbol ',' do
-                                    RewriteResourceBudget.checkpoint ()
-                                    actions.Add(Remove(namePart (), false))
+                                let dropName () = Remove(namePart (), false)
+                                let actions = commaSeparated dropName dropName
                                 expectSymbol ')'
-                                actions |> Seq.toList
+                                actions
                             else
                                 expect "COLUMN"
                                 [Remove(namePart (), false)]
