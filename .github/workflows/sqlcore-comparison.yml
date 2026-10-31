@@ -348,6 +348,59 @@ jobs:
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
               output.write(report)
           PY
+      - name: Compare six-provider Validation proof walks on identical 48-case corpus
+        shell: bash
+        env:
+          DOTNET_TieredCompilation: "0"
+          DOTNET_ReadyToRun: "0"
+        run: |
+          for round in 1 2 3; do
+            if [ "$round" = 2 ]; then order="head base"; else order="base head"; fi
+            for revision in $order; do
+              dotnet run -c Release --no-build --project "$revision/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks" -- \
+                --stage-profile --iterations 12 --warmup 4 --output "artifacts/validation-stage-$revision-$round.json"
+            done
+          done
+          python3 - <<'PY'
+          import json, os, statistics
+          from pathlib import Path
+          root = Path("artifacts")
+          runs = {}
+          for side in ("base", "head"):
+              runs[side] = []
+              for round in (1, 2, 3):
+                  data = json.loads((root / f"validation-stage-{side}-{round}.json").read_text())
+                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
+                  assert len(rows) == 48, (side, round, "six providers x eight cases")
+                  runs[side].append(rows)
+          rows_out = ["### Fully proven Filter + Join validation AST fast-path (three paired rounds)",
+                      "| Dialect / deep AST | Validation allocations candidate/base | Validation time candidate/base |",
+                      "|---|---:|---:|"]
+          keys = set(runs["base"][0])
+          for side in ("base", "head"):
+              assert all(set(one) == keys for one in runs[side])
+          for key in sorted(keys):
+              old = [one[key] for one in runs["base"]]
+              new = [one[key] for one in runs["head"]]
+              assert len({one["OutputDigest"] for one in old + new}) == 1, (key, "Output parity")
+              stages = lambda row: {s["Name"]: s for s in row["Stages"]}
+              assert all(set(stages(row)) == set(stages(old[0])) for row in old + new), key
+              if key[1] not in ("query-derived-32", "query-scalar-32"):
+                  continue
+              ratios = []
+              for metric in ("MedianAllocatedBytes", "MedianMicroseconds"):
+                  before = statistics.median(stages(row)["Validation"][metric] for row in old)
+                  after = statistics.median(stages(row)["Validation"][metric] for row in new)
+                  assert before > 0 and after >= 0, (key, metric, before, after)
+                  ratios.append(f"{after/before:.3f}x")
+              rows_out.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
+          assert len(rows_out) == 15, len(rows_out)
+          report = "\n".join(rows_out) + "\n"
+          print(report)
+          (root / "validation-fastpath-comparison.md").write_text(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(report)
+          PY
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
       - uses: actions/upload-artifact@v4

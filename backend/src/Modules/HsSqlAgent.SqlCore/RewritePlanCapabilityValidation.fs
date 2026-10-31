@@ -76,7 +76,7 @@ module internal RewritePlanCapabilityValidation =
         | DerivedTable(query, _) | LateralDerivedTable(query, _) ->
             proveJoinQuery capabilityMessage proofs query
 
-    let proveJoins capabilityMessage proofs document =
+    let private proveJoinsWhenRequired capabilityMessage proofs document =
         match document.Statement with
         | QueryStatement query -> proveJoinQuery capabilityMessage proofs query
         | InsertStatement insert ->
@@ -90,6 +90,14 @@ module internal RewritePlanCapabilityValidation =
             delete.Ctes |> List.iter (fun cte -> proveJoinQuery capabilityMessage proofs cte.Query)
             delete.Using |> List.iter (proveJoinSource capabilityMessage proofs)
         | MergeStatement _ -> ()
+
+    /// This traversal only checks Right/Full JoinKind capabilities; when
+    /// both are proven, it cannot contribute a further capability rejection.
+    /// A rejected proof retains exactly the old source-order traversal.
+    let proveJoins capabilityMessage (proofs: JoinProofs) document =
+        match proofs.RightJoin, proofs.FullJoin with
+        | ProvenCapability, ProvenCapability -> ()
+        | _ -> proveJoinsWhenRequired capabilityMessage proofs document
 
     let private requireDmlCapability capabilityMessage = function
         | ProvenCapability -> ()
