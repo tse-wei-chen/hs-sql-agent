@@ -7,6 +7,34 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M05 — Nullable SQL Server source UNIQUE + ordinary equality witness (develop only)
+
+- Introduce the **closed F# source-null comparison witness**
+  `AllKeysNotNull | NullableKeysOrdinaryAnsiEquality`; a nullable
+  source UNIQUE index can now support the existing bounded CTE
+  mutation only if a real 1–2 key enabled, unfiltered, built-in-type
+  UNIQUE index exists, there is a mandatory ordinary AND equality
+  graph to nonnullable composite target keys, and the actual live
+  session is `ANSI_NULLS ON`. NULL-containing source tuples
+  cannot match any target under that ordinary equality.
+- Reject `VerifyLive` without an equality target, filtered
+  `IS NOT NULL` indexes, nonunique/disabled/hypothetical keys,
+  partial/OR/COALESCE/CAST/NULL-safe equality and virtual Catalog
+  uniqueness. The source and target type/collation/width checks and
+  full ordered index key metadata remain mandatory.
+- Check `@@OPTIONS` when minting nullable source proof **and**
+  within transaction-held `IsCurrent` before the actual DML;
+  retain immutable schema/rowset/approval fingerprint and
+  index/column nullability digest. ProofIdentity advances to **v8**
+  so an approved v7 plan cannot be replayed.
+- Real SQL Server 2022 RED→GREEN proves nullable source BIGINT,
+  DECIMAL, UUID and BIN2 VARCHAR composite tuples, real NULL
+  nonmatches, UPDATE/DELETE 1–3 CTE/Approval/Commit, revoked
+  physical index and filtered/disabled/nonunique negatives.
+  Six other existing query/DDL semantics and all other five
+  database engines remain unchanged; no added MCP tool,
+  driver, public API, permission or default DML selection.
+
 ### G9 / M04 — exact BIN2 VARCHAR/NVARCHAR physical key proof (develop only)
 
 - Extend the **same** private closed F# SQL Server KeyTuple with
