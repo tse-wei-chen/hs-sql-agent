@@ -526,7 +526,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
     [Theory]
-    [InlineData(true, false, 1, false)]
+    [InlineData(true, false, 1, false, "INT", "BIGINT")]
     [InlineData(false, false, 1, false, "INT", "BIGINT")]
     [InlineData(true, true, 2, false, "INT", "BIGINT")]
     [InlineData(false, true, 3, false, "INT", "BIGINT")]
