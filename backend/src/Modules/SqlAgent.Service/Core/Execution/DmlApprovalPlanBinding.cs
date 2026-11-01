@@ -22,7 +22,7 @@ internal static class DmlApprovalPlanBinding
         Append(hash, plan.PlanFingerprint);
         var mutationFingerprintPolicy =
             plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
-                ? plan.PolicyVersion + "|live-sqlserver-cte-int=" +
+                ? plan.PolicyVersion + "|live-sqlserver-cte-exact-integer=" +
                   plan.SqlServerCteUniqueKeyAssurance.ProofIdentity
                 : plan.PolicyVersion;
         Append(hash, DmlFingerprintService.ComputePlanFingerprint(
