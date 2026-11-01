@@ -106,6 +106,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, true, true, "NONE", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI", "BIGINT")]
     [InlineData(false, false, 3, false, true, "INNER", "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "VARCHAR(24) COLLATE Latin1_General_100_CI_AS")]
     [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI")]
+    // M06: the first CTE reads a bounded, non-lateral derived-table
+    // direct projection, including two independent key renames.
+    // F# must prove cardinality independently of Host live discovery.
+    [InlineData(true, false, 2, false, false, "DERIVED", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DERIVED", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 1, true, false, "DERIVED", "NVARCHAR(32)", "INT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -264,6 +270,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var physicalSource = joined.StartsWith("SELF", StringComparison.Ordinal)
                 ? "dbo.[" + src + "] AS s"
                 : "dbo.[" + src + "]";
+            if (joined == "DERIVED")
+            {
+                physicalSource = "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                    "FROM dbo.[" + src + "] AS innerSrc) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
             var singletonJoin = joined switch
             {
                 "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
@@ -273,7 +285,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" => "",
+                "NONE" or "DERIVED" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
             var cte = "WITH seed AS (SELECT " + firstProjection +
