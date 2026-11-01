@@ -89,9 +89,12 @@ internal static class SqlServerCteLiveProofDiscovery
         && profile.ServerVersion is not null
         && profile.ServerVersion >= new Version(9, 0);
 
-    // The semantic owner is still the F# closed AST. This prefilter intentionally
-    // accepts fewer shapes than the compiler, never more; any ambiguous CLR
-    // form simply declines automatic proof discovery.
+    // The Host extracts only bounded, direct column lineage. It does not
+    // mint executable authority: F# independently proves the ordered key
+    // lineage and the real database verifies physical INT uniqueness.
+    private readonly record struct ProjectionLineage(
+        string OutputName, string PhysicalColumn, int FirstOrdinal);
+
     private static bool TryDescribe(SqlStatement mutation, out Candidate candidate)
     {
         candidate = null!;
@@ -113,17 +116,17 @@ internal static class SqlServerCteLiveProofDiscovery
             || !TryPhysicalTable(target.Name, out var targetTable)
             || sources[0] is not NamedTableSource cteReference
             || !TrySingleName(cteReference.Name, out var referencedName)
-            || !TryBuildDirectKeyChain(
-                ctes, out var cteName, out var outputNames,
-                out var sourceTable, out var sourceKeys)
+            || !TryBuildDirectProjectionChain(
+                ctes, out var cteName, out var outputs, out var sourceTable)
             || !Same(cteName, referencedName)
             || Same(targetTable, sourceTable))
             return false;
 
         var cteQualifier = cteReference.Alias?.Value ?? cteName;
-        // Every tuple component needs a DIFFERENT mandatory ordinary '='.
-        // An OR branch, cast or computed expression cannot contribute an edge.
-        var matchedTargets = new string?[sourceKeys.Length];
+        // Only mandatory AND-connected ordinary '=' edges contribute.
+        // A projected payload may be selected but never substitutes for a
+        // missing key equality, implicit cast, or unverifiable index.
+        var matched = new List<(ProjectionLineage Source, string Target)>();
         var pending = new Stack<SqlExpr>();
         if (predicate is not null) pending.Push(predicate);
         var budget = 256;
@@ -138,42 +141,49 @@ internal static class SqlServerCteLiveProofDiscovery
                 continue;
             }
             if (!SameOperator(binary.Operator, "=")) continue;
-            for (var i = 0; i < outputNames.Length; i++)
+            foreach (var output in outputs)
             {
                 if ((TryTargetKey(binary.Left, targetTable, out var key)
-                     && IsCteKey(binary.Right, cteQualifier, outputNames[i]))
+                     && IsCteKey(binary.Right, cteQualifier, output.OutputName))
                     || (TryTargetKey(binary.Right, targetTable, out key)
-                        && IsCteKey(binary.Left, cteQualifier, outputNames[i])))
+                        && IsCteKey(binary.Left, cteQualifier, output.OutputName)))
                 {
-                    if (matchedTargets[i] is not null) return false;
-                    matchedTargets[i] = key;
+                    if (matched.Any(m => Same(m.Source.PhysicalColumn, output.PhysicalColumn)
+                                         || Same(m.Source.OutputName, output.OutputName)
+                                         || Same(m.Target, key)))
+                        return false;
+                    matched.Add((output, key));
                 }
             }
         }
-        if (matchedTargets.Any(k => k is null)
-            || matchedTargets.Distinct(StringComparer.Ordinal).Count() != sourceKeys.Length)
-            return false;
 
+        if (matched.Count is < 1 or > 2) return false;
+        // The original physical projection order is preserved in the
+        // attested tuple; sys.index_columns.key_ordinal verifies that exact
+        // order. Payload positions do not become index components.
+        var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
         candidate = new Candidate(targetTable,
-            matchedTargets.Select(k => k!).ToImmutableArray(),
-            sourceTable, sourceKeys);
+            ordered.Select(m => m.Target).ToImmutableArray(),
+            sourceTable,
+            ordered.Select(m => m.Source.PhysicalColumn).ToImmutableArray());
         return true;
     }
 
     /// <summary>
-    /// Closed ordinal-preserving INT key chain through one to three CTEs.
-    /// The two-element form is intentionally narrower than general payload
-    /// projection. Reordered, duplicated, computed and omitted keys fail closed.
+    /// Closed one-to-three-hop CTE projection chain. Extra direct columns
+    /// may appear beside the keys, but cannot introduce a join, grouping,
+    /// duplicate alias, expression or another physical row source.
+    /// Physical column lineage is preserved even when payload is omitted
+    /// by a later hop. All output names remain unambiguous.
     /// </summary>
-    private static bool TryBuildDirectKeyChain(
+    private static bool TryBuildDirectProjectionChain(
         ImmutableArray<CteDefinition> ctes,
-        out string finalCte, out ImmutableArray<string> finalKeys,
-        out string physicalTable, out ImmutableArray<string> physicalKeys)
+        out string finalCte, out ImmutableArray<ProjectionLineage> finalColumns,
+        out string physicalTable)
     {
         finalCte = "";
-        finalKeys = ImmutableArray<string>.Empty;
+        finalColumns = ImmutableArray<ProjectionLineage>.Empty;
         physicalTable = "";
-        physicalKeys = ImmutableArray<string>.Empty;
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < ctes.Length; i++)
         {
@@ -188,14 +198,12 @@ internal static class SqlServerCteLiveProofDiscovery
                 || select.Having is not null || select.OrderBy.Length != 0
                 || select.Limit.HasValue || select.Offset.HasValue
                 || select.FetchPercent.HasValue || select.FetchWithTies
-                || select.Select.Length is < 1 or > 2
+                || select.Select.Length is < 1 or > 32
                 || select.From is not NamedTableSource input
-                || (i > 0 && select.Select.Length != finalKeys.Length)
                 || (!cte.ColumnAliases.IsDefaultOrEmpty
                     && cte.ColumnAliases.Length != select.Select.Length))
                 return false;
 
-            string[] inputKeys = new string[select.Select.Length];
             if (i == 0)
             {
                 if (!TryPhysicalTable(input.Name, out physicalTable))
@@ -205,42 +213,51 @@ internal static class SqlServerCteLiveProofDiscovery
                      || !Same(namedCte, finalCte))
                 return false;
 
-            var nextKeys = ImmutableArray.CreateBuilder<string>(select.Select.Length);
-            for (var j = 0; j < select.Select.Length; j++)
+            var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
+            var usedOutputs = new HashSet<string>(StringComparer.Ordinal);
+            var usedInputs = new HashSet<string>(StringComparer.Ordinal);
+            var qualifier = input.Alias?.Value ?? (i == 0
+                ? physicalTable.Split('.')[1]
+                : finalCte);
+            foreach (var (item, ordinal) in select.Select.Select((item, ordinal) => (item, ordinal)))
             {
-                if (select.Select[j].Expression is not ColumnExpr keyColumn)
+                if (item.Expression is not ColumnExpr column)
                     return false;
 
-                string inputKey;
+                string physicalColumn;
+                int firstOrdinal;
+                string inputName;
                 if (i == 0)
                 {
-                    if (!TryPhysicalKey(keyColumn.Name, input, out inputKey))
+                    if (!TryPhysicalKey(column.Name, input, out inputName))
                         return false;
+                    physicalColumn = inputName;
+                    firstOrdinal = ordinal;
                 }
                 else
                 {
-                    inputKey = finalKeys[j];
-                    var qualifier = input.Alias?.Value ?? finalCte;
-                    if (!TrySelectedKey(keyColumn.Name, inputKey, qualifier))
+                    var previous = finalColumns.FirstOrDefault(p =>
+                        TrySelectedKey(column.Name, p.OutputName, qualifier));
+                    if (string.IsNullOrEmpty(previous.OutputName))
                         return false;
+                    inputName = previous.OutputName;
+                    physicalColumn = previous.PhysicalColumn;
+                    firstOrdinal = previous.FirstOrdinal;
                 }
 
-                var outputKey = cte.ColumnAliases.IsDefaultOrEmpty
-                    ? select.Select[j].Alias?.Value ?? inputKey
-                    : TrySingleName(cte.ColumnAliases[j], out var columnAlias)
+                var output = cte.ColumnAliases.IsDefaultOrEmpty
+                    ? item.Alias?.Value ?? inputName
+                    : TrySingleName(cte.ColumnAliases[ordinal], out var columnAlias)
                         ? columnAlias : "";
-                if (!SafeName(outputKey)) return false;
-                inputKeys[j] = inputKey;
-                nextKeys.Add(outputKey);
+                if (!SafeName(output) || !usedOutputs.Add(output)
+                    || !usedInputs.Add(inputName))
+                    return false;
+                next.Add(new ProjectionLineage(output, physicalColumn, firstOrdinal));
             }
-            if (inputKeys.Distinct(StringComparer.Ordinal).Count() != inputKeys.Length
-                || nextKeys.Distinct(StringComparer.Ordinal).Count() != nextKeys.Count)
-                return false;
-            if (i == 0) physicalKeys = inputKeys.ToImmutableArray();
             finalCte = cteName;
-            finalKeys = nextKeys.MoveToImmutable();
+            finalColumns = next.MoveToImmutable();
         }
-        return !string.IsNullOrEmpty(physicalTable) && !physicalKeys.IsDefaultOrEmpty;
+        return !string.IsNullOrEmpty(physicalTable) && !finalColumns.IsDefaultOrEmpty;
     }
 
     private static bool TrySelectedKey(
