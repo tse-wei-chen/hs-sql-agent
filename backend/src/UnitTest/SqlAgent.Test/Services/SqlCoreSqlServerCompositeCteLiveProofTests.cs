@@ -193,6 +193,23 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
                         db, wrongTypedSnapshot, target, new[] { "k1", "k2" },
                         source, new[] { "k1", "k2" }));
+                // Correct source UUID family is still not permission to
+                // misdeclare the target UUID as Numeric.
+                var wrongTargetSnapshot = new SqlSchemaSnapshot(
+                    SqlAgentToolType.MsSqlServer, "g9-wrong-target-family", [
+                        SqlSchemaTable.WithTypes(target, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        SqlSchemaTable.WithTypes(source, [
+                            new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                                ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                                ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
+                    ]);
+                Assert.Throws<ArgumentException>(() =>
+                    SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                        db, wrongTargetSnapshot, target, new[] { "k1", "k2" },
+                        source, new[] { "k1", "k2" }));
             }
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
@@ -446,6 +463,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("source-decimal")]
     [InlineData("source-float")]
     [InlineData("source-uuid")]
+    [InlineData("target-uuid")]
     [InlineData("decimal-precision-mismatch")]
     [InlineData("decimal-scale-mismatch")]
     [InlineData("numeric-vs-int")]
@@ -494,6 +512,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "target-decimal" => "DECIMAL(20,0)",
                     "target-smallint" => "SMALLINT",
                     "target-tinyint" => "TINYINT",
+                    "target-uuid" => "UNIQUEIDENTIFIER",
                     "decimal-precision-mismatch" => "DECIMAL(12,2)",
                     "decimal-scale-mismatch" => "DECIMAL(12,2)",
                     "decimal-vs-bigint" => "BIGINT",
