@@ -20,16 +20,18 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
 {
     [Theory]
-    [InlineData(true, true, 1)]
-    [InlineData(true, false, 1)]
-    [InlineData(false, true, 1)]
-    [InlineData(false, false, 1)]
-    [InlineData(true, true, 2)]
-    [InlineData(false, true, 2)]
-    [InlineData(true, false, 3)]
-    [InlineData(false, false, 3)]
+    [InlineData(true, true, 1, false)]
+    [InlineData(true, false, 1, false)]
+    [InlineData(false, true, 1, false)]
+    [InlineData(false, false, 1, false)]
+    [InlineData(true, true, 2, false)]
+    [InlineData(false, true, 2, false)]
+    [InlineData(true, false, 3, false)]
+    [InlineData(false, false, 3, false)]
+    [InlineData(true, false, 1, true)]
+    [InlineData(false, false, 3, true)]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
-        bool update, bool primaryKey, int hops)
+        bool update, bool primaryKey, int hops, bool revokeBeforeCommit)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -200,13 +202,28 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var preview = await coordinator.PreviewAsync(
                 cs, plan, "g7-composite-approver", ct, serverVersion);
             Assert.Equal(3, preview.AffectedRows);
-            var committed = await coordinator.CommitAsync(
-                cs, plan, preview.Challenge, "g7-composite-approver", ct, serverVersion);
-            Assert.True(committed.Committed);
-            await using (var cmd = new SqlCommand(
-                "SELECT COUNT(*) FROM dbo.[" + dst + "]", db))
+            if (revokeBeforeCommit)
             {
-                Assert.Equal(update ? 3 : 0, Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)));
+                // Preview/approval already happened. Removing physical
+                // uniqueness must invalidate the exact same plan when the
+                // commit transaction rechecks live index metadata.
+                Assert.False(primaryKey);
+                await Exec("DROP INDEX [" + idx + "] ON dbo.[" + src + "]");
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    coordinator.CommitAsync(cs, plan, preview.Challenge,
+                        "g7-composite-approver", ct, serverVersion));
+                await using var unchanged = new SqlCommand(
+                    "SELECT COUNT(*) FROM dbo.[" + dst + "] WHERE label = 'old'", db);
+                Assert.Equal(3, Convert.ToInt32(await unchanged.ExecuteScalarAsync(ct)));
+            }
+            else
+            {
+                var committed = await coordinator.CommitAsync(
+                    cs, plan, preview.Challenge, "g7-composite-approver", ct, serverVersion);
+                Assert.True(committed.Committed);
+                await using var count = new SqlCommand(
+                    "SELECT COUNT(*) FROM dbo.[" + dst + "]", db);
+                Assert.Equal(update ? 3 : 0, Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
             }
             if (primaryKey)
             {
@@ -217,7 +234,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 Assert.False(string.IsNullOrWhiteSpace(pk));
                 await Exec("ALTER TABLE dbo.[" + src + "] DROP CONSTRAINT [" + pk + "]");
             }
-            else
+            else if (!revokeBeforeCommit)
                 await Exec("DROP INDEX [" + idx + "] ON dbo.[" + src + "]");
 
             await using var recheck = (SqlTransaction)await db.BeginTransactionAsync(ct);
