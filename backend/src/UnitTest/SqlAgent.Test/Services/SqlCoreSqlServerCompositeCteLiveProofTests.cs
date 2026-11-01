@@ -251,6 +251,88 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
 
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("nonunique")]
+    [InlineData("filtered")]
+    [InlineData("disabled")]
+    [InlineData("nullable")]
+    [InlineData("source-bigint")]
+    [InlineData("target-bigint")]
+    [InlineData("computed")]
+    public async Task CompositeLiveMetadataRejectsUnprovenIndexAndOperandTypes(string shape)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("Composite SQL Server negative metadata tests require a real database.");
+            Assert.Skip("Real SQL Server required.");
+        }
+
+        var ct = TestContext.Current.CancellationToken;
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var src = "g7_negsrc_" + id;
+        var dst = "g7_negdst_" + id;
+        var idx = "g7_negidx_" + id;
+        await using var db = new SqlConnection(cs);
+        for (var retry = 0; ; retry++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (retry < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string sql)
+        {
+            await using var command = new SqlCommand(sql, db);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + dst + "] (k1 INT NOT NULL, k2 " +
+                (shape == "target-bigint" ? "BIGINT" : "INT") + " NOT NULL)");
+            var sourceDefinition = shape switch
+            {
+                "nullable" => "k1 INT NOT NULL, k2 INT NULL",
+                "source-bigint" => "k1 INT NOT NULL, k2 BIGINT NOT NULL",
+                "computed" => "k1 INT NOT NULL, k2 AS (k1 + 1) PERSISTED",
+                _ => "k1 INT NOT NULL, k2 INT NOT NULL"
+            };
+            await Exec("CREATE TABLE dbo.[" + src + "] (" + sourceDefinition + ")");
+            if (shape != "missing")
+            {
+                var unique = shape == "nonunique" ? "" : "UNIQUE ";
+                var predicate = shape == "filtered" ? " WHERE k2 > 0" : "";
+                await Exec("CREATE " + unique + "INDEX [" + idx + "] ON dbo.[" +
+                    src + "] (k1, k2)" + predicate);
+            }
+            if (shape == "disabled")
+                await Exec("ALTER INDEX [" + idx + "] ON dbo.[" + src + "] DISABLE");
+
+            // A seemingly matching caller-declared Numeric snapshot must
+            // never override real sys.* index keys and physical data types.
+            var snapshot = new SqlSchemaSnapshot(
+                SqlAgentToolType.MsSqlServer, "g7-negative-metadata", [
+                    SqlSchemaTable.WithTypes("dbo." + dst, [
+                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                    SqlSchemaTable.WithTypes("dbo." + src, [
+                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)])
+                ]);
+            Assert.Throws<InvalidOperationException>(() =>
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    db, snapshot, "dbo." + dst, new[] { "k1", "k2" },
+                    "dbo." + src, new[] { "k1", "k2" }));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + src + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + dst + "]");
+        }
+    }
+
     private sealed class SqlServerConnectionFactory : IDbConnectionFactory
     {
         public DbConnection Create(string connectionString) => new SqlConnection(connectionString);
