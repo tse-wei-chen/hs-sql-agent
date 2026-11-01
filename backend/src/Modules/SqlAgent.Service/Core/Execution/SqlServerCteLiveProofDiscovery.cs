@@ -57,17 +57,25 @@ internal static class SqlServerCteLiveProofDiscovery
         // The proof's snapshot is only a tightly scoped identity/type
         // witness. This never becomes an invented full-table schema snapshot,
         // and never suppresses the ordinary optional live schema verifier.
-        var boundedTables = new List<SqlSchemaTable>
+        // An existing immutable snapshot is validated by F# against the
+        // physical unique-key catalog below. Only discover key families
+        // when the Host must create the bounded snapshot: do not add
+        // redundant metadata round trips to explicit-snapshot callers.
+        var snapshot = context.SchemaSnapshot;
+        if (snapshot is null)
         {
-            PhysicalKeyTable(metadataConnection, candidate.TargetTable, candidate.TargetKeys),
-            PhysicalKeyTable(metadataConnection, candidate.SourceTable, candidate.SourceKeys)
-        };
-        if (candidate.JoinedTable is not null)
-            boundedTables.Add(PhysicalKeyTable(
-                metadataConnection, candidate.JoinedTable, candidate.JoinedKeys));
-        var snapshot = context.SchemaSnapshot ?? new SqlSchemaSnapshot(
-            SqlAgentToolType.MsSqlServer,
-            "host-discovered-sqlserver-cte-exact-key-v3", boundedTables);
+            var boundedTables = new List<SqlSchemaTable>
+            {
+                PhysicalKeyTable(metadataConnection, candidate.TargetTable, candidate.TargetKeys),
+                PhysicalKeyTable(metadataConnection, candidate.SourceTable, candidate.SourceKeys)
+            };
+            if (candidate.JoinedTable is not null)
+                boundedTables.Add(PhysicalKeyTable(
+                    metadataConnection, candidate.JoinedTable, candidate.JoinedKeys));
+            snapshot = new SqlSchemaSnapshot(
+                SqlAgentToolType.MsSqlServer,
+                "host-discovered-sqlserver-cte-exact-key-v3", boundedTables);
+        }
 
         // This is the ONLY authority minting operation. It independently
         // verifies both physical, per-ordinal exact integer or fixed-decimal
