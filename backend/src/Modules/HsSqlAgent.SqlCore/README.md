@@ -3600,14 +3600,18 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
-## G9 / M04 — SQL Server exact physical integer KeyTuple (unreleased)
+## G9 / M04 — SQL Server exact physical integer and fixed-decimal KeyTuple (unreleased)
 
 This **development-only** capability extends the already-proven SQL Server
 2005+ CTE-prefixed native UPDATE/DELETE source-row cardinality proof.
 One or two unique-key ordinals can use **built-in TINYINT, SMALLINT, INT
-or BIGINT**, including mixed ordered pairs such as `(SMALLINT, TINYINT)`,
-`(INT, BIGINT)` and `(TINYINT, BIGINT)`. The F# proof owns a
-private, closed `UInt8 | Int16 | Int32 | Int64` physical key-kind algebra,
+or BIGINT**, or an exactly attested `DECIMAL(p,s)` / `NUMERIC(p,s)`
+physical key (`1 ≤ p ≤ 38`, `0 ≤ s ≤ p`), including mixed ordered
+pairs such as `(SMALLINT, TINYINT)`, `(INT, BIGINT)`,
+`(DECIMAL(12,2), INT)` and `(NUMERIC(18,4), DECIMAL(38,0))`.
+The F# proof owns a private, closed
+`UInt8 | Int16 | Int32 | Int64 | FixedDecimal(precision,scale)`
+physical key-kind algebra,
 never a user-supplied string tag or a parsed/virtual Catalog execution grant.
 `TINYINT` is SQL Server's unsigned 8-bit physical integer, distinct from
 signed `SMALLINT` (16-bit), `INT` (32-bit) and `BIGINT` (64-bit).
@@ -3619,11 +3623,19 @@ names are obtained from live `sys.index_columns`, `sys.columns` and
 `sys.types`; the Host does not infer physical authority from a
 generic `Numeric` schema type. A source `INT` joined to a target
 `BIGINT` is **not** accepted, even where SQL Server would implicitly
-promote values. `DECIMAL`, `NUMERIC`, `FLOAT`, `REAL`,
-`UNIQUEIDENTIFIER`, user-defined alias types and computed/nullable source
-key components are **not** included in this proof. Live `sys.types`
-metadata must identify each key column as a built-in type; a custom
-alias named like a built-in type cannot manufacture uniqueness evidence.
+promote values. For `DECIMAL` and `NUMERIC`, SQL Server's two
+synonyms are normalized to the same sealed `FixedDecimal(p,s)`
+type **only when both actual physical precision and scale match
+exactly** at every source, target and independently joined key
+position. Different `p` or `s`, implicit widening, decimal-to-integer,
+`FLOAT`, `REAL`, `MONEY`, `UNIQUEIDENTIFIER`, user-defined alias
+types and computed/nullable source key components are **not** included.
+The Host reads `sys.columns.precision`/`scale` and the built-in
+identity from `sys.types`; virtual `Numeric` classifications never
+mint physical uniqueness. All physical composite index key columns
+must be accounted for **before** testing whether a supported subset is
+unique: `UNIQUE(a,b)` never proves `UNIQUE(a)` when `b` has an
+unrecognized alias type.
 
 The same closed F# AST validator verifies mandatory ordinary `AND`/`=`
 equality across every key, direct 1–3-hop CTE projection, bounded inert
@@ -3633,7 +3645,7 @@ approval fingerprint use a **versioned physical proof identity** including
 ordered key kinds; a pending older INT-only approval is never replayed
 against the widened type contract. Before committing native DML,
 `IsCurrent(actualConnection, actualTransaction)` re-attests the same
-server, database GUID, physical index, key types/order and metadata
+server, database GUID, physical index, key types/precision/scale/order and metadata
 digest under transaction-held locks.
 
 ```sql
@@ -3650,8 +3662,9 @@ WHERE dbo.TargetRows.tenant_id = proven.tenant
 ```
 
 SQL Server 2022 live CI covers primary/unique indexes, UPDATE and
-DELETE, 8/16/32/64-bit physical key kinds, 64-bit values beyond
-2,147,483,647, mixed-ordinal keys,
+DELETE, 8/16/32/64-bit and exact fixed-decimal physical key kinds,
+64-bit values beyond 2,147,483,647, fractional values,
+precision/scale-mismatch rejections, mixed-ordinal keys,
 1–3 CTE hops, proof-preserving JOINs, Host auto-discovery,
 physical preview/approval/commit parity and index revocation.
 This does not broaden the other five database providers, grant a

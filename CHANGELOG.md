@@ -7,6 +7,32 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M04 — exact SQL Server fixed-decimal physical keys (develop only)
+
+- Extend the same private F# closed physical KeyTuple to
+  `FixedDecimal(precision, scale)` for built-in SQL Server `DECIMAL(p,s)`
+  and `NUMERIC(p,s)` (SQL synonyms), with `1 ≤ p ≤ 38`, `0 ≤ s ≤ p`.
+  The source UNIQUE index, target comparison and any independently
+  attested secondary JOIN index must agree at **every exact physical
+  precision and scale**. A generic Catalog `Numeric` classification,
+  implicit decimal rounding/widening, user-defined alias or mixed
+  DECIMAL/INT equality cannot confer proof.
+- Retain every physical index key ordinal before examining its type;
+  this closes a potential false one-key uniqueness inference from a
+  composite index with unsupported user-alias component. Preserve
+  live metadata digest, transaction-held schema locks, Preview,
+  row-set identity, independent Approval and `IsCurrent` re-attestation.
+  Version immutable ProofIdentity to v5 so v4 approval evidence
+  cannot authorize expanded decimal-key plans.
+- SQL Server 2022 TDD covers 1–3 CTE hops, UPDATE/DELETE,
+  fractional values, mixed DECIMAL/NUMERIC and integer key tuples,
+  singleton/self/dual-physical JOINs, correct source/target identity,
+  revoked physical index and negative precision/scale/cast/alias-index
+  cases. Existing 4 built-in integer kinds remain fully supported.
+- Backend and seven-locale docs **develop** only, no main/release,
+  MCP tool, driver, public API or new permissions. UUID, text, nullable
+  UNIQUE and arbitrary multi-join still fail closed.
+
 ### G9 / M04 — exact 8/16-bit physical key kinds (develop only)
 
 - Extend SQL Server's private, closed physical KeyTuple algebra from
