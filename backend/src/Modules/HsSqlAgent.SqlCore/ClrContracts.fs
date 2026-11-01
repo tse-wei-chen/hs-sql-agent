@@ -1297,11 +1297,16 @@ type SqlServerCteUniqueKeyAssurance private (
         ArgumentNullException.ThrowIfNull sourceKeys
         ArgumentNullException.ThrowIfNull joinedKeys
         SqlServerCteUniqueKeyAssurance.Parts "joinedTable" joinedTable |> ignore
+        // IReadOnlyList does not imply immutable backing storage. Freeze
+        // all ordinals once before the two independent metadata reads.
+        let target = targetKeys |> Seq.toArray
+        let source = sourceKeys |> Seq.toArray
+        let joined = joinedKeys |> Seq.toArray
         if StringComparer.OrdinalIgnoreCase.Equals(joinedTable, sourceTable)
            || StringComparer.OrdinalIgnoreCase.Equals(joinedTable, targetTable)
-           || targetKeys.Count <> sourceKeys.Count
-           || joinedKeys.Count <> sourceKeys.Count
-           || sourceKeys.Count < 1 || sourceKeys.Count > 2 then
+           || target.Length <> source.Length
+           || joined.Length <> source.Length
+           || source.Length < 1 || source.Length > 2 then
             invalidArg "joinedTable" "Cross-table proof needs three distinct physical tables and equal 1-2 key widths."
         let create (target: string) (keys: System.Collections.Generic.IReadOnlyList<string>)
                    (source: string) (sourceKey: System.Collections.Generic.IReadOnlyList<string>) =
@@ -1311,11 +1316,11 @@ type SqlServerCteUniqueKeyAssurance private (
             else
                 SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
                     connection, snapshot, target, keys, source, sourceKey)
-        let primary = create targetTable targetKeys sourceTable sourceKeys
+        let primary = create targetTable target sourceTable source
         // The secondary proof compares the JOINed key's exact type
         // at every ordinal against the primary physical key, not merely
         // Numeric and not an implicitly coerced SQL expression.
-        let secondary = create sourceTable sourceKeys joinedTable joinedKeys
+        let secondary = create sourceTable source joinedTable joined
         if not (StringComparer.Ordinal.Equals(primary.ServerInstanceName, secondary.ServerInstanceName))
            || primary.DatabaseGuid <> secondary.DatabaseGuid
            || primary.DatabaseId <> secondary.DatabaseId
