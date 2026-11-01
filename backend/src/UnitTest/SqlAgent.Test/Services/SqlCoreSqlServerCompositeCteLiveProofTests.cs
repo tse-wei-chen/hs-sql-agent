@@ -669,7 +669,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("unicode-varchar")]
     [InlineData("varchar-max-target")]
     [InlineData("char-not-proven")]
-    [InlineData("source-nullable")]
+    [InlineData("source-nullable-filtered")]
     [InlineData("wrong-source-snapshot")]
     [InlineData("wrong-target-snapshot")]
     [InlineData("filtered-index")]
@@ -724,9 +724,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 " COLLATE " + targetCollation + " NOT NULL, label VARCHAR(20))");
             await Exec("CREATE TABLE dbo.[" + src + "] (k " + sourceType +
                 " COLLATE " + sourceCollation +
-                (variant == "source-nullable" ? " NULL)" : " NOT NULL)"));
+                (variant == "source-nullable-filtered" ? " NULL)" : " NOT NULL)"));
             await Exec("CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + src + "] (k)" +
-                (variant == "filtered-index" ? " WHERE k IS NOT NULL" : ""));
+                (variant is "filtered-index" or "source-nullable-filtered" ? " WHERE k IS NOT NULL" : ""));
             if (variant == "disabled-index")
                 await Exec("ALTER INDEX [" + index + "] ON dbo.[" + src + "] DISABLE");
             var sourceKind = variant == "wrong-source-snapshot"
