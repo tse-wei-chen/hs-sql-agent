@@ -85,7 +85,7 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.Equal("dbo." + target, proof.TargetTable);
             Assert.Equal("dbo." + source, proof.SourceTable);
             Assert.Equal("id", proof.SourceKeyColumn);
-            Assert.Contains("sqlserver-live-exact-key-v7", proof.ProofIdentity);
+            Assert.Contains("sqlserver-live-exact-key-v8", proof.ProofIdentity);
             Assert.Contains("source-key-types=" + type, proof.ProofIdentity);
             Assert.False(string.IsNullOrWhiteSpace(proof.ProofIdentity));
 
@@ -113,6 +113,76 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.Throws<InvalidOperationException>(() =>
                 SqlServerCteUniqueKeyAssurance.VerifyLive(db, snapshot,
                     "dbo." + target, "dbo." + source, "id"));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
+
+
+    [Fact]
+    public async Task NullableSingleColumnUniqueNeedsProvenTargetEqualityAndLiveAnsiSession()
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("Nullable source UNIQUE proof requires actual SQL Server.");
+            Assert.Skip("SQL Server 2022 required.");
+        }
+        var token = TestContext.Current.CancellationToken;
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var source = "m05_single_s_" + id;
+        var target = "m05_single_t_" + id;
+        var index = "m05_single_uq_" + id;
+        await using var db = new SqlConnection(cs);
+        for (var attempt = 0; ; attempt++)
+        {
+            try { await db.OpenAsync(token); break; }
+            catch (SqlException) when (attempt < 24 && !token.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), token); }
+        }
+        async Task Exec(string sql)
+        {
+            await using var cmd = new SqlCommand(sql, db);
+            await cmd.ExecuteNonQueryAsync(token);
+        }
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + target +
+                "] (id INT NOT NULL PRIMARY KEY)");
+            await Exec("CREATE TABLE dbo.[" + source +
+                "] (id INT NULL)");
+            await Exec("CREATE UNIQUE INDEX [" + index +
+                "] ON dbo.[" + source + "] (id)");
+            await Exec("INSERT INTO dbo.[" + source + "] (id) VALUES (1), (NULL)");
+            var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "m05-single-null", [
+                    SqlSchemaTable.WithTypes("dbo." + target,
+                        [new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric)]),
+                    SqlSchemaTable.WithTypes("dbo." + source,
+                        [new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric)])
+                ]);
+            // The old non-joined API has no mandatory source->target
+            // equality graph. It must NOT mint nullable authority.
+            Assert.Throws<InvalidOperationException>(() =>
+                SqlServerCteUniqueKeyAssurance.VerifyLive(
+                    db, snapshot, "dbo." + target, "dbo." + source, "id"));
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, snapshot, "dbo." + target, "id", "dbo." + source, "id");
+            Assert.Contains("source-key-null-semantics=ordinary-ansi-on",
+                proof.ProofIdentity, StringComparison.Ordinal);
+            await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(token))
+            {
+                Assert.True(proof.IsCurrent(db, tx));
+                await tx.RollbackAsync(token);
+            }
+            await Exec("DROP INDEX [" + index + "] ON dbo.[" + source + "]");
+            await using var staleTx = (SqlTransaction)await db.BeginTransactionAsync(token);
+            Assert.False(proof.IsCurrent(db, staleTx));
+            await staleTx.RollbackAsync(token);
         }
         finally
         {

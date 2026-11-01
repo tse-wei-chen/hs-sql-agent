@@ -3600,6 +3600,52 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M05 — nullable source UNIQUE keys under ordinary ANSI equality (develop only)
+
+An **unfiltered, enabled, physical SQL Server UNIQUE index** may contain
+nullable source key columns while still guaranteeing no two rows with
+the same complete indexed tuple. For the bounded CTE UPDATE/DELETE
+proof, those keys now receive a separate sealed F# null-comparison
+witness `NullableKeysOrdinaryAnsiEquality` **only** when there is
+an actual target key comparison and the attesting connection has
+`ANSI_NULLS ON` (checked with `@@OPTIONS`). With an ordinary
+mandatory `AND` graph of `target.key = CTE.source_key` comparisons,
+any NULL source component evaluates to UNKNOWN and **cannot match**
+a target row. `NULL` is not rewritten to a sentinel and no NULL-safe
+comparison is permitted by this proof.
+
+The Host must still obtain live `sys.indexes`/`sys.index_columns`
+provenance for **every** ordered 1–2 key position; the F# proof
+checks built-in exact source/target SQL kinds, the complete index
+(no filter, no disabled/hypothetical/non-unique index, no computed
+key), typed source snapshot consistency, and a pinned database/schema
+metadata digest. The source may contain NULL; the target in a composite
+proof remains **nonnullable**. The separate non-joined `VerifyLive`
+API cannot attest nullable source keys because it lacks a proven
+target equality graph. The independently attested multi-physical
+JOIN still needs its existing exact target-side nullability contract.
+
+`ANSI_NULLS ON` is attested when a source nullable proof is minted
+**and again on the actual connection/transaction used for Commit**.
+Only a complete, ordinary `=` expression graph from the existing
+closed F# AST is eligible. Filtered UNIQUE (`WHERE key IS NOT NULL`),
+nonunique or disabled indexes, `OR`, `COALESCE`, casts,
+`IS [NOT] DISTINCT FROM`, fake Catalog uniqueness or any
+cross-provider implicit equivalence remain fail-closed. The
+transaction-held `IsCurrent` rechecks session options, real index
+metadata, nullability and database identity. ProofIdentity advances
+to **v8** and invalidates v7 approvals.
+
+Real SQL Server 2022 RED→GREEN tests cover nullable BIGINT,
+DECIMAL(12,2), UNIQUEIDENTIFIER and BIN2 VARCHAR(24) components in
+exact composite source UNIQUE keys, 1–3 CTE hops, UPDATE/DELETE,
+NULL source rows that cannot match, independent Preview→Approval→Commit,
+index withdrawal after preview, and wrong/filtered/nonunique/
+disabled/null-safe predicates. Existing six-dialect grammar/baseline
+contracts remain unchanged. No new public API, driver, MCP tool,
+default DML selection or SQL execution path. Backend/site
+`develop` only; this feature is **unreleased**.
+
 ## G9 / M04 — SQL Server exact BIN2 text key proof (develop only)
 
 The closed F# SQL Server physical KeyTuple now supports built-in
