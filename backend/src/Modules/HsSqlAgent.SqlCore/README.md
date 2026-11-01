@@ -3550,6 +3550,56 @@ preview/approval/commit, physical row parity, post-preview secondary
 index revocation and negative catalog proof (missing/nonunique/
 filtered/disabled/reversed/nullable/computed/wrong width).
 
+## M07 — correlated EXISTS / NOT EXISTS row-filter proof (SQL Server)
+
+A SQL Server CTE-prefixed `UPDATE` / `DELETE` can include an
+`EXISTS` (semi-join) or `NOT EXISTS` (anti-join) in the **first
+CTE's WHERE**, but only under a bounded, key-correlated contract:
+
+```sql
+WITH seed AS (
+    SELECT s.k1 AS a, s.k2 AS b
+    FROM dbo.SourceRows AS s
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM dbo.SourceRows AS checkrow
+        WHERE checkrow.k1 = s.k1
+          AND checkrow.k2 = s.k2
+          AND checkrow.payload = 11
+    )
+)
+DELETE FROM dbo.TargetRows
+FROM seed
+WHERE dbo.TargetRows.k1 = seed.a
+  AND dbo.TargetRows.k2 = seed.b;
+```
+
+The subquery may only read the **same already live-attested physical
+source table**, with a distinct alias. It must select exactly one
+literal, without a second join, set operations, aggregates, grouping,
+ordering, CTEs, TOP/LIMIT or extra row sources. The inner WHERE
+requires ordinary mandatory `AND`-connected equality on **all**
+components of the physical 1- or 2-column `INT`/`BIGINT`
+unique-key tuple, and may include additional inner-column-to-literal
+equality filters. No coercion, computed key, duplicate/missing key
+predicate, `OR`-only correlation or unverified third table qualifies.
+
+The cardinality proof is that EXISTS/NOT EXISTS can only retain or
+remove primary source rows, never multiply them. SQL Server Host
+discovery independently validates the restricted CLR AST; the closed
+F# compiler verifies the matching key graph and outer-row scope.
+Both reuse the original source-index and target-column live key
+attestation, bounded affected-row preview, approval challenge and
+commit-time `IsCurrent` under transaction-held metadata locks.
+Removing the source index after preview makes the approval stale.
+
+Only the first CTE's whole `WHERE EXISTS/NOT EXISTS` gains this
+special proof. Subsequent CTEs remain bounded direct projections.
+General correlated subqueries, arbitrary EXISTS predicates, another
+physical filter source and any arbitrary multi-table anti-join need
+their own independent evidence. Five other providers and default MCP
+tool selection are unchanged.
+
 ## G9 / M04 — SQL Server exact physical INT/BIGINT KeyTuple (unreleased)
 
 This **development-only** capability extends the already-proven SQL Server

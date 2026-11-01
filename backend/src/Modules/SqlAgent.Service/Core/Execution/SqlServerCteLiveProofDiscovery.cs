@@ -173,6 +173,27 @@ internal static class SqlServerCteLiveProofDiscovery
         // attested tuple; sys.index_columns.key_ordinal verifies that exact
         // order. Payload positions do not become index components.
         var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
+        // The Host's initial shape check cannot choose the key tuple.
+        // Once the actual outer target equality establishes its ordered
+        // components, independently require the correlated EXISTS filter
+        // to contain EXACTLY those physical source keys.
+        if (ctes[0].Query is SelectStatement filteredFirst
+            && filteredFirst.From is NamedTableSource filteredRoot
+            && filteredRoot.Alias is not null)
+        {
+            var semi = filteredFirst.Where switch
+            {
+                ExistsExpr e => e,
+                UnaryExpr u when SameOperator(u.Operator, "NOT")
+                                 && u.Operand is ExistsExpr e => e,
+                _ => null
+            };
+            if (semi is not null
+                && !ProvenCorrelatedKeyExists(
+                    semi, filteredRoot.Alias.Value, sourceTable,
+                    ordered.Select(m => m.Source.PhysicalColumn).ToArray()))
+                return false;
+        }
         string? joinedTable = null;
         var joinedKeys = ImmutableArray<string>.Empty;
         if (ctes[0].Query is SelectStatement first
@@ -250,6 +271,10 @@ internal static class SqlServerCteLiveProofDiscovery
                         || HasDistinctPhysicalJoinShape(input, join, knownPhysicalTable)))))
                 return false;
 
+            if (select.Where is not null &&
+                !SafeCteFilter(select.Where, input, i, knownPhysicalTable))
+                return false;
+
             var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
             var usedOutputs = new HashSet<string>(StringComparer.Ordinal);
             var usedInputs = new HashSet<string>(StringComparer.Ordinal);
@@ -295,6 +320,175 @@ internal static class SqlServerCteLiveProofDiscovery
             finalColumns = next.MoveToImmutable();
         }
         return !string.IsNullOrEmpty(physicalTable) && !finalColumns.IsDefaultOrEmpty;
+    }
+
+    // EXISTS and NOT EXISTS are row filters, never row multipliers. For
+    // this first M07 predicate boundary, only a correlated, full-key
+    // EXISTS over the already live-attested physical source is admitted.
+    // Other query-bearing predicates cannot borrow its unique index.
+    private static bool SafeCteFilter(
+        SqlExpr predicate, NamedTableSource root, int hop,
+        string physicalSource)
+    {
+        if (predicate is ExistsExpr exists)
+        {
+            if (hop != 0 || root.Alias is null
+                || !SafeName(root.Alias.Value))
+                return false;
+            // The whole WHERE must be the semi-/anti-join predicate.
+            // A separate SQL expression around EXISTS needs a distinct
+            // proof of deterministic Boolean behavior.
+            return ProvenCorrelatedKeyExists(exists, root.Alias.Value, physicalSource);
+        }
+        if (predicate is UnaryExpr unary && SameOperator(unary.Operator, "NOT")
+            && unary.Operand is ExistsExpr negated)
+            return hop == 0 && root.Alias is not null
+                && ProvenCorrelatedKeyExists(negated, root.Alias.Value, physicalSource);
+        return !ContainsQueryPredicate(predicate);
+    }
+
+    private static bool ContainsQueryPredicate(SqlExpr expr)
+    {
+        var todo = new Stack<SqlExpr>();
+        todo.Push(expr);
+        var budget = 256;
+        while (todo.Count > 0)
+        {
+            if (--budget < 0) return true;
+            switch (todo.Pop())
+            {
+                case ExistsExpr:
+                case SubqueryExpr:
+                    return true;
+                case UnaryExpr unary:
+                    todo.Push(unary.Operand);
+                    break;
+                case BinaryExpr binary:
+                    todo.Push(binary.Right);
+                    todo.Push(binary.Left);
+                    break;
+                case FunctionCallExpr function:
+                    foreach (var arg in function.Arguments) todo.Push(arg);
+                    foreach (var order in function.AggregateOrderBy)
+                        todo.Push(order.Expression);
+                    break;
+                case RegexExpr regex:
+                    todo.Push(regex.Value);
+                    todo.Push(regex.Pattern);
+                    break;
+                case PostgresJsonAccessExpr json:
+                    todo.Push(json.Value);
+                    break;
+                case FilterExpr filter:
+                    todo.Push(filter.Expression);
+                    todo.Push(filter.Predicate);
+                    break;
+                case WindowedExpr windowed:
+                    todo.Push(windowed.Expression);
+                    foreach (var part in windowed.Window.PartitionBy) todo.Push(part);
+                    foreach (var order in windowed.Window.OrderBy)
+                        todo.Push(order.Expression);
+                    break;
+                case CastExpr cast:
+                    todo.Push(cast.Expression);
+                    break;
+                case ExtractExpr extract:
+                    todo.Push(extract.Expression);
+                    break;
+                case CaseExpr @case:
+                    foreach (var branch in @case.Branches)
+                    {
+                        todo.Push(branch.Condition);
+                        todo.Push(branch.Value);
+                    }
+                    if (@case.ElseExpression is not null)
+                        todo.Push(@case.ElseExpression);
+                    break;
+                case InExpr @in:
+                    todo.Push(@in.Value);
+                    foreach (var item in @in.Items) todo.Push(item);
+                    break;
+                case BetweenExpr between:
+                    todo.Push(between.Value);
+                    todo.Push(between.Lower);
+                    todo.Push(between.Upper);
+                    break;
+                case IsNullExpr isNull:
+                    todo.Push(isNull.Value);
+                    break;
+                case ColumnExpr:
+                case HsSqlAgent.SqlCore.Core.Binding.BoundColumnExpr:
+                case LiteralExpr:
+                case IntervalExpr:
+                    break;
+                // Unknown CLR expression classes must not conceal a
+                // correlated/subquery read under an attested key proof.
+                default:
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    private static bool ProvenCorrelatedKeyExists(
+        ExistsExpr predicate, string outerAlias, string physicalSource,
+        IReadOnlyList<string>? requiredKeys = null)
+    {
+        if (predicate.Query is not SelectStatement query
+            || query.Ctes.Length != 0 || query.Joins.Length != 0
+            || query.From is not NamedTableSource filtered
+            || filtered.Alias is null || !SafeName(filtered.Alias.Value)
+            || Same(outerAlias, filtered.Alias.Value)
+            || !TryPhysicalTable(filtered.Name, out var table)
+            || !Same(table, physicalSource)
+            || query.Select.Length != 1
+            || query.Select[0].Expression is not LiteralExpr
+            || query.Distinct || query.DistinctOn.Length != 0
+            || query.GroupBy.Length != 0 || query.Having is not null
+            || query.OrderBy.Length != 0 || query.Limit.HasValue
+            || query.Offset.HasValue || query.FetchPercent.HasValue
+            || query.FetchWithTies || query.Where is null)
+            return false;
+
+        var pair = new HashSet<string>(StringComparer.Ordinal);
+        var inner = filtered.Alias.Value;
+        var pending = new Stack<SqlExpr>();
+        pending.Push(query.Where);
+        var budget = 256;
+        while (pending.Count > 0)
+        {
+            if (--budget < 0) return false;
+            if (pending.Pop() is not BinaryExpr binary)
+                return false;
+            if (SameOperator(binary.Operator, "AND"))
+            {
+                pending.Push(binary.Left);
+                pending.Push(binary.Right);
+                continue;
+            }
+            if (!SameOperator(binary.Operator, "="))
+                return false;
+            if (TryAliasKey(binary.Left, inner, out var innerName)
+                && TryAliasKey(binary.Right, outerAlias, out var outerName)
+                || TryAliasKey(binary.Right, inner, out innerName)
+                && TryAliasKey(binary.Left, outerAlias, out outerName))
+            {
+                if (!Same(innerName, outerName) || !pair.Add(innerName))
+                    return false;
+            }
+            else if (!((TryAliasKey(binary.Left, inner, out _)
+                      && binary.Right is LiteralExpr)
+                       || (TryAliasKey(binary.Right, inner, out _)
+                           && binary.Left is LiteralExpr)))
+                return false;
+        }
+        // Require the whole attested key equality; physical columns are
+        // chosen by live index proof, never a caller-provided name list.
+        return pair.Count is >= 1 and <= 2
+               && pair.All(SafeName)
+               && (requiredKeys is null
+                   || (requiredKeys.Count == pair.Count
+                       && requiredKeys.All(pair.Contains)));
     }
 
     // The second physical table is not trusted until an independent

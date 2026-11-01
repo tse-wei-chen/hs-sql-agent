@@ -683,6 +683,115 @@ module internal RewriteStages =
                     | _ -> ()
                 not duplicate && (seen |> Array.forall id)
             | _ -> false
+        // A correlated EXISTS/NOT EXISTS is a Boolean filter, never a
+        // row source. In this first executable subset, it can read only
+        // the SAME physically attested table and must correlate by every
+        // key ordinal using direct ordinary AND-connected equality.
+        // Any extra subquery predicate is a direct inner column/literal
+        // equality, never a computed expression or volatile source.
+        let provenCorrelatedExists (outerAlias: string) (query: Query) =
+            let outerKey field name =
+                match Expr.unspan field with
+                | Column identifier
+                | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
+                    match Identifier.parts identifier with
+                    | [owner; column] ->
+                        same owner.Value outerAlias && same column.Value name
+                    | _ -> false
+                | _ -> false
+            let inner = query.Head
+            match inner.From with
+            | Some(NamedTable(physical, Some innerAlias))
+                when qualified physical proof.SourceTable
+                     && not (same outerAlias innerAlias.Value)
+                     && query.SetOperations.IsEmpty
+                     && query.OrderBy.IsEmpty
+                     && query.Limit.IsNone && query.Offset.IsNone
+                     && query.FetchPercent.IsNone && not query.FetchWithTies
+                     && inner.Ctes.IsEmpty && inner.Joins.IsEmpty
+                     && inner.GroupBy.IsEmpty && inner.Having.IsNone
+                     && inner.DistinctMode = SelectDistinct.AllRows
+                     && (match inner.Projection with
+                         | [{ Expression = projected }] ->
+                             match Expr.unspan projected with
+                             | Literal _ -> true
+                             | _ -> false
+                         | _ -> false) ->
+                let keys = proof.SourceKeyColumns |> Seq.toArray
+                let proven = Array.create keys.Length false
+                let pending = ResizeArray<Expr>()
+                inner.Where |> Option.iter pending.Add
+                let mutable valid = inner.Where.IsSome
+                let mutable work = 256
+                while valid && pending.Count > 0 do
+                    RewriteResourceBudget.checkpoint ()
+                    work <- work - 1
+                    if work < 0 then valid <- false
+                    else
+                        let at = pending.Count - 1
+                        let node = pending.[at]
+                        pending.RemoveAt(at)
+                        match Expr.unspan node with
+                        | Binary(BinaryOperator.And, l, r) ->
+                            pending.Add l
+                            pending.Add r
+                        | Binary(BinaryOperator.Equal, l, r) ->
+                            let mutable matched = false
+                            for i = 0 to keys.Length - 1 do
+                                if (isColumn l innerAlias.Value keys.[i]
+                                    && outerKey r keys.[i])
+                                   || (isColumn r innerAlias.Value keys.[i]
+                                       && outerKey l keys.[i]) then
+                                    if proven.[i] then valid <- false
+                                    else proven.[i] <- true
+                                    matched <- true
+                            if not matched then
+                                match Expr.unspan l, Expr.unspan r with
+                                | (Literal _, (Column _ | BoundColumn _))
+                                | ((Column _ | BoundColumn _), Literal _) ->
+                                    let field =
+                                        match Expr.unspan l with
+                                        | Literal _ -> r
+                                        | _ -> l
+                                    match Expr.unspan field with
+                                    | Column id
+                                    | BoundColumn(id, ColumnBinding.LocalRowSource) ->
+                                        match Identifier.parts id with
+                                        | [a; _] when same a.Value innerAlias.Value -> ()
+                                        | _ -> valid <- false
+                                    | _ -> valid <- false
+                                | _ -> valid <- false
+                        | _ -> valid <- false
+                valid && (proven |> Array.forall id)
+            | _ -> false
+        let validCteFilter index (head: Select) =
+            match head.Where with
+            | None -> true
+            | Some expression ->
+                let rootAlias =
+                    match head.From with
+                    | Some(NamedTable(name, Some alias))
+                        when index = 0 && qualified name proof.SourceTable ->
+                            Some alias.Value
+                    | _ -> None
+                match Expr.unspan expression, rootAlias with
+                | Exists(query, _), Some alias ->
+                    provenCorrelatedExists alias query
+                | Unary(UnaryOperator.Not, nested), Some alias ->
+                    match Expr.unspan nested with
+                    | Exists(query, _) -> provenCorrelatedExists alias query
+                    | _ ->
+                        // Ordinary NOT on a query-free predicate was already
+                        // supported; don't accidentally regress its grammar.
+                        not (RewriteAstTraversal.exists true (function
+                            | Exists _ | InSubquery _ | ScalarSubquery _ -> true
+                            | _ -> false) expression)
+                | _ ->
+                    // Do not let nested subqueries hide in OR, CASE or a
+                    // derived value and borrow a source-key proof.
+                    not (RewriteAstTraversal.exists true (function
+                        | Exists _ | InSubquery _ | ScalarSubquery _ -> true
+                        | _ -> false) expression)
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
@@ -801,6 +910,7 @@ module internal RewriteStages =
                            || (index = 0 && (provenPhysicalSelfJoin head join
                                               || provenDistinctPhysicalJoin head join))))
                        || not head.GroupBy.IsEmpty || head.Having.IsSome
+                       || not (validCteFilter index head)
                        || head.DistinctMode <> SelectDistinct.AllRows
                        || directProjection.IsNone then
                         valid <- false
