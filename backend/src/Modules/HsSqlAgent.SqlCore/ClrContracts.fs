@@ -865,6 +865,16 @@ type SqliteUpdateFromKeyAssurance private (
         SqliteUpdateFromKeyAssurance(
             snapshot, snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
 
+/// An ordered, sealed source/target physical INT key tuple. Construction is
+/// restricted to the live attestation module; this is not a public CLR DTO.
+type private SqlServerIntKeyTuple = private SqlServerIntKeyTuple of string array
+
+module private SqlServerIntKeyTuple =
+    let ofAttested (columns: string array) =
+        SqlServerIntKeyTuple(Array.copy columns)
+
+    let values (SqlServerIntKeyTuple columns) = columns
+
 /// SQL Server source-key evidence is minted from its live sys.* catalog,
 /// never from a caller-supplied Virtual Catalog, schema name or SQL text.
 /// An explicit transaction must retain schema locks until the caller commits.
@@ -873,8 +883,8 @@ type SqlServerCteUniqueKeyAssurance private (
     pinnedSnapshot: SqlSchemaSnapshot,
     targetTable: string,
     sourceTable: string,
-    sourceKeyColumns: string array,
-    targetKeyColumns: string array,
+    sourceKeyTuple: SqlServerIntKeyTuple,
+    targetKeyTuple: SqlServerIntKeyTuple option,
     databaseId: int,
     serverInstanceName: string,
     databaseName: string,
@@ -884,6 +894,11 @@ type SqlServerCteUniqueKeyAssurance private (
     uniqueIndexId: int,
     uniqueIndexName: string,
     metadataDigest: string) =
+    let sourceKeyColumns = SqlServerIntKeyTuple.values sourceKeyTuple
+    let targetKeyColumns =
+        targetKeyTuple
+        |> Option.map SqlServerIntKeyTuple.values
+        |> Option.defaultValue [||]
 
     member _.SchemaSha256 = pinnedSnapshot.Sha256
     member _.TargetTable = targetTable
@@ -1165,7 +1180,8 @@ type SqlServerCteUniqueKeyAssurance private (
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable, [|sourceKeyColumn|], [||], false)
         SqlServerCteUniqueKeyAssurance(
-            snapshot, targetTable, sourceTable, [|sourceKeyColumn|], [||],
+            snapshot, targetTable, sourceTable,
+            SqlServerIntKeyTuple.ofAttested [|sourceKeyColumn|], None,
             dbId, liveServer, liveName, liveGuid,
             sourceId, targetId, indexId, indexName, digest)
 
@@ -1188,7 +1204,9 @@ type SqlServerCteUniqueKeyAssurance private (
                 connection, null, snapshot, targetTable, sourceTable,
                 [|sourceKeyColumn|], [|targetKeyColumn|], false)
         SqlServerCteUniqueKeyAssurance(
-            snapshot, targetTable, sourceTable, [|sourceKeyColumn|], [|targetKeyColumn|],
+            snapshot, targetTable, sourceTable,
+            SqlServerIntKeyTuple.ofAttested [|sourceKeyColumn|],
+            Some(SqlServerIntKeyTuple.ofAttested [|targetKeyColumn|]),
             dbId, liveServer, liveName, liveGuid,
             sourceId, targetId, indexId, indexName, digest)
 
@@ -1214,7 +1232,9 @@ type SqlServerCteUniqueKeyAssurance private (
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable, source, target, false)
         SqlServerCteUniqueKeyAssurance(
-            snapshot, targetTable, sourceTable, source, target,
+            snapshot, targetTable, sourceTable,
+            SqlServerIntKeyTuple.ofAttested source,
+            Some(SqlServerIntKeyTuple.ofAttested target),
             dbId, liveServer, liveName, liveGuid,
             sourceId, targetId, indexId, indexName, digest)
 
