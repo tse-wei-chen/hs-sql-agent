@@ -7,6 +7,27 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M04 — exact 8/16-bit physical key kinds (develop only)
+
+- Extend SQL Server's private, closed physical KeyTuple algebra from
+  `INT` / `BIGINT` to **built-in `TINYINT` (unsigned 8-bit) and
+  `SMALLINT` (signed 16-bit)**. Each source UNIQUE index, target
+  comparison column and independently attested JOIN key must match
+  its corresponding physical SQL type exactly; conversions and alias
+  user types cannot mint a proof.
+- Preserve live `sys.*` index ordinal/type/identity evidence, bounded
+  CTE lineage, singleton/self/second-table JOIN proof, row-set
+  preview, independent approval and same-transaction `IsCurrent` recheck.
+  The exact proof identity advances to v4 to prevent older approval
+  evidence from being replayed across this expanded physical type model.
+- SQL Server 2022 RED→GREEN coverage adds UPDATE/DELETE, primary/
+  unique keys, mixed SMALLINT/TINYINT/INT/BIGINT ordinals, 1–3 CTE
+  hops, direct payload, preview→approval→commit, post-preview index
+  revocation, independent second-table JOIN and wrong-type denial.
+- **Unreleased**: No new MCP tool, driver, permissions or other
+  provider semantics. DECIMAL, UUID, nullable source UNIQUE and
+  unproven conversion/JOIN shapes remain fail-closed.
+
 ### M07 — correlated semi-/anti-join filters on one attested source (develop only)
 
 - Allow **EXISTS/NOT EXISTS** as a first-CTE WHERE filter in native SQL

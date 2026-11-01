@@ -867,16 +867,22 @@ type SqliteUpdateFromKeyAssurance private (
 
 /// Closed physical SQL Server key kind: conversion is not a uniqueness proof.
 type private SqlServerExactIntegerKind =
+    | UInt8
+    | Int16
     | Int32
     | Int64
 
 module private SqlServerExactIntegerKind =
     let fromPhysical (sqlType: string) =
-        if StringComparer.OrdinalIgnoreCase.Equals(sqlType, "int") then Some Int32
+        if StringComparer.OrdinalIgnoreCase.Equals(sqlType, "tinyint") then Some UInt8
+        elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "smallint") then Some Int16
+        elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "int") then Some Int32
         elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "bigint") then Some Int64
         else None
 
     let label = function
+        | UInt8 -> "TINYINT"
+        | Int16 -> "SMALLINT"
         | Int32 -> "INT"
         | Int64 -> "BIGINT"
 
@@ -947,7 +953,7 @@ type SqlServerCteUniqueKeyAssurance private (
         joinedProof |> Option.map (fun proof -> proof.ProofIdentity)
         |> Option.defaultValue null
     member _.ProofIdentity =
-        String.Join("|", [| "sqlserver-live-exact-integer-v3"; pinnedSnapshot.Sha256;
+        String.Join("|", [| "sqlserver-live-exact-integer-v4"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumns.[0];
@@ -1095,7 +1101,7 @@ type SqlServerCteUniqueKeyAssurance private (
             |> Seq.map (fun col -> col.Name)
             |> Set.ofSeq
         if sourceKeys |> Array.exists (fun key -> not (physicalSnapshotKeys.Contains key)) then
-            invalidArg "snapshot" "Every source INT/BIGINT key must be typed Numeric in the immutable schema snapshot."
+            invalidArg "snapshot" "Every source exact integer key must be typed Numeric in the immutable schema snapshot."
         if pin then
             // TABLE S lock + HOLDLOCK lasts for the SAME explicit transaction;
             // DDL requires Sch-M and is blocked until commit or rollback.
@@ -1142,7 +1148,9 @@ type SqlServerCteUniqueKeyAssurance private (
                     """SELECT c.name, typ.name, c.is_computed, c.is_nullable
                        FROM sys.columns c JOIN sys.types typ
                          ON typ.user_type_id = c.user_type_id
-                       WHERE c.object_id = @objectId AND c.name = @key""")
+                       WHERE c.object_id = @objectId AND c.name = @key
+                         AND typ.is_user_defined = 0
+                         AND typ.user_type_id = typ.system_type_id""")
                 SqlServerCteUniqueKeyAssurance.Bind typeCommand "@objectId" (box targetId)
                 SqlServerCteUniqueKeyAssurance.Bind typeCommand "@key" key
                 use reader = typeCommand.ExecuteReader()
@@ -1157,7 +1165,7 @@ type SqlServerCteUniqueKeyAssurance private (
                     invalidOp "SQL Server target key is not an exact noncomputed physical operand."
                 match SqlServerExactIntegerKind.fromPhysical physicalType with
                 | Some kind -> kind
-                | None -> invalidOp "SQL Server target key is not a built-in INT or BIGINT.")
+                | None -> invalidOp "SQL Server target key must be a built-in exact TINYINT/SMALLINT/INT/BIGINT.")
         use indexCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx (
                 """SELECT i.index_id, i.name, ic.key_ordinal, c.name,
@@ -1169,6 +1177,8 @@ type SqlServerCteUniqueKeyAssurance private (
                      AND c.column_id = ic.column_id
                    JOIN sys.types typ ON typ.user_type_id = c.user_type_id
                    WHERE i.object_id = @objectId
+                     AND typ.is_user_defined = 0
+                     AND typ.user_type_id = typ.system_type_id
                      AND i.is_unique = 1 AND i.is_disabled = 0
                      AND i.is_hypothetical = 0 AND i.has_filter = 0
                      AND i.type IN (1, 2) AND ic.key_ordinal > 0
@@ -1205,7 +1215,7 @@ type SqlServerCteUniqueKeyAssurance private (
         let indexId, indexName, sourceKinds =
             match matching with
             | Some value -> value
-            | None -> invalidOp "SQL Server live physical UNIQUE key requires exact ordered INT/BIGINT kinds matching the target."
+            | None -> invalidOp "SQL Server live physical UNIQUE key requires exact ordered built-in integer kinds matching the target."
         let sha256 = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()
         databaseId, serverInstanceName, databaseName, databaseGuid,
         sourceId, targetId, indexId, indexName, sha256, sourceKinds, targetKinds

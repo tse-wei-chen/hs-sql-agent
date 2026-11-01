@@ -3600,14 +3600,17 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
-## G9 / M04 — SQL Server exact physical INT/BIGINT KeyTuple (unreleased)
+## G9 / M04 — SQL Server exact physical integer KeyTuple (unreleased)
 
 This **development-only** capability extends the already-proven SQL Server
 2005+ CTE-prefixed native UPDATE/DELETE source-row cardinality proof.
-One or two unique-key ordinals can now be either **built-in INT or BIGINT**,
-including mixed ordered pairs such as `(INT, BIGINT)`. The F# proof owns a
-private, closed `Int32 | Int64` physical key-kind algebra, never a
-user-supplied string tag or a parsed/virtual Catalog execution grant.
+One or two unique-key ordinals can use **built-in TINYINT, SMALLINT, INT
+or BIGINT**, including mixed ordered pairs such as `(SMALLINT, TINYINT)`,
+`(INT, BIGINT)` and `(TINYINT, BIGINT)`. The F# proof owns a
+private, closed `UInt8 | Int16 | Int32 | Int64` physical key-kind algebra,
+never a user-supplied string tag or a parsed/virtual Catalog execution grant.
+`TINYINT` is SQL Server's unsigned 8-bit physical integer, distinct from
+signed `SMALLINT` (16-bit), `INT` (32-bit) and `BIGINT` (64-bit).
 
 **Every physical key position** of the enabled, unfiltered, noncomputed,
 nonnullable source UNIQUE index must match the corresponding target
@@ -3616,9 +3619,11 @@ names are obtained from live `sys.index_columns`, `sys.columns` and
 `sys.types`; the Host does not infer physical authority from a
 generic `Numeric` schema type. A source `INT` joined to a target
 `BIGINT` is **not** accepted, even where SQL Server would implicitly
-promote values. `DECIMAL`, `NUMERIC`, `SMALLINT`, `FLOAT`,
-`REAL`, `UNIQUEIDENTIFIER`, alias types and computed/nullable key
-components are **not** included in this proof.
+promote values. `DECIMAL`, `NUMERIC`, `FLOAT`, `REAL`,
+`UNIQUEIDENTIFIER`, user-defined alias types and computed/nullable source
+key components are **not** included in this proof. Live `sys.types`
+metadata must identify each key column as a built-in type; a custom
+alias named like a built-in type cannot manufacture uniqueness evidence.
 
 The same closed F# AST validator verifies mandatory ordinary `AND`/`=`
 equality across every key, direct 1–3-hop CTE projection, bounded inert
@@ -3645,7 +3650,8 @@ WHERE dbo.TargetRows.tenant_id = proven.tenant
 ```
 
 SQL Server 2022 live CI covers primary/unique indexes, UPDATE and
-DELETE, 64-bit values beyond 2,147,483,647, mixed-ordinal keys,
+DELETE, 8/16/32/64-bit physical key kinds, 64-bit values beyond
+2,147,483,647, mixed-ordinal keys,
 1–3 CTE hops, proof-preserving JOINs, Host auto-discovery,
 physical preview/approval/commit parity and index revocation.
 This does not broaden the other five database providers, grant a
