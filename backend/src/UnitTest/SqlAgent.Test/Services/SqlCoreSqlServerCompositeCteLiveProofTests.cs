@@ -149,7 +149,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var auto = Assert.IsType<SqlServerCteUniqueKeyAssurance>(
                 plan.SqlServerCteUniqueKeyAssurance);
             Assert.Equal(new[] { "k1", "k2" }, auto.SourceKeyColumns);
-            Assert.Equal(proof.ProofIdentity, auto.ProofIdentity);
+            // The manually declared snapshot and Host's bounded auto-
+            // discovered snapshot have deliberately different identities.
+            // Compare physical, ordered key facts instead of treating their
+            // independent snapshot hashes as interchangeable proof tokens.
+            Assert.NotEqual(proof.SchemaSha256, auto.SchemaSha256);
+            Assert.Equal(proof.DatabaseGuid, auto.DatabaseGuid);
+            Assert.Equal(proof.ServerInstanceName, auto.ServerInstanceName);
+            Assert.Equal(proof.UniqueIndexName, auto.UniqueIndexName);
+            Assert.Equal(new[] { "k1", "k2" }, auto.TargetKeyColumns);
             DmlCoordinator.ValidatePlan(plan);
             var coordinator = new DmlCoordinator(new SqlServerConnectionFactory());
             var serverVersion = db.ServerVersion.Trim();
