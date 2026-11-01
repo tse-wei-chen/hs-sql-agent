@@ -20,40 +20,50 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
 {
     [Theory]
-    [InlineData(true, true, 1, false, false, "NONE")]
-    [InlineData(true, false, 1, false, false, "NONE")]
-    [InlineData(false, true, 1, false, false, "NONE")]
-    [InlineData(false, false, 1, false, false, "NONE")]
-    [InlineData(true, true, 2, false, false, "NONE")]
-    [InlineData(false, true, 2, false, false, "NONE")]
-    [InlineData(true, false, 3, false, false, "NONE")]
-    [InlineData(false, false, 3, false, false, "NONE")]
-    [InlineData(true, false, 1, true, false, "NONE")]
-    [InlineData(false, false, 3, true, false, "NONE")]
-    [InlineData(true, true, 1, false, true, "NONE")]
-    [InlineData(false, false, 1, false, true, "NONE")]
-    [InlineData(true, false, 2, false, true, "NONE")]
-    [InlineData(false, true, 2, false, true, "NONE")]
-    [InlineData(true, true, 3, false, true, "NONE")]
-    [InlineData(false, false, 3, false, true, "NONE")]
-    [InlineData(true, false, 2, true, true, "NONE")]
-    [InlineData(false, false, 3, true, true, "NONE")]
-    [InlineData(true, true, 1, false, true, "CROSS")]
-    [InlineData(false, false, 1, false, true, "CROSS")]
-    [InlineData(true, false, 2, false, true, "INNER")]
-    [InlineData(false, true, 2, false, true, "INNER")]
-    [InlineData(true, true, 3, false, true, "LEFT")]
-    [InlineData(false, false, 3, false, true, "LEFT")]
-    [InlineData(true, false, 2, true, true, "CROSS")]
-    [InlineData(false, false, 3, true, true, "INNER")]
-    [InlineData(true, true, 1, false, true, "SELF")]
-    [InlineData(false, false, 1, false, true, "SELF")]
-    [InlineData(true, false, 2, false, true, "SELF_LEFT")]
-    [InlineData(false, true, 3, false, true, "SELF_LEFT")]
-    [InlineData(true, false, 2, true, true, "SELF")]
-    [InlineData(false, false, 3, true, true, "SELF_LEFT")]
+    [InlineData(true, true, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, false, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, true, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, false, 1, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, true, 2, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, true, 2, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, false, 3, false, false, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, false, false, "NONE", "INT", "INT")]
+    [InlineData(true, false, 1, true, false, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, true, false, "NONE", "INT", "INT")]
+    [InlineData(true, true, 1, false, true, "NONE", "INT", "INT")]
+    [InlineData(false, false, 1, false, true, "NONE", "INT", "INT")]
+    [InlineData(true, false, 2, false, true, "NONE", "INT", "INT")]
+    [InlineData(false, true, 2, false, true, "NONE", "INT", "INT")]
+    [InlineData(true, true, 3, false, true, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, false, true, "NONE", "INT", "INT")]
+    [InlineData(true, false, 2, true, true, "NONE", "INT", "INT")]
+    [InlineData(false, false, 3, true, true, "NONE", "INT", "INT")]
+    [InlineData(true, true, 1, false, true, "CROSS", "INT", "INT")]
+    [InlineData(false, false, 1, false, true, "CROSS", "INT", "INT")]
+    [InlineData(true, false, 2, false, true, "INNER", "INT", "INT")]
+    [InlineData(false, true, 2, false, true, "INNER", "INT", "INT")]
+    [InlineData(true, true, 3, false, true, "LEFT", "INT", "INT")]
+    [InlineData(false, false, 3, false, true, "LEFT", "INT", "INT")]
+    [InlineData(true, false, 2, true, true, "CROSS", "INT", "INT")]
+    [InlineData(false, false, 3, true, true, "INNER", "INT", "INT")]
+    [InlineData(true, true, 1, false, true, "SELF", "INT", "INT")]
+    [InlineData(false, false, 1, false, true, "SELF", "INT", "INT")]
+    [InlineData(true, false, 2, false, true, "SELF_LEFT", "INT", "INT")]
+    [InlineData(false, true, 3, false, true, "SELF_LEFT", "INT", "INT")]
+    [InlineData(true, false, 2, true, true, "SELF", "INT", "INT")]
+    [InlineData(false, false, 3, true, true, "SELF_LEFT", "INT", "INT")]
+    // G9/M04: 64-bit exact SQL Server 2022 physical key types.
+    [InlineData(true, true, 1, false, false, "NONE", "BIGINT", "BIGINT")]
+    [InlineData(false, false, 2, false, true, "NONE", "BIGINT", "BIGINT")]
+    [InlineData(true, false, 3, false, true, "SELF", "INT", "BIGINT")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "BIGINT", "INT")]
+    [InlineData(true, false, 2, false, true, "INNER", "BIGINT", "BIGINT")]
+    [InlineData(false, false, 1, false, true, "CROSS", "BIGINT", "INT")]
+    [InlineData(true, false, 3, true, false, "NONE", "BIGINT", "BIGINT")]
+    [InlineData(false, false, 2, true, true, "SELF", "BIGINT", "INT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
-        bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload, string joined)
+        bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
+        string joined, string k1Type, string k2Type)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -84,16 +94,21 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         try
         {
             await Exec("CREATE TABLE dbo.[" + dst +
-                "] (k1 INT NOT NULL, k2 INT NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
+                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type
+                + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + src +
-                "] (k1 INT NOT NULL, k2 INT NOT NULL, payload INT NOT NULL" +
+                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type
+                + " NOT NULL, payload INT NOT NULL" +
                 (primaryKey ? ", PRIMARY KEY (k1,k2)" : "") + ")");
             if (!primaryKey)
                 await Exec("CREATE UNIQUE INDEX [" + idx + "] ON dbo.[" + src + "] (k1,k2)");
+            // Actual 64-bit values distinguish BIGINT from ordinary INT.
+            var first = k1Type == "BIGINT" ? 2147483649L : 1L;
+            var second = k2Type == "BIGINT" ? 2147483649L : 1L;
             await Exec("INSERT INTO dbo.[" + dst +
-                "] (k1,k2,label) VALUES (1,1,'old'),(1,2,'old'),(2,1,'old')");
+                $"] (k1,k2,label) VALUES ({first},{second},'old'),({first},{second + 1},'old'),({first + 1},{second},'old')");
             await Exec("INSERT INTO dbo.[" + src +
-                "] (k1,k2,payload) VALUES (1,1,11),(1,2,12),(2,1,21)");
+                $"] (k1,k2,payload) VALUES ({first},{second},11),({first},{second + 1},12),({first + 1},{second},21)");
 
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
                 "g7-composite-live-v1", [
@@ -113,6 +128,10 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             Assert.Equal(new[] { "k1", "k2" }, proof.TargetKeyColumns);
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
+            Assert.Contains("source-key-types=" + k1Type + "," + k2Type,
+                proof.ProofIdentity, StringComparison.Ordinal);
+            Assert.Contains("target-key-types=" + k1Type + "," + k2Type,
+                proof.ProofIdentity, StringComparison.Ordinal);
 
             var profile = new SqlProviderCapabilityProfile(
                 SqlAgentToolType.MsSqlServer, new Version(16, 0));
@@ -269,8 +288,8 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             metadata.Setup(x => x.GetColumnsAsync("g7-metadata", "dbo", dst,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync([
-                    new DatabaseColumnMetadata("dbo", dst, "k1", "int", true, 1),
-                    new DatabaseColumnMetadata("dbo", dst, "k2", "int", true, 2),
+                    new DatabaseColumnMetadata("dbo", dst, "k1", k1Type, true, 1),
+                    new DatabaseColumnMetadata("dbo", dst, "k2", k2Type, true, 2),
                     new DatabaseColumnMetadata("dbo", dst, "label", "varchar", false)
                 ]);
             var plan = await new DmlPlanFactory(metadata.Object)
@@ -349,8 +368,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("filtered")]
     [InlineData("disabled")]
     [InlineData("nullable")]
+    // Opposite-side BIGINT without exact counterpart stays denied.
     [InlineData("source-bigint")]
     [InlineData("target-bigint")]
+    [InlineData("source-smallint")]
+    [InlineData("source-decimal")]
+    [InlineData("source-float")]
+    [InlineData("source-uuid")]
+    [InlineData("target-decimal")]
+    [InlineData("target-smallint")]
     [InlineData("computed")]
     public async Task CompositeLiveMetadataRejectsUnprovenIndexAndOperandTypes(string shape)
     {
@@ -383,11 +409,21 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         try
         {
             await Exec("CREATE TABLE dbo.[" + dst + "] (k1 INT NOT NULL, k2 " +
-                (shape == "target-bigint" ? "BIGINT" : "INT") + " NOT NULL)");
+                (shape switch
+                {
+                    "target-bigint" => "BIGINT",
+                    "target-decimal" => "DECIMAL(20,0)",
+                    "target-smallint" => "SMALLINT",
+                    _ => "INT"
+                }) + " NOT NULL)");
             var sourceDefinition = shape switch
             {
                 "nullable" => "k1 INT NOT NULL, k2 INT NULL",
                 "source-bigint" => "k1 INT NOT NULL, k2 BIGINT NOT NULL",
+                "source-smallint" => "k1 INT NOT NULL, k2 SMALLINT NOT NULL",
+                "source-decimal" => "k1 INT NOT NULL, k2 DECIMAL(20,0) NOT NULL",
+                "source-float" => "k1 INT NOT NULL, k2 FLOAT NOT NULL",
+                "source-uuid" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
                 "computed" => "k1 INT NOT NULL, k2 AS (k1 + 1) PERSISTED",
                 _ => "k1 INT NOT NULL, k2 INT NOT NULL"
             };

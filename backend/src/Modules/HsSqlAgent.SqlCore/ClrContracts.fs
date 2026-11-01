@@ -865,15 +865,33 @@ type SqliteUpdateFromKeyAssurance private (
         SqliteUpdateFromKeyAssurance(
             snapshot, snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
 
-/// An ordered, sealed source/target physical INT key tuple. Construction is
-/// restricted to the live attestation module; this is not a public CLR DTO.
-type private SqlServerIntKeyTuple = private SqlServerIntKeyTuple of string array
+/// Closed physical SQL Server key kind: conversion is not a uniqueness proof.
+type private SqlServerExactIntegerKind =
+    | Int32
+    | Int64
 
-module private SqlServerIntKeyTuple =
-    let ofAttested (columns: string array) =
-        SqlServerIntKeyTuple(Array.copy columns)
+module private SqlServerExactIntegerKind =
+    let fromPhysical (sqlType: string) =
+        if StringComparer.OrdinalIgnoreCase.Equals(sqlType, "int") then Some Int32
+        elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "bigint") then Some Int64
+        else None
 
-    let values (SqlServerIntKeyTuple columns) = columns
+    let label = function
+        | Int32 -> "INT"
+        | Int64 -> "BIGINT"
+
+/// Only real sys.* evidence can create this ordered physical name/type tuple.
+type private SqlServerExactIntegerKeyTuple =
+    private SqlServerExactIntegerKeyTuple of (string * SqlServerExactIntegerKind) array
+
+module private SqlServerExactIntegerKeyTuple =
+    let ofAttested (columns: string array) (kinds: SqlServerExactIntegerKind array) =
+        if columns.Length <> kinds.Length then
+            invalidArg "kinds" "The attested source/target key ordinal must bind one physical SQL kind."
+        SqlServerExactIntegerKeyTuple(Array.zip columns kinds)
+
+    let values (SqlServerExactIntegerKeyTuple pairs) = pairs |> Array.map fst
+    let kinds (SqlServerExactIntegerKeyTuple pairs) = pairs |> Array.map snd
 
 /// SQL Server source-key evidence is minted from its live sys.* catalog,
 /// never from a caller-supplied Virtual Catalog, schema name or SQL text.
@@ -883,8 +901,8 @@ type SqlServerCteUniqueKeyAssurance private (
     pinnedSnapshot: SqlSchemaSnapshot,
     targetTable: string,
     sourceTable: string,
-    sourceKeyTuple: SqlServerIntKeyTuple,
-    targetKeyTuple: SqlServerIntKeyTuple option,
+    sourceKeyTuple: SqlServerExactIntegerKeyTuple,
+    targetKeyTuple: SqlServerExactIntegerKeyTuple option,
     databaseId: int,
     serverInstanceName: string,
     databaseName: string,
@@ -894,10 +912,13 @@ type SqlServerCteUniqueKeyAssurance private (
     uniqueIndexId: int,
     uniqueIndexName: string,
     metadataDigest: string) =
-    let sourceKeyColumns = SqlServerIntKeyTuple.values sourceKeyTuple
+    let sourceKeyColumns = SqlServerExactIntegerKeyTuple.values sourceKeyTuple
+    let sourceKeyKinds = SqlServerExactIntegerKeyTuple.kinds sourceKeyTuple
     let targetKeyColumns =
-        targetKeyTuple
-        |> Option.map SqlServerIntKeyTuple.values
+        targetKeyTuple |> Option.map SqlServerExactIntegerKeyTuple.values
+        |> Option.defaultValue [||]
+    let targetKeyKinds =
+        targetKeyTuple |> Option.map SqlServerExactIntegerKeyTuple.kinds
         |> Option.defaultValue [||]
 
     member _.SchemaSha256 = pinnedSnapshot.Sha256
@@ -913,7 +934,7 @@ type SqlServerCteUniqueKeyAssurance private (
     member _.DatabaseGuid = databaseGuid
     member _.UniqueIndexName = uniqueIndexName
     member _.ProofIdentity =
-        String.Join("|", [| "sqlserver-live-unique-int-v2"; pinnedSnapshot.Sha256;
+        String.Join("|", [| "sqlserver-live-exact-integer-v3"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumns.[0];
@@ -921,10 +942,11 @@ type SqlServerCteUniqueKeyAssurance private (
         + (if sourceKeyColumns.Length > 1
            then "|ordered-source-keys=" + String.Join(",", sourceKeyColumns)
            else "")
+        + "|source-key-types=" + String.Join(",", sourceKeyKinds |> Array.map SqlServerExactIntegerKind.label)
         + (if targetKeyColumns.Length = 0 then ""
-           elif targetKeyColumns.Length = 1
-           then "|target-int-key=" + targetKeyColumns.[0]
+           elif targetKeyColumns.Length = 1 then "|target-key=" + targetKeyColumns.[0]
            else "|ordered-target-keys=" + String.Join(",", targetKeyColumns))
+        + "|target-key-types=" + String.Join(",", targetKeyKinds |> Array.map SqlServerExactIntegerKind.label)
 
     /// Binding a proof to a key also requires an exact schema.table scope.
     /// Restricted ASCII identifiers avoid provider-specific collation and
@@ -1046,7 +1068,7 @@ type SqlServerCteUniqueKeyAssurance private (
            || (targetKeys.Length <> 0 && targetKeys.Length <> sourceKeys.Length)
            || (sourceKeys |> Array.distinct |> Array.length) <> sourceKeys.Length
            || (targetKeys |> Array.distinct |> Array.length) <> targetKeys.Length then
-            invalidArg "sourceKeys" "SQL Server proof requires an ordered distinct 1-2 component INT key tuple."
+            invalidArg "sourceKeys" "SQL Server proof requires an ordered distinct 1-2 component exact integer key tuple."
         sourceKeys |> Array.iter (fun key -> SqlServerCteUniqueKeyAssurance.Name "sourceKeys" key |> ignore)
         targetKeys |> Array.iter (fun key -> SqlServerCteUniqueKeyAssurance.Name "targetKeys" key |> ignore)
         let physicalSnapshotKeys =
@@ -1057,7 +1079,7 @@ type SqlServerCteUniqueKeyAssurance private (
             |> Seq.map (fun col -> col.Name)
             |> Set.ofSeq
         if sourceKeys |> Array.exists (fun key -> not (physicalSnapshotKeys.Contains key)) then
-            invalidArg "snapshot" "Every source INT key must be typed Numeric in the immutable schema snapshot."
+            invalidArg "snapshot" "Every source INT/BIGINT key must be typed Numeric in the immutable schema snapshot."
         if pin then
             // TABLE S lock + HOLDLOCK lasts for the SAME explicit transaction;
             // DDL requires Sch-M and is blocked until commit or rollback.
@@ -1095,27 +1117,31 @@ type SqlServerCteUniqueKeyAssurance private (
             connection, tx, sourceTable, digest)
         let targetId = SqlServerCteUniqueKeyAssurance.Metadata(
             connection, tx, targetTable, digest)
-        // SQL Server can implicitly promote distinct INTs to the same REAL
-        // value. Only a physically attested, noncomputed INT target operand
-        // may be used to prove one source match per target row.
-        // Every target operand is checked against its physical SQL Server INT
-        // column; a caller's virtual schema never becomes execution proof.
-        for key in targetKeys do
-            use typeCommand = SqlServerCteUniqueKeyAssurance.Command connection tx (
-                """SELECT c.name, typ.name, c.is_computed, c.is_nullable
-                   FROM sys.columns c
-                   JOIN sys.types typ ON typ.user_type_id = c.user_type_id
-                   WHERE c.object_id = @objectId AND c.name = @key""")
-            SqlServerCteUniqueKeyAssurance.Bind typeCommand "@objectId" (box targetId)
-            SqlServerCteUniqueKeyAssurance.Bind typeCommand "@key" key
-            use targetTypes = typeCommand.ExecuteReader()
-            if not (targetTypes.Read())
-               || not (StringComparer.Ordinal.Equals(targetTypes.GetString(0), key))
-               || not (StringComparer.OrdinalIgnoreCase.Equals(targetTypes.GetString(1), "int"))
-               || targetTypes.GetBoolean(2)
-               || (targetKeys.Length > 1 && targetTypes.GetBoolean(3))
-               || targetTypes.Read() then
-                invalidOp "SQL Server joined CTE tuple requires exact noncomputed INT target operands."
+        // Physical target comparison must have EXACTLY the source ordinal's
+        // SQL key type. A virtual Numeric classification cannot mint it.
+        let targetKinds =
+            targetKeys
+            |> Array.map (fun key ->
+                use typeCommand = SqlServerCteUniqueKeyAssurance.Command connection tx (
+                    """SELECT c.name, typ.name, c.is_computed, c.is_nullable
+                       FROM sys.columns c JOIN sys.types typ
+                         ON typ.user_type_id = c.user_type_id
+                       WHERE c.object_id = @objectId AND c.name = @key""")
+                SqlServerCteUniqueKeyAssurance.Bind typeCommand "@objectId" (box targetId)
+                SqlServerCteUniqueKeyAssurance.Bind typeCommand "@key" key
+                use reader = typeCommand.ExecuteReader()
+                if not (reader.Read()) then invalidOp "SQL Server physical target key missing."
+                let name = reader.GetString(0)
+                let physicalType = reader.GetString(1)
+                let computed = reader.GetBoolean(2)
+                let nullable = reader.GetBoolean(3)
+                if not (StringComparer.Ordinal.Equals(name, key))
+                   || computed || (targetKeys.Length > 1 && nullable)
+                   || reader.Read() then
+                    invalidOp "SQL Server target key is not an exact noncomputed physical operand."
+                match SqlServerExactIntegerKind.fromPhysical physicalType with
+                | Some kind -> kind
+                | None -> invalidOp "SQL Server target key is not a built-in INT or BIGINT.")
         use indexCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx (
                 """SELECT i.index_id, i.name, ic.key_ordinal, c.name,
@@ -1145,26 +1171,28 @@ type SqlServerCteUniqueKeyAssurance private (
             |> Seq.sortBy fst
             |> Seq.tryPick (fun (_, candidates) ->
                 let keys =
-                    candidates
-                    |> Seq.sortBy (fun (_, _, ordinal, _, _, _, _) -> ordinal)
+                    candidates |> Seq.sortBy (fun (_, _, ordinal, _, _, _, _) -> ordinal)
                     |> Seq.toArray
+                let kinds =
+                    keys |> Array.map (fun (_, _, _, _, sqlType, _, _) ->
+                        SqlServerExactIntegerKind.fromPhysical sqlType)
                 if keys.Length = sourceKeys.Length
-                   && Array.forall2 (fun (_, _, ordinal, name, sqlType, nullable, computed) key ->
-                       ordinal > 0
-                       && StringComparer.Ordinal.Equals(name, key)
-                       && StringComparer.OrdinalIgnoreCase.Equals(sqlType, "int")
-                       && not nullable && not computed) keys sourceKeys then
+                   && (kinds |> Array.forall Option.isSome)
+                   && Array.forall2 (fun (_, _, ordinal, name, _, nullable, computed) key ->
+                       ordinal > 0 && StringComparer.Ordinal.Equals(name, key)
+                       && not nullable && not computed) keys sourceKeys
+                   && (targetKinds.Length = 0
+                       || Array.forall2 (=) targetKinds (kinds |> Array.map Option.get)) then
                     let (id, indexName, _, _, _, _, _) = keys.[0]
-                    Some(id, indexName)
+                    Some(id, indexName, kinds |> Array.map Option.get)
                 else None)
-        let indexId, indexName =
+        let indexId, indexName, sourceKinds =
             match matching with
             | Some value -> value
-            | None ->
-                invalidOp "SQL Server live proof requires exact ordered, enabled, unfiltered UNIQUE nonnullable INT tuple."
+            | None -> invalidOp "SQL Server live physical UNIQUE key requires exact ordered INT/BIGINT kinds matching the target."
         let sha256 = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()
         databaseId, serverInstanceName, databaseName, databaseGuid,
-        sourceId, targetId, indexId, indexName, sha256
+        sourceId, targetId, indexId, indexName, sha256, sourceKinds, targetKinds
 
     static member VerifyLive
         (connection: DbConnection, snapshot: SqlSchemaSnapshot,
@@ -1176,12 +1204,12 @@ type SqlServerCteUniqueKeyAssurance private (
         SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
         if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
             invalidArg "sourceTable" "Self-joined live SQL Server key proof is outside the first verified subset."
-        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest, sourceKinds, targetKinds) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable, [|sourceKeyColumn|], [||], false)
         SqlServerCteUniqueKeyAssurance(
             snapshot, targetTable, sourceTable,
-            SqlServerIntKeyTuple.ofAttested [|sourceKeyColumn|], None,
+            SqlServerExactIntegerKeyTuple.ofAttested [|sourceKeyColumn|] sourceKinds, None,
             dbId, liveServer, liveName, liveGuid,
             sourceId, targetId, indexId, indexName, digest)
 
@@ -1199,18 +1227,18 @@ type SqlServerCteUniqueKeyAssurance private (
         SqlServerCteUniqueKeyAssurance.Name "sourceKeyColumn" sourceKeyColumn |> ignore
         if StringComparer.OrdinalIgnoreCase.Equals(targetTable, sourceTable) then
             invalidArg "sourceTable" "Self-joined SQL Server key proof is not modeled."
-        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest, sourceKinds, targetKinds) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable,
                 [|sourceKeyColumn|], [|targetKeyColumn|], false)
         SqlServerCteUniqueKeyAssurance(
             snapshot, targetTable, sourceTable,
-            SqlServerIntKeyTuple.ofAttested [|sourceKeyColumn|],
-            Some(SqlServerIntKeyTuple.ofAttested [|targetKeyColumn|]),
+            SqlServerExactIntegerKeyTuple.ofAttested [|sourceKeyColumn|] sourceKinds,
+            Some(SqlServerExactIntegerKeyTuple.ofAttested [|targetKeyColumn|] targetKinds),
             dbId, liveServer, liveName, liveGuid,
             sourceId, targetId, indexId, indexName, digest)
 
-    /// Domain-owned physical proof for exactly two ordered INT key ordinals.
+    /// Domain-owned physical proof for two ordered exact integer key ordinals.
     /// No virtual Catalog or caller DTO can mint this authority.
     static member VerifyLiveForJoinedMutation
         (connection: DbConnection, snapshot: SqlSchemaSnapshot,
@@ -1227,14 +1255,14 @@ type SqlServerCteUniqueKeyAssurance private (
         let target = targetKeys |> Seq.toArray
         let source = sourceKeys |> Seq.toArray
         if source.Length <> 2 || target.Length <> 2 then
-            invalidArg "sourceKeys" "Composite SQL Server CTE assurance requires two ordered INT keys."
-        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
+            invalidArg "sourceKeys" "Composite SQL Server CTE assurance requires two ordered exact integer keys."
+        let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest, sourceKinds, targetKinds) =
             SqlServerCteUniqueKeyAssurance.Attest(
                 connection, null, snapshot, targetTable, sourceTable, source, target, false)
         SqlServerCteUniqueKeyAssurance(
             snapshot, targetTable, sourceTable,
-            SqlServerIntKeyTuple.ofAttested source,
-            Some(SqlServerIntKeyTuple.ofAttested target),
+            SqlServerExactIntegerKeyTuple.ofAttested source sourceKinds,
+            Some(SqlServerExactIntegerKeyTuple.ofAttested target targetKinds),
             dbId, liveServer, liveName, liveGuid,
             sourceId, targetId, indexId, indexName, digest)
 
@@ -1246,7 +1274,7 @@ type SqlServerCteUniqueKeyAssurance private (
            || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
         else
             try
-                let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest) =
+                let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest, sourceKinds, targetKinds) =
                     SqlServerCteUniqueKeyAssurance.Attest(
                         connection, transaction, pinnedSnapshot,
                         targetTable, sourceTable, sourceKeyColumns, targetKeyColumns, true)
@@ -1258,6 +1286,8 @@ type SqlServerCteUniqueKeyAssurance private (
                 && targetId = targetObjectId && indexId = uniqueIndexId
                 && StringComparer.Ordinal.Equals(indexName, uniqueIndexName)
                 && StringComparer.Ordinal.Equals(digest, metadataDigest)
+                && sourceKinds = sourceKeyKinds
+                && targetKinds = targetKeyKinds
             with
             | :? ArgumentException
             | :? InvalidOperationException

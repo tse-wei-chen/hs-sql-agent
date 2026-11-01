@@ -507,7 +507,7 @@ public sealed class DmlCoordinator(
         }
 
         var fingerprintPolicy = plan.SqlServerCteUniqueKeyAssurance?.TargetKeyColumn is not null
-            ? plan.PolicyVersion + "|live-sqlserver-cte-int=" +
+            ? plan.PolicyVersion + "|live-sqlserver-cte-exact-integer=" +
               plan.SqlServerCteUniqueKeyAssurance.ProofIdentity
             : plan.PolicyVersion;
         var expectedFingerprint = DmlFingerprintService.ComputePlanFingerprint(

@@ -58,7 +58,7 @@ internal static class SqlServerCteLiveProofDiscovery
         // and never suppresses the ordinary optional live schema verifier.
         var snapshot = context.SchemaSnapshot ?? new SqlSchemaSnapshot(
             SqlAgentToolType.MsSqlServer,
-            "host-discovered-sqlserver-cte-int-v1",
+            "host-discovered-sqlserver-cte-exact-integer-v2",
             [
                 SqlSchemaTable.WithTypes(candidate.TargetTable,
                     candidate.TargetKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray()),
@@ -67,7 +67,7 @@ internal static class SqlServerCteLiveProofDiscovery
             ]);
 
         // This is the ONLY authority minting operation. It independently
-        // verifies both physical INT types and the enabled, unfiltered,
+        // verifies both physical, per-ordinal exact INT/BIGINT types and the enabled, unfiltered,
         // single-column source UNIQUE index in the real SQL Server sys catalog.
         // Unsupported or invisible metadata throws: never downgrade to a
         // compile-time Catalog guess.
@@ -91,7 +91,7 @@ internal static class SqlServerCteLiveProofDiscovery
 
     // The Host extracts only bounded, direct column lineage. It does not
     // mint executable authority: F# independently proves the ordered key
-    // lineage and the real database verifies physical INT uniqueness.
+    // lineage and the real database verifies physical exact integer-key uniqueness.
     private readonly record struct ProjectionLineage(
         string OutputName, string PhysicalColumn, int FirstOrdinal);
 

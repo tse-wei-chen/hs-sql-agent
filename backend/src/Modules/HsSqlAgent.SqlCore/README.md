@@ -3493,6 +3493,62 @@ remain ordinary read-only predicate semantics and do not by
 themselves mint executable physical-key evidence. The other
 five providers and MCP tool count are unchanged.
 
+## G9 / M04 — SQL Server exact physical INT/BIGINT KeyTuple (unreleased)
+
+This **development-only** capability extends the already-proven SQL Server
+2005+ CTE-prefixed native UPDATE/DELETE source-row cardinality proof.
+One or two unique-key ordinals can now be either **built-in INT or BIGINT**,
+including mixed ordered pairs such as `(INT, BIGINT)`. The F# proof owns a
+private, closed `Int32 | Int64` physical key-kind algebra, never a
+user-supplied string tag or a parsed/virtual Catalog execution grant.
+
+**Every physical key position** of the enabled, unfiltered, noncomputed,
+nonnullable source UNIQUE index must match the corresponding target
+comparison column's exact built-in SQL Server type. Key ordinals and
+names are obtained from live `sys.index_columns`, `sys.columns` and
+`sys.types`; the Host does not infer physical authority from a
+generic `Numeric` schema type. A source `INT` joined to a target
+`BIGINT` is **not** accepted, even where SQL Server would implicitly
+promote values. `DECIMAL`, `NUMERIC`, `SMALLINT`, `FLOAT`,
+`REAL`, `UNIQUEIDENTIFIER`, alias types and computed/nullable key
+components are **not** included in this proof.
+
+The same closed F# AST validator verifies mandatory ordinary `AND`/`=`
+equality across every key, direct 1–3-hop CTE projection, bounded inert
+payload, and the existing singleton-derived or same-table key-preserving
+JOIN subset. No extra MCP tool or compiler/driver is added. Preview and
+approval fingerprint use a **versioned physical proof identity** including
+ordered key kinds; a pending older INT-only approval is never replayed
+against the widened type contract. Before committing native DML,
+`IsCurrent(actualConnection, actualTransaction)` re-attests the same
+server, database GUID, physical index, key types/order and metadata
+digest under transaction-held locks.
+
+```sql
+-- Both tables have an appropriate physical schema, and SourceRows
+-- has an actual (tenant_id BIGINT, row_id INT) UNIQUE index.
+WITH proven AS (
+    SELECT tenant_id AS tenant, row_id AS row_key
+    FROM dbo.SourceRows
+)
+UPDATE dbo.TargetRows SET status = 'updated'
+FROM proven
+WHERE dbo.TargetRows.tenant_id = proven.tenant
+  AND dbo.TargetRows.row_id = proven.row_key;
+```
+
+SQL Server 2022 live CI covers primary/unique indexes, UPDATE and
+DELETE, 64-bit values beyond 2,147,483,647, mixed-ordinal keys,
+1–3 CTE hops, proof-preserving JOINs, Host auto-discovery,
+physical preview/approval/commit parity and index revocation.
+This does not broaden the other five database providers, grant a
+general key coercion rule, enable arbitrary JOIN graphs, or change the
+four default read-only tools; DML/DDL remain unselected.
+
+**Release guard:** This section describes an unshipped `develop`
+feature only. It must remain off the production documentation site's
+`main` branch until a matching explicit product Release.
+
 ## G1 — Strict additive DDL Schema Compiler (compile only)
 
 `SqlCoreFacade.CompileDdl(sql, new DdlCompilationOptions(sourceDialect, targetDialect))`

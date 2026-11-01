@@ -902,7 +902,7 @@ module internal RewriteFacadeAdapter =
         match context.SqlServerCteUniqueKeyAssurance with
         | null -> version
         | assurance when isNull assurance.TargetKeyColumn -> version
-        | assurance -> version + "|live-sqlserver-cte-int=" + assurance.ProofIdentity
+        | assurance -> version + "|live-sqlserver-cte-exact-integer=" + assurance.ProofIdentity
 
     let compileDmlValidated sql source target (sourceProfile: SqlProviderCapabilityProfile | null) (targetProfile: SqlProviderCapabilityProfile | null) (validationContext: SqlPlanValidationContext) (policy: DmlCompilationPolicy | null) (conflictTargetAssurance: DmlConflictTargetAssurance | null) =
         ArgumentNullException.ThrowIfNull(validationContext)
