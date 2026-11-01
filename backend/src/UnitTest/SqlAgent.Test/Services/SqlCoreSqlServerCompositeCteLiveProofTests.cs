@@ -364,8 +364,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("filtered")]
     [InlineData("disabled")]
     [InlineData("nullable")]
+    // Opposite-side BIGINT without exact counterpart stays denied.
     [InlineData("source-bigint")]
     [InlineData("target-bigint")]
+    [InlineData("source-smallint")]
+    [InlineData("source-decimal")]
+    [InlineData("source-float")]
+    [InlineData("source-uuid")]
+    [InlineData("target-decimal")]
+    [InlineData("target-smallint")]
     [InlineData("computed")]
     public async Task CompositeLiveMetadataRejectsUnprovenIndexAndOperandTypes(string shape)
     {
@@ -398,11 +405,21 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         try
         {
             await Exec("CREATE TABLE dbo.[" + dst + "] (k1 INT NOT NULL, k2 " +
-                (shape == "target-bigint" ? "BIGINT" : "INT") + " NOT NULL)");
+                (shape switch
+                {
+                    "target-bigint" => "BIGINT",
+                    "target-decimal" => "DECIMAL(20,0)",
+                    "target-smallint" => "SMALLINT",
+                    _ => "INT"
+                }) + " NOT NULL)");
             var sourceDefinition = shape switch
             {
                 "nullable" => "k1 INT NOT NULL, k2 INT NULL",
                 "source-bigint" => "k1 INT NOT NULL, k2 BIGINT NOT NULL",
+                "source-smallint" => "k1 INT NOT NULL, k2 SMALLINT NOT NULL",
+                "source-decimal" => "k1 INT NOT NULL, k2 DECIMAL(20,0) NOT NULL",
+                "source-float" => "k1 INT NOT NULL, k2 FLOAT NOT NULL",
+                "source-uuid" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
                 "computed" => "k1 INT NOT NULL, k2 AS (k1 + 1) PERSISTED",
                 _ => "k1 INT NOT NULL, k2 INT NOT NULL"
             };
