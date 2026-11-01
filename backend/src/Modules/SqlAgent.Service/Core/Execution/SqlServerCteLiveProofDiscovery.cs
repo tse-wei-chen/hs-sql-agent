@@ -417,6 +417,7 @@ internal static class SqlServerCteLiveProofDiscovery
                     todo.Push(isNull.Value);
                     break;
                 case ColumnExpr:
+                case HsSqlAgent.SqlCore.Core.Binding.BoundColumnExpr:
                 case LiteralExpr:
                 case IntervalExpr:
                     break;
