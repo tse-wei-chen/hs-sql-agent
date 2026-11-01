@@ -7,6 +7,27 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### M07 — correlated semi-/anti-join filters on one attested source (develop only)
+
+- Allow **EXISTS/NOT EXISTS** as a first-CTE WHERE filter in native SQL
+  Server UPDATE/DELETE, limited to a read-only, nonmultiplying correlated
+  query on the **same physically live-attested source table**.
+- Require every ordered INT/BIGINT physical source UNIQUE key component
+  to be compared to its matching outer alias by ordinary mandatory
+  `AND`/`=` predicates; optional direct inner column/literal equality
+  predicates can further restrict rows. No additional table, JOIN,
+  aggregation, recursion, set branch or computed/OR key equality.
+- The CLR Host and closed F# AST independently validate the bounded
+  predicate; continue to bind the source unique-index metadata,
+  snapshot, row-set preview and approval fingerprint to the **same
+  transaction's** `IsCurrent` check. An index lost after approval
+  rejects the write; `NOT EXISTS` cannot expand the source rowset.
+- Real SQL Server 2022 tests cover 1–3 CTE hops, EXISTS and NOT EXISTS,
+  UPDATE/DELETE, mixed INT/BIGINT composite keys, rejected partial/OR/
+  computed/ambiguous correlation and approval-time index drift.
+- **Unreleased** on backend/site develop, with no default permission,
+  new MCP tool or arbitrary EXISTS/anti-join privilege.
+
 ### M07 — independently attested second physical JOIN source (develop only)
 
 - Extend SQL Server native CTE `UPDATE`/`DELETE` to one bounded
