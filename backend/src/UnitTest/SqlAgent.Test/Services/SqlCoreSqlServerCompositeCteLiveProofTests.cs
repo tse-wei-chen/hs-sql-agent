@@ -300,6 +300,20 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 new DmlCompilationPolicy(), profile, null);
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(" AND ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            if (IsText(k1Type) || IsText(k2Type))
+            {
+                var forcedCollation = sql.Replace(
+                    " WHERE dbo." + dst + ".k1 = " + keyAlias + ".a",
+                    " WHERE dbo." + dst +
+                        ".k1 COLLATE Latin1_General_100_BIN2 = " + keyAlias + ".a",
+                    StringComparison.Ordinal);
+                Assert.ThrowsAny<Exception>(() =>
+                    SqlCoreFacade.CompileDml(
+                        CoreSqlTextParser.ParseDml(forcedCollation,
+                            SqlAgentToolType.MsSqlServer, profile),
+                        SqlAgentToolType.MsSqlServer, context,
+                        new DmlCompilationPolicy(), profile, null));
+            }
             var missing = sql.Replace(
                 " AND dbo." + dst + ".k2 = " + keyAlias + ".b", "");
             var missingParsed = CoreSqlTextParser.ParseDml(
@@ -670,6 +684,103 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
 
+
+
+    // Compare SQL Server's actual index conflicts against native column =
+    // rather than assuming CI/AI suffixes describe the engine correctly.
+    [Theory]
+    [InlineData("Latin1_General_100_CI_AS", "VARCHAR(24)", true, false)]
+    [InlineData("Latin1_General_100_CI_AI", "NVARCHAR(24)", true, true)]
+    [InlineData("Latin1_General_100_CS_AS", "VARCHAR(24)", false, false)]
+    [InlineData("Latin1_General_100_CS_AS", "NVARCHAR(24)", false, false)]
+    public async Task LinguisticUniqueAndNativeEqualityMustAgree(
+        string collation, string type, bool caseEqual, bool accentEqual)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("M05 collation comparison parity needs real SQL Server.");
+            Assert.Skip("Real SQL Server 2022 required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var source = "m05_cmp_src_" + id;
+        var target = "m05_cmp_dst_" + id;
+        var idx = "m05_cmp_uq_" + id;
+        await using var db = new SqlConnection(cs);
+        for (var retry = 0; ; retry++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (retry < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string sql)
+        {
+            await using var command = new SqlCommand(sql, db);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        async Task<bool> IsDuplicate(string literal)
+        {
+            try
+            {
+                await Exec("INSERT INTO dbo.[" + source + "] (k) VALUES (" + literal + ")");
+                return false;
+            }
+            catch (SqlException ex) when (ex.Number is 2601 or 2627)
+            {
+                return true;
+            }
+        }
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + source + "] (k " + type +
+                " COLLATE " + collation + " NOT NULL)");
+            await Exec("CREATE UNIQUE INDEX [" + idx + "] ON dbo.[" + source + "] (k)");
+            await Exec("CREATE TABLE dbo.[" + target + "] (k " + type +
+                " COLLATE " + collation + " NOT NULL)");
+            await Exec("INSERT INTO dbo.[" + source + "] (k) VALUES (N'CaseA'),(N'Café')");
+            Assert.Equal(caseEqual, await IsDuplicate("N'casea'"));
+            if (!caseEqual) await Exec("DELETE FROM dbo.[" + source + "] WHERE k = N'casea'");
+            Assert.Equal(accentEqual, await IsDuplicate("N'Cafe'"));
+            if (!accentEqual) await Exec("DELETE FROM dbo.[" + source + "] WHERE k = N'Cafe'");
+            await Exec("INSERT INTO dbo.[" + target + "] (k) VALUES (N'casea'),(N'Cafe')");
+            await using (var cmd = new SqlCommand(
+                "SELECT COUNT(*) FROM dbo.[" + source + "] AS s INNER JOIN dbo.[" +
+                target + "] AS t ON s.k = t.k", db))
+            {
+                var actual = Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+                Assert.Equal((caseEqual ? 1 : 0) + (accentEqual ? 1 : 0), actual);
+            }
+
+            var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "m05-collation-comparison", [
+                    SqlSchemaTable.WithTypes("dbo." + target,
+                        [new SqlSchemaColumn("k", SqlSchemaValueKind.Text)]),
+                    SqlSchemaTable.WithTypes("dbo." + source,
+                        [new SqlSchemaColumn("k", SqlSchemaValueKind.Text)])
+                ]);
+            var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                db, snapshot, "dbo." + target, "k", "dbo." + source, "k");
+            Assert.Contains("@" + collation, proof.ProofIdentity, StringComparison.Ordinal);
+            await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
+            {
+                Assert.True(proof.IsCurrent(db, tx));
+                await tx.RollbackAsync(ct);
+            }
+            // A collation change after preview must invalidate the same proof.
+            await Exec("ALTER TABLE dbo.[" + target + "] ALTER COLUMN k " + type +
+                " COLLATE Latin1_General_100_BIN2 NOT NULL");
+            await using var staleTx = (SqlTransaction)await db.BeginTransactionAsync(ct);
+            Assert.False(proof.IsCurrent(db, staleTx));
+            await staleTx.RollbackAsync(ct);
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
 
     // Exact native source UNIQUE and target equality comparison must be
     // proof-equivalent. A generic Text schema kind is never sufficient.

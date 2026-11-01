@@ -868,6 +868,29 @@ type SqliteUpdateFromKeyAssurance private (
             snapshot, snapshot.Sha256, target, targetPk, source, sourcePk, schemaVersion)
 
 /// Closed physical SQL Server key kind: conversion is not a uniqueness proof.
+/// The concrete physical string comparison contract must match the same
+/// UNIQUE-index and equality-operand collation at every key ordinal.
+type private SqlServerTextEquality =
+    | BinaryCodepoint
+    | CaseInsensitiveAccentSensitive
+    | CaseInsensitiveAccentInsensitive
+    | CaseSensitiveAccentSensitive
+
+module private SqlServerTextEquality =
+    let fromPhysical (collation: string) =
+        match collation with
+        | "Latin1_General_100_BIN2" -> Some BinaryCodepoint
+        | "Latin1_General_100_CI_AS" -> Some CaseInsensitiveAccentSensitive
+        | "Latin1_General_100_CI_AI" -> Some CaseInsensitiveAccentInsensitive
+        | "Latin1_General_100_CS_AS" -> Some CaseSensitiveAccentSensitive
+        | _ -> None
+
+    let label = function
+        | BinaryCodepoint -> "Latin1_General_100_BIN2"
+        | CaseInsensitiveAccentSensitive -> "Latin1_General_100_CI_AS"
+        | CaseInsensitiveAccentInsensitive -> "Latin1_General_100_CI_AI"
+        | CaseSensitiveAccentSensitive -> "Latin1_General_100_CS_AS"
+
 type private SqlServerExactKeyKind =
     | UInt8
     | Int16
@@ -875,14 +898,10 @@ type private SqlServerExactKeyKind =
     | Int64
     | FixedDecimal of byte * byte
     | Uuid
-    | VarChar of int16
-    | NVarChar of int16
+    | VarChar of int16 * SqlServerTextEquality
+    | NVarChar of int16 * SqlServerTextEquality
 
 module private SqlServerExactKeyKind =
-    // A single exact BIN2 collation is deliberately proven. Other collations
-    // require their own comparison and uniqueness safety model (M05).
-    let private bin2 = "Latin1_General_100_BIN2"
-
     let fromPhysical (sqlType: string) (precision: byte) (scale: byte)
                      (maxLength: int16) (collation: string) =
         if StringComparer.OrdinalIgnoreCase.Equals(sqlType, "tinyint") then Some UInt8
@@ -897,13 +916,14 @@ module private SqlServerExactKeyKind =
                 Some(FixedDecimal(precision, scale))
             else None
         elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "uniqueidentifier") then Some Uuid
-        elif StringComparer.Ordinal.Equals(collation, bin2)
-             && StringComparer.OrdinalIgnoreCase.Equals(sqlType, "varchar")
-             && maxLength >= 1s && maxLength <= 8000s then Some(VarChar maxLength)
-        elif StringComparer.Ordinal.Equals(collation, bin2)
-             && StringComparer.OrdinalIgnoreCase.Equals(sqlType, "nvarchar")
+        elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "varchar")
+             && maxLength >= 1s && maxLength <= 8000s then
+            SqlServerTextEquality.fromPhysical collation
+            |> Option.map (fun equality -> VarChar(maxLength, equality))
+        elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "nvarchar")
              && maxLength >= 2s && maxLength <= 8000s && maxLength % 2s = 0s then
-            Some(NVarChar (maxLength / 2s))
+            SqlServerTextEquality.fromPhysical collation
+            |> Option.map (fun equality -> NVarChar(maxLength / 2s, equality))
         else None
 
     let label = function
@@ -914,8 +934,14 @@ module private SqlServerExactKeyKind =
         | FixedDecimal(precision, scale) ->
             "DECIMAL(" + string (int precision) + "," + string (int scale) + ")"
         | Uuid -> "UNIQUEIDENTIFIER"
-        | VarChar n -> "VARCHAR(" + string (int n) + ")"
-        | NVarChar n -> "NVARCHAR(" + string (int n) + ")"
+        | VarChar(n, equality) ->
+            "VARCHAR(" + string (int n) + ")" +
+            (if equality = BinaryCodepoint then ""
+             else "@" + SqlServerTextEquality.label equality)
+        | NVarChar(n, equality) ->
+            "NVARCHAR(" + string (int n) + ")" +
+            (if equality = BinaryCodepoint then ""
+             else "@" + SqlServerTextEquality.label equality)
 
     /// A typed snapshot describes its actual value family. An externally
     /// declared Numeric column can never authorize physical UNIQUEIDENTIFIER.
@@ -1001,7 +1027,7 @@ type SqlServerCteUniqueKeyAssurance private (
         joinedProof |> Option.map (fun proof -> proof.ProofIdentity)
         |> Option.defaultValue null
     member _.ProofIdentity =
-        String.Join("|", [| "sqlserver-live-exact-key-v8"; pinnedSnapshot.Sha256;
+        String.Join("|", [| "sqlserver-live-exact-key-v9"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumns.[0];
@@ -1222,7 +1248,7 @@ type SqlServerCteUniqueKeyAssurance private (
                     invalidOp "SQL Server target key is not an exact noncomputed physical operand."
                 match SqlServerExactKeyKind.fromPhysical physicalType precision scale maxLength collation with
                 | Some kind -> kind
-                | None -> invalidOp "SQL Server target key must be an exact built-in numeric, UUID, or matching BIN2 VARCHAR/NVARCHAR.")
+                | None -> invalidOp "SQL Server target key must use exact built-in numeric, UUID or attested Latin1 General text equality.")
         use indexCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx (
                 """SELECT i.index_id, i.name, ic.key_ordinal, c.name,
@@ -1290,7 +1316,7 @@ type SqlServerCteUniqueKeyAssurance private (
         let indexId, indexName, sourceKinds, hasNullableKey =
             match matching with
             | Some value -> value
-            | None -> invalidOp "SQL Server live UNIQUE key requires exact typed key ordinals, including matching BIN2 VARCHAR/NVARCHAR width and collation."
+            | None -> invalidOp "SQL Server live UNIQUE key requires complete native index ordinals, matching SQL kinds, widths and attested collation equality."
         // Nullable UNIQUE indexes are safe for the *ordinary equality* path
         // only: any NULL key component yields UNKNOWN and cannot match a
         // target. There must be a target comparison edge (not bare VerifyLive).

@@ -7,6 +7,32 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M05 — exact SQL Server linguistic-collation equality (develop only)
+
+- Extend the closed F# physical KeyTuple with private
+  `SqlServerTextEquality` cases for `Latin1_General_100_CI_AS`,
+  `Latin1_General_100_CI_AI` and `Latin1_General_100_CS_AS`;
+  retain the prior `Latin1_General_100_BIN2` semantics. The actual
+  **comparison class is embedded in each private VARCHAR/NVARCHAR kind**,
+  not inferred from generic `Text` or a caller-provided collation name.
+- Source UNIQUE index, target and independently proven second JOIN
+  must have exactly matching native type, byte width, entire ordered
+  key tuple and physical column collation. No implicit text coercion
+  or source/target collation override may mint evidence; all other
+  collations, alias or MAX types, filtered/disabled/nonunique indexes,
+  computed keys and unproven JOINs remain denied.
+- Preserve nullable-UNIQUE `ANSI_NULLS ON` witness, full metadata
+  digest, immutable approval, independent rowset Preview and commit
+  under transaction-held `IsCurrent`. Advance ProofIdentity to
+  **v9**, invalidating v8 pending approvals.
+- Add actual SQL Server 2022 **UNIQUE conflict-versus-native equality
+  parity** across case and accent distinctions (not just grammar
+  acceptance), and real UPDATE/DELETE, 1–3 CTE, composite mixed text,
+  numeric, UUID and secondary-table JOIN approval/DDL-drift matrices.
+  Six-database scripts and compiler benchmark parity stay gated.
+- **Unreleased, develop only**. No new public API, dependency,
+  MCP tool, parser, driver, default DML/DDL selection or permission.
+
 ### G9 / M05 — Nullable SQL Server source UNIQUE + ordinary equality witness (develop only)
 
 - Introduce the **closed F# source-null comparison witness**
