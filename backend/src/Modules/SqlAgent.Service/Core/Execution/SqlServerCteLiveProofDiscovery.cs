@@ -173,6 +173,27 @@ internal static class SqlServerCteLiveProofDiscovery
         // attested tuple; sys.index_columns.key_ordinal verifies that exact
         // order. Payload positions do not become index components.
         var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
+        // The Host's initial shape check cannot choose the key tuple.
+        // Once the actual outer target equality establishes its ordered
+        // components, independently require the correlated EXISTS filter
+        // to contain EXACTLY those physical source keys.
+        if (ctes[0].Query is SelectStatement filteredFirst
+            && filteredFirst.From is NamedTableSource filteredRoot
+            && filteredRoot.Alias is not null)
+        {
+            var semi = filteredFirst.Where switch
+            {
+                ExistsExpr e => e,
+                UnaryExpr u when SameOperator(u.Operator, "NOT")
+                                 && u.Operand is ExistsExpr e => e,
+                _ => null
+            };
+            if (semi is not null
+                && !ProvenCorrelatedKeyExists(
+                    semi, filteredRoot.Alias.Value, sourceTable,
+                    ordered.Select(m => m.Source.PhysicalColumn).ToArray()))
+                return false;
+        }
         string? joinedTable = null;
         var joinedKeys = ImmutableArray<string>.Empty;
         if (ctes[0].Query is SelectStatement first
@@ -359,7 +380,8 @@ internal static class SqlServerCteLiveProofDiscovery
     }
 
     private static bool ProvenCorrelatedKeyExists(
-        ExistsExpr predicate, string outerAlias, string physicalSource)
+        ExistsExpr predicate, string outerAlias, string physicalSource,
+        IReadOnlyList<string>? requiredKeys = null)
     {
         if (predicate.Query is not SelectStatement query
             || query.Ctes.Length != 0 || query.Joins.Length != 0
@@ -412,7 +434,10 @@ internal static class SqlServerCteLiveProofDiscovery
         // Require the whole attested key equality; physical columns are
         // chosen by live index proof, never a caller-provided name list.
         return pair.Count is >= 1 and <= 2
-               && pair.All(SafeName);
+               && pair.All(SafeName)
+               && (requiredKeys is null
+                   || (requiredKeys.Count == pair.Count
+                       && requiredKeys.All(pair.Contains)));
     }
 
     // The second physical table is not trusted until an independent
