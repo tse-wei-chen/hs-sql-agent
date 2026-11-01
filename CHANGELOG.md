@@ -7,6 +7,31 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M04 — exact BIN2 VARCHAR/NVARCHAR physical key proof (develop only)
+
+- Extend the **same** private closed F# SQL Server KeyTuple with
+  `VarChar(n) | NVarChar(n)` under the **single attested collation**
+  `Latin1_General_100_BIN2`; require matching native family and
+  maximum byte length at every source/target/independent JOIN index
+  ordinal. A typed Text snapshot is not execution authority; real
+  `sys.columns.max_length`, `collation_name`, built-in `sys.types`
+  identity and complete enabled/unfiltered UNIQUE index are mandatory.
+  MAX, CHAR/NCHAR, different BIN2 or case-insensitive collations,
+  width or Unicode coercions, user aliases and nullable source keys
+  continue fail-closed.
+- Keep the existing mandatory ordinary key equality graph, bounded
+  1–3 CTE layers, singleton/self/physical JOIN, Preview/Approval
+  fingerprint, audit and same-transaction locked `IsCurrent`.
+  ProofIdentity advances to v7 to invalidate v6 pending approvals
+  and bind the exact string type/length to the physical digest.
+- RED→GREEN real SQL Server 2022 matrix covers UPDATE/DELETE,
+  composite mixed text/UUID/decimal/integer keys, secondary physical
+  JOIN, Host discovery, approved commit and index revocation, plus
+  binary collation, length and source/target snapshot negative cases.
+  Six provider compiler/baseline gates remain mandatory.
+- No new CLR API, MCP tool, SQL runner, permission, or default DML
+  selection; `develop` only, not a production release.
+
 ### G9 / M04 — SQL Server exact UNIQUEIDENTIFIER physical keys (develop only)
 
 - Add a closed F# `Uuid` physical key kind with exact live

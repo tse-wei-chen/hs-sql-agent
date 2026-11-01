@@ -149,6 +149,10 @@ internal static class SqlServerCteLiveProofDiscovery
                 "tinyint" or "smallint" or "int" or "bigint"
                     or "decimal" or "numeric" => SqlSchemaValueKind.Numeric,
                 "uniqueidentifier" => SqlSchemaValueKind.Uuid,
+                // Declared family is only a snapshot witness. The closed F#
+                // physical proof separately requires exact BIN2 collation,
+                // built-in type, length and complete UNIQUE-index ordinals.
+                "varchar" or "nvarchar" => SqlSchemaValueKind.Text,
                 _ => throw new InvalidOperationException(
                     "SQL Server physical key type family is not supported.")
             };

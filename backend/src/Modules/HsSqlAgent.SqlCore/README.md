@@ -3600,6 +3600,46 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M04 — SQL Server exact BIN2 text key proof (develop only)
+
+The closed F# SQL Server physical KeyTuple now supports built-in
+`VARCHAR(n)` and `NVARCHAR(n)` **only** when the physical column's
+`sys.columns.collation_name` is exactly
+`Latin1_General_100_BIN2` and its `max_length` is a valid bounded
+non-MAX size. `VARCHAR` lengths are stored in bytes; `NVARCHAR`
+lengths are validated as UTF-16 byte counts and normalized to a
+character count inside distinct private `VarChar(n) | NVarChar(n)`
+algebraic kinds. Source and target operands must match the same
+physical kind and length at **every** ordered key position; no
+case-insensitive/accent-insensitive or other binary collation, CHAR,
+NCHAR, MAX, user aliases, NULL-able source unique key, CAST, OR,
+computed projection or implicit text/numeric/UUID conversion is
+granted.
+
+Host's existing live source/target/JOIN key discovery classifies
+built-in text keys as `SqlSchemaValueKind.Text`, never Numeric or
+Uuid. This immutable snapshot is only a type-family witness: the
+F# domain proof separately checks live sys.types identity, the
+complete unique-index ordinal, noncomputed/nonnullable source,
+max_length and exact BIN2 collation from the actual DB. Every
+corresponding JOIN source must carry its own independently minted
+UNIQUE proof. The full metadata SHA already contains column length,
+collation and index membership, so DDL drift is detected at the
+**actual DML commit transaction** by locked `IsCurrent`.
+ProofIdentity v7 invalidates older v6 approvals.
+
+SQL Server 2022 tests-first evidence covers live native UPDATE/DELETE
+on mixed text/INT/DECIMAL/UUID keys, 1–3 CTE hops, singleton/self
+and second-physical-table nonmultiplying JOIN, Host auto-discovery,
+Preview→Approval→Commit, and index withdrawal after preview.
+Negative real-DB tests cover case-insensitive/other BIN2 collations,
+length and Unicode mismatches, MAX, CHAR, nullable source, filtered
+or disabled UNIQUE indexes and forged Text snapshots. All other
+collation families remain **fail-closed** pending an M05 comparison
+semantics proof, as do the other five database providers. No new
+MCP tool, driver, permission or default DML selection is added.
+**Unreleased**: this belongs to backend/site `develop` only.
+
 ## G9 / M04 — SQL Server UNIQUEIDENTIFIER typed physical keys (develop only)
 
 The sealed F# SQL Server physical KeyTuple proof now accepts **built-in

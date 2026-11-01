@@ -875,9 +875,16 @@ type private SqlServerExactKeyKind =
     | Int64
     | FixedDecimal of byte * byte
     | Uuid
+    | VarChar of int16
+    | NVarChar of int16
 
 module private SqlServerExactKeyKind =
-    let fromPhysical (sqlType: string) (precision: byte) (scale: byte) =
+    // A single exact BIN2 collation is deliberately proven. Other collations
+    // require their own comparison and uniqueness safety model (M05).
+    let private bin2 = "Latin1_General_100_BIN2"
+
+    let fromPhysical (sqlType: string) (precision: byte) (scale: byte)
+                     (maxLength: int16) (collation: string) =
         if StringComparer.OrdinalIgnoreCase.Equals(sqlType, "tinyint") then Some UInt8
         elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "smallint") then Some Int16
         elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "int") then Some Int32
@@ -890,6 +897,13 @@ module private SqlServerExactKeyKind =
                 Some(FixedDecimal(precision, scale))
             else None
         elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "uniqueidentifier") then Some Uuid
+        elif StringComparer.Ordinal.Equals(collation, bin2)
+             && StringComparer.OrdinalIgnoreCase.Equals(sqlType, "varchar")
+             && maxLength >= 1s && maxLength <= 8000s then Some(VarChar maxLength)
+        elif StringComparer.Ordinal.Equals(collation, bin2)
+             && StringComparer.OrdinalIgnoreCase.Equals(sqlType, "nvarchar")
+             && maxLength >= 2s && maxLength <= 8000s && maxLength % 2s = 0s then
+            Some(NVarChar (maxLength / 2s))
         else None
 
     let label = function
@@ -900,12 +914,15 @@ module private SqlServerExactKeyKind =
         | FixedDecimal(precision, scale) ->
             "DECIMAL(" + string (int precision) + "," + string (int scale) + ")"
         | Uuid -> "UNIQUEIDENTIFIER"
+        | VarChar n -> "VARCHAR(" + string (int n) + ")"
+        | NVarChar n -> "NVARCHAR(" + string (int n) + ")"
 
     /// A typed snapshot describes its actual value family. An externally
     /// declared Numeric column can never authorize physical UNIQUEIDENTIFIER.
     let matchesSnapshot kind declared =
         match kind, declared with
         | Uuid, SqlSchemaValueKind.Uuid -> true
+        | (VarChar _ | NVarChar _), SqlSchemaValueKind.Text -> true
         | (UInt8 | Int16 | Int32 | Int64 | FixedDecimal _), SqlSchemaValueKind.Numeric -> true
         | _ -> false
 
@@ -976,7 +993,7 @@ type SqlServerCteUniqueKeyAssurance private (
         joinedProof |> Option.map (fun proof -> proof.ProofIdentity)
         |> Option.defaultValue null
     member _.ProofIdentity =
-        String.Join("|", [| "sqlserver-live-exact-key-v6"; pinnedSnapshot.Sha256;
+        String.Join("|", [| "sqlserver-live-exact-key-v7"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumns.[0];
@@ -1168,6 +1185,7 @@ type SqlServerCteUniqueKeyAssurance private (
             |> Array.map (fun key ->
                 use typeCommand = SqlServerCteUniqueKeyAssurance.Command connection tx (
                     """SELECT c.name, typ.name, c.precision, c.scale,
+                              c.max_length, c.collation_name,
                               c.is_computed, c.is_nullable
                        FROM sys.columns c JOIN sys.types typ
                          ON typ.user_type_id = c.user_type_id
@@ -1182,19 +1200,22 @@ type SqlServerCteUniqueKeyAssurance private (
                 let physicalType = reader.GetString(1)
                 let precision = reader.GetByte(2)
                 let scale = reader.GetByte(3)
-                let computed = reader.GetBoolean(4)
-                let nullable = reader.GetBoolean(5)
+                let maxLength = reader.GetInt16(4)
+                let collation = if reader.IsDBNull(5) then "" else reader.GetString(5)
+                let computed = reader.GetBoolean(6)
+                let nullable = reader.GetBoolean(7)
                 if not (StringComparer.Ordinal.Equals(name, key))
                    || computed || (targetKeys.Length > 1 && nullable)
                    || reader.Read() then
                     invalidOp "SQL Server target key is not an exact noncomputed physical operand."
-                match SqlServerExactKeyKind.fromPhysical physicalType precision scale with
+                match SqlServerExactKeyKind.fromPhysical physicalType precision scale maxLength collation with
                 | Some kind -> kind
-                | None -> invalidOp "SQL Server target key must be an exact built-in integer, DECIMAL(p,s), or UNIQUEIDENTIFIER.")
+                | None -> invalidOp "SQL Server target key must be an exact built-in numeric, UUID, or matching BIN2 VARCHAR/NVARCHAR.")
         use indexCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx (
                 """SELECT i.index_id, i.name, ic.key_ordinal, c.name,
                           typ.name, c.precision, c.scale,
+                          c.max_length, c.collation_name,
                           c.is_nullable, c.is_computed, typ.is_user_defined,
                           typ.user_type_id, typ.system_type_id
                    FROM sys.indexes i
@@ -1213,43 +1234,46 @@ type SqlServerCteUniqueKeyAssurance private (
         // unsupported alias rows in SQL could turn UNIQUE(a,b) into a
         // forged UNIQUE(a) claim when b uses a user-defined type.
         let rows = ResizeArray<int * string * int * string * string *
-                               byte * byte * bool * bool * bool>()
+                               byte * byte * int16 * string * bool * bool * bool>()
         use indexes = indexCommand.ExecuteReader()
         while indexes.Read() do
-            let builtin = not (indexes.GetBoolean(9))
-                          && indexes.GetInt32(10) = int (indexes.GetByte(11))
+            let builtin = not (indexes.GetBoolean(11))
+                          && indexes.GetInt32(12) = int (indexes.GetByte(13))
+            let collation = if indexes.IsDBNull(8) then "" else indexes.GetString(8)
             rows.Add(indexes.GetInt32(0), indexes.GetString(1),
                      Convert.ToInt32(indexes.GetValue(2)),
                      indexes.GetString(3), indexes.GetString(4),
-                     indexes.GetByte(5), indexes.GetByte(6),
-                     indexes.GetBoolean(7), indexes.GetBoolean(8), builtin)
+                     indexes.GetByte(5), indexes.GetByte(6), indexes.GetInt16(7),
+                     collation, indexes.GetBoolean(9), indexes.GetBoolean(10), builtin)
         let matching =
             rows
-            |> Seq.groupBy (fun (id, _, _, _, _, _, _, _, _, _) -> id)
+            |> Seq.groupBy (fun (id, _, _, _, _, _, _, _, _, _, _, _) -> id)
             |> Seq.sortBy fst
             |> Seq.tryPick (fun (_, candidates) ->
                 let keys =
-                    candidates |> Seq.sortBy (fun (_, _, ordinal, _, _, _, _, _, _, _) -> ordinal)
+                    candidates
+                    |> Seq.sortBy (fun (_, _, ordinal, _, _, _, _, _, _, _, _, _) -> ordinal)
                     |> Seq.toArray
                 let kinds =
-                    keys |> Array.map (fun (_, _, _, _, sqlType, precision, scale, _, _, builtin) ->
+                    keys |> Array.map (fun (_, _, _, _, sqlType, precision, scale,
+                                            length, collation, _, _, builtin) ->
                         if builtin then
-                            SqlServerExactKeyKind.fromPhysical sqlType precision scale
+                            SqlServerExactKeyKind.fromPhysical sqlType precision scale length collation
                         else None)
                 if keys.Length = sourceKeys.Length
                    && (kinds |> Array.forall Option.isSome)
-                   && Array.forall2 (fun (_, _, ordinal, name, _, _, _, nullable, computed, builtin) key ->
+                   && Array.forall2 (fun (_, _, ordinal, name, _, _, _, _, _, nullable, computed, builtin) key ->
                        ordinal > 0 && builtin && StringComparer.Ordinal.Equals(name, key)
                        && not nullable && not computed) keys sourceKeys
                    && (targetKinds.Length = 0
                        || Array.forall2 (=) targetKinds (kinds |> Array.map Option.get)) then
-                    let (id, indexName, _, _, _, _, _, _, _, _) = keys.[0]
+                    let (id, indexName, _, _, _, _, _, _, _, _, _, _) = keys.[0]
                     Some(id, indexName, kinds |> Array.map Option.get)
                 else None)
         let indexId, indexName, sourceKinds =
             match matching with
             | Some value -> value
-            | None -> invalidOp "SQL Server live UNIQUE key requires exact built-in integer, DECIMAL(p,s), or UNIQUEIDENTIFIER types and ordinals matching the target."
+            | None -> invalidOp "SQL Server live UNIQUE key requires exact typed key ordinals, including matching BIN2 VARCHAR/NVARCHAR width and collation."
         // The snapshot is an immutable type-family witness, not execution
         // authority. Require it to agree with actual sys.* key types.
         sourceKinds
