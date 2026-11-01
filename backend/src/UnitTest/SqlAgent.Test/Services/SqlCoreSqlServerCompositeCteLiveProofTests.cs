@@ -682,4 +682,90 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     }
 
 
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("nonunique")]
+    [InlineData("filtered")]
+    [InlineData("disabled")]
+    [InlineData("nullable")]
+    [InlineData("type-mismatch")]
+    [InlineData("reversed")]
+    [InlineData("computed")]
+    public async Task CrossPhysicalUniqueProofRejectsUnverifiedSecondaryCatalog(string variant)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("M07 physical catalog tests require SQL Server.");
+            Assert.Skip("Real SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var tag = Guid.NewGuid().ToString("N")[..12];
+        var target = "m07_dest_" + tag;
+        var source = "m07_origin_" + tag;
+        var joined = "m07_extra_" + tag;
+        var index = "m07_idx_" + tag;
+        await using var db = new SqlConnection(cs);
+        for (var attempt = 0; ; attempt++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (attempt < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string statement)
+        {
+            await using var command = new SqlCommand(statement, db);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + target +
+                "] (k1 INT NOT NULL, k2 BIGINT NOT NULL)");
+            await Exec("CREATE TABLE dbo.[" + source +
+                "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, PRIMARY KEY (k1,k2))");
+            var j2 = variant switch
+            {
+                "nullable" => "j2 BIGINT NULL",
+                "type-mismatch" => "j2 INT NOT NULL",
+                "computed" => "j2 AS CAST(j1 AS BIGINT) PERSISTED",
+                _ => "j2 BIGINT NOT NULL"
+            };
+            await Exec("CREATE TABLE dbo.[" + joined + "] (j1 INT NOT NULL, " + j2 + ")");
+            if (variant != "missing")
+            {
+                var unique = variant == "nonunique" ? "" : "UNIQUE ";
+                var columns = variant == "reversed" ? "(j2,j1)" : "(j1,j2)";
+                var filter = variant == "filtered" ? " WHERE j2 > 0" : "";
+                await Exec("CREATE " + unique + "INDEX [" + index +
+                    "] ON dbo.[" + joined + "] " + columns + filter);
+            }
+            if (variant == "disabled")
+                await Exec("ALTER INDEX [" + index + "] ON dbo.[" + joined + "] DISABLE");
+
+            var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer, "m07-negative", [
+                SqlSchemaTable.WithTypes("dbo." + target, [
+                    new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                    new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                SqlSchemaTable.WithTypes("dbo." + source, [
+                    new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                    new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                SqlSchemaTable.WithTypes("dbo." + joined, [
+                    new SqlSchemaColumn("j1", SqlSchemaValueKind.Numeric),
+                    new SqlSchemaColumn("j2", SqlSchemaValueKind.Numeric)])
+            ]);
+            Assert.Throws<InvalidOperationException>(() =>
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForKeyPreservingJoin(
+                    db, snapshot, "dbo." + target, new[] { "k1", "k2" },
+                    "dbo." + source, new[] { "k1", "k2" },
+                    "dbo." + joined, new[] { "j1", "j2" }));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + joined + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
+
 }
