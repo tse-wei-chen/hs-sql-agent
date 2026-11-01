@@ -1303,7 +1303,8 @@ type SqlServerCteUniqueKeyAssurance private (
            || joinedKeys.Count <> sourceKeys.Count
            || sourceKeys.Count < 1 || sourceKeys.Count > 2 then
             invalidArg "joinedTable" "Cross-table proof needs three distinct physical tables and equal 1-2 key widths."
-        let create target keys source sourceKey =
+        let create (target: string) (keys: System.Collections.Generic.IReadOnlyList<string>)
+                   (source: string) (sourceKey: System.Collections.Generic.IReadOnlyList<string>) =
             if sourceKey.Count = 1 then
                 SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
                     connection, snapshot, target, keys.[0], source, sourceKey.[0])
@@ -1325,24 +1326,13 @@ type SqlServerCteUniqueKeyAssurance private (
 
     member private _.AttachVerifiedJoinedProof(secondary: SqlServerCteUniqueKeyAssurance) =
         SqlServerCteUniqueKeyAssurance(
-            pinnedSnapshot = pinnedSnapshot,
-            targetTable = targetTable,
-            sourceTable = sourceTable,
-            sourceKeyTuple = SqlServerExactIntegerKeyTuple.ofAttested
-                sourceKeyColumns sourceKeyKinds,
-            targetKeyTuple =
-                (if targetKeyColumns.Length = 0 then None
-                 else Some(SqlServerExactIntegerKeyTuple.ofAttested targetKeyColumns targetKeyKinds)),
-            databaseId = databaseId,
-            serverInstanceName = serverInstanceName,
-            databaseName = databaseName,
-            databaseGuid = databaseGuid,
-            sourceObjectId = sourceObjectId,
-            targetObjectId = targetObjectId,
-            uniqueIndexId = uniqueIndexId,
-            uniqueIndexName = uniqueIndexName,
-            metadataDigest = metadataDigest,
-            joinedProof = Some secondary)
+            pinnedSnapshot, targetTable, sourceTable,
+            SqlServerExactIntegerKeyTuple.ofAttested sourceKeyColumns sourceKeyKinds,
+            (if targetKeyColumns.Length = 0 then None
+             else Some(SqlServerExactIntegerKeyTuple.ofAttested targetKeyColumns targetKeyKinds)),
+            databaseId, serverInstanceName, databaseName, databaseGuid,
+            sourceObjectId, targetObjectId, uniqueIndexId, uniqueIndexName,
+            metadataDigest, Some secondary)
 
     /// The caller MUST invoke this on the actual DML transaction/connection
     /// before executing the write. Locks are transaction-held; no detached
