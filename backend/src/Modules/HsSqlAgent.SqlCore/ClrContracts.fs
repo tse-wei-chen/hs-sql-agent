@@ -1342,6 +1342,23 @@ type SqlServerCteUniqueKeyAssurance private (
            || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
         else
             try
+                // A joined proof spans three physical objects. Acquire all
+                // transaction-held table locks in one canonical order
+                // BEFORE either metadata witness reads the index catalog.
+                // Without this, each independent two-table proof would
+                // lock a different pair and invite inverted lock order.
+                match joinedProof with
+                | Some dependent ->
+                    for tableName in [targetTable; sourceTable; dependent.SourceTable]
+                                     |> List.distinct |> List.sort do
+                        let schema, table =
+                            SqlServerCteUniqueKeyAssurance.Parts "tableName" tableName
+                        use lockCommand =
+                            SqlServerCteUniqueKeyAssurance.Command connection transaction (
+                                "SELECT TOP (1) 1 FROM [" + schema + "].[" + table
+                                + "] WITH (TABLOCK, HOLDLOCK)")
+                        lockCommand.ExecuteScalar() |> ignore
+                | None -> ()
                 let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest, sourceKinds, targetKinds) =
                     SqlServerCteUniqueKeyAssurance.Attest(
                         connection, transaction, pinnedSnapshot,
