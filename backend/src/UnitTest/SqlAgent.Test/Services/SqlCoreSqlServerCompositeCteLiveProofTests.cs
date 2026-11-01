@@ -20,14 +20,16 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
 {
     [Theory]
-    [InlineData(true, true, false)]
-    [InlineData(true, false, false)]
-    [InlineData(false, true, false)]
-    [InlineData(false, false, false)]
-    [InlineData(true, true, true)]
-    [InlineData(false, true, true)]
+    [InlineData(true, true, 1)]
+    [InlineData(true, false, 1)]
+    [InlineData(false, true, 1)]
+    [InlineData(false, false, 1)]
+    [InlineData(true, true, 2)]
+    [InlineData(false, true, 2)]
+    [InlineData(true, false, 3)]
+    [InlineData(false, false, 3)]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
-        bool update, bool primaryKey, bool chained)
+        bool update, bool primaryKey, int hops)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -96,9 +98,17 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 .WithSqlServerCteUniqueKeyAssurance(proof);
 
             var cte = "WITH seed AS (SELECT k1 AS a, k2 AS b FROM dbo.[" + src + "]) ";
-            if (chained)
+            if (hops >= 2)
                 cte += ", picked AS (SELECT a, b FROM seed) ";
-            var keyAlias = chained ? "picked" : "seed";
+            if (hops >= 3)
+                cte += ", matched AS (SELECT a, b FROM picked) ";
+            var keyAlias = hops switch
+            {
+                1 => "seed",
+                2 => "picked",
+                3 => "matched",
+                _ => throw new ArgumentOutOfRangeException(nameof(hops))
+            };
             var sql = cte + (update
                 ? "UPDATE dbo.[" + dst + "] SET label = 'changed' FROM " + keyAlias
                 : "DELETE FROM dbo.[" + dst + "] FROM " + keyAlias)
@@ -118,6 +128,32 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
                 missingParsed, SqlAgentToolType.MsSqlServer, context,
                 new DmlCompilationPolicy(), profile, null));
+
+            // A complete tuple never becomes a match through OR, duplicate
+            // edges, implicit coercion or a shuffled physical-key projection.
+            foreach (var rejected in new[]
+            {
+                sql.Replace(" AND dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    " OR dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    StringComparison.Ordinal),
+                sql.Replace(" AND dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    " AND dbo." + dst + ".k1 = " + keyAlias + ".a" +
+                    " AND dbo." + dst + ".k2 = " + keyAlias + ".b",
+                    StringComparison.Ordinal),
+                sql.Replace(keyAlias + ".b",
+                    "CAST(" + keyAlias + ".b AS BIGINT)", StringComparison.Ordinal),
+                sql.Replace("SELECT k1 AS a, k2 AS b",
+                    "SELECT k2 AS a, k1 AS b", StringComparison.Ordinal),
+                sql.Replace("SELECT k1 AS a, k2 AS b",
+                    "SELECT k1 AS a, k1 AS b", StringComparison.Ordinal)
+            })
+            {
+                var attempt = SqlCoreFacade.TryCompileDml(rejected,
+                    SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                    context, new DmlCompilationPolicy(), profile, profile);
+                Assert.False(attempt.Success);
+                Assert.NotEmpty(attempt.TypedDiagnostics);
+            }
 
             await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
             {
