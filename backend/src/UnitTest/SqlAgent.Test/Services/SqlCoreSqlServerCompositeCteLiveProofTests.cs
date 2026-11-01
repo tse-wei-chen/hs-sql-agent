@@ -20,18 +20,26 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
 {
     [Theory]
-    [InlineData(true, true, 1, false)]
-    [InlineData(true, false, 1, false)]
-    [InlineData(false, true, 1, false)]
-    [InlineData(false, false, 1, false)]
-    [InlineData(true, true, 2, false)]
-    [InlineData(false, true, 2, false)]
-    [InlineData(true, false, 3, false)]
-    [InlineData(false, false, 3, false)]
-    [InlineData(true, false, 1, true)]
-    [InlineData(false, false, 3, true)]
+    [InlineData(true, true, 1, false, false)]
+    [InlineData(true, false, 1, false, false)]
+    [InlineData(false, true, 1, false, false)]
+    [InlineData(false, false, 1, false, false)]
+    [InlineData(true, true, 2, false, false)]
+    [InlineData(false, true, 2, false, false)]
+    [InlineData(true, false, 3, false, false)]
+    [InlineData(false, false, 3, false, false)]
+    [InlineData(true, false, 1, true, false)]
+    [InlineData(false, false, 3, true, false)]
+    [InlineData(true, true, 1, false, true)]
+    [InlineData(false, false, 1, false, true)]
+    [InlineData(true, false, 2, false, true)]
+    [InlineData(false, true, 2, false, true)]
+    [InlineData(true, true, 3, false, true)]
+    [InlineData(false, false, 3, false, true)]
+    [InlineData(true, false, 2, true, true)]
+    [InlineData(false, false, 3, true, true)]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
-        bool update, bool primaryKey, int hops, bool revokeBeforeCommit)
+        bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload = false)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -99,11 +107,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var context = new SqlPlanValidationContext("g7-composite-live", allowed)
                 .WithSqlServerCteUniqueKeyAssurance(proof);
 
-            var cte = "WITH seed AS (SELECT k1 AS a, k2 AS b FROM dbo.[" + src + "]) ";
+            var firstProjection = payload
+                ? "k1 AS a, payload AS extra, k2 AS b"
+                : "k1 AS a, k2 AS b";
+            var nextProjection = payload ? "a, extra, b" : "a, b";
+            var cte = "WITH seed AS (SELECT " + firstProjection + " FROM dbo.[" + src + "]) ";
             if (hops >= 2)
-                cte += ", picked AS (SELECT a, b FROM seed) ";
+                cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
             if (hops >= 3)
-                cte += ", matched AS (SELECT a, b FROM picked) ";
+                cte += ", matched AS (SELECT " + nextProjection + " FROM picked) ";
             var keyAlias = hops switch
             {
                 1 => "seed",
@@ -143,10 +155,20 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     StringComparison.Ordinal),
                 sql.Replace(keyAlias + ".b",
                     "CAST(" + keyAlias + ".b AS BIGINT)", StringComparison.Ordinal),
-                sql.Replace("SELECT k1 AS a, k2 AS b",
-                    "SELECT k2 AS a, k1 AS b", StringComparison.Ordinal),
-                sql.Replace("SELECT k1 AS a, k2 AS b",
-                    "SELECT k1 AS a, k1 AS b", StringComparison.Ordinal)
+                sql.Replace(firstProjection,
+                    payload ? "k2 AS a, payload AS extra, k1 AS b"
+                            : "k2 AS a, k1 AS b", StringComparison.Ordinal),
+                sql.Replace(firstProjection,
+                    payload ? "k1 AS a, payload AS extra, k1 AS b"
+                            : "k1 AS a, k1 AS b", StringComparison.Ordinal),
+                // Payload must not be allowed to mask or overwrite a key.
+                sql.Replace(firstProjection,
+                    payload ? "k1 AS a, payload AS extra, payload AS b"
+                            : "k1 AS a, k2 + 0 AS b", StringComparison.Ordinal),
+                // Extra projection aliases cannot introduce ambiguity.
+                sql.Replace(firstProjection,
+                    payload ? "k1 AS a, payload AS a, k2 AS b"
+                            : "k1 AS a, k2 AS a", StringComparison.Ordinal)
             })
             {
                 // Use the same profile-verified parsed-statement compiler
