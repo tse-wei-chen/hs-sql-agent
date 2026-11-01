@@ -7,6 +7,29 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M04 — SQL Server exact UNIQUEIDENTIFIER physical keys (develop only)
+
+- Add a closed F# `Uuid` physical key kind with exact live
+  `sys.columns`/`sys.types` identity and unchanged full source UNIQUE
+  index provenance. SQL Server `UNIQUEIDENTIFIER` is not implicitly
+  `Numeric`, `Text` or `Binary`; no GUID string coercion, alias type
+  or unsafe CAST may mint a proof.
+- Add explicit portable immutable `SqlSchemaValueKind.Uuid` (append-only
+  enum value) and bounded Host physical typed-key snapshot discovery for
+  source, target and independently attested second JOIN source. The F#
+  live proof requires matching Snapshot and physical source/target kind
+  on **every** key ordinal, never trusting virtual Catalog metadata as
+  execution authority. Existing integer/DECIMAL keys stay supported.
+- Keep 1–3 CTE projection, full AND key equality, self/singleton/second
+  physical JOIN, bounded result-row Preview, independent Approval,
+  held schema locks and same-transaction `IsCurrent`. ProofIdentity
+  advances to v6, preventing v5 approval replay against new key shapes.
+- SQL Server 2022 tests-first matrix verifies real UUID UPDATE/DELETE,
+  mixed physical composite keys, Host-discovered proof, approved commit,
+  revoked UNIQUE indexes and UUID-vs-integer/text/binary rejection.
+  **Unreleased develop-only**; no new tool, provider authorization,
+  compiler, driver or default DML/DDL selection.
+
 ### G9 / M04 — exact SQL Server fixed-decimal physical keys (develop only)
 
 - Extend the same private F# closed physical KeyTuple to

@@ -159,11 +159,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
                 "g7-composite-live-v1", [
                     SqlSchemaTable.WithTypes("dbo." + dst, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
                     SqlSchemaTable.WithTypes("dbo." + src, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)])
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
                 ]);
             var target = "dbo." + dst;
             var source = "dbo." + src;
@@ -172,6 +176,24 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 source, new[] { "k1", "k2" });
             Assert.Equal(new[] { "k1", "k2" }, proof.SourceKeyColumns);
             Assert.Equal(new[] { "k1", "k2" }, proof.TargetKeyColumns);
+            if (k1Type == "UNIQUEIDENTIFIER" || k2Type == "UNIQUEIDENTIFIER")
+            {
+                // Numeric is not a UUID witness, even when every live
+                // source UNIQUE key has otherwise been correctly attested.
+                var wrongTypedSnapshot = new SqlSchemaSnapshot(
+                    SqlAgentToolType.MsSqlServer, "g9-wrong-uuid-family", [
+                        SqlSchemaTable.WithTypes(target, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        SqlSchemaTable.WithTypes(source, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)])
+                    ]);
+                Assert.Throws<ArgumentException>(() =>
+                    SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                        db, wrongTypedSnapshot, target, new[] { "k1", "k2" },
+                        source, new[] { "k1", "k2" }));
+            }
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
             var exactTypes = (k1Type + "," + k2Type).Replace(
@@ -729,14 +751,20 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
                 "m07-cross-physical", [
                     SqlSchemaTable.WithTypes("dbo." + target, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
                     SqlSchemaTable.WithTypes("dbo." + source, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
                     SqlSchemaTable.WithTypes("dbo." + joined, [
-                        new SqlSchemaColumn("j1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("j2", SqlSchemaValueKind.Numeric)])
+                        new SqlSchemaColumn("j1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("j2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
                 ]);
             var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForKeyPreservingJoin(
                 db, snapshot, "dbo." + target, new[] { "k1", "k2" },

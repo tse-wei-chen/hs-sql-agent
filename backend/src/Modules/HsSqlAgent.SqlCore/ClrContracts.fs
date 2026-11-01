@@ -642,6 +642,8 @@ type SqlSchemaValueKind =
     | Temporal = 4
     | Binary = 5
     | Json = 6
+    /// Provider-independent 128-bit UUID family; never implicit Numeric or Text.
+    | Uuid = 7
 
 [<Sealed>]
 type SqlSchemaColumn(name: string, kind: SqlSchemaValueKind) =
@@ -872,6 +874,7 @@ type private SqlServerExactKeyKind =
     | Int32
     | Int64
     | FixedDecimal of byte * byte
+    | Uuid
 
 module private SqlServerExactKeyKind =
     let fromPhysical (sqlType: string) (precision: byte) (scale: byte) =
@@ -886,6 +889,7 @@ module private SqlServerExactKeyKind =
             if precision >= 1uy && precision <= 38uy && scale <= precision then
                 Some(FixedDecimal(precision, scale))
             else None
+        elif StringComparer.OrdinalIgnoreCase.Equals(sqlType, "uniqueidentifier") then Some Uuid
         else None
 
     let label = function
@@ -895,6 +899,15 @@ module private SqlServerExactKeyKind =
         | Int64 -> "BIGINT"
         | FixedDecimal(precision, scale) ->
             "DECIMAL(" + string (int precision) + "," + string (int scale) + ")"
+        | Uuid -> "UNIQUEIDENTIFIER"
+
+    /// A typed snapshot describes its actual value family. An externally
+    /// declared Numeric column can never authorize physical UNIQUEIDENTIFIER.
+    let matchesSnapshot kind declared =
+        match kind, declared with
+        | Uuid, SqlSchemaValueKind.Uuid -> true
+        | (UInt8 | Int16 | Int32 | Int64 | FixedDecimal _), SqlSchemaValueKind.Numeric -> true
+        | _ -> false
 
 /// Only real sys.* evidence can create this ordered physical name/type tuple.
 type private SqlServerExactKeyTuple =
@@ -963,7 +976,7 @@ type SqlServerCteUniqueKeyAssurance private (
         joinedProof |> Option.map (fun proof -> proof.ProofIdentity)
         |> Option.defaultValue null
     member _.ProofIdentity =
-        String.Join("|", [| "sqlserver-live-exact-key-v5"; pinnedSnapshot.Sha256;
+        String.Join("|", [| "sqlserver-live-exact-key-v6"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
             sourceTable; targetTable; sourceKeyColumns.[0];
@@ -1103,15 +1116,14 @@ type SqlServerCteUniqueKeyAssurance private (
             invalidArg "sourceKeys" "SQL Server proof requires an ordered distinct 1-2 component exact key tuple."
         sourceKeys |> Array.iter (fun key -> SqlServerCteUniqueKeyAssurance.Name "sourceKeys" key |> ignore)
         targetKeys |> Array.iter (fun key -> SqlServerCteUniqueKeyAssurance.Name "targetKeys" key |> ignore)
-        let physicalSnapshotKeys =
+        let sourceSnapshotKinds =
             snapshot.Tables
             |> Seq.filter (fun item -> StringComparer.Ordinal.Equals(item.Name, sourceTable))
             |> Seq.collect (fun item -> item.TypedColumns)
-            |> Seq.filter (fun col -> col.Kind = SqlSchemaValueKind.Numeric)
-            |> Seq.map (fun col -> col.Name)
-            |> Set.ofSeq
-        if sourceKeys |> Array.exists (fun key -> not (physicalSnapshotKeys.Contains key)) then
-            invalidArg "snapshot" "Every exact source key must be typed Numeric in the immutable schema snapshot."
+            |> Seq.map (fun col -> col.Name, col.Kind)
+            |> Map.ofSeq
+        if sourceKeys |> Array.exists (fun key -> not (sourceSnapshotKinds.ContainsKey key)) then
+            invalidArg "snapshot" "Every source key requires an explicit typed column in the immutable schema snapshot."
         if pin then
             // TABLE S lock + HOLDLOCK lasts for the SAME explicit transaction;
             // DDL requires Sch-M and is blocked until commit or rollback.
@@ -1178,7 +1190,7 @@ type SqlServerCteUniqueKeyAssurance private (
                     invalidOp "SQL Server target key is not an exact noncomputed physical operand."
                 match SqlServerExactKeyKind.fromPhysical physicalType precision scale with
                 | Some kind -> kind
-                | None -> invalidOp "SQL Server target key must be an exact built-in integer or DECIMAL(p,s)/NUMERIC(p,s).")
+                | None -> invalidOp "SQL Server target key must be an exact built-in integer, DECIMAL(p,s), or UNIQUEIDENTIFIER.")
         use indexCommand =
             SqlServerCteUniqueKeyAssurance.Command connection tx (
                 """SELECT i.index_id, i.name, ic.key_ordinal, c.name,
@@ -1237,7 +1249,26 @@ type SqlServerCteUniqueKeyAssurance private (
         let indexId, indexName, sourceKinds =
             match matching with
             | Some value -> value
-            | None -> invalidOp "SQL Server live UNIQUE key requires exact built-in integer or DECIMAL(p,s) types, ordinals and target equivalence."
+            | None -> invalidOp "SQL Server live UNIQUE key requires exact built-in integer, DECIMAL(p,s), or UNIQUEIDENTIFIER types and ordinals matching the target."
+        // The snapshot is an immutable type-family witness, not execution
+        // authority. Require it to agree with actual sys.* key types.
+        sourceKinds
+        |> Array.iteri (fun ordinal kind ->
+            if not (SqlServerExactKeyKind.matchesSnapshot kind sourceSnapshotKinds.[sourceKeys.[ordinal]]) then
+                invalidArg "snapshot" "Source key snapshot type family differs from its live physical type.")
+        let targetSnapshotKinds =
+            snapshot.Tables
+            |> Seq.filter (fun item -> StringComparer.Ordinal.Equals(item.Name, targetTable))
+            |> Seq.collect (fun item -> item.TypedColumns)
+            |> Seq.map (fun col -> col.Name, col.Kind)
+            |> Map.ofSeq
+        targetKinds
+        |> Array.iteri (fun ordinal kind ->
+            match targetSnapshotKinds.TryFind targetKeys.[ordinal] with
+            | Some SqlSchemaValueKind.Unknown -> () // Legacy target name-only snapshot: physical proof remains authoritative.
+            | Some declared when not (SqlServerExactKeyKind.matchesSnapshot kind declared) ->
+                invalidArg "snapshot" "Target key snapshot type family differs from its live physical type."
+            | _ -> ())
         let sha256 = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant()
         databaseId, serverInstanceName, databaseName, databaseGuid,
         sourceId, targetId, indexId, indexName, sha256, sourceKinds, targetKinds

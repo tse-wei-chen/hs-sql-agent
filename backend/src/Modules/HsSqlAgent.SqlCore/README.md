@@ -3600,6 +3600,43 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M04 — SQL Server UNIQUEIDENTIFIER typed physical keys (develop only)
+
+The sealed F# SQL Server physical KeyTuple proof now accepts **built-in
+`UNIQUEIDENTIFIER`**, the 128-bit UUID SQL Server type, alongside the
+already proven four exact integer kinds and fixed `DECIMAL(p,s)` /
+`NUMERIC(p,s)`. The portable immutable Schema Snapshot gained an
+explicit **`SqlSchemaValueKind.Uuid`** type family; a UUID is **never
+pretended to be Numeric, Text, or Binary**. Host auto-discovery reads
+actual `sys.tables/sys.schemas/sys.columns/sys.types` for each bounded
+source, target and optional second physical JOIN key; alias and unknown
+SQL types fail closed rather than inventing a type. The F# proof then
+independently verifies full source UNIQUE index key completeness,
+enabled/unfiltered identity, precise built-in types and per-ordinal
+target equivalence, plus the source/target Snapshot's declared family.
+`UNIQUEIDENTIFIER = INT/VARCHAR/BINARY/DECIMAL` is never proof-bearing;
+neither SQL implicit conversions nor user-defined aliases are accepted.
+
+Mixed one- and two-key tuples like `(UNIQUEIDENTIFIER, INT)`,
+`(SMALLINT, UNIQUEIDENTIFIER)` and `(UNIQUEIDENTIFIER, DECIMAL(12,2))`
+retain 1–3 CTE hops, direct lineage, self/derived-singleton JOIN and
+**one independently live-attested second physical source JOIN**. The
+existing F# AST validator still demands exact ordinary AND/equality
+for every key, bounded row multiplicity, and no CAST/computed lineage.
+The Host still requires Preview, independent Approval and an unchanged
+`IsCurrent` physical re-check **inside the actual commit transaction**
+under held locks. A new v6 ProofIdentity binds both UUID and snapshot
+type-family metadata and invalidates all older v5 pending approvals.
+
+SQL Server 2022 RED→GREEN tests cover UUID UPDATE/DELETE, primary/
+UNIQUE physical indexes, composite mixed type tuples, self and second
+physical JOIN, Host auto-proof discovery, transaction preview/approval/
+commit, dropped index after preview, wrong typed snapshots and
+UUID-vs-INT/VARCHAR/BINARY negatives. No new MCP tool, driver, parser,
+runtime execution privilege, default DML selection or general JOIN
+authorization. Other five database providers are unchanged. The
+feature is **unreleased** and restricted to backend/site `develop`.
+
 ## G9 / M04 — SQL Server exact physical integer and fixed-decimal KeyTuple (unreleased)
 
 This **development-only** capability extends the already-proven SQL Server
