@@ -20,7 +20,8 @@ internal static class SqlServerCteLiveProofDiscovery
 {
     private sealed record Candidate(
         string TargetTable, ImmutableArray<string> TargetKeys,
-        string SourceTable, ImmutableArray<string> SourceKeys);
+        string SourceTable, ImmutableArray<string> SourceKeys,
+        string? JoinedTable, ImmutableArray<string> JoinedKeys);
 
     internal static SqlPlanValidationContext AttachIfProven(
         DbConnection? metadataConnection,
@@ -56,28 +57,38 @@ internal static class SqlServerCteLiveProofDiscovery
         // The proof's snapshot is only a tightly scoped identity/type
         // witness. This never becomes an invented full-table schema snapshot,
         // and never suppresses the ordinary optional live schema verifier.
+        var boundedTables = new List<SqlSchemaTable>
+        {
+            SqlSchemaTable.WithTypes(candidate.TargetTable,
+                candidate.TargetKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray()),
+            SqlSchemaTable.WithTypes(candidate.SourceTable,
+                candidate.SourceKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray())
+        };
+        if (candidate.JoinedTable is not null)
+            boundedTables.Add(SqlSchemaTable.WithTypes(candidate.JoinedTable,
+                candidate.JoinedKeys.Select(k =>
+                    new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray()));
         var snapshot = context.SchemaSnapshot ?? new SqlSchemaSnapshot(
             SqlAgentToolType.MsSqlServer,
-            "host-discovered-sqlserver-cte-exact-integer-v2",
-            [
-                SqlSchemaTable.WithTypes(candidate.TargetTable,
-                    candidate.TargetKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray()),
-                SqlSchemaTable.WithTypes(candidate.SourceTable,
-                    candidate.SourceKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray())
-            ]);
+            "host-discovered-sqlserver-cte-exact-integer-v2", boundedTables);
 
         // This is the ONLY authority minting operation. It independently
         // verifies both physical, per-ordinal exact INT/BIGINT types and the enabled, unfiltered,
         // single-column source UNIQUE index in the real SQL Server sys catalog.
         // Unsupported or invisible metadata throws: never downgrade to a
         // compile-time Catalog guess.
-        var proof = candidate.SourceKeys.Length == 1
-            ? SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
-                metadataConnection, snapshot, candidate.TargetTable, candidate.TargetKeys[0],
-                candidate.SourceTable, candidate.SourceKeys[0])
-            : SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+        var proof = candidate.JoinedTable is not null
+            ? SqlServerCteUniqueKeyAssurance.VerifyLiveForKeyPreservingJoin(
                 metadataConnection, snapshot, candidate.TargetTable, candidate.TargetKeys.ToArray(),
-                candidate.SourceTable, candidate.SourceKeys.ToArray());
+                candidate.SourceTable, candidate.SourceKeys.ToArray(),
+                candidate.JoinedTable, candidate.JoinedKeys.ToArray())
+            : candidate.SourceKeys.Length == 1
+                ? SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    metadataConnection, snapshot, candidate.TargetTable, candidate.TargetKeys[0],
+                    candidate.SourceTable, candidate.SourceKeys[0])
+                : SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    metadataConnection, snapshot, candidate.TargetTable, candidate.TargetKeys.ToArray(),
+                    candidate.SourceTable, candidate.SourceKeys.ToArray());
 
         cancellationToken.ThrowIfCancellationRequested();
         return context.WithSqlServerCteUniqueKeyAssurance(proof);
@@ -162,16 +173,27 @@ internal static class SqlServerCteLiveProofDiscovery
         // attested tuple; sys.index_columns.key_ordinal verifies that exact
         // order. Payload positions do not become index components.
         var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
+        string? joinedTable = null;
+        var joinedKeys = ImmutableArray<string>.Empty;
         if (ctes[0].Query is SelectStatement first
             && first.From is NamedTableSource physical
-            && first.Joins.Any(join => !ProvenSingletonJoin(join))
-            && !ProvenPhysicalSelfJoin(physical, first.Joins[0], sourceTable,
-                ordered.Select(m => m.Source.PhysicalColumn).ToArray()))
-            return false;
+            && first.Joins.Any(join => !ProvenSingletonJoin(join)))
+        {
+            var join = first.Joins[0];
+            var rootKeys = ordered.Select(m => m.Source.PhysicalColumn).ToArray();
+            if (!ProvenPhysicalSelfJoin(physical, join, sourceTable, rootKeys))
+            {
+                if (!TryDescribeDistinctPhysicalJoin(
+                    physical, join, sourceTable, targetTable, rootKeys,
+                    out joinedTable, out joinedKeys))
+                    return false;
+            }
+        }
         candidate = new Candidate(targetTable,
             ordered.Select(m => m.Target).ToImmutableArray(),
             sourceTable,
-            ordered.Select(m => m.Source.PhysicalColumn).ToImmutableArray());
+            ordered.Select(m => m.Source.PhysicalColumn).ToImmutableArray(),
+            joinedTable, joinedKeys);
         return true;
     }
 
@@ -224,7 +246,8 @@ internal static class SqlServerCteLiveProofDiscovery
             // Capture an ordinary local, not the method's out parameter.
             var knownPhysicalTable = physicalTable;
             if (select.Joins.Any(join => !ProvenSingletonJoin(join)
-                    && !(i == 0 && HasPhysicalSelfJoinShape(input, join, knownPhysicalTable))))
+                    && !(i == 0 && (HasPhysicalSelfJoinShape(input, join, knownPhysicalTable)
+                        || HasDistinctPhysicalJoinShape(input, join, knownPhysicalTable)))))
                 return false;
 
             var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
@@ -272,6 +295,81 @@ internal static class SqlServerCteLiveProofDiscovery
             finalColumns = next.MoveToImmutable();
         }
         return !string.IsNullOrEmpty(physicalTable) && !finalColumns.IsDefaultOrEmpty;
+    }
+
+    // The second physical table is not trusted until an independent
+    // enabled/unfiltered UNIQUE index is attested with exact integer kinds.
+    private static bool HasDistinctPhysicalJoinShape(
+        NamedTableSource primary, JoinSource join, string physicalSource) =>
+        primary.Alias is not null && SafeName(primary.Alias.Value)
+        && !join.IsNatural && join.UsingColumns.IsDefaultOrEmpty
+        && (SameOperator(join.Kind, "INNER") || SameOperator(join.Kind, "LEFT"))
+        && join.Predicate is not null
+        && join.Source is NamedTableSource secondary
+        && secondary.Alias is not null && SafeName(secondary.Alias.Value)
+        && !Same(primary.Alias.Value, secondary.Alias.Value)
+        && TryPhysicalTable(secondary.Name, out var joinedTable)
+        && !Same(physicalSource, joinedTable);
+
+    private static bool TryDescribeDistinctPhysicalJoin(
+        NamedTableSource primary, JoinSource join,
+        string physicalSource, string targetTable, string[] primaryKeys,
+        out string? joinedTable, out ImmutableArray<string> joinedKeys)
+    {
+        joinedTable = null;
+        joinedKeys = ImmutableArray<string>.Empty;
+        if (!HasDistinctPhysicalJoinShape(primary, join, physicalSource)
+            || join.Source is not NamedTableSource secondary
+            || !TryPhysicalTable(secondary.Name, out var physicalJoined)
+            || Same(physicalJoined, targetTable)
+            || join.Predicate is null || primaryKeys.Length is < 1 or > 2)
+            return false;
+
+        var matched = new string?[primaryKeys.Length];
+        var pending = new Stack<SqlExpr>();
+        pending.Push(join.Predicate);
+        var budget = 256;
+        while (pending.Count > 0)
+        {
+            if (--budget < 0) return false;
+            if (pending.Pop() is not BinaryExpr binary) continue;
+            if (SameOperator(binary.Operator, "AND"))
+            {
+                pending.Push(binary.Left);
+                pending.Push(binary.Right);
+                continue;
+            }
+            if (!SameOperator(binary.Operator, "=")) continue;
+            for (var i = 0; i < primaryKeys.Length; i++)
+            {
+                if ((IsCteKey(binary.Left, primary.Alias!.Value, primaryKeys[i])
+                     && TryAliasKey(binary.Right, secondary.Alias!.Value, out var name))
+                    || (IsCteKey(binary.Right, primary.Alias!.Value, primaryKeys[i])
+                        && TryAliasKey(binary.Left, secondary.Alias!.Value, out name)))
+                {
+                    if (matched[i] is not null) return false;
+                    matched[i] = name;
+                }
+            }
+        }
+        if (matched.Any(x => x is null)
+            || matched.Distinct(StringComparer.Ordinal).Count() != primaryKeys.Length)
+            return false;
+        joinedTable = physicalJoined;
+        joinedKeys = matched.Select(x => x!).ToImmutableArray();
+        return true;
+    }
+
+    private static bool TryAliasKey(SqlExpr expression, string alias, out string key)
+    {
+        key = "";
+        if (expression is not ColumnExpr column
+            || column.Name.Parts.Length != 2
+            || !Same(column.Name.Parts[0].Value, alias)
+            || !SafeName(column.Name.Parts[1].Value))
+            return false;
+        key = column.Name.Parts[1].Value;
+        return true;
     }
 
     // A self-JOIN on the same live-attested unique INT key cannot multiply
