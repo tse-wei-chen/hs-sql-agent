@@ -3401,6 +3401,48 @@ unchanged and fail closed for this executable proof. Real SQL Server 2022
 tests cover composite PK/UNIQUE, index ordinal mismatch, mandatory predicates,
 Host preview/commit and post-preview physical index drift.
 
+## G8 / M03 — SQL Server CTE payload projection with proven INT keys
+
+A native SQL Server UPDATE/DELETE may now select additional **non-key
+payload columns** alongside its one- or two-column INT key in a
+bounded, read-only linear CTE chain. The SQL Server 2005+ Host accepts
+up to **32 direct column projections per hop** across at most three
+CTEs. Key columns may have non-key payload between them, but the
+**relative physical key order must remain unchanged** throughout
+each hop. All output names must remain unique; a downstream CTE may
+drop unused payload while carrying every key.
+
+```sql
+WITH seed AS (
+  SELECT k1 AS a, payload AS description, k2 AS b
+  FROM dbo.SourceRows
+), picked AS (
+  SELECT a, description, b FROM seed
+)
+UPDATE dbo.TargetRows SET status = 'updated'
+FROM picked
+WHERE dbo.TargetRows.k1 = picked.a
+  AND dbo.TargetRows.k2 = picked.b;
+```
+
+This is a strict **projection** expansion, not general joined
+cardinality proof. Only direct source column expressions qualify for
+automatic Host discovery; no scalar/derived expressions, duplicate
+input or output columns, wildcard projection, aggregates, DISTINCT,
+set branches, recursion or JOIN are accepted in the proof path.
+A missing, duplicated, transformed or reordered key, or an ambiguous
+alias, rejects execution. SQL Server live metadata must still attest
+the complete enabled/unfiltered physical unique INT key tuple in the
+exact ordinal order, with each target key physically INT. The closed
+F# compiler independently checks the CTE path and mandatory
+`AND`/`=` equality graph before native rendering; bounded preview,
+approval evidence, transaction-held index/table locks and commit-time
+`IsCurrent` checks are unchanged.
+
+**M07 key-preserving JOIN is a separate future proof boundary.** This
+feature does not add JOIN mutation privileges, change the other five
+database providers, or create an additional MCP tool.
+
 ## G1 — Strict additive DDL Schema Compiler (compile only)
 
 `SqlCoreFacade.CompileDdl(sql, new DdlCompilationOptions(sourceDialect, targetDialect))`
