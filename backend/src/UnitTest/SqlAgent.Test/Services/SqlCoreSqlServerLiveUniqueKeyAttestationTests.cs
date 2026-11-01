@@ -31,9 +31,12 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
         ]);
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task ActualUnfilteredUniqueIntIndexIsPinnedAndRevocationFailsClosed(bool primaryKey)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task ActualUnfilteredUniqueIntIndexIsPinnedAndRevocationFailsClosed(
+        bool primaryKey, bool bigInt)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -64,13 +67,17 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
 
         try
         {
-            await Exec("CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30) NOT NULL)");
-            await Exec("CREATE TABLE dbo.[" + source + "] (id INT NOT NULL" +
+            var type = bigInt ? "BIGINT" : "INT";
+            await Exec("CREATE TABLE dbo.[" + target + "] (id " + type
+                + " NOT NULL PRIMARY KEY, label VARCHAR(30) NOT NULL)");
+            await Exec("CREATE TABLE dbo.[" + source + "] (id " + type + " NOT NULL" +
                        (primaryKey ? " PRIMARY KEY" : "") +
                        ", label VARCHAR(30) NOT NULL)");
             if (!primaryKey)
                 await Exec("CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + source + "] (id)");
 
+            await Exec("INSERT INTO dbo.[" + source + "] (id,label) VALUES ("
+                + (bigInt ? "2147483649" : "1") + ",'source')");
             var snapshot = Snapshot(target, source);
             var proof = SqlServerCteUniqueKeyAssurance.VerifyLive(
                 db, snapshot, "dbo." + target, "dbo." + source, "id");
@@ -78,7 +85,8 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.Equal("dbo." + target, proof.TargetTable);
             Assert.Equal("dbo." + source, proof.SourceTable);
             Assert.Equal("id", proof.SourceKeyColumn);
-            Assert.Contains("sqlserver-live-unique-int", proof.ProofIdentity);
+            Assert.Contains("sqlserver-live-exact-integer-v3", proof.ProofIdentity);
+            Assert.Contains("source-key-types=" + type, proof.ProofIdentity);
             Assert.False(string.IsNullOrWhiteSpace(proof.ProofIdentity));
 
             await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(token))
