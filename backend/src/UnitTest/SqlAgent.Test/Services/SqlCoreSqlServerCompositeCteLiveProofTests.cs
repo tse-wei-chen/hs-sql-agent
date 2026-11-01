@@ -128,6 +128,10 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             Assert.Equal(new[] { "k1", "k2" }, proof.TargetKeyColumns);
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
+            Assert.Contains("source-key-types=" + k1Type + "," + k2Type,
+                proof.ProofIdentity, StringComparison.Ordinal);
+            Assert.Contains("target-key-types=" + k1Type + "," + k2Type,
+                proof.ProofIdentity, StringComparison.Ordinal);
 
             var profile = new SqlProviderCapabilityProfile(
                 SqlAgentToolType.MsSqlServer, new Version(16, 0));

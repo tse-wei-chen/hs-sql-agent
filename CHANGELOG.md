@@ -7,6 +7,25 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M04 — SQL Server exact integer key equivalence (develop only)
+
+- Support a bounded live-verified, **exact INT/BIGINT** physical source-key
+  and target equality pair at each ordinal of one-/two-component SQL Server
+  CTE UPDATE/DELETE unique-key proof; mixed `(INT, BIGINT)` ordinals are
+  allowed only where the actual source and target column types match.
+- Reuse existing Host discovery, closed F# CTE and JOIN AST proof,
+  strict row-set Preview/Approval, immutable identity and commit-time
+  transaction-held metadata recheck. A private closed F# integer-kind DU
+  binds each source/target physical key ordinal; versioned fingerprint
+  prevents legacy single-INT approval replay.
+- Real SQL Server 2022 tests include values above signed 32-bit maximum,
+  PRIMARY KEY and UNIQUE index, 1–3 CTE hops, UPDATE/DELETE, Host approval,
+  stale-index recheck and negative `INT`↔`BIGINT` implicit coercions,
+  `SMALLINT`/`DECIMAL`/`FLOAT`/`UUID` and computed/nullable keys.
+- **Unreleased:** backend `develop` only; documentation stays on site
+  `develop`. The production site `main` remains pinned to the last
+  published release. No new MCP tool, driver or permission inheritance.
+
 ### SQL Core G1/G2, PostgreSQL G3, SQLite/SQL Server/Firebird G4, MySQL/Oracle G5 and PostgreSQL G6 DDL
 
 - Introduce a separate closed F# `CompileDdl` / `TryCompileDdl` compiler,

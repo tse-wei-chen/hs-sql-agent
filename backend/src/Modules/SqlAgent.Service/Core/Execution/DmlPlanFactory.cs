@@ -241,7 +241,7 @@ public sealed class DmlPlanFactory(
 
         var boundProof = effectiveValidationContext.SqlServerCteUniqueKeyAssurance;
         var fingerprintPolicy = boundProof?.TargetKeyColumn is not null
-            ? validationContext.PolicyVersion + "|live-sqlserver-cte-int=" + boundProof.ProofIdentity
+            ? validationContext.PolicyVersion + "|live-sqlserver-cte-exact-integer=" + boundProof.ProofIdentity
             : validationContext.PolicyVersion;
         var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
             mutationCommand, fingerprintPolicy);
