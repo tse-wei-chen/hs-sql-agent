@@ -72,6 +72,14 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(false, false, 3, false, true, "INNER", "SMALLINT", "BIGINT")]
     [InlineData(true, true, 2, false, false, "CROSS", "BIGINT", "TINYINT")]
     [InlineData(false, false, 1, false, true, "LEFT", "INT", "SMALLINT")]
+    // G9/M04: fixed-point physical type equality requires both p and s.
+    [InlineData(true, true, 1, false, false, "NONE", "DECIMAL(12,2)", "DECIMAL(18,4)")]
+    [InlineData(false, false, 2, false, true, "NONE", "NUMERIC(12,2)", "DECIMAL(18,4)")]
+    [InlineData(true, false, 3, false, true, "SELF", "SMALLINT", "DECIMAL(20,0)")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "DECIMAL(18,4)", "BIGINT")]
+    [InlineData(true, false, 1, true, true, "NONE", "DECIMAL(12,2)", "INT")]
+    [InlineData(false, false, 3, false, true, "INNER", "DECIMAL(18,4)", "DECIMAL(12,2)")]
+    [InlineData(true, false, 2, false, false, "CROSS", "DECIMAL(38,0)", "DECIMAL(38,18)")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -114,8 +122,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             if (!primaryKey)
                 await Exec("CREATE UNIQUE INDEX [" + idx + "] ON dbo.[" + src + "] (k1,k2)");
             // Actual 64-bit values distinguish BIGINT from ordinary INT.
-            var first = k1Type == "BIGINT" ? 2147483649L : 1L;
-            var second = k2Type == "BIGINT" ? 2147483649L : 1L;
+            decimal first = k1Type == "BIGINT" ? 2147483649m
+                : (k1Type.StartsWith("DECIMAL(", StringComparison.Ordinal)
+                   || k1Type.StartsWith("NUMERIC(", StringComparison.Ordinal)) && !k1Type.EndsWith(",0)", StringComparison.Ordinal)
+                    ? 1.25m : 1m;
+            decimal second = k2Type == "BIGINT" ? 2147483649m
+                : k2Type.StartsWith("DECIMAL(", StringComparison.Ordinal) && !k2Type.EndsWith(",0)", StringComparison.Ordinal)
+                    ? 101.125m : 1m;
             await Exec("INSERT INTO dbo.[" + dst +
                 $"] (k1,k2,label) VALUES ({first},{second},'old'),({first},{second + 1},'old'),({first + 1},{second},'old')");
             await Exec("INSERT INTO dbo.[" + src +
@@ -139,9 +152,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             Assert.Equal(new[] { "k1", "k2" }, proof.TargetKeyColumns);
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
-            Assert.Contains("source-key-types=" + k1Type + "," + k2Type,
+            var exactTypes = (k1Type + "," + k2Type).Replace(
+                "NUMERIC(", "DECIMAL(", StringComparison.Ordinal);
+            Assert.Contains("source-key-types=" + exactTypes,
                 proof.ProofIdentity, StringComparison.Ordinal);
-            Assert.Contains("target-key-types=" + k1Type + "," + k2Type,
+            Assert.Contains("target-key-types=" + exactTypes,
                 proof.ProofIdentity, StringComparison.Ordinal);
 
             var profile = new SqlProviderCapabilityProfile(
@@ -387,6 +402,10 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("source-decimal")]
     [InlineData("source-float")]
     [InlineData("source-uuid")]
+    [InlineData("decimal-precision-mismatch")]
+    [InlineData("decimal-scale-mismatch")]
+    [InlineData("numeric-vs-int")]
+    [InlineData("decimal-vs-bigint")]
     [InlineData("target-decimal")]
     [InlineData("target-smallint")]
     [InlineData("target-tinyint")]
@@ -428,6 +447,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "target-decimal" => "DECIMAL(20,0)",
                     "target-smallint" => "SMALLINT",
                     "target-tinyint" => "TINYINT",
+                    "decimal-precision-mismatch" => "DECIMAL(12,2)",
+                    "decimal-scale-mismatch" => "DECIMAL(12,2)",
+                    "decimal-vs-bigint" => "BIGINT",
                     _ => "INT"
                 }) + " NOT NULL)");
             var sourceDefinition = shape switch
@@ -437,6 +459,10 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 "source-smallint" => "k1 INT NOT NULL, k2 SMALLINT NOT NULL",
                 "source-tinyint" => "k1 INT NOT NULL, k2 TINYINT NOT NULL",
                 "source-decimal" => "k1 INT NOT NULL, k2 DECIMAL(20,0) NOT NULL",
+                "decimal-precision-mismatch" => "k1 INT NOT NULL, k2 DECIMAL(13,2) NOT NULL",
+                "decimal-scale-mismatch" => "k1 INT NOT NULL, k2 DECIMAL(12,3) NOT NULL",
+                "numeric-vs-int" => "k1 INT NOT NULL, k2 NUMERIC(12,2) NOT NULL",
+                "decimal-vs-bigint" => "k1 INT NOT NULL, k2 DECIMAL(20,0) NOT NULL",
                 "source-float" => "k1 INT NOT NULL, k2 FLOAT NOT NULL",
                 "source-uuid" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
                 "computed" => "k1 INT NOT NULL, k2 AS (k1 + 1) PERSISTED",
@@ -535,6 +561,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, false, "SMALLINT", "TINYINT")]
     [InlineData(false, true, 2, false, "TINYINT", "SMALLINT")]
     [InlineData(true, true, 3, true, "SMALLINT", "INT")]
+    [InlineData(true, false, 1, false, "DECIMAL(12,2)", "DECIMAL(18,4)")]
+    [InlineData(false, true, 2, false, "NUMERIC(12,2)", "DECIMAL(18,4)")]
+    [InlineData(true, true, 3, true, "DECIMAL(12,2)", "DECIMAL(20,0)")]
     public async Task CrossPhysicalUniqueJoinRequiresBothLiveIndexesAndCommitFreshness(
         bool update, bool leftJoin, int hops, bool revokeJoinedIndex,
         string k1Type, string k2Type)
@@ -575,8 +604,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             await Exec("CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + joined + "] (j1,j2)");
             // Keep 64-bit sample values for BIGINT, but fit exact
             // SMALLINT/TINYINT ranges without implicit conversion.
-            var first = k1Type == "BIGINT" ? 2147483649L : 1L;
-            var second = k2Type == "BIGINT" ? 2147483649L : 1L;
+            decimal first = k1Type == "BIGINT" ? 2147483649m
+                : (k1Type.StartsWith("DECIMAL(", StringComparison.Ordinal)
+                   || k1Type.StartsWith("NUMERIC(", StringComparison.Ordinal)) && !k1Type.EndsWith(",0)", StringComparison.Ordinal)
+                    ? 1.25m : 1m;
+            decimal second = k2Type == "BIGINT" ? 2147483649m
+                : k2Type.StartsWith("DECIMAL(", StringComparison.Ordinal) && !k2Type.EndsWith(",0)", StringComparison.Ordinal)
+                    ? 101.125m : 1m;
             await Exec("INSERT INTO dbo.[" + target +
                 $"] (k1,k2,label) VALUES ({first},{second},'old'),({first},{second + 1},'old'),({first + 1},{second},'old')");
             await Exec("INSERT INTO dbo.[" + source +
