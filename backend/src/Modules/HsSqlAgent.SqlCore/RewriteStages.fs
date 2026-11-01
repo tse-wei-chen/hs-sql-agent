@@ -643,6 +643,46 @@ module internal RewriteStages =
                     | _ -> ()
                 not duplicate && (seen |> Array.forall id)
             | _ -> false
+        let provenDistinctPhysicalJoin (head: Select) join =
+            // The source keeps its own ordered unique key; every equality
+            // also targets one component of a *different*, independently
+            // attested unique index. The secondary proof is inseparable
+            // from the transaction-bound primary token.
+            match head.From, join with
+            | Some(NamedTable(physical, Some leftAlias)),
+              OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     NamedTable(joinedPhysical, Some rightAlias), predicate)
+                when not (isNull proof.JoinedSourceTable)
+                     && qualified physical proof.SourceTable
+                     && qualified joinedPhysical proof.JoinedSourceTable
+                     && not (same leftAlias.Value rightAlias.Value)
+                     && proof.JoinedSourceKeyColumns.Count = proof.SourceKeyColumns.Count ->
+                let primary = proof.SourceKeyColumns |> Seq.toArray
+                let secondary = proof.JoinedSourceKeyColumns |> Seq.toArray
+                let seen = Array.create primary.Length false
+                let pending = ResizeArray<Expr>()
+                pending.Add predicate
+                let mutable duplicate = false
+                while pending.Count > 0 && not duplicate do
+                    RewriteResourceBudget.checkpoint ()
+                    let last = pending.Count - 1
+                    let node = pending.[last]
+                    pending.RemoveAt(last)
+                    match Expr.unspan node with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add left
+                        pending.Add right
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        for i = 0 to primary.Length - 1 do
+                            if (isColumn left leftAlias.Value primary.[i]
+                                && isColumn right rightAlias.Value secondary.[i])
+                               || (isColumn right leftAlias.Value primary.[i]
+                                   && isColumn left rightAlias.Value secondary.[i]) then
+                                if seen.[i] then duplicate <- true
+                                else seen.[i] <- true
+                    | _ -> ()
+                not duplicate && (seen |> Array.forall id)
+            | _ -> false
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
@@ -758,7 +798,8 @@ module internal RewriteStages =
                        || head.Joins.Length > 1
                        || not (head.Joins |> List.forall (fun join ->
                            singletonJoin join
-                           || (index = 0 && provenPhysicalSelfJoin head join)))
+                           || (index = 0 && (provenPhysicalSelfJoin head join
+                                              || provenDistinctPhysicalJoin head join))))
                        || not head.GroupBy.IsEmpty || head.Having.IsSome
                        || head.DistinctMode <> SelectDistinct.AllRows
                        || directProjection.IsNone then

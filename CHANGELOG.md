@@ -7,6 +7,26 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### M07 — independently attested second physical JOIN source (develop only)
+
+- Extend SQL Server native CTE `UPDATE`/`DELETE` to one bounded
+  `INNER` or `LEFT JOIN` against a **different** physical source table.
+  Each source independently requires a live enabled/unfiltered UNIQUE
+  `INT`/`BIGINT` key of one or two exact, nonnullable components;
+  the JOIN must equate every component in order without casts or `OR`.
+- Bind the second physical index/object, source types, database identity
+  and metadata digest into the original execution/approval proof, and
+  reattest **both** proofs on the actual commit transaction.
+  The closed F# compiler independently proves the complete JOIN
+  equality graph. No virtual catalog can mint authority.
+- Real SQL Server 2022 tests cover UPDATE/DELETE, INNER/LEFT, CTE
+  chains, mixed-width keys, after-preview secondary-index revocation
+  and missing/disabled/filtered/nullable/nonunique/wrong-type/reversed
+  secondary index cases. No new MCP tools, new SQL providers or
+  general multi-table cardinality authorization.
+- **Unreleased:** main product/site branches remain untouched; site
+  documentation is developed and verified on its own `develop`.
+
 ### G9 / M04 — SQL Server exact integer key equivalence (develop only)
 
 - Support a bounded live-verified, **exact INT/BIGINT** physical source-key

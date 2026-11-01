@@ -3493,6 +3493,63 @@ remain ordinary read-only predicate semantics and do not by
 themselves mint executable physical-key evidence. The other
 five providers and MCP tool count are unchanged.
 
+## M07 — cross-physical UNIQUE key JOIN with dual live evidence
+
+Building on the first bounded M07 singleton/self-JOIN proof and
+G9/M04 exact INT/BIGINT KeyTuple, a native SQL Server 2005+
+CTE-prefixed `UPDATE` or `DELETE` may now use a **single INNER or
+LEFT JOIN to a different physical source table**. No new MCP tool,
+public SQL execution path, optional source catalog, or provider driver.
+
+Both physical sources must independently have an **enabled,
+unfiltered, nonnullable UNIQUE/PRIMARY KEY B-tree index** on the exact
+ordered one-/two-component `INT`/`BIGINT` key tuple. Every joined
+source key must match a corresponding primary source key through
+mandatory ordinary `AND`/`=` predicates in the JOIN `ON` clause,
+with exact physical SQL type equality **per ordinal**. The primary
+source's full key also matches the actual mutation target as before.
+
+```sql
+WITH seed AS (
+    SELECT src.k1 AS a, src.k2 AS b
+    FROM dbo.SourceRows AS src
+    INNER JOIN dbo.OtherRows AS oth
+      ON src.k1 = oth.other_k1
+     AND src.k2 = oth.other_k2
+)
+UPDATE dbo.TargetRows SET status = 'changed'
+FROM seed
+WHERE dbo.TargetRows.k1 = seed.a
+  AND dbo.TargetRows.k2 = seed.b;
+```
+
+The Host's bounded CLR discovery identifies both physical tables and
+the exact second table key tuple. It calls the *two* live, domain-owned
+`SqlServerCteUniqueKeyAssurance` attestations. The sealed combined
+proof includes **both** identities in `ProofIdentity`; this flows
+through immutable preview, plan and approval fingerprints. During
+commit, `IsCurrent(connection, transaction)` checks both physical
+object/index identities, database GUID, complete metadata digests
+and exact SQL integer widths with transaction-held source/target locks.
+Removing or changing either index after preview invalidates approval;
+the write must not proceed.
+
+Independently, the closed F# AST validates the exact second physical
+table, each full-key equality, source scopes, ordering, and the
+absence of `OR`, computed operands or implicit coercion. One to
+three linear read-only CTEs and up to 32 direct projections per hop
+remain the bounded footprint. Other CTE joins, a third physical
+source, RIGHT/FULL/CROSS with physical sources, filtered/disabled or
+nonunique indexes, nullable/computed keys, unproven types,
+many-to-many joins and cross-provider DML remain fail-closed.
+This is **not yet general JOIN/EXISTS/anti-join authorization**.
+
+The live SQL Server test matrix covers INNER/LEFT UPDATE/DELETE,
+one to three CTE hops, mixed INT/BIGINT composite keys, Host
+preview/approval/commit, physical row parity, post-preview secondary
+index revocation and negative catalog proof (missing/nonunique/
+filtered/disabled/reversed/nullable/computed/wrong width).
+
 ## G9 / M04 — SQL Server exact physical INT/BIGINT KeyTuple (unreleased)
 
 This **development-only** capability extends the already-proven SQL Server

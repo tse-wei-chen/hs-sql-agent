@@ -911,7 +911,8 @@ type SqlServerCteUniqueKeyAssurance private (
     targetObjectId: int,
     uniqueIndexId: int,
     uniqueIndexName: string,
-    metadataDigest: string) =
+    metadataDigest: string,
+    joinedProof: SqlServerCteUniqueKeyAssurance option) =
     let sourceKeyColumns = SqlServerExactIntegerKeyTuple.values sourceKeyTuple
     let sourceKeyKinds = SqlServerExactIntegerKeyTuple.kinds sourceKeyTuple
     let targetKeyColumns =
@@ -933,6 +934,18 @@ type SqlServerCteUniqueKeyAssurance private (
     member _.DatabaseName = databaseName
     member _.DatabaseGuid = databaseGuid
     member _.UniqueIndexName = uniqueIndexName
+    /// The secondary physical table has its own independently minted
+    /// unique-index evidence, never a virtual/catalog-only declaration.
+    member _.JoinedSourceTable =
+        joinedProof |> Option.map (fun proof -> proof.SourceTable)
+        |> Option.defaultValue null
+    member _.JoinedSourceKeyColumns =
+        match joinedProof with
+        | Some proof -> proof.SourceKeyColumns
+        | None -> Array.AsReadOnly([||] : string array)
+    member _.JoinedSourceProofIdentity =
+        joinedProof |> Option.map (fun proof -> proof.ProofIdentity)
+        |> Option.defaultValue null
     member _.ProofIdentity =
         String.Join("|", [| "sqlserver-live-exact-integer-v3"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
@@ -947,6 +960,9 @@ type SqlServerCteUniqueKeyAssurance private (
            elif targetKeyColumns.Length = 1 then "|target-key=" + targetKeyColumns.[0]
            else "|ordered-target-keys=" + String.Join(",", targetKeyColumns))
         + "|target-key-types=" + String.Join(",", targetKeyKinds |> Array.map SqlServerExactIntegerKind.label)
+        + (match joinedProof with
+           | Some dependent -> "|m07-joined-source=" + dependent.ProofIdentity
+           | None -> "")
 
     /// Binding a proof to a key also requires an exact schema.table scope.
     /// Restricted ASCII identifiers avoid provider-specific collation and
@@ -1211,7 +1227,7 @@ type SqlServerCteUniqueKeyAssurance private (
             snapshot, targetTable, sourceTable,
             SqlServerExactIntegerKeyTuple.ofAttested [|sourceKeyColumn|] sourceKinds, None,
             dbId, liveServer, liveName, liveGuid,
-            sourceId, targetId, indexId, indexName, digest)
+            sourceId, targetId, indexId, indexName, digest, None)
 
     /// Only this API may mint compilation evidence for physical-read CTE
     /// UPDATE/DELETE. Both INT equality operands are checked on the live DB.
@@ -1236,7 +1252,7 @@ type SqlServerCteUniqueKeyAssurance private (
             SqlServerExactIntegerKeyTuple.ofAttested [|sourceKeyColumn|] sourceKinds,
             Some(SqlServerExactIntegerKeyTuple.ofAttested [|targetKeyColumn|] targetKinds),
             dbId, liveServer, liveName, liveGuid,
-            sourceId, targetId, indexId, indexName, digest)
+            sourceId, targetId, indexId, indexName, digest, None)
 
     /// Domain-owned physical proof for two ordered exact integer key ordinals.
     /// No virtual Catalog or caller DTO can mint this authority.
@@ -1264,7 +1280,64 @@ type SqlServerCteUniqueKeyAssurance private (
             SqlServerExactIntegerKeyTuple.ofAttested source sourceKinds,
             Some(SqlServerExactIntegerKeyTuple.ofAttested target targetKinds),
             dbId, liveServer, liveName, liveGuid,
-            sourceId, targetId, indexId, indexName, digest)
+            sourceId, targetId, indexId, indexName, digest, None)
+
+    /// Only this live factory can combine two physical unique-index
+    /// attestations. The first proof controls target matching, the second
+    /// proves that a distinct JOIN source cannot multiply any source row.
+    /// Both are revalidated in the actual mutation transaction.
+    static member VerifyLiveForKeyPreservingJoin
+        (connection: DbConnection, snapshot: SqlSchemaSnapshot,
+         targetTable: string, targetKeys: System.Collections.Generic.IReadOnlyList<string>,
+         sourceTable: string, sourceKeys: System.Collections.Generic.IReadOnlyList<string>,
+         joinedTable: string, joinedKeys: System.Collections.Generic.IReadOnlyList<string>) =
+        ArgumentNullException.ThrowIfNull connection
+        ArgumentNullException.ThrowIfNull snapshot
+        ArgumentNullException.ThrowIfNull targetKeys
+        ArgumentNullException.ThrowIfNull sourceKeys
+        ArgumentNullException.ThrowIfNull joinedKeys
+        SqlServerCteUniqueKeyAssurance.Parts "joinedTable" joinedTable |> ignore
+        // IReadOnlyList does not imply immutable backing storage. Freeze
+        // all ordinals once before the two independent metadata reads.
+        let target = targetKeys |> Seq.toArray
+        let source = sourceKeys |> Seq.toArray
+        let joined = joinedKeys |> Seq.toArray
+        if StringComparer.OrdinalIgnoreCase.Equals(joinedTable, sourceTable)
+           || StringComparer.OrdinalIgnoreCase.Equals(joinedTable, targetTable)
+           || target.Length <> source.Length
+           || joined.Length <> source.Length
+           || source.Length < 1 || source.Length > 2 then
+            invalidArg "joinedTable" "Cross-table proof needs three distinct physical tables and equal 1-2 key widths."
+        let create (target: string) (keys: System.Collections.Generic.IReadOnlyList<string>)
+                   (source: string) (sourceKey: System.Collections.Generic.IReadOnlyList<string>) =
+            if sourceKey.Count = 1 then
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    connection, snapshot, target, keys.[0], source, sourceKey.[0])
+            else
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    connection, snapshot, target, keys, source, sourceKey)
+        let primary = create targetTable target sourceTable source
+        // The secondary proof compares the JOINed key's exact type
+        // at every ordinal against the primary physical key, not merely
+        // Numeric and not an implicitly coerced SQL expression.
+        let secondary = create sourceTable source joinedTable joined
+        if not (StringComparer.Ordinal.Equals(primary.ServerInstanceName, secondary.ServerInstanceName))
+           || primary.DatabaseGuid <> secondary.DatabaseGuid
+           || primary.DatabaseId <> secondary.DatabaseId
+           || not (StringComparer.Ordinal.Equals(primary.DatabaseName, secondary.DatabaseName))
+           || not (StringComparer.Ordinal.Equals(primary.SchemaSha256, secondary.SchemaSha256)) then
+            invalidOp "Independent SQL Server JOIN attestation identities disagree."
+        primary.AttachVerifiedJoinedProof(secondary)
+
+    member private _.AttachVerifiedJoinedProof(secondary: SqlServerCteUniqueKeyAssurance) =
+        SqlServerCteUniqueKeyAssurance(
+            pinnedSnapshot, targetTable, sourceTable,
+            SqlServerExactIntegerKeyTuple.ofAttested sourceKeyColumns sourceKeyKinds,
+            (if targetKeyColumns.Length = 0 then None
+             else Some(SqlServerExactIntegerKeyTuple.ofAttested targetKeyColumns targetKeyKinds)),
+            databaseId, serverInstanceName, databaseName, databaseGuid,
+            sourceObjectId, targetObjectId, uniqueIndexId, uniqueIndexName,
+            metadataDigest, Some secondary)
 
     /// The caller MUST invoke this on the actual DML transaction/connection
     /// before executing the write. Locks are transaction-held; no detached
@@ -1274,6 +1347,23 @@ type SqlServerCteUniqueKeyAssurance private (
            || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
         else
             try
+                // A joined proof spans three physical objects. Acquire all
+                // transaction-held table locks in one canonical order
+                // BEFORE either metadata witness reads the index catalog.
+                // Without this, each independent two-table proof would
+                // lock a different pair and invite inverted lock order.
+                match joinedProof with
+                | Some dependent ->
+                    for tableName in [targetTable; sourceTable; dependent.SourceTable]
+                                     |> List.distinct |> List.sort do
+                        let schema, table =
+                            SqlServerCteUniqueKeyAssurance.Parts "tableName" tableName
+                        use lockCommand =
+                            SqlServerCteUniqueKeyAssurance.Command connection transaction (
+                                "SELECT TOP (1) 1 FROM [" + schema + "].[" + table
+                                + "] WITH (TABLOCK, HOLDLOCK)")
+                        lockCommand.ExecuteScalar() |> ignore
+                | None -> ()
                 let (dbId, liveServer, liveName, liveGuid, sourceId, targetId, indexId, indexName, digest, sourceKinds, targetKinds) =
                     SqlServerCteUniqueKeyAssurance.Attest(
                         connection, transaction, pinnedSnapshot,
@@ -1288,6 +1378,9 @@ type SqlServerCteUniqueKeyAssurance private (
                 && StringComparer.Ordinal.Equals(digest, metadataDigest)
                 && sourceKinds = sourceKeyKinds
                 && targetKinds = targetKeyKinds
+                && (match joinedProof with
+                    | Some dependent -> dependent.IsCurrent(connection, transaction)
+                    | None -> true)
             with
             | :? ArgumentException
             | :? InvalidOperationException
