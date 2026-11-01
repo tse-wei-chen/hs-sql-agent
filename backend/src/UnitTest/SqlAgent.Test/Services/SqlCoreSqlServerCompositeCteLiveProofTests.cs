@@ -334,6 +334,40 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 missingParsed, SqlAgentToolType.MsSqlServer, context,
                 new DmlCompilationPolicy(), profile, null));
 
+            if (joined == "DERIVED")
+            {
+                // M06 negative grammar matrix: changing the nested source
+                // must never borrow a physical UNIQUE proof by alias alone.
+                var direct = "SELECT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                    "FROM dbo.[" + src + "] AS innerSrc";
+                Assert.Contains(direct, sql, StringComparison.Ordinal);
+                foreach (var invalidDerived in new[]
+                {
+                    direct.Replace("innerSrc.k1 AS x", "innerSrc.k1 + 0 AS x",
+                        StringComparison.Ordinal), // computed key
+                    direct.Replace("innerSrc.k2 AS y", "innerSrc.k2 AS x",
+                        StringComparison.Ordinal), // ambiguous output
+                    direct.Replace("innerSrc.k2 AS y", "innerSrc.k2 AS z",
+                        StringComparison.Ordinal), // missing key lineage
+                    "SELECT DISTINCT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                        "FROM dbo.[" + src + "] AS innerSrc",
+                    direct + " WHERE innerSrc.k1 IS NOT NULL",
+                    direct + " INNER JOIN dbo.[" + src + "] AS second " +
+                        "ON innerSrc.k1 = second.k1"
+                })
+                {
+                    var rejected = sql.Replace(direct, invalidDerived,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(
+                                rejected, SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
             // A complete tuple never becomes a match through OR, duplicate
             // edges, implicit coercion or a shuffled physical-key projection.
             foreach (var rejected in new[]
