@@ -89,6 +89,14 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, true, false, "NONE", "UNIQUEIDENTIFIER", "BIGINT")]
     [InlineData(false, true, 3, false, true, "INNER", "UNIQUEIDENTIFIER", "SMALLINT")]
     [InlineData(true, true, 2, false, false, "CROSS", "UNIQUEIDENTIFIER", "UNIQUEIDENTIFIER")]
+    // G9/M04 Text: fixed VARCHAR/NVARCHAR under verified BIN2 collation.
+    [InlineData(true, true, 1, false, false, "NONE", "VARCHAR(24)", "VARCHAR(24)")]
+    [InlineData(false, false, 2, false, true, "NONE", "NVARCHAR(32)", "NVARCHAR(32)")]
+    [InlineData(true, false, 3, false, true, "SELF", "VARCHAR(32)", "INT")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "UNIQUEIDENTIFIER", "NVARCHAR(32)")]
+    [InlineData(true, false, 1, true, true, "NONE", "NVARCHAR(32)", "DECIMAL(12,2)")]
+    [InlineData(false, false, 3, false, true, "INNER", "VARCHAR(24)", "NVARCHAR(32)")]
+    [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32)", "SMALLINT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -121,11 +129,16 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
 
         try
         {
+            static bool IsText(string type) =>
+                type.StartsWith("VARCHAR(", StringComparison.Ordinal)
+                || type.StartsWith("NVARCHAR(", StringComparison.Ordinal);
+            string PhysicalType(string type) => IsText(type)
+                ? type + " COLLATE Latin1_General_100_BIN2" : type;
             await Exec("CREATE TABLE dbo.[" + dst +
-                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type
+                "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
                 + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + src +
-                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type
+                "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
                 + " NOT NULL, payload INT NOT NULL" +
                 (primaryKey ? ", PRIMARY KEY (k1,k2)" : "") + ")");
             if (!primaryKey)
@@ -140,6 +153,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     ? 101.125m : 1m;
             string KeySql(string type, decimal numeric, int ordinal)
             {
+                if (IsText(type))
+                    return (type.StartsWith("NVARCHAR", StringComparison.Ordinal) ? "N" : "")
+                        + "'Key" + ordinal.ToString("D4") + "'";
                 if (type != "UNIQUEIDENTIFIER")
                     return numeric.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 // SQL literal is explicitly typed by the physical UNIQUEIDENTIFIER
@@ -160,14 +176,14 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 "g7-composite-live-v1", [
                     SqlSchemaTable.WithTypes("dbo." + dst, [
                         new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
                         new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))]),
                     SqlSchemaTable.WithTypes("dbo." + src, [
                         new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
                         new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))])
                 ]);
             var target = "dbo." + dst;
             var source = "dbo." + src;
@@ -202,9 +218,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                             new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
                         SqlSchemaTable.WithTypes(source, [
                             new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
-                                ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                                ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
                             new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
-                                ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
+                                ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))])
                     ]);
                 Assert.Throws<ArgumentException>(() =>
                     SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
@@ -699,6 +715,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, false, "UNIQUEIDENTIFIER", "INT")]
     [InlineData(false, true, 2, false, "SMALLINT", "UNIQUEIDENTIFIER")]
     [InlineData(true, true, 3, true, "UNIQUEIDENTIFIER", "DECIMAL(12,2)")]
+    [InlineData(true, false, 1, false, "VARCHAR(24)", "INT")]
+    [InlineData(false, true, 2, false, "NVARCHAR(32)", "VARCHAR(24)")]
+    [InlineData(true, true, 3, true, "NVARCHAR(32)", "DECIMAL(12,2)")]
     public async Task CrossPhysicalUniqueJoinRequiresBothLiveIndexesAndCommitFreshness(
         bool update, bool leftJoin, int hops, bool revokeJoinedIndex,
         string k1Type, string k2Type)
@@ -730,12 +749,17 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
         try
         {
+            static bool IsText(string type) =>
+                type.StartsWith("VARCHAR(", StringComparison.Ordinal)
+                || type.StartsWith("NVARCHAR(", StringComparison.Ordinal);
+            string PhysicalType(string type) => IsText(type)
+                ? type + " COLLATE Latin1_General_100_BIN2" : type;
             await Exec("CREATE TABLE dbo.[" + target +
-                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
+                "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type) + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + source +
-                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type + " NOT NULL, payload INT, PRIMARY KEY (k1,k2))");
+                "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type) + " NOT NULL, payload INT, PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + joined +
-                "] (j1 " + k1Type + " NOT NULL, j2 " + k2Type + " NOT NULL, extra INT)");
+                "] (j1 " + PhysicalType(k1Type) + " NOT NULL, j2 " + PhysicalType(k2Type) + " NOT NULL, extra INT)");
             await Exec("CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + joined + "] (j1,j2)");
             // Keep 64-bit sample values for BIGINT, but fit exact
             // SMALLINT/TINYINT ranges without implicit conversion.
@@ -748,6 +772,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     ? 101.125m : 1m;
             string KeySql(string type, decimal numeric, int ordinal)
             {
+                if (IsText(type))
+                    return (type.StartsWith("NVARCHAR", StringComparison.Ordinal) ? "N" : "")
+                        + "'Key" + ordinal.ToString("D4") + "'";
                 if (type != "UNIQUEIDENTIFIER")
                     return numeric.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 // SQL literal is explicitly typed by the physical UNIQUEIDENTIFIER
@@ -771,19 +798,19 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 "m07-cross-physical", [
                     SqlSchemaTable.WithTypes("dbo." + target, [
                         new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
                         new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))]),
                     SqlSchemaTable.WithTypes("dbo." + source, [
                         new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
                         new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))]),
                     SqlSchemaTable.WithTypes("dbo." + joined, [
                         new SqlSchemaColumn("j1", k1Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            ? SqlSchemaValueKind.Uuid : (IsText(k1Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric)),
                         new SqlSchemaColumn("j2", k2Type == "UNIQUEIDENTIFIER"
-                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
+                            ? SqlSchemaValueKind.Uuid : (IsText(k2Type) ? SqlSchemaValueKind.Text : SqlSchemaValueKind.Numeric))])
                 ]);
             var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForKeyPreservingJoin(
                 db, snapshot, "dbo." + target, new[] { "k1", "k2" },
