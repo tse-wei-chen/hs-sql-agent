@@ -192,7 +192,9 @@ internal static class SqlServerCteLiveProofDiscovery
                 || !seen.Add(cteName)
                 || cte.RecursiveScope
                 || cte.Query is not SelectStatement select
-                || select.Ctes.Length != 0 || select.Joins.Length != 0
+                || select.Ctes.Length != 0
+                || select.Joins.Length > 1
+                || select.Joins.Any(join => !ProvenSingletonJoin(join))
                 || select.Distinct || select.DistinctOn.Length != 0
                 || select.GroupBy.Length != 0
                 || select.Having is not null || select.OrderBy.Length != 0
@@ -258,6 +260,44 @@ internal static class SqlServerCteLiveProofDiscovery
             finalColumns = next.MoveToImmutable();
         }
         return !string.IsNullOrEmpty(physicalTable) && !finalColumns.IsDefaultOrEmpty;
+    }
+
+    /// <summary>
+    /// A closed, uncorrelated derived SELECT with no FROM and one literal
+    /// expression always yields exactly one row. CROSS can therefore add
+    /// exactly one row per source row; INNER/LEFT with a literal equality
+    /// can yield at most one. This is a syntax proof, not an inferred
+    /// uniqueness claim about another physical table.
+    /// </summary>
+    private static bool ProvenSingletonJoin(JoinSource join)
+    {
+        if (join.IsNatural || !join.UsingColumns.IsDefaultOrEmpty
+            || join.Source is not DerivedTableSource { IsLateral: false } derived
+            || !SafeName(derived.Alias.Value)
+            || derived.Query is not SelectStatement singleton
+            || singleton.Ctes.Length != 0 || singleton.From is not null
+            || singleton.Joins.Length != 0
+            || singleton.Select.Length != 1
+            || singleton.Select[0].Expression is not LiteralExpr
+            || singleton.Select[0].Alias is null
+            || !SafeName(singleton.Select[0].Alias.Value)
+            || singleton.Distinct || singleton.DistinctOn.Length != 0
+            || singleton.Where is not null || singleton.GroupBy.Length != 0
+            || singleton.Having is not null || singleton.OrderBy.Length != 0
+            || singleton.Limit.HasValue || singleton.Offset.HasValue
+            || singleton.FetchPercent.HasValue || singleton.FetchWithTies)
+            return false;
+
+        if (SameOperator(join.Kind, "CROSS"))
+            return join.Predicate is null;
+        if (!SameOperator(join.Kind, "INNER")
+            && !SameOperator(join.Kind, "LEFT"))
+            return false;
+
+        return join.Predicate is BinaryExpr equality
+               && SameOperator(equality.Operator, "=")
+               && equality.Left is LiteralExpr
+               && equality.Right is LiteralExpr;
     }
 
     private static bool TrySelectedKey(
