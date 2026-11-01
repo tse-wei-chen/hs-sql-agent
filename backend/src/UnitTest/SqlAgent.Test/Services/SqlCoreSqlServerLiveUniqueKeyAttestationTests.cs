@@ -330,12 +330,16 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
 
 
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    [InlineData(true, true)]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
     public async Task LiveTargetAndSourceIntKey_CompilesAndCommitsStrictCteMutation(
-        bool update, bool projectedAlias)
+        bool update, bool projectedAlias, bool bigInt)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -364,14 +368,23 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
         }
         try
         {
-            await Exec("CREATE TABLE dbo.[" + target + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30))");
-            await Exec("CREATE TABLE dbo.[" + source + "] (id INT NOT NULL PRIMARY KEY, label VARCHAR(30))");
-            await Exec("INSERT INTO dbo.[" + target + "] (id, label) VALUES (1, 'old'), (2, 'untouched')");
-            await Exec("INSERT INTO dbo.[" + source + "] (id, label) VALUES (1, 'one')");
+            var sqlType = bigInt ? "BIGINT" : "INT";
+            var firstKey = bigInt ? 2147483649L : 1L;
+            var otherKey = firstKey + 1;
+            await Exec("CREATE TABLE dbo.[" + target + "] (id " + sqlType
+                + " NOT NULL PRIMARY KEY, label VARCHAR(30))");
+            await Exec("CREATE TABLE dbo.[" + source + "] (id " + sqlType
+                + " NOT NULL PRIMARY KEY, label VARCHAR(30))");
+            await Exec("INSERT INTO dbo.[" + target +
+                $"] (id, label) VALUES ({firstKey}, 'old'), ({otherKey}, 'untouched')");
+            await Exec("INSERT INTO dbo.[" + source +
+                $"] (id, label) VALUES ({firstKey}, 'one')");
 
             var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
                 db, Snapshot(target, source), "dbo." + target, "id", "dbo." + source, "id");
             Assert.Equal("id", proof.TargetKeyColumn);
+            Assert.Contains("source-key-types=" + sqlType, proof.ProofIdentity);
+            Assert.Contains("target-key-types=" + sqlType, proof.ProofIdentity);
             var legacySourceOnlyProof = SqlServerCteUniqueKeyAssurance.VerifyLive(
                 db, Snapshot(target, source), "dbo." + target, "dbo." + source, "id");
             Assert.Null(legacySourceOnlyProof.TargetKeyColumn);
@@ -420,7 +433,7 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             metadata.Setup(x => x.GetColumnsAsync("metadata-test", "dbo", target,
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync([
-                    new DatabaseColumnMetadata("dbo", target, "id", "int", true, 1),
+                    new DatabaseColumnMetadata("dbo", target, "id", sqlType, true, 1),
                     new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
                 ]);
             var plan = await new DmlPlanFactory(metadata.Object).CreateAsync(
@@ -438,9 +451,9 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
                 DmlCoordinator.ValidatePlan(
                     plan with { SqlServerCteUniqueKeyAssurance = legacySourceOnlyProof }));
 
-            // RED: The production Host receives an open metadata connection,
+            // The production Host receives an open metadata connection,
             // but no caller-created live proof. It must discover, mint and
-            // bind the exact physical INT key proof from the parsed CTE.
+            // bind the exact physical integer key proof from the parsed CTE.
             var autoPlan = await new DmlPlanFactory(metadata.Object)
                 .CreateWithMetadataConnectionAsync(
                     db, "metadata-test", parsed, SqlAgentToolType.MsSqlServer,
@@ -490,11 +503,11 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             if (update)
             {
                 Assert.True(await reader.ReadAsync(token));
-                Assert.Equal(1, reader.GetInt32(0));
+                Assert.Equal(firstKey, bigInt ? reader.GetInt64(0) : reader.GetInt32(0));
                 Assert.Equal("changed", reader.GetString(1));
             }
             Assert.True(await reader.ReadAsync(token));
-            Assert.Equal(2, reader.GetInt32(0));
+            Assert.Equal(otherKey, bigInt ? reader.GetInt64(0) : reader.GetInt32(0));
             Assert.Equal("untouched", reader.GetString(1));
             Assert.False(await reader.ReadAsync(token));
         }
