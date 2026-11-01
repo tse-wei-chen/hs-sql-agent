@@ -2,6 +2,10 @@ using System.Collections.Immutable;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Core.Pipeline;
+using HsSqlAgent.Provider.Abstractions;
+using SqlAgent.Service.Core.Execution;
+using System.Data.Common;
+using Moq;
 using HsSqlAgent.SqlCore.Enums;
 using Microsoft.Data.SqlClient;
 using Xunit;
@@ -120,6 +124,46 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 Assert.True(proof.IsCurrent(db, tx));
                 await tx.RollbackAsync(ct);
             }
+
+            // Production Host path: the user supplies no proof. Discovery
+            // extracts ordered CTE lineage, attests sys.* and binds the
+            // resulting token to preview, approval and same-tx commit.
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("g7-metadata", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("g7-metadata", "dbo", It.IsAny<CancellationToken>()))
+                .ReturnsAsync([dst]);
+            metadata.Setup(x => x.GetColumnsAsync("g7-metadata", "dbo", dst,
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync([
+                    new DatabaseColumnMetadata("dbo", dst, "k1", "int", true, 1),
+                    new DatabaseColumnMetadata("dbo", dst, "k2", "int", true, 2),
+                    new DatabaseColumnMetadata("dbo", dst, "label", "varchar", false)
+                ]);
+            var plan = await new DmlPlanFactory(metadata.Object)
+                .CreateWithMetadataConnectionAsync(db, "g7-metadata", parsed,
+                    SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext("g7-composite-live", allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 5, cancellationToken: ct, targetProfile: profile);
+            var auto = Assert.IsType<SqlServerCteUniqueKeyAssurance>(
+                plan.SqlServerCteUniqueKeyAssurance);
+            Assert.Equal(new[] { "k1", "k2" }, auto.SourceKeyColumns);
+            Assert.Equal(proof.ProofIdentity, auto.ProofIdentity);
+            DmlCoordinator.ValidatePlan(plan);
+            var coordinator = new DmlCoordinator(new SqlServerConnectionFactory());
+            var serverVersion = db.ServerVersion.Trim();
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, "g7-composite-approver", ct, serverVersion);
+            Assert.Equal(3, preview.AffectedRows);
+            var committed = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, "g7-composite-approver", ct, serverVersion);
+            Assert.True(committed.Committed);
+            await using (var cmd = new SqlCommand(
+                "SELECT COUNT(*) FROM dbo.[" + dst + "]", db))
+            {
+                Assert.Equal(update ? 3 : 0, Convert.ToInt32(await cmd.ExecuteScalarAsync(ct)));
+            }
             if (primaryKey)
             {
                 await using var command = new SqlCommand(
@@ -141,6 +185,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             await Exec("DROP TABLE IF EXISTS dbo.[" + src + "]");
             await Exec("DROP TABLE IF EXISTS dbo.[" + dst + "]");
         }
+    }
+
+    private sealed class SqlServerConnectionFactory : IDbConnectionFactory
+    {
+        public DbConnection Create(string connectionString) => new SqlConnection(connectionString);
     }
 
     [Fact]
