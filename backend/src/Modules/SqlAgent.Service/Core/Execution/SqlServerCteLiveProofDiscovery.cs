@@ -272,7 +272,7 @@ internal static class SqlServerCteLiveProofDiscovery
                 return false;
 
             if (select.Where is not null &&
-                !SafeCteFilter(select.Where, input, i, knownPhysicalTable, finalColumns))
+                !SafeCteFilter(select.Where, input, i, knownPhysicalTable))
                 return false;
 
             var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
@@ -328,7 +328,7 @@ internal static class SqlServerCteLiveProofDiscovery
     // Other query-bearing predicates cannot borrow its unique index.
     private static bool SafeCteFilter(
         SqlExpr predicate, NamedTableSource root, int hop,
-        string physicalSource, ImmutableArray<ProjectionLineage> previous)
+        string physicalSource)
     {
         if (predicate is ExistsExpr exists)
         {
@@ -367,11 +367,61 @@ internal static class SqlServerCteLiveProofDiscovery
                     todo.Push(binary.Right);
                     todo.Push(binary.Left);
                     break;
-                // Other expression ASTs may contain nested subqueries:
-                // fail closed instead of guessing an incomplete traversal.
+                case FunctionCallExpr function:
+                    foreach (var arg in function.Arguments) todo.Push(arg);
+                    foreach (var order in function.AggregateOrderBy)
+                        todo.Push(order.Expression);
+                    break;
+                case RegexExpr regex:
+                    todo.Push(regex.Value);
+                    todo.Push(regex.Pattern);
+                    break;
+                case PostgresJsonAccessExpr json:
+                    todo.Push(json.Value);
+                    break;
+                case FilterExpr filter:
+                    todo.Push(filter.Expression);
+                    todo.Push(filter.Predicate);
+                    break;
+                case WindowedExpr windowed:
+                    todo.Push(windowed.Expression);
+                    foreach (var part in windowed.Window.PartitionBy) todo.Push(part);
+                    foreach (var order in windowed.Window.OrderBy)
+                        todo.Push(order.Expression);
+                    break;
+                case CastExpr cast:
+                    todo.Push(cast.Expression);
+                    break;
+                case ExtractExpr extract:
+                    todo.Push(extract.Expression);
+                    break;
+                case CaseExpr @case:
+                    foreach (var branch in @case.Branches)
+                    {
+                        todo.Push(branch.Condition);
+                        todo.Push(branch.Value);
+                    }
+                    if (@case.ElseExpression is not null)
+                        todo.Push(@case.ElseExpression);
+                    break;
+                case InExpr @in:
+                    todo.Push(@in.Value);
+                    foreach (var item in @in.Items) todo.Push(item);
+                    break;
+                case BetweenExpr between:
+                    todo.Push(between.Value);
+                    todo.Push(between.Lower);
+                    todo.Push(between.Upper);
+                    break;
+                case IsNullExpr isNull:
+                    todo.Push(isNull.Value);
+                    break;
                 case ColumnExpr:
                 case LiteralExpr:
+                case IntervalExpr:
                     break;
+                // Unknown CLR expression classes must not conceal a
+                // correlated/subquery read under an attested key proof.
                 default:
                     return true;
             }
