@@ -73,8 +73,9 @@ internal static class SqlServerCteLiveProofDiscovery
             "host-discovered-sqlserver-cte-exact-integer-v2", boundedTables);
 
         // This is the ONLY authority minting operation. It independently
-        // verifies both physical, per-ordinal exact INT/BIGINT types and the enabled, unfiltered,
-        // single-column source UNIQUE index in the real SQL Server sys catalog.
+        // verifies both physical, per-ordinal exact integer or fixed-decimal
+        // precision/scale types and every key of the enabled, unfiltered
+        // source UNIQUE index in the real SQL Server sys catalog.
         // Unsupported or invisible metadata throws: never downgrade to a
         // compile-time Catalog guess.
         var proof = candidate.JoinedTable is not null
@@ -102,7 +103,7 @@ internal static class SqlServerCteLiveProofDiscovery
 
     // The Host extracts only bounded, direct column lineage. It does not
     // mint executable authority: F# independently proves the ordered key
-    // lineage and the real database verifies physical exact integer-key uniqueness.
+    // lineage and the real database verifies physical exact typed-key uniqueness.
     private readonly record struct ProjectionLineage(
         string OutputName, string PhysicalColumn, int FirstOrdinal);
 
