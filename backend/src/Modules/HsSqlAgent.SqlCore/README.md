@@ -3600,6 +3600,50 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M05 — exact SQL Server linguistic-collation comparison proof (develop only)
+
+The sealed SQL Server F# physical KeyTuple now supports **four precisely
+modeled native equality classes** for built-in bounded `VARCHAR(n)` and
+`NVARCHAR(n)`: `Latin1_General_100_BIN2` (existing), plus
+`Latin1_General_100_CI_AS`, `Latin1_General_100_CI_AI`, and
+`Latin1_General_100_CS_AS`. These are **separate cases in a private
+`SqlServerTextEquality` discriminated union**, carried within the
+private `VarChar(length, comparison)` / `NVarChar(length, comparison)`
+physical key kinds. CI, AI and CS do **not** get rewritten to binary
+equality. The database's own native `UNIQUE` index and ordinary SQL
+`=` must use the **same concrete collation**.
+
+For every key ordinal, source UNIQUE index, target physical comparison
+operand, and optionally independently verified second physical JOIN
+must agree on the built-in SQL type, exact length (bytes for VARCHAR,
+even bytes for NVARCHAR), and actual `sys.columns.collation_name`.
+A generic `Text` typed snapshot, SQL literal, virtual Catalog,
+heuristic name or unspecified/default collation can never mint a
+physical proof. SQL Server's index itself proves source uniqueness,
+and the closed F# compiler separately proves bounded 1–3 CTE
+direct-column lineage, full AND ordinary equality and absence of
+key CAST/computed/expression/collation-override paths. The nullable
+source UNIQUE under `ANSI_NULLS ON` contract remains unchanged,
+as does the complete enabled/unfiltered index and transaction-held
+`IsCurrent` source/target/second-JOIN metadata recheck.
+
+Explicit SQL `COLLATE` overrides, `VARCHAR`↔`NVARCHAR` coercion,
+different source/target collation or length, other collations such as
+`Latin1_General_100_CS_AI`, `*_SC`, `*_UTF8`, legacy `SQL_*`,
+CHAR/NCHAR/MAX, alias types, filtered/disabled/nonunique indexes and
+non-ordinary equality remain fail-closed. This is a **bounded family
+of physical comparison equivalences**, not all linguistic collations.
+SQL Server 2022 real-database RED→GREEN coverage additionally compares
+actual `UNIQUE` constraint conflicts for case/accent variants with
+the native equality JOIN result, and checks rejected/index-drift
+approvals with UPDATE/DELETE, mixed UUID/numeric/text composite keys,
+and one independently proven extra physical source JOIN.
+
+ProofIdentity advances to **v9**; v8 pending approvals cannot be
+replayed. Zero new MCP tools, CLR public API, driver, permission,
+execution bypass or default DML selection. The other five providers
+are unchanged; this capability remains **unreleased** on `develop`.
+
 ## G9 / M05 — nullable source UNIQUE keys under ordinary ANSI equality (develop only)
 
 An **unfiltered, enabled, physical SQL Server UNIQUE index** may contain
