@@ -46,6 +46,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(false, false, 3, false, true, "LEFT")]
     [InlineData(true, false, 2, true, true, "CROSS")]
     [InlineData(false, false, 3, true, true, "INNER")]
+    [InlineData(true, true, 1, false, true, "SELF")]
+    [InlineData(false, false, 1, false, true, "SELF")]
+    [InlineData(true, false, 2, false, true, "SELF_LEFT")]
+    [InlineData(false, true, 3, false, true, "SELF_LEFT")]
+    [InlineData(true, false, 2, true, true, "SELF")]
+    [InlineData(false, false, 3, true, true, "SELF_LEFT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload, string joined)
     {
@@ -119,16 +125,25 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 ? "k1 AS a, payload AS extra, k2 AS b"
                 : "k1 AS a, k2 AS b";
             var nextProjection = payload ? "a, extra, b" : "a, b";
+            if (joined.StartsWith("SELF", StringComparison.Ordinal))
+                firstProjection = "s.k1 AS a, s.payload AS extra, s.k2 AS b";
+            var physicalSource = joined.StartsWith("SELF", StringComparison.Ordinal)
+                ? "dbo.[" + src + "] AS s"
+                : "dbo.[" + src + "]";
             var singletonJoin = joined switch
             {
                 "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
                 "INNER" => " INNER JOIN (SELECT 1 AS marker) AS once ON 1 = 1",
                 "LEFT" => " LEFT JOIN (SELECT 1 AS marker) AS once ON 1 = 1",
+                "SELF" => " INNER JOIN dbo.[" + src +
+                    "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
+                "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
+                    "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "NONE" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
             var cte = "WITH seed AS (SELECT " + firstProjection +
-                " FROM dbo.[" + src + "]" + singletonJoin + ") ";
+                " FROM " + physicalSource + singletonJoin + ") ";
             if (hops >= 2)
                 cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
             if (hops >= 3)
@@ -199,7 +214,25 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                         new DmlCompilationPolicy(), profile, null));
             }
 
-            if (joined != "NONE")
+            if (joined.StartsWith("SELF", StringComparison.Ordinal))
+            {
+                foreach (var invalid in new[]
+                {
+                    sql.Replace(" AND s.k2 = j.k2", "", StringComparison.Ordinal),
+                    sql.Replace(" AND s.k2 = j.k2", " OR s.k2 = j.k2", StringComparison.Ordinal),
+                    sql.Replace("s.k2 = j.k2", "s.k2 + 0 = j.k2", StringComparison.Ordinal),
+                    sql.Replace("s.k2 = j.k2", "s.k1 = j.k2", StringComparison.Ordinal)
+                })
+                {
+                    Assert.Throws<SqlCompilationException>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+            if (joined is "CROSS" or "INNER" or "LEFT")
             {
                 // A derived singleton is the ONLY acceptable extra join
                 // source. A physical or derived table scan can multiply

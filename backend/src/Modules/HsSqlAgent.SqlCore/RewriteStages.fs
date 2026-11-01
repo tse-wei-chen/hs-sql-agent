@@ -609,6 +609,40 @@ module internal RewriteStages =
                         | _ -> false
                     | _ -> false)
             | _ -> false
+        let provenPhysicalSelfJoin (head: Select) join =
+            match head.From, join with
+            | Some(NamedTable(physical, Some leftAlias)),
+              OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     NamedTable(otherPhysical, Some rightAlias), predicate)
+                when qualified physical proof.SourceTable
+                     && qualified otherPhysical proof.SourceTable
+                     && not (same leftAlias.Value rightAlias.Value) ->
+                let keys = proof.SourceKeyColumns |> Seq.toArray
+                let seen = Array.create keys.Length false
+                let pending = ResizeArray<Expr>()
+                pending.Add predicate
+                let mutable duplicate = false
+                while pending.Count > 0 && not duplicate do
+                    RewriteResourceBudget.checkpoint ()
+                    let last = pending.Count - 1
+                    let node = pending.[last]
+                    pending.RemoveAt(last)
+                    match Expr.unspan node with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add right
+                        pending.Add left
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        for i = 0 to keys.Length - 1 do
+                            let key = keys.[i]
+                            if (isColumn left leftAlias.Value key
+                                && isColumn right rightAlias.Value key)
+                               || (isColumn right leftAlias.Value key
+                                   && isColumn left rightAlias.Value key) then
+                                if seen.[i] then duplicate <- true
+                                else seen.[i] <- true
+                    | _ -> ()
+                not duplicate && (seen |> Array.forall id)
+            | _ -> false
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
@@ -722,7 +756,9 @@ module internal RewriteStages =
                        || query.FetchPercent.IsSome || query.FetchWithTies
                        || not head.Ctes.IsEmpty
                        || head.Joins.Length > 1
-                       || not (head.Joins |> List.forall singletonJoin)
+                       || not (head.Joins |> List.forall (fun join ->
+                           singletonJoin join
+                           || (index = 0 && provenPhysicalSelfJoin head join)))
                        || not head.GroupBy.IsEmpty || head.Having.IsSome
                        || head.DistinctMode <> SelectDistinct.AllRows
                        || directProjection.IsNone then

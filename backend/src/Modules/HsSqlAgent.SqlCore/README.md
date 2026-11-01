@@ -3476,6 +3476,14 @@ physical enabled/unfiltered SQL Server INT unique-key/index proof,
 the mandatory target key equality graph and row-set preview,
 approval, transaction-bound metadata locks and `IsCurrent`.
 
+The same physical table also supports an **INNER/LEFT self-JOIN**
+when it is referenced under two distinct aliases and the `ON`
+predicate contains ordinary, mandatory equality on **every** INT
+component of the previously verified UNIQUE tuple. The joined copy
+then has at most one row per primary row. Both the Host and closed F#
+AST independently check this. Omitted keys, `OR`-only predicates,
+computed operands or another physical table fail closed.
+
 This is a deliberately **narrow first M07 boundary**. It does
 **not** authorize general key-preserving multi-table JOINs, physical
 JOIN uniqueness by a caller-supplied catalog, `APPLY`, correlated
