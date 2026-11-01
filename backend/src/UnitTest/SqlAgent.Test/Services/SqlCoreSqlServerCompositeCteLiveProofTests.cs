@@ -122,14 +122,6 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 new DmlCompilationPolicy(), profile, null);
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(" AND ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
-            // Positive control uses the exact same SQL-text overload as the
-            // negative grammar matrix below; a trivially rejecting overload
-            // must not make its fail-closed assertions vacuous.
-            var positive = SqlCoreFacade.TryCompileDml(sql,
-                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                context, new DmlCompilationPolicy(), profile, profile);
-            Assert.True(positive.Success, string.Join("; ", positive.Diagnostics));
-
             var missing = sql.Replace(
                 " AND dbo." + dst + ".k2 = " + keyAlias + ".b", "");
             var missingParsed = CoreSqlTextParser.ParseDml(
@@ -157,11 +149,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "SELECT k1 AS a, k1 AS b", StringComparison.Ordinal)
             })
             {
-                var attempt = SqlCoreFacade.TryCompileDml(rejected,
-                    SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
-                    context, new DmlCompilationPolicy(), profile, profile);
-                Assert.False(attempt.Success);
-                Assert.NotEmpty(attempt.TypedDiagnostics);
+                // Use the same profile-verified parsed-statement compiler
+                // that accepted the positive SQL above. TryCompileDml(text)
+                // has no policy/profile overload by design.
+                Assert.Throws<SqlCompilationException>(() =>
+                    SqlCoreFacade.CompileDml(
+                        CoreSqlTextParser.ParseDml(rejected,
+                            SqlAgentToolType.MsSqlServer, profile),
+                        SqlAgentToolType.MsSqlServer, context,
+                        new DmlCompilationPolicy(), profile, null));
             }
 
             await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
