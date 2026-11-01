@@ -948,6 +948,20 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 SqlAgentToolType.MsSqlServer, context,
                 new DmlCompilationPolicy(), profile, null);
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            // Preserve the previous non-subquery Boolean grammar, including
+            // a plain NOT filter. Only nested query-bearing predicates gain
+            // the stricter semi-/anti-join proof requirements.
+            var plainNot = sql.Replace(
+                (antiJoin ? "NOT EXISTS (" : "EXISTS (") + inner + ")",
+                "NOT (s.payload = 0)", StringComparison.Ordinal);
+            Assert.StartsWith("WITH ",
+                SqlCoreFacade.CompileDml(
+                    CoreSqlTextParser.ParseDml(
+                        plainNot, SqlAgentToolType.MsSqlServer, profile),
+                    SqlAgentToolType.MsSqlServer, context,
+                    new DmlCompilationPolicy(), profile, null).Sql,
+                StringComparison.OrdinalIgnoreCase);
+
 
             // Correlated source must have a complete mandatory ordinary
             // key equality graph; an OR, computed key or other physical
