@@ -690,6 +690,15 @@ module internal RewriteStages =
         // Any extra subquery predicate is a direct inner column/literal
         // equality, never a computed expression or volatile source.
         let provenCorrelatedExists (outerAlias: string) (query: Query) =
+            let outerKey field name =
+                match Expr.unspan field with
+                | Column identifier
+                | BoundColumn(identifier, ColumnBinding.OuterRowSource) ->
+                    match Identifier.parts identifier with
+                    | [owner; column] ->
+                        same owner.Value outerAlias && same column.Value name
+                    | _ -> false
+                | _ -> false
             let inner = query.Head
             match inner.From with
             | Some(NamedTable(physical, Some innerAlias))
@@ -730,9 +739,9 @@ module internal RewriteStages =
                             let mutable matched = false
                             for i = 0 to keys.Length - 1 do
                                 if (isColumn l innerAlias.Value keys.[i]
-                                    && isColumn r outerAlias keys.[i])
+                                    && outerKey r keys.[i])
                                    || (isColumn r innerAlias.Value keys.[i]
-                                       && isColumn l outerAlias keys.[i]) then
+                                       && outerKey l keys.[i]) then
                                     if proven.[i] then valid <- false
                                     else proven.[i] <- true
                                     matched <- true
