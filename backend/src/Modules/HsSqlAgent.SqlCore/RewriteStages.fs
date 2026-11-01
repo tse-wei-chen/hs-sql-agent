@@ -621,22 +621,61 @@ module internal RewriteStages =
                     let directProjection =
                         match input with
                         | Some(keys, qualifier)
-                            when List.length head.Projection = List.length keys
+                            when List.length head.Projection >= List.length keys
+                                 && List.length head.Projection <= 32
                                  && (cte.ColumnAliases.IsEmpty
-                                     || List.length cte.ColumnAliases = List.length keys) ->
+                                     || List.length cte.ColumnAliases = List.length head.Projection) ->
+                            // A key may sit anywhere among inert payload
+                            // columns. Every projected expression remains a
+                            // direct local-row-source column: no scalar
+                            // subquery, multiplication or computed key can
+                            // borrow the physical uniqueness witness.
                             let projected =
-                                (head.Projection, keys)
-                                ||> List.map2 (fun item key ->
-                                    if simpleColumn item.Expression key qualifier then
-                                        Some(defaultArg (item.Alias |> Option.map (fun a -> a.Value)) key)
-                                    else None)
+                                head.Projection
+                                |> List.mapi (fun ordinal item ->
+                                    let inputName =
+                                        match Expr.unspan item.Expression with
+                                        | Column identifier
+                                        | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                                            match Identifier.parts identifier with
+                                            | [column] -> Some column.Value
+                                            | [owner; column] when same owner.Value qualifier ->
+                                                Some column.Value
+                                            | _ -> None
+                                        | _ -> None
+                                    inputName
+                                    |> Option.map (fun name ->
+                                        let output =
+                                            if cte.ColumnAliases.IsEmpty then
+                                                defaultArg (item.Alias |> Option.map (fun a -> a.Value)) name
+                                            else
+                                                (List.item ordinal cte.ColumnAliases).Value
+                                        name, output))
                             if projected |> List.forall Option.isSome then
-                                let names = projected |> List.choose id
-                                let names =
-                                    if cte.ColumnAliases.IsEmpty then names
-                                    else cte.ColumnAliases |> List.map (fun a -> a.Value)
-                                if (names |> List.distinct |> List.length) = List.length names
-                                then Some names else None
+                                let columns = projected |> List.choose id
+                                let inputNames = columns |> List.map fst
+                                let outputNames = columns |> List.map snd
+                                let selectedKeys =
+                                    keys |> List.map (fun key ->
+                                        let matching =
+                                            columns
+                                            |> List.mapi (fun pos (name, output) ->
+                                                if same name key then Some(pos, output)
+                                                else None)
+                                            |> List.choose id
+                                        match matching with
+                                        | [single] -> Some single
+                                        | _ -> None)
+                                if List.length (List.distinct inputNames) = List.length columns
+                                   && List.length (List.distinct outputNames) = List.length columns
+                                   && (selectedKeys |> List.forall Option.isSome) then
+                                    let positions = selectedKeys |> List.choose id
+                                    if (positions |> List.pairwise
+                                        |> List.forall (fun ((before, _), (after, _)) ->
+                                            before < after)) then
+                                        Some(positions |> List.map snd)
+                                    else None
+                                else None
                             else None
                         | _ -> None
                     if not valid
