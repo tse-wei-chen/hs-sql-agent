@@ -470,7 +470,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("nonunique")]
     [InlineData("filtered")]
     [InlineData("disabled")]
-    [InlineData("nullable")]
+    [InlineData("nullable-filtered")]
+    [InlineData("nullable-nonunique")]
+    [InlineData("nullable-disabled")]
     // Opposite-side BIGINT without exact counterpart stays denied.
     [InlineData("source-bigint")]
     [InlineData("target-bigint")]
@@ -539,7 +541,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 }) + " NOT NULL)");
             var sourceDefinition = shape switch
             {
-                "nullable" => "k1 INT NOT NULL, k2 INT NULL",
+                "nullable-filtered" => "k1 INT NOT NULL, k2 INT NULL",
+                "nullable-nonunique" => "k1 INT NOT NULL, k2 INT NULL",
+                "nullable-disabled" => "k1 INT NOT NULL, k2 INT NULL",
                 "source-bigint" => "k1 INT NOT NULL, k2 BIGINT NOT NULL",
                 "source-smallint" => "k1 INT NOT NULL, k2 SMALLINT NOT NULL",
                 "source-tinyint" => "k1 INT NOT NULL, k2 TINYINT NOT NULL",
@@ -559,12 +563,16 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             await Exec("CREATE TABLE dbo.[" + src + "] (" + sourceDefinition + ")");
             if (shape != "missing")
             {
-                var unique = shape == "nonunique" ? "" : "UNIQUE ";
-                var predicate = shape == "filtered" ? " WHERE k2 > 0" : "";
+                var unique = shape is "nonunique" or "nullable-nonunique" ? "" : "UNIQUE ";
+                var predicate = shape switch {
+                    "filtered" => " WHERE k2 > 0",
+                    "nullable-filtered" => " WHERE k2 IS NOT NULL",
+                    _ => ""
+                };
                 await Exec("CREATE " + unique + "INDEX [" + idx + "] ON dbo.[" +
                     src + "] (k1, k2)" + predicate);
             }
-            if (shape == "disabled")
+            if (shape is "disabled" or "nullable-disabled")
                 await Exec("ALTER INDEX [" + idx + "] ON dbo.[" + src + "] DISABLE");
 
             // A seemingly matching caller-declared Numeric snapshot must
@@ -1198,7 +1206,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("nonunique")]
     [InlineData("filtered")]
     [InlineData("disabled")]
-    [InlineData("nullable")]
+    [InlineData("nullable-filtered")]
+    [InlineData("nullable-nonunique")]
+    [InlineData("nullable-disabled")]
     [InlineData("type-mismatch")]
     [InlineData("reversed")]
     [InlineData("computed")]
@@ -1237,7 +1247,8 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, PRIMARY KEY (k1,k2))");
             var j2 = variant switch
             {
-                "nullable" => "j2 BIGINT NULL",
+                "nullable-filtered" or "nullable-nonunique" or "nullable-disabled"
+                    => "j2 BIGINT NULL",
                 "type-mismatch" => "j2 INT NOT NULL",
                 "computed" => "j2 AS CAST(j1 AS BIGINT) PERSISTED",
                 _ => "j2 BIGINT NOT NULL"
@@ -1245,13 +1256,17 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             await Exec("CREATE TABLE dbo.[" + joined + "] (j1 INT NOT NULL, " + j2 + ")");
             if (variant != "missing")
             {
-                var unique = variant == "nonunique" ? "" : "UNIQUE ";
+                var unique = variant is "nonunique" or "nullable-nonunique" ? "" : "UNIQUE ";
                 var columns = variant == "reversed" ? "(j2,j1)" : "(j1,j2)";
-                var filter = variant == "filtered" ? " WHERE j2 > 0" : "";
+                var filter = variant switch {
+                    "filtered" => " WHERE j2 > 0",
+                    "nullable-filtered" => " WHERE j2 IS NOT NULL",
+                    _ => ""
+                };
                 await Exec("CREATE " + unique + "INDEX [" + index +
                     "] ON dbo.[" + joined + "] " + columns + filter);
             }
-            if (variant == "disabled")
+            if (variant is "disabled" or "nullable-disabled")
                 await Exec("ALTER INDEX [" + index + "] ON dbo.[" + joined + "] DISABLE");
 
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer, "m07-negative", [
