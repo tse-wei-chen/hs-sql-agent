@@ -780,7 +780,12 @@ module internal RewriteStages =
                 | Unary(UnaryOperator.Not, nested), Some alias ->
                     match Expr.unspan nested with
                     | Exists(query, _) -> provenCorrelatedExists alias query
-                    | _ -> false
+                    | _ ->
+                        // Ordinary NOT on a query-free predicate was already
+                        // supported; don't accidentally regress its grammar.
+                        not (RewriteAstTraversal.exists true (function
+                            | Exists _ | InSubquery _ | ScalarSubquery _ -> true
+                            | _ -> false) expression)
                 | _ ->
                     // Do not let nested subqueries hide in OR, CASE or a
                     // derived value and borrow a source-key proof.
