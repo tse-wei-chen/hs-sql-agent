@@ -57,20 +57,25 @@ internal static class SqlServerCteLiveProofDiscovery
         // The proof's snapshot is only a tightly scoped identity/type
         // witness. This never becomes an invented full-table schema snapshot,
         // and never suppresses the ordinary optional live schema verifier.
-        var boundedTables = new List<SqlSchemaTable>
+        // An existing immutable snapshot is validated by F# against the
+        // physical unique-key catalog below. Only discover key families
+        // when the Host must create the bounded snapshot: do not add
+        // redundant metadata round trips to explicit-snapshot callers.
+        var snapshot = context.SchemaSnapshot;
+        if (snapshot is null)
         {
-            SqlSchemaTable.WithTypes(candidate.TargetTable,
-                candidate.TargetKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray()),
-            SqlSchemaTable.WithTypes(candidate.SourceTable,
-                candidate.SourceKeys.Select(k => new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray())
-        };
-        if (candidate.JoinedTable is not null)
-            boundedTables.Add(SqlSchemaTable.WithTypes(candidate.JoinedTable,
-                candidate.JoinedKeys.Select(k =>
-                    new SqlSchemaColumn(k, SqlSchemaValueKind.Numeric)).ToArray()));
-        var snapshot = context.SchemaSnapshot ?? new SqlSchemaSnapshot(
-            SqlAgentToolType.MsSqlServer,
-            "host-discovered-sqlserver-cte-exact-integer-v2", boundedTables);
+            var boundedTables = new List<SqlSchemaTable>
+            {
+                PhysicalKeyTable(metadataConnection, candidate.TargetTable, candidate.TargetKeys),
+                PhysicalKeyTable(metadataConnection, candidate.SourceTable, candidate.SourceKeys)
+            };
+            if (candidate.JoinedTable is not null)
+                boundedTables.Add(PhysicalKeyTable(
+                    metadataConnection, candidate.JoinedTable, candidate.JoinedKeys));
+            snapshot = new SqlSchemaSnapshot(
+                SqlAgentToolType.MsSqlServer,
+                "host-discovered-sqlserver-cte-exact-key-v3", boundedTables);
+        }
 
         // This is the ONLY authority minting operation. It independently
         // verifies both physical, per-ordinal exact integer or fixed-decimal
@@ -93,6 +98,65 @@ internal static class SqlServerCteLiveProofDiscovery
 
         cancellationToken.ThrowIfCancellationRequested();
         return context.WithSqlServerCteUniqueKeyAssurance(proof);
+    }
+
+    // This query describes the *actual* physical value family of each bounded
+    // source/target/JOIN key. It is only a typed snapshot witness; F# still
+    // mints authority from the independent complete index/sys.* catalog.
+    // Never fabricate Numeric metadata for UNIQUEIDENTIFIER.
+    private static SqlSchemaTable PhysicalKeyTable(
+        DbConnection connection, string table, ImmutableArray<string> keys)
+    {
+        var parts = table.Split('.');
+        if (parts.Length != 2 || parts.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException(
+                "SQL Server physical key discovery requires an exact schema.table.");
+        var columns = keys.Select(key =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT c.name, typ.name, typ.is_user_defined,
+                       typ.user_type_id, typ.system_type_id
+                FROM sys.tables t
+                JOIN sys.schemas s ON s.schema_id = t.schema_id
+                JOIN sys.columns c ON c.object_id = t.object_id
+                JOIN sys.types typ ON typ.user_type_id = c.user_type_id
+                WHERE s.name = @schema AND t.name = @table AND c.name = @column
+                """;
+            void Bind(string name, string value)
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = name;
+                parameter.DbType = DbType.String;
+                parameter.Value = value;
+                command.Parameters.Add(parameter);
+            }
+            Bind("@schema", parts[0]);
+            Bind("@table", parts[1]);
+            Bind("@column", key);
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+                throw new InvalidOperationException("SQL Server physical key column is unavailable.");
+            var foundName = reader.GetString(0);
+            var physicalType = reader.GetString(1);
+            if (!StringComparer.Ordinal.Equals(foundName, key)
+                || reader.GetBoolean(2)
+                || reader.GetInt32(3) != reader.GetByte(4))
+                throw new InvalidOperationException(
+                    "SQL Server physical key has ambiguous name or custom alias type.");
+            var kind = physicalType.ToLowerInvariant() switch
+            {
+                "tinyint" or "smallint" or "int" or "bigint"
+                    or "decimal" or "numeric" => SqlSchemaValueKind.Numeric,
+                "uniqueidentifier" => SqlSchemaValueKind.Uuid,
+                _ => throw new InvalidOperationException(
+                    "SQL Server physical key type family is not supported.")
+            };
+            if (reader.Read())
+                throw new InvalidOperationException("SQL Server physical key column is ambiguous.");
+            return new SqlSchemaColumn(key, kind);
+        }).ToArray();
+        return SqlSchemaTable.WithTypes(table, columns);
     }
 
     private static bool HasSqlServer2005Profile(SqlProviderCapabilityProfile? profile) =>

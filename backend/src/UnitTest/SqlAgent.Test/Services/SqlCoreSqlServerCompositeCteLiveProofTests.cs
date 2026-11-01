@@ -80,6 +80,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, true, true, "NONE", "DECIMAL(12,2)", "INT")]
     [InlineData(false, false, 3, false, true, "INNER", "DECIMAL(18,4)", "DECIMAL(12,2)")]
     [InlineData(true, false, 2, false, false, "CROSS", "DECIMAL(38,0)", "DECIMAL(38,18)")]
+    // G9/M04: UUID belongs to an exact non-numeric physical key family.
+    // Positive 1-3 CTE, self-join, 2-column mixed, approval and index drift.
+    [InlineData(true, true, 1, false, false, "NONE", "UNIQUEIDENTIFIER", "UNIQUEIDENTIFIER")]
+    [InlineData(false, false, 2, false, true, "NONE", "UNIQUEIDENTIFIER", "INT")]
+    [InlineData(true, false, 3, false, true, "SELF", "INT", "UNIQUEIDENTIFIER")]
+    [InlineData(false, false, 2, false, false, "SELF_LEFT", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 1, true, false, "NONE", "UNIQUEIDENTIFIER", "BIGINT")]
+    [InlineData(false, true, 3, false, true, "INNER", "UNIQUEIDENTIFIER", "SMALLINT")]
+    [InlineData(true, true, 2, false, false, "CROSS", "UNIQUEIDENTIFIER", "UNIQUEIDENTIFIER")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -129,19 +138,36 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             decimal second = k2Type == "BIGINT" ? 2147483649m
                 : k2Type.StartsWith("DECIMAL(", StringComparison.Ordinal) && !k2Type.EndsWith(",0)", StringComparison.Ordinal)
                     ? 101.125m : 1m;
+            string KeySql(string type, decimal numeric, int ordinal)
+            {
+                if (type != "UNIQUEIDENTIFIER")
+                    return numeric.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // SQL literal is explicitly typed by the physical UNIQUEIDENTIFIER
+                // column; no conversion is part of the key equality predicate.
+                return "'00000000-0000-0000-0000-" + ordinal.ToString("D12") + "'";
+            }
+            var key1 = KeySql(k1Type, first, 1);
+            var key2 = KeySql(k2Type, second, 11);
+            var key1Next = KeySql(k1Type, first + 1, 2);
+            var key2Next = KeySql(k2Type, second + 1, 12);
+
             await Exec("INSERT INTO dbo.[" + dst +
-                $"] (k1,k2,label) VALUES ({first},{second},'old'),({first},{second + 1},'old'),({first + 1},{second},'old')");
+                $"] (k1,k2,label) VALUES ({key1},{key2},'old'),({key1},{key2Next},'old'),({key1Next},{key2},'old')");
             await Exec("INSERT INTO dbo.[" + src +
-                $"] (k1,k2,payload) VALUES ({first},{second},11),({first},{second + 1},12),({first + 1},{second},21)");
+                $"] (k1,k2,payload) VALUES ({key1},{key2},11),({key1},{key2Next},12),({key1Next},{key2},21)");
 
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
                 "g7-composite-live-v1", [
                     SqlSchemaTable.WithTypes("dbo." + dst, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
                     SqlSchemaTable.WithTypes("dbo." + src, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)])
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
                 ]);
             var target = "dbo." + dst;
             var source = "dbo." + src;
@@ -150,6 +176,41 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 source, new[] { "k1", "k2" });
             Assert.Equal(new[] { "k1", "k2" }, proof.SourceKeyColumns);
             Assert.Equal(new[] { "k1", "k2" }, proof.TargetKeyColumns);
+            if (k1Type == "UNIQUEIDENTIFIER" || k2Type == "UNIQUEIDENTIFIER")
+            {
+                // Numeric is not a UUID witness, even when every live
+                // source UNIQUE key has otherwise been correctly attested.
+                var wrongTypedSnapshot = new SqlSchemaSnapshot(
+                    SqlAgentToolType.MsSqlServer, "g9-wrong-uuid-family", [
+                        SqlSchemaTable.WithTypes(target, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        SqlSchemaTable.WithTypes(source, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)])
+                    ]);
+                Assert.Throws<ArgumentException>(() =>
+                    SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                        db, wrongTypedSnapshot, target, new[] { "k1", "k2" },
+                        source, new[] { "k1", "k2" }));
+                // Correct source UUID family is still not permission to
+                // misdeclare the target UUID as Numeric.
+                var wrongTargetSnapshot = new SqlSchemaSnapshot(
+                    SqlAgentToolType.MsSqlServer, "g9-wrong-target-family", [
+                        SqlSchemaTable.WithTypes(target, [
+                            new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        SqlSchemaTable.WithTypes(source, [
+                            new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                                ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                            new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                                ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
+                    ]);
+                Assert.Throws<ArgumentException>(() =>
+                    SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                        db, wrongTargetSnapshot, target, new[] { "k1", "k2" },
+                        source, new[] { "k1", "k2" }));
+            }
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
             var exactTypes = (k1Type + "," + k2Type).Replace(
@@ -402,10 +463,14 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("source-decimal")]
     [InlineData("source-float")]
     [InlineData("source-uuid")]
+    [InlineData("target-uuid")]
     [InlineData("decimal-precision-mismatch")]
     [InlineData("decimal-scale-mismatch")]
     [InlineData("numeric-vs-int")]
     [InlineData("decimal-vs-bigint")]
+    [InlineData("uuid-vs-int")]
+    [InlineData("uuid-vs-varchar")]
+    [InlineData("uuid-vs-binary")]
     [InlineData("target-decimal")]
     [InlineData("target-smallint")]
     [InlineData("target-tinyint")]
@@ -447,9 +512,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "target-decimal" => "DECIMAL(20,0)",
                     "target-smallint" => "SMALLINT",
                     "target-tinyint" => "TINYINT",
+                    "target-uuid" => "UNIQUEIDENTIFIER",
                     "decimal-precision-mismatch" => "DECIMAL(12,2)",
                     "decimal-scale-mismatch" => "DECIMAL(12,2)",
                     "decimal-vs-bigint" => "BIGINT",
+                    "uuid-vs-int" => "INT",
+                    "uuid-vs-varchar" => "VARCHAR(36)",
+                    "uuid-vs-binary" => "BINARY(16)",
                     _ => "INT"
                 }) + " NOT NULL)");
             var sourceDefinition = shape switch
@@ -465,6 +534,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 "decimal-vs-bigint" => "k1 INT NOT NULL, k2 DECIMAL(20,0) NOT NULL",
                 "source-float" => "k1 INT NOT NULL, k2 FLOAT NOT NULL",
                 "source-uuid" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
+                "uuid-vs-int" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
+                "uuid-vs-varchar" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
+                "uuid-vs-binary" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
                 "computed" => "k1 INT NOT NULL, k2 AS (k1 + 1) PERSISTED",
                 _ => "k1 INT NOT NULL, k2 INT NOT NULL"
             };
@@ -624,6 +696,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, false, "DECIMAL(12,2)", "DECIMAL(18,4)")]
     [InlineData(false, true, 2, false, "NUMERIC(12,2)", "DECIMAL(18,4)")]
     [InlineData(true, true, 3, true, "DECIMAL(12,2)", "DECIMAL(20,0)")]
+    [InlineData(true, false, 1, false, "UNIQUEIDENTIFIER", "INT")]
+    [InlineData(false, true, 2, false, "SMALLINT", "UNIQUEIDENTIFIER")]
+    [InlineData(true, true, 3, true, "UNIQUEIDENTIFIER", "DECIMAL(12,2)")]
     public async Task CrossPhysicalUniqueJoinRequiresBothLiveIndexesAndCommitFreshness(
         bool update, bool leftJoin, int hops, bool revokeJoinedIndex,
         string k1Type, string k2Type)
@@ -671,25 +746,44 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             decimal second = k2Type == "BIGINT" ? 2147483649m
                 : k2Type.StartsWith("DECIMAL(", StringComparison.Ordinal) && !k2Type.EndsWith(",0)", StringComparison.Ordinal)
                     ? 101.125m : 1m;
+            string KeySql(string type, decimal numeric, int ordinal)
+            {
+                if (type != "UNIQUEIDENTIFIER")
+                    return numeric.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // SQL literal is explicitly typed by the physical UNIQUEIDENTIFIER
+                // column; no conversion is part of the key equality predicate.
+                return "'00000000-0000-0000-0000-" + ordinal.ToString("D12") + "'";
+            }
+            var key1 = KeySql(k1Type, first, 1);
+            var key2 = KeySql(k2Type, second, 11);
+            var key1Next = KeySql(k1Type, first + 1, 2);
+            var key2Next = KeySql(k2Type, second + 1, 12);
+
             await Exec("INSERT INTO dbo.[" + target +
-                $"] (k1,k2,label) VALUES ({first},{second},'old'),({first},{second + 1},'old'),({first + 1},{second},'old')");
+                $"] (k1,k2,label) VALUES ({key1},{key2},'old'),({key1},{key2Next},'old'),({key1Next},{key2},'old')");
             await Exec("INSERT INTO dbo.[" + source +
-                $"] (k1,k2,payload) VALUES ({first},{second},11),({first},{second + 1},12),({first + 1},{second},21)");
+                $"] (k1,k2,payload) VALUES ({key1},{key2},11),({key1},{key2Next},12),({key1Next},{key2},21)");
             await Exec("INSERT INTO dbo.[" + joined +
-                $"] (j1,j2,extra) VALUES ({first},{second},5),({first},{second + 1},6),({first + 1},{second},7)");
+                $"] (j1,j2,extra) VALUES ({key1},{key2},5),({key1},{key2Next},6),({key1Next},{key2},7)");
 
             var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(16, 0));
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
                 "m07-cross-physical", [
                     SqlSchemaTable.WithTypes("dbo." + target, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
                     SqlSchemaTable.WithTypes("dbo." + source, [
-                        new SqlSchemaColumn("k1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("k2", SqlSchemaValueKind.Numeric)]),
+                        new SqlSchemaColumn("k1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("k2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)]),
                     SqlSchemaTable.WithTypes("dbo." + joined, [
-                        new SqlSchemaColumn("j1", SqlSchemaValueKind.Numeric),
-                        new SqlSchemaColumn("j2", SqlSchemaValueKind.Numeric)])
+                        new SqlSchemaColumn("j1", k1Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric),
+                        new SqlSchemaColumn("j2", k2Type == "UNIQUEIDENTIFIER"
+                            ? SqlSchemaValueKind.Uuid : SqlSchemaValueKind.Numeric)])
                 ]);
             var proof = SqlServerCteUniqueKeyAssurance.VerifyLiveForKeyPreservingJoin(
                 db, snapshot, "dbo." + target, new[] { "k1", "k2" },
