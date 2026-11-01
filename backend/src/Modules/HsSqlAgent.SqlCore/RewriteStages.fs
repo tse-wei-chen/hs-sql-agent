@@ -574,7 +574,10 @@ module internal RewriteStages =
                     same owner.Value inputQualifier && same column.Value inputName
                 | _ -> false
             | _ -> false
-        if isNull proof || String.IsNullOrWhiteSpace(proof.TargetKeyColumn)
+        if isNull proof
+           || proof.TargetKeyColumns.Count = 0
+           || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
+           || proof.SourceKeyColumns.Count > 2
            || not (versioned sourceProfile) || not (versioned targetProfile)
            || (not (isNull snapshot)
                && (snapshot.Provider <> SqlAgentToolType.MsSqlServer
@@ -585,15 +588,15 @@ module internal RewriteStages =
         else
             match sources with
             | [CteTable(cteIdentifier, outerAlias)] ->
+                let sourceKeys = proof.SourceKeyColumns |> Seq.toList
+                let targetKeys = proof.TargetKeyColumns |> Seq.toArray
                 let mutable valid = true
                 let mutable lastName = ""
-                let mutable lastKey = ""
+                let mutable lastKeys: string list = []
                 let seen = System.Collections.Generic.HashSet<string>(StringComparer.Ordinal)
-                // The only cardinality-preserving chain is:
-                // physical unique INT -> one direct column projection ->
-                // 0..2 single-source, direct CTE-key projections.
-                // Any nested scope, branching, grouping or row multiplier
-                // invalidates the whole proof, not only that CTE.
+                // One physical ordered UNIQUE tuple -> at most three single-
+                // source CTEs projecting EACH key unchanged in SAME ordinal.
+                // This is executable proof, unlike Virtual Catalog evidence.
                 for index, cte in ctes |> List.indexed do
                     RewriteResourceBudget.checkpoint ()
                     let query = cte.Query
@@ -602,7 +605,7 @@ module internal RewriteStages =
                         match head.From, index with
                         | Some(NamedTable(name, alias)), 0
                             when qualified name proof.SourceTable ->
-                            Some(proof.SourceKeyColumn,
+                            Some(sourceKeys,
                                  match alias, Identifier.parts name with
                                  | Some a, _ -> a.Value
                                  | None, [_; table] -> table.Value
@@ -610,19 +613,31 @@ module internal RewriteStages =
                         | Some(CteTable(name, alias)), n when n > 0 ->
                             match Identifier.parts name with
                             | [namePart] when same namePart.Value lastName ->
-                                Some(lastKey, match alias with
-                                              | Some a -> a.Value
-                                              | None -> lastName)
+                                Some(lastKeys, match alias with
+                                               | Some a -> a.Value
+                                               | None -> lastName)
                             | _ -> None
                         | _ -> None
                     let directProjection =
-                        match head.Projection, cte.ColumnAliases, input with
-                        | [item], [], Some(key, qualifier)
-                            when simpleColumn item.Expression key qualifier ->
-                            Some(defaultArg (item.Alias |> Option.map (fun a -> a.Value)) key)
-                        | [item], [alias], Some(key, qualifier)
-                            when simpleColumn item.Expression key qualifier ->
-                            Some alias.Value
+                        match input with
+                        | Some(keys, qualifier)
+                            when List.length head.Projection = List.length keys
+                                 && (cte.ColumnAliases.IsEmpty
+                                     || List.length cte.ColumnAliases = List.length keys) ->
+                            let projected =
+                                (head.Projection, keys)
+                                ||> List.map2 (fun item key ->
+                                    if simpleColumn item.Expression key qualifier then
+                                        Some(defaultArg (item.Alias |> Option.map (fun a -> a.Value)) key)
+                                    else None)
+                            if projected |> List.forall Option.isSome then
+                                let names = projected |> List.choose id
+                                let names =
+                                    if cte.ColumnAliases.IsEmpty then names
+                                    else cte.ColumnAliases |> List.map (fun a -> a.Value)
+                                if (names |> List.distinct |> List.length) = List.length names
+                                then Some names else None
+                            else None
                         | _ -> None
                     if not valid
                        || not (seen.Add cte.Name.Value)
@@ -638,24 +653,22 @@ module internal RewriteStages =
                         valid <- false
                     else
                         lastName <- cte.Name.Value
-                        lastKey <- directProjection.Value
+                        lastKeys <- directProjection.Value
                 let outerNameMatches =
                     match Identifier.parts cteIdentifier with
                     | [name] -> same name.Value lastName
                     | _ -> false
-                if not valid || not outerNameMatches then false
+                if not valid || not outerNameMatches
+                   || List.length lastKeys <> targetKeys.Length then false
                 else
                     let qualifier = match outerAlias with
                                     | Some alias -> alias.Value
                                     | None -> lastName
-                    // Ordinary key equality must occur in an AND-only path
-                    // from the root; an OR, CAST or computed operand cannot
-                    // contribute a unique-key match. Bound traversal by the
-                    // existing resource budget as well.
                     let pending = ResizeArray<Expr>()
                     predicate |> Option.iter pending.Add
-                    let mutable proven = false
-                    while pending.Count > 0 && not proven do
+                    let proven = Array.create targetKeys.Length false
+                    let mutable duplicate = false
+                    while pending.Count > 0 do
                         RewriteResourceBudget.checkpoint ()
                         let last = pending.Count - 1
                         let node = pending.[last]
@@ -665,13 +678,15 @@ module internal RewriteStages =
                             pending.Add right
                             pending.Add left
                         | Binary(BinaryOperator.Equal, left, right) ->
-                            if (isTargetKey left proof.TargetTable proof.TargetKeyColumn
-                                && isColumn right qualifier lastKey)
-                               || (isTargetKey right proof.TargetTable proof.TargetKeyColumn
-                                   && isColumn left qualifier lastKey) then
-                                proven <- true
+                            for i = 0 to targetKeys.Length - 1 do
+                                if (isTargetKey left proof.TargetTable targetKeys.[i]
+                                    && isColumn right qualifier lastKeys.[i])
+                                   || (isTargetKey right proof.TargetTable targetKeys.[i]
+                                       && isColumn left qualifier lastKeys.[i]) then
+                                    if proven.[i] then duplicate <- true
+                                    else proven.[i] <- true
                         | _ -> ()
-                    proven
+                    not duplicate && (proven |> Array.forall id)
             | _ -> false
 
     /// Public CLR mutation statements may be constructed without the native
