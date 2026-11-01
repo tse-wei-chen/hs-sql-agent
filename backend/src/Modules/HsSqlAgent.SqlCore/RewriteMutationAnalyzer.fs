@@ -374,6 +374,21 @@ module internal RewriteMutationSourceMatchProof =
                                 { relation with Qualifiers = sourceQualifiers dialect name alias })
                         | _ -> None
                     | DerivedTable(query, alias) ->
+                        // Diagnostic-only RED investigation; this will be
+                        // removed before the next acceptance commit.
+                        let shape = query.Head
+                        let root =
+                            match shape.From with
+                            | Some(NamedTable(name, physicalAlias)) ->
+                                let found = create 0 name physicalAlias
+                                let traced =
+                                    found |> Option.bind (projectRelation shape.Projection [])
+                                sprintf "named=%b projected=%b unique=%d" found.IsSome traced.IsSome
+                                    (found |> Option.map (fun r -> r.UniqueKeys.Length) |> Option.defaultValue -1)
+                            | _ -> "not-a-named-physical-table"
+                        invalidOp (sprintf "M06DBG derived: %s, selection=%d joins=%d where=%b set=%d order=%d"
+                            root shape.Projection.Length shape.Joins.Length shape.Where.IsSome
+                            query.SetOperations.Length query.OrderBy.Length)
                         // One finite, non-lateral, nonmultiplying read from one
                         // physical table. No CTE inside, filter, JOIN, top,
                         // set operations, ordering or computed projections.
