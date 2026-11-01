@@ -3365,6 +3365,42 @@ Host proof creation, CTE-preserving match preview, approved commit
 and physical row parity. Explicit negative cases cover computed,
 multiplying, wrong-scope and non-equality lineage.
 
+## G7 / M02 — SQL Server ordered composite INT CTE execution proof
+
+The existing SQL Server CTE UPDATE/DELETE compiler and Host live proof now
+accept an explicitly **ordered pair of distinct, nonnullable INT keys** from
+one enabled, unfiltered physical PRIMARY KEY or UNIQUE B-tree index. The
+index's `sys.index_columns.key_ordinal` order is part of the proof; an
+otherwise valid index on `(k2,k1)` does not authorize a requested `(k1,k2)`
+tuple. Included columns and non-key payloads are not uniqueness proofs.
+
+The Host may discover the full pair from one through three linear,
+single-source, read-only CTEs. **Both** physical keys must survive every CTE
+projection unchanged, without positional permutations, casts, arithmetic,
+duplicate aliases or multi-row JOINs. Both distinct physical target INT
+columns must be matched through mandatory ordinary `AND`/`=` predicates
+against the corresponding final CTE columns. Missing/duplicated predicates,
+`OR`-only matches, nullable/computed keys, filtered/disabled/nonunique indexes
+and non-INT operands fail closed. This is not a key-preserving JOIN or
+arbitrary projected payload authorization.
+
+`SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation` has a new
+CLR-friendly two-list overload. Its sealed token binds physical
+server/database/object/index identity, ordered key names, catalog digest and
+the immutable approval/compiled command fingerprint. The original
+single-column overload and its behavior remain available. All evidence
+must be checked by `IsCurrent(actualConnection, actualTransaction)` while
+transaction-held locks protect the actual write. Virtual Catalog analysis,
+SQL parsing and user-supplied key names alone **never** authorize execution.
+
+The supported subset is SQL Server 2005+ with explicit source/target
+version profiles, an already-open metadata connection, strict target-row
+identity, bounded affected rows and native same-provider UPDATE/DELETE.
+Other five providers and decimal/UUID/text/nullable composite keys remain
+unchanged and fail closed for this executable proof. Real SQL Server 2022
+tests cover composite PK/UNIQUE, index ordinal mismatch, mandatory predicates,
+Host preview/commit and post-preview physical index drift.
+
 ## G1 — Strict additive DDL Schema Compiler (compile only)
 
 `SqlCoreFacade.CompileDdl(sql, new DdlCompilationOptions(sourceDialect, targetDialect))`
