@@ -61,6 +61,17 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(false, false, 1, false, true, "CROSS", "BIGINT", "INT")]
     [InlineData(true, false, 3, true, false, "NONE", "BIGINT", "BIGINT")]
     [InlineData(false, false, 2, true, true, "SELF", "BIGINT", "INT")]
+    // G9/M04: distinct signed 16-bit and unsigned 8-bit physical SQL key kinds.
+    // All existing approval, cardinality, index drift and CAST rejection
+    // assertions apply to these exact key types too.
+    [InlineData(true, true, 1, false, false, "NONE", "SMALLINT", "SMALLINT")]
+    [InlineData(false, false, 2, false, true, "NONE", "TINYINT", "TINYINT")]
+    [InlineData(true, false, 3, false, true, "SELF", "SMALLINT", "TINYINT")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "TINYINT", "SMALLINT")]
+    [InlineData(true, false, 1, true, false, "NONE", "TINYINT", "INT")]
+    [InlineData(false, false, 3, false, true, "INNER", "SMALLINT", "BIGINT")]
+    [InlineData(true, true, 2, false, false, "CROSS", "BIGINT", "TINYINT")]
+    [InlineData(false, false, 1, false, true, "LEFT", "INT", "SMALLINT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -372,11 +383,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("source-bigint")]
     [InlineData("target-bigint")]
     [InlineData("source-smallint")]
+    [InlineData("source-tinyint")]
     [InlineData("source-decimal")]
     [InlineData("source-float")]
     [InlineData("source-uuid")]
     [InlineData("target-decimal")]
     [InlineData("target-smallint")]
+    [InlineData("target-tinyint")]
     [InlineData("computed")]
     public async Task CompositeLiveMetadataRejectsUnprovenIndexAndOperandTypes(string shape)
     {
@@ -414,6 +427,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "target-bigint" => "BIGINT",
                     "target-decimal" => "DECIMAL(20,0)",
                     "target-smallint" => "SMALLINT",
+                    "target-tinyint" => "TINYINT",
                     _ => "INT"
                 }) + " NOT NULL)");
             var sourceDefinition = shape switch
@@ -421,6 +435,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 "nullable" => "k1 INT NOT NULL, k2 INT NULL",
                 "source-bigint" => "k1 INT NOT NULL, k2 BIGINT NOT NULL",
                 "source-smallint" => "k1 INT NOT NULL, k2 SMALLINT NOT NULL",
+                "source-tinyint" => "k1 INT NOT NULL, k2 TINYINT NOT NULL",
                 "source-decimal" => "k1 INT NOT NULL, k2 DECIMAL(20,0) NOT NULL",
                 "source-float" => "k1 INT NOT NULL, k2 FLOAT NOT NULL",
                 "source-uuid" => "k1 INT NOT NULL, k2 UNIQUEIDENTIFIER NOT NULL",
@@ -511,14 +526,18 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
     [Theory]
-    [InlineData(true, false, 1, false)]
-    [InlineData(false, false, 1, false)]
-    [InlineData(true, true, 2, false)]
-    [InlineData(false, true, 3, false)]
-    [InlineData(true, false, 2, true)]
-    [InlineData(false, true, 1, true)]
+    [InlineData(true, false, 1, false, "INT", "BIGINT")]
+    [InlineData(false, false, 1, false, "INT", "BIGINT")]
+    [InlineData(true, true, 2, false, "INT", "BIGINT")]
+    [InlineData(false, true, 3, false, "INT", "BIGINT")]
+    [InlineData(true, false, 2, true, "INT", "BIGINT")]
+    [InlineData(false, true, 1, true, "INT", "BIGINT")]
+    [InlineData(true, false, 1, false, "SMALLINT", "TINYINT")]
+    [InlineData(false, true, 2, false, "TINYINT", "SMALLINT")]
+    [InlineData(true, true, 3, true, "SMALLINT", "INT")]
     public async Task CrossPhysicalUniqueJoinRequiresBothLiveIndexesAndCommitFreshness(
-        bool update, bool leftJoin, int hops, bool revokeJoinedIndex)
+        bool update, bool leftJoin, int hops, bool revokeJoinedIndex,
+        string k1Type, string k2Type)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -548,18 +567,22 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         try
         {
             await Exec("CREATE TABLE dbo.[" + target +
-                "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
+                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + source +
-                "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, payload INT, PRIMARY KEY (k1,k2))");
+                "] (k1 " + k1Type + " NOT NULL, k2 " + k2Type + " NOT NULL, payload INT, PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + joined +
-                "] (j1 INT NOT NULL, j2 BIGINT NOT NULL, extra INT)");
+                "] (j1 " + k1Type + " NOT NULL, j2 " + k2Type + " NOT NULL, extra INT)");
             await Exec("CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + joined + "] (j1,j2)");
+            // Keep 64-bit sample values for BIGINT, but fit exact
+            // SMALLINT/TINYINT ranges without implicit conversion.
+            var first = k1Type == "BIGINT" ? 2147483649L : 1L;
+            var second = k2Type == "BIGINT" ? 2147483649L : 1L;
             await Exec("INSERT INTO dbo.[" + target +
-                "] (k1,k2,label) VALUES (1,2147483649,'old'),(1,2147483650,'old'),(2,2147483649,'old')");
+                $"] (k1,k2,label) VALUES ({first},{second},'old'),({first},{second + 1},'old'),({first + 1},{second},'old')");
             await Exec("INSERT INTO dbo.[" + source +
-                "] (k1,k2,payload) VALUES (1,2147483649,11),(1,2147483650,12),(2,2147483649,21)");
+                $"] (k1,k2,payload) VALUES ({first},{second},11),({first},{second + 1},12),({first + 1},{second},21)");
             await Exec("INSERT INTO dbo.[" + joined +
-                "] (j1,j2,extra) VALUES (1,2147483649,5),(1,2147483650,6),(2,2147483649,7)");
+                $"] (j1,j2,extra) VALUES ({first},{second},5),({first},{second + 1},6),({first + 1},{second},7)");
 
             var profile = new SqlProviderCapabilityProfile(SqlAgentToolType.MsSqlServer, new Version(16, 0));
             var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
@@ -632,8 +655,8 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     It.IsAny<CancellationToken>())).ReturnsAsync([target]);
             metadata.Setup(x => x.GetColumnsAsync("m07-metadata", "dbo", target,
                     It.IsAny<CancellationToken>())).ReturnsAsync([
-                        new DatabaseColumnMetadata("dbo", target, "k1", "int", true, 1),
-                        new DatabaseColumnMetadata("dbo", target, "k2", "bigint", true, 2),
+                        new DatabaseColumnMetadata("dbo", target, "k1", k1Type, true, 1),
+                        new DatabaseColumnMetadata("dbo", target, "k2", k2Type, true, 2),
                         new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
                     ]);
             var plan = await new DmlPlanFactory(metadata.Object)
