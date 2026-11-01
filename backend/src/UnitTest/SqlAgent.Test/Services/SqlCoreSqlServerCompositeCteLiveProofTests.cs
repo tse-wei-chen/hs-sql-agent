@@ -768,4 +768,100 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SingleBigIntPhysicalJoinKeepsRealPreviewApprovalAndCommit(bool update)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("M07 BIGINT JOIN requires SQL Server.");
+            Assert.Skip("SQL Server required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var tag = Guid.NewGuid().ToString("N")[..12];
+        var source = "m07_s_" + tag;
+        var joined = "m07_j_" + tag;
+        var target = "m07_t_" + tag;
+        await using var db = new SqlConnection(cs);
+        for (var attempt = 0; ; attempt++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (attempt < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string statement)
+        {
+            await using var cmd = new SqlCommand(statement, db);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + target +
+                "] (id BIGINT NOT NULL PRIMARY KEY, label VARCHAR(20))");
+            await Exec("CREATE TABLE dbo.[" + source +
+                "] (id BIGINT NOT NULL PRIMARY KEY)");
+            await Exec("CREATE TABLE dbo.[" + joined +
+                "] (external_id BIGINT NOT NULL UNIQUE)");
+            await Exec("INSERT INTO dbo.[" + source +
+                "] (id) VALUES (2147483649),(2147483650)");
+            await Exec("INSERT INTO dbo.[" + joined +
+                "] (external_id) VALUES (2147483649),(2147483650)");
+            await Exec("INSERT INTO dbo.[" + target +
+                "] (id,label) VALUES (2147483649,'old'),(2147483650,'old')");
+            var profile = new SqlProviderCapabilityProfile(
+                SqlAgentToolType.MsSqlServer, new Version(16, 0));
+            var sql = "WITH picked AS (SELECT s.id AS key_id FROM dbo.[" +
+                source + "] AS s INNER JOIN dbo.[" + joined +
+                "] AS j ON s.id = j.external_id) " +
+                (update
+                    ? "UPDATE dbo.[" + target + "] SET label = 'new' FROM picked"
+                    : "DELETE FROM dbo.[" + target + "] FROM picked") +
+                " WHERE dbo." + target + ".id = picked.key_id";
+            var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer, profile);
+            var metadata = new Mock<IProviderMetadataReader>();
+            metadata.Setup(x => x.GetSchemasAsync("m07-single", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(["dbo"]);
+            metadata.Setup(x => x.GetTablesAsync("m07-single", "dbo",
+                    It.IsAny<CancellationToken>())).ReturnsAsync([target]);
+            metadata.Setup(x => x.GetColumnsAsync("m07-single", "dbo", target,
+                    It.IsAny<CancellationToken>())).ReturnsAsync([
+                        new DatabaseColumnMetadata("dbo", target, "id", "bigint", true, 1),
+                        new DatabaseColumnMetadata("dbo", target, "label", "varchar", false)
+                    ]);
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "dbo." + source, "dbo." + joined, "dbo." + target };
+            var plan = await new DmlPlanFactory(metadata.Object)
+                .CreateWithMetadataConnectionAsync(db, "m07-single", parsed,
+                    SqlAgentToolType.MsSqlServer,
+                    new SqlPlanValidationContext("m07-single", allowed),
+                    new DmlCompilationPolicy(), DmlRowIdentityAssurance.Strict,
+                    maxAffectedRows: 4, cancellationToken: ct, targetProfile: profile);
+            var proof = Assert.IsType<SqlServerCteUniqueKeyAssurance>(
+                plan.SqlServerCteUniqueKeyAssurance);
+            Assert.Equal(new[] { "id" }, proof.SourceKeyColumns);
+            Assert.Equal(new[] { "external_id" }, proof.JoinedSourceKeyColumns);
+            Assert.Contains("BIGINT", proof.ProofIdentity, StringComparison.Ordinal);
+            DmlCoordinator.ValidatePlan(plan);
+            var coordinator = new DmlCoordinator(new SqlServerConnectionFactory());
+            var version = db.ServerVersion.Trim();
+            var preview = await coordinator.PreviewAsync(cs, plan, "m07-single-approver", ct, version);
+            Assert.Equal(2, preview.AffectedRows);
+            var commit = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, "m07-single-approver", ct, version);
+            Assert.True(commit.Committed);
+            await using var count = new SqlCommand(
+                "SELECT COUNT(*) FROM dbo.[" + target + "]", db);
+            Assert.Equal(update ? 2 : 0, Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + joined + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + target + "]");
+        }
+    }
+
 }
