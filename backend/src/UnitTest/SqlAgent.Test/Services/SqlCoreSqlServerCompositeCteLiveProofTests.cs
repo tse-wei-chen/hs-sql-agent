@@ -650,6 +650,102 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
 
+
+    // Exact native source UNIQUE and target equality comparison must be
+    // proof-equivalent. A generic Text schema kind is never sufficient.
+    [Theory]
+    [InlineData("source-ci")]
+    [InlineData("target-ci")]
+    [InlineData("different-bin2")]
+    [InlineData("different-length")]
+    [InlineData("unicode-varchar")]
+    [InlineData("varchar-max-target")]
+    [InlineData("char-not-proven")]
+    [InlineData("source-nullable")]
+    [InlineData("wrong-source-snapshot")]
+    [InlineData("wrong-target-snapshot")]
+    [InlineData("filtered-index")]
+    [InlineData("disabled-index")]
+    public async Task TextPhysicalEqualityRequiresSameBuiltInLengthAndBinaryCollation(string variant)
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("Text BIN2 live proof requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("Real SQL Server 2022 is required.");
+        }
+        var ct = TestContext.Current.CancellationToken;
+        var id = Guid.NewGuid().ToString("N")[..12];
+        var src = "g9_txtsrc_" + id;
+        var dst = "g9_txtdst_" + id;
+        var index = "g9_txtuq_" + id;
+        await using var db = new SqlConnection(cs);
+        for (var retry = 0; ; retry++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (retry < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string sql)
+        {
+            await using var cmd = new SqlCommand(sql, db);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        const string bin2 = "Latin1_General_100_BIN2";
+        const string ci = "Latin1_General_100_CI_AS";
+        var sourceType = variant == "char-not-proven" ? "CHAR(24)" : "VARCHAR(24)";
+        var targetType = variant switch
+        {
+            "char-not-proven" => "CHAR(24)",
+            "different-length" => "VARCHAR(32)",
+            "unicode-varchar" => "NVARCHAR(24)",
+            "varchar-max-target" => "VARCHAR(MAX)",
+            _ => "VARCHAR(24)"
+        };
+        var sourceCollation = variant == "source-ci" ? ci : bin2;
+        var targetCollation = variant switch
+        {
+            "target-ci" => ci,
+            "different-bin2" => "Latin1_General_BIN2",
+            _ => bin2
+        };
+        try
+        {
+            await Exec("CREATE TABLE dbo.[" + dst + "] (k " + targetType +
+                " COLLATE " + targetCollation + " NOT NULL, label VARCHAR(20))");
+            await Exec("CREATE TABLE dbo.[" + src + "] (k " + sourceType +
+                " COLLATE " + sourceCollation +
+                (variant == "source-nullable" ? " NULL)" : " NOT NULL)"));
+            await Exec("CREATE UNIQUE INDEX [" + index + "] ON dbo.[" + src + "] (k)" +
+                (variant == "filtered-index" ? " WHERE k IS NOT NULL" : ""));
+            if (variant == "disabled-index")
+                await Exec("ALTER INDEX [" + index + "] ON dbo.[" + src + "] DISABLE");
+            var sourceKind = variant == "wrong-source-snapshot"
+                ? SqlSchemaValueKind.Numeric : SqlSchemaValueKind.Text;
+            var targetKind = variant == "wrong-target-snapshot"
+                ? SqlSchemaValueKind.Numeric : SqlSchemaValueKind.Text;
+            var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "g9-text-" + variant, [
+                    SqlSchemaTable.WithTypes("dbo." + dst,
+                        [new SqlSchemaColumn("k", targetKind)]),
+                    SqlSchemaTable.WithTypes("dbo." + src,
+                        [new SqlSchemaColumn("k", sourceKind)])
+                ]);
+            var error = Record.Exception(() =>
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    db, snapshot, "dbo." + dst, "k", "dbo." + src, "k"));
+            Assert.NotNull(error);
+            Assert.True(error is ArgumentException or InvalidOperationException,
+                "Unsupported text proof must fail closed at the domain gate: " + error);
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + src + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + dst + "]");
+        }
+    }
+
     private sealed class SqlServerConnectionFactory : IDbConnectionFactory
     {
         public DbConnection Create(string connectionString) => new SqlConnection(connectionString);
