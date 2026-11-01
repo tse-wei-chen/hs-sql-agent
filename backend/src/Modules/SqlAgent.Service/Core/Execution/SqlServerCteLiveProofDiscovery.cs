@@ -162,6 +162,12 @@ internal static class SqlServerCteLiveProofDiscovery
         // attested tuple; sys.index_columns.key_ordinal verifies that exact
         // order. Payload positions do not become index components.
         var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
+        if (ctes[0].Query is SelectStatement first
+            && first.From is NamedTableSource physical
+            && first.Joins.Any(join => !ProvenSingletonJoin(join))
+            && !ProvenPhysicalSelfJoin(physical, first.Joins[0], sourceTable,
+                ordered.Select(m => m.Source.PhysicalColumn).ToArray()))
+            return false;
         candidate = new Candidate(targetTable,
             ordered.Select(m => m.Target).ToImmutableArray(),
             sourceTable,
@@ -192,7 +198,9 @@ internal static class SqlServerCteLiveProofDiscovery
                 || !seen.Add(cteName)
                 || cte.RecursiveScope
                 || cte.Query is not SelectStatement select
-                || select.Ctes.Length != 0 || select.Joins.Length != 0
+                || select.Ctes.Length != 0
+                || select.Joins.Length > 1
+
                 || select.Distinct || select.DistinctOn.Length != 0
                 || select.GroupBy.Length != 0
                 || select.Having is not null || select.OrderBy.Length != 0
@@ -211,6 +219,12 @@ internal static class SqlServerCteLiveProofDiscovery
             }
             else if (!TrySingleName(input.Name, out var namedCte)
                      || !Same(namedCte, finalCte))
+                return false;
+
+            // Capture an ordinary local, not the method's out parameter.
+            var knownPhysicalTable = physicalTable;
+            if (select.Joins.Any(join => !ProvenSingletonJoin(join)
+                    && !(i == 0 && HasPhysicalSelfJoinShape(input, join, knownPhysicalTable))))
                 return false;
 
             var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
@@ -258,6 +272,100 @@ internal static class SqlServerCteLiveProofDiscovery
             finalColumns = next.MoveToImmutable();
         }
         return !string.IsNullOrEmpty(physicalTable) && !finalColumns.IsDefaultOrEmpty;
+    }
+
+    // A self-JOIN on the same live-attested unique INT key cannot multiply
+    // one source row if every key component participates in an ordinary
+    // mandatory equality between two distinct table aliases.
+    private static bool HasPhysicalSelfJoinShape(
+        NamedTableSource primary, JoinSource join, string physicalTable) =>
+        primary.Alias is not null && SafeName(primary.Alias.Value)
+        && !join.IsNatural && join.UsingColumns.IsDefaultOrEmpty
+        && (SameOperator(join.Kind, "INNER") || SameOperator(join.Kind, "LEFT"))
+        && join.Predicate is not null
+        && join.Source is NamedTableSource secondary
+        && secondary.Alias is not null && SafeName(secondary.Alias.Value)
+        && !Same(primary.Alias.Value, secondary.Alias.Value)
+        && TryPhysicalTable(secondary.Name, out var secondTable)
+        && Same(physicalTable, secondTable);
+
+    private static bool ProvenPhysicalSelfJoin(
+        NamedTableSource primary, JoinSource join,
+        string physicalTable, string[] uniqueKeys)
+    {
+        if (!HasPhysicalSelfJoinShape(primary, join, physicalTable)
+            || uniqueKeys.Length is < 1 or > 2
+            || join.Source is not NamedTableSource secondary
+            || join.Predicate is null)
+            return false;
+
+        var matched = new bool[uniqueKeys.Length];
+        var pending = new Stack<SqlExpr>();
+        pending.Push(join.Predicate);
+        var budget = 256;
+        while (pending.Count > 0)
+        {
+            if (--budget < 0) return false;
+            if (pending.Pop() is not BinaryExpr binary) continue;
+            if (SameOperator(binary.Operator, "AND"))
+            {
+                pending.Push(binary.Left);
+                pending.Push(binary.Right);
+                continue;
+            }
+            if (!SameOperator(binary.Operator, "=")) continue;
+            for (var i = 0; i < uniqueKeys.Length; i++)
+            {
+                var key = uniqueKeys[i];
+                if ((IsCteKey(binary.Left, primary.Alias!.Value, key)
+                     && IsCteKey(binary.Right, secondary.Alias!.Value, key))
+                    || (IsCteKey(binary.Right, primary.Alias!.Value, key)
+                        && IsCteKey(binary.Left, secondary.Alias!.Value, key)))
+                {
+                    if (matched[i]) return false;
+                    matched[i] = true;
+                }
+            }
+        }
+        return matched.All(identity => identity);
+    }
+
+    /// <summary>
+    /// A closed, uncorrelated derived SELECT with no FROM and one literal
+    /// expression always yields exactly one row. CROSS can therefore add
+    /// exactly one row per source row; INNER/LEFT with a literal equality
+    /// can yield at most one. This is a syntax proof, not an inferred
+    /// uniqueness claim about another physical table.
+    /// </summary>
+    private static bool ProvenSingletonJoin(JoinSource join)
+    {
+        if (join.IsNatural || !join.UsingColumns.IsDefaultOrEmpty
+            || join.Source is not DerivedTableSource { IsLateral: false } derived
+            || !SafeName(derived.Alias.Value)
+            || derived.Query is not SelectStatement singleton
+            || singleton.Ctes.Length != 0 || singleton.From is not null
+            || singleton.Joins.Length != 0
+            || singleton.Select.Length != 1
+            || singleton.Select[0].Expression is not LiteralExpr
+            || singleton.Select[0].Alias is null
+            || !SafeName(singleton.Select[0].Alias.Value)
+            || singleton.Distinct || singleton.DistinctOn.Length != 0
+            || singleton.Where is not null || singleton.GroupBy.Length != 0
+            || singleton.Having is not null || singleton.OrderBy.Length != 0
+            || singleton.Limit.HasValue || singleton.Offset.HasValue
+            || singleton.FetchPercent.HasValue || singleton.FetchWithTies)
+            return false;
+
+        if (SameOperator(join.Kind, "CROSS"))
+            return join.Predicate is null;
+        if (!SameOperator(join.Kind, "INNER")
+            && !SameOperator(join.Kind, "LEFT"))
+            return false;
+
+        return join.Predicate is BinaryExpr equality
+               && SameOperator(equality.Operator, "=")
+               && equality.Left is LiteralExpr
+               && equality.Right is LiteralExpr;
     }
 
     private static bool TrySelectedKey(

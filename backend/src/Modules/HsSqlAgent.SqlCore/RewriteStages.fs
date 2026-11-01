@@ -574,6 +574,75 @@ module internal RewriteStages =
                     same owner.Value inputQualifier && same column.Value inputName
                 | _ -> false
             | _ -> false
+        // A derived SELECT without FROM, predicates, set branches or
+        // aggregates and with one literal item is exactly one row.
+        // CROSS preserves cardinality, and INNER/LEFT with a literal
+        // equality cannot multiply any physical-source row. Only these
+        // closed syntactic cases are eligible for the live INT-key path;
+        // a physical join needs its own separate catalog proof.
+        let singletonDerived (query: Query) =
+            let head = query.Head
+            query.SetOperations.IsEmpty
+            && query.OrderBy.IsEmpty
+            && query.Limit.IsNone && query.Offset.IsNone
+            && query.FetchPercent.IsNone && not query.FetchWithTies
+            && head.Ctes.IsEmpty && head.From.IsNone
+            && head.Joins.IsEmpty && head.Where.IsNone
+            && head.GroupBy.IsEmpty && head.Having.IsNone
+            && head.DistinctMode = SelectDistinct.AllRows
+            && (match head.Projection with
+                | [{ Expression = expr; Alias = Some _ }] ->
+                    match Expr.unspan expr with
+                    | Literal _ -> true
+                    | _ -> false
+                | _ -> false)
+        let singletonJoin = function
+            | CrossJoin(DerivedTable(query, _)) ->
+                singletonDerived query
+            | OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     DerivedTable(query, _), predicate) ->
+                singletonDerived query
+                && (match Expr.unspan predicate with
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        match Expr.unspan left, Expr.unspan right with
+                        | Literal _, Literal _ -> true
+                        | _ -> false
+                    | _ -> false)
+            | _ -> false
+        let provenPhysicalSelfJoin (head: Select) join =
+            match head.From, join with
+            | Some(NamedTable(physical, Some leftAlias)),
+              OnJoin((OnJoinKind.Inner | OnJoinKind.Left),
+                     NamedTable(otherPhysical, Some rightAlias), predicate)
+                when qualified physical proof.SourceTable
+                     && qualified otherPhysical proof.SourceTable
+                     && not (same leftAlias.Value rightAlias.Value) ->
+                let keys = proof.SourceKeyColumns |> Seq.toArray
+                let seen = Array.create keys.Length false
+                let pending = ResizeArray<Expr>()
+                pending.Add predicate
+                let mutable duplicate = false
+                while pending.Count > 0 && not duplicate do
+                    RewriteResourceBudget.checkpoint ()
+                    let last = pending.Count - 1
+                    let node = pending.[last]
+                    pending.RemoveAt(last)
+                    match Expr.unspan node with
+                    | Binary(BinaryOperator.And, left, right) ->
+                        pending.Add right
+                        pending.Add left
+                    | Binary(BinaryOperator.Equal, left, right) ->
+                        for i = 0 to keys.Length - 1 do
+                            let key = keys.[i]
+                            if (isColumn left leftAlias.Value key
+                                && isColumn right rightAlias.Value key)
+                               || (isColumn right leftAlias.Value key
+                                   && isColumn left rightAlias.Value key) then
+                                if seen.[i] then duplicate <- true
+                                else seen.[i] <- true
+                    | _ -> ()
+                not duplicate && (seen |> Array.forall id)
+            | _ -> false
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
@@ -685,7 +754,11 @@ module internal RewriteStages =
                        || not query.OrderBy.IsEmpty
                        || query.Limit.IsSome || query.Offset.IsSome
                        || query.FetchPercent.IsSome || query.FetchWithTies
-                       || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+                       || not head.Ctes.IsEmpty
+                       || head.Joins.Length > 1
+                       || not (head.Joins |> List.forall (fun join ->
+                           singletonJoin join
+                           || (index = 0 && provenPhysicalSelfJoin head join)))
                        || not head.GroupBy.IsEmpty || head.Having.IsSome
                        || head.DistinctMode <> SelectDistinct.AllRows
                        || directProjection.IsNone then

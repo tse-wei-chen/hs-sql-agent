@@ -3443,6 +3443,56 @@ approval evidence, transaction-held index/table locks and commit-time
 feature does not add JOIN mutation privileges, change the other five
 database providers, or create an additional MCP tool.
 
+## G8 / M07 — closed singleton JOIN cardinality proof (SQL Server phase 1)
+
+Native SQL Server 2005+ CTE-prefixed `UPDATE`/`DELETE` may now
+project the previously attested ordered one-/two-component physical
+`INT` UNIQUE key through one to three read-only CTEs even when one
+CTE hop additionally contains a **proven singleton-derived JOIN**.
+At most one such JOIN is allowed per CTE hop, and each join source
+must be an **uncorrelated derived `SELECT` with exactly one literal
+projection, no `FROM`, no filtering, aggregation, set branches,
+recursive CTE, limit, function or additional JOIN**:
+
+```sql
+WITH seed AS (
+  SELECT src.k1 AS a, src.payload AS extra, src.k2 AS b
+  FROM dbo.SourceRows AS src
+  CROSS JOIN (SELECT 1 AS marker) AS one
+)
+UPDATE dbo.TargetRows SET status = 'updated'
+FROM seed
+WHERE dbo.TargetRows.k1 = seed.a
+  AND dbo.TargetRows.k2 = seed.b;
+```
+
+`CROSS JOIN` is exactly one derived match per physical source row;
+`INNER JOIN` and `LEFT JOIN` with a pure **literal-equality ON
+predicate** admit at most one. In each case JOIN cannot multiply the
+unique physical key. The Host proves the derived singleton shape on
+the parsed CLR AST; the **closed F# DML compiler checks the same
+cardinality shape independently**. Both still require the real
+physical enabled/unfiltered SQL Server INT unique-key/index proof,
+the mandatory target key equality graph and row-set preview,
+approval, transaction-bound metadata locks and `IsCurrent`.
+
+The same physical table also supports an **INNER/LEFT self-JOIN**
+when it is referenced under two distinct aliases and the `ON`
+predicate contains ordinary, mandatory equality on **every** INT
+component of the previously verified UNIQUE tuple. The joined copy
+then has at most one row per primary row. Both the Host and closed F#
+AST independently check this. Omitted keys, `OR`-only predicates,
+computed operands or another physical table fail closed.
+
+This is a deliberately **narrow first M07 boundary**. It does
+**not** authorize general key-preserving multi-table JOINs, physical
+JOIN uniqueness by a caller-supplied catalog, `APPLY`, correlated
+derived sources, `RIGHT`/`FULL` joins, `UNION ALL` or a
+multi-row subquery. Existing `EXISTS` and `NOT EXISTS` filtering
+remain ordinary read-only predicate semantics and do not by
+themselves mint executable physical-key evidence. The other
+five providers and MCP tool count are unchanged.
+
 ## G1 — Strict additive DDL Schema Compiler (compile only)
 
 `SqlCoreFacade.CompileDdl(sql, new DdlCompilationOptions(sourceDialect, targetDialect))`

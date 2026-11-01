@@ -20,26 +20,40 @@ namespace SqlAgent.Test.Services;
 public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
 {
     [Theory]
-    [InlineData(true, true, 1, false, false)]
-    [InlineData(true, false, 1, false, false)]
-    [InlineData(false, true, 1, false, false)]
-    [InlineData(false, false, 1, false, false)]
-    [InlineData(true, true, 2, false, false)]
-    [InlineData(false, true, 2, false, false)]
-    [InlineData(true, false, 3, false, false)]
-    [InlineData(false, false, 3, false, false)]
-    [InlineData(true, false, 1, true, false)]
-    [InlineData(false, false, 3, true, false)]
-    [InlineData(true, true, 1, false, true)]
-    [InlineData(false, false, 1, false, true)]
-    [InlineData(true, false, 2, false, true)]
-    [InlineData(false, true, 2, false, true)]
-    [InlineData(true, true, 3, false, true)]
-    [InlineData(false, false, 3, false, true)]
-    [InlineData(true, false, 2, true, true)]
-    [InlineData(false, false, 3, true, true)]
+    [InlineData(true, true, 1, false, false, "NONE")]
+    [InlineData(true, false, 1, false, false, "NONE")]
+    [InlineData(false, true, 1, false, false, "NONE")]
+    [InlineData(false, false, 1, false, false, "NONE")]
+    [InlineData(true, true, 2, false, false, "NONE")]
+    [InlineData(false, true, 2, false, false, "NONE")]
+    [InlineData(true, false, 3, false, false, "NONE")]
+    [InlineData(false, false, 3, false, false, "NONE")]
+    [InlineData(true, false, 1, true, false, "NONE")]
+    [InlineData(false, false, 3, true, false, "NONE")]
+    [InlineData(true, true, 1, false, true, "NONE")]
+    [InlineData(false, false, 1, false, true, "NONE")]
+    [InlineData(true, false, 2, false, true, "NONE")]
+    [InlineData(false, true, 2, false, true, "NONE")]
+    [InlineData(true, true, 3, false, true, "NONE")]
+    [InlineData(false, false, 3, false, true, "NONE")]
+    [InlineData(true, false, 2, true, true, "NONE")]
+    [InlineData(false, false, 3, true, true, "NONE")]
+    [InlineData(true, true, 1, false, true, "CROSS")]
+    [InlineData(false, false, 1, false, true, "CROSS")]
+    [InlineData(true, false, 2, false, true, "INNER")]
+    [InlineData(false, true, 2, false, true, "INNER")]
+    [InlineData(true, true, 3, false, true, "LEFT")]
+    [InlineData(false, false, 3, false, true, "LEFT")]
+    [InlineData(true, false, 2, true, true, "CROSS")]
+    [InlineData(false, false, 3, true, true, "INNER")]
+    [InlineData(true, true, 1, false, true, "SELF")]
+    [InlineData(false, false, 1, false, true, "SELF")]
+    [InlineData(true, false, 2, false, true, "SELF_LEFT")]
+    [InlineData(false, true, 3, false, true, "SELF_LEFT")]
+    [InlineData(true, false, 2, true, true, "SELF")]
+    [InlineData(false, false, 3, true, true, "SELF_LEFT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
-        bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload = false)
+        bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload, string joined)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -111,7 +125,25 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 ? "k1 AS a, payload AS extra, k2 AS b"
                 : "k1 AS a, k2 AS b";
             var nextProjection = payload ? "a, extra, b" : "a, b";
-            var cte = "WITH seed AS (SELECT " + firstProjection + " FROM dbo.[" + src + "]) ";
+            if (joined.StartsWith("SELF", StringComparison.Ordinal))
+                firstProjection = "s.k1 AS a, s.payload AS extra, s.k2 AS b";
+            var physicalSource = joined.StartsWith("SELF", StringComparison.Ordinal)
+                ? "dbo.[" + src + "] AS s"
+                : "dbo.[" + src + "]";
+            var singletonJoin = joined switch
+            {
+                "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
+                "INNER" => " INNER JOIN (SELECT 1 AS marker) AS once ON 1 = 1",
+                "LEFT" => " LEFT JOIN (SELECT 1 AS marker) AS once ON 1 = 1",
+                "SELF" => " INNER JOIN dbo.[" + src +
+                    "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
+                "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
+                    "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
+                "NONE" => "",
+                _ => throw new ArgumentOutOfRangeException(nameof(joined))
+            };
+            var cte = "WITH seed AS (SELECT " + firstProjection +
+                " FROM " + physicalSource + singletonJoin + ") ";
             if (hops >= 2)
                 cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
             if (hops >= 3)
@@ -180,6 +212,44 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                             SqlAgentToolType.MsSqlServer, profile),
                         SqlAgentToolType.MsSqlServer, context,
                         new DmlCompilationPolicy(), profile, null));
+            }
+
+            if (joined.StartsWith("SELF", StringComparison.Ordinal))
+            {
+                foreach (var invalid in new[]
+                {
+                    sql.Replace(" AND s.k2 = j.k2", "", StringComparison.Ordinal),
+                    sql.Replace(" AND s.k2 = j.k2", " OR s.k2 = j.k2", StringComparison.Ordinal),
+                    sql.Replace("s.k2 = j.k2", "s.k2 + 0 = j.k2", StringComparison.Ordinal),
+                    sql.Replace("s.k2 = j.k2", "s.k1 = j.k2", StringComparison.Ordinal)
+                })
+                {
+                    Assert.Throws<SqlCompilationException>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+            if (joined is "CROSS" or "INNER" or "LEFT")
+            {
+                // A derived singleton is the ONLY acceptable extra join
+                // source. A physical or derived table scan can multiply
+                // source keys and must never be proof-bearing.
+                foreach (var wrong in new[]
+                {
+                    sql.Replace("(SELECT 1 AS marker)", "(SELECT k1 AS marker FROM dbo.[" + src + "])", StringComparison.Ordinal),
+                    sql.Replace("(SELECT 1 AS marker)", "(SELECT 1 AS marker UNION ALL SELECT 2 AS marker)", StringComparison.Ordinal),
+                    sql.Replace("(SELECT 1 AS marker)", "(SELECT 1 AS marker FROM dbo.[" + src + "])", StringComparison.Ordinal)
+                })
+                {
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(wrong, SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
             }
 
             await using (var tx = (SqlTransaction)await db.BeginTransactionAsync(ct))
