@@ -97,6 +97,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, true, true, "NONE", "NVARCHAR(32)", "DECIMAL(12,2)")]
     [InlineData(false, false, 3, false, true, "INNER", "VARCHAR(24)", "NVARCHAR(32)")]
     [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32)", "SMALLINT")]
+    // M05: linguistic equality must use the *same physical collation* as
+    // the source UNIQUE index, not a case-sensitive binary approximation.
+    [InlineData(true, true, 1, false, false, "NONE", "VARCHAR(24) COLLATE Latin1_General_100_CI_AS", "INT")]
+    [InlineData(false, false, 2, false, true, "NONE", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "DECIMAL(12,2)")]
+    [InlineData(true, false, 3, false, true, "SELF", "VARCHAR(24) COLLATE Latin1_General_100_CS_AS", "UNIQUEIDENTIFIER")]
+    [InlineData(false, true, 2, false, false, "SELF_LEFT", "INT", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AS")]
+    [InlineData(true, false, 1, true, true, "NONE", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI", "BIGINT")]
+    [InlineData(false, false, 3, false, true, "INNER", "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "VARCHAR(24) COLLATE Latin1_General_100_CI_AS")]
+    [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -133,7 +142,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 type.StartsWith("VARCHAR(", StringComparison.Ordinal)
                 || type.StartsWith("NVARCHAR(", StringComparison.Ordinal);
             string PhysicalType(string type) => IsText(type)
-                ? type + " COLLATE Latin1_General_100_BIN2" : type;
+                ? (type.Contains(" COLLATE ", StringComparison.Ordinal) ? type
+                    : type + " COLLATE Latin1_General_100_BIN2")
+                : type;
             await Exec("CREATE TABLE dbo.[" + dst +
                 "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
                 + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
@@ -229,8 +240,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             }
             Assert.Contains("k1", proof.ProofIdentity);
             Assert.Contains("k2", proof.ProofIdentity);
-            var exactTypes = (k1Type + "," + k2Type).Replace(
-                "NUMERIC(", "DECIMAL(", StringComparison.Ordinal);
+            var exactTypes = (k1Type + "," + k2Type)
+                .Replace("NUMERIC(", "DECIMAL(", StringComparison.Ordinal)
+                .Replace(" COLLATE ", "@", StringComparison.Ordinal);
             Assert.Contains("source-key-types=" + exactTypes,
                 proof.ProofIdentity, StringComparison.Ordinal);
             Assert.Contains("target-key-types=" + exactTypes,
@@ -665,6 +677,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData("source-ci")]
     [InlineData("target-ci")]
     [InlineData("different-bin2")]
+    [InlineData("source-ci-ai")]
+    [InlineData("target-cs")]
+    [InlineData("different-linguistic")]
+    [InlineData("unsupported-cs-ai")]
+    [InlineData("unsupported-sc")]
     [InlineData("different-length")]
     [InlineData("unicode-varchar")]
     [InlineData("varchar-max-target")]
@@ -711,11 +728,21 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             "varchar-max-target" => "VARCHAR(MAX)",
             _ => "VARCHAR(24)"
         };
-        var sourceCollation = variant == "source-ci" ? ci : bin2;
+        var sourceCollation = variant switch
+        {
+            "source-ci" or "different-linguistic" => ci,
+            "source-ci-ai" => "Latin1_General_100_CI_AI",
+            "target-cs" => "Latin1_General_100_CS_AS",
+            "unsupported-cs-ai" => "Latin1_General_100_CS_AI",
+            "unsupported-sc" => "Latin1_General_100_CI_AS_SC",
+            _ => bin2
+        };
         var targetCollation = variant switch
         {
             "target-ci" => ci,
             "different-bin2" => "Latin1_General_BIN2",
+            "different-linguistic" => "Latin1_General_100_CI_AI",
+            "target-cs" => ci,
             _ => bin2
         };
         try
@@ -999,6 +1026,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, false, "VARCHAR(24)", "INT")]
     [InlineData(false, true, 2, false, "NVARCHAR(32)", "VARCHAR(24)")]
     [InlineData(true, true, 3, true, "NVARCHAR(32)", "DECIMAL(12,2)")]
+    [InlineData(true, false, 1, false, "VARCHAR(24) COLLATE Latin1_General_100_CI_AS", "INT")]
+    [InlineData(false, true, 2, false, "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI")]
+    [InlineData(true, true, 3, true, "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "DECIMAL(12,2)")]
     public async Task CrossPhysicalUniqueJoinRequiresBothLiveIndexesAndCommitFreshness(
         bool update, bool leftJoin, int hops, bool revokeJoinedIndex,
         string k1Type, string k2Type)
@@ -1034,7 +1064,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 type.StartsWith("VARCHAR(", StringComparison.Ordinal)
                 || type.StartsWith("NVARCHAR(", StringComparison.Ordinal);
             string PhysicalType(string type) => IsText(type)
-                ? type + " COLLATE Latin1_General_100_BIN2" : type;
+                ? (type.Contains(" COLLATE ", StringComparison.Ordinal) ? type
+                    : type + " COLLATE Latin1_General_100_BIN2")
+                : type;
             await Exec("CREATE TABLE dbo.[" + target +
                 "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type) + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + source +
