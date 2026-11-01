@@ -3600,6 +3600,57 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M06 — single-level Derived Table key-preserving lineage (develop only)
+
+SQL Server CTE UPDATE/DELETE now supports a **bounded, single-level
+non-lateral Derived Table** between one physical source and the first
+CTE. A direct projection can rename one or both ordered key columns:
+
+```sql
+WITH seed AS (
+    SELECT d.x AS a, d.y AS b
+    FROM (SELECT s.k1 AS x, s.k2 AS y FROM dbo.Source AS s) AS d
+), picked AS (SELECT a,b FROM seed)
+UPDATE dbo.Target
+SET label = 'updated'
+FROM picked
+WHERE dbo.Target.k1 = picked.a
+  AND dbo.Target.k2 = picked.b;
+```
+
+The outer CTE, nested derived projection, and 1–3 CTE hops must be
+**pure column-to-column lineage**, with unique output names and a
+complete 1–2-column source UNIQUE key surviving every rename.
+Two **independent** gates are required: the F# mutation cardinality
+analyzer shares one direct-projection proof between CTE and derived
+sources; Host auto-discovery independently reconstructs the physical
+column/ordinal and calls the existing sealed SQL Server
+`SqlServerCteUniqueKeyAssurance` against real `sys.*` catalog.
+A virtual Catalog, a derived SQL alias, or a static cardinality result
+alone is **not** executable authorization.
+
+This deliberately **does not enable general Derived Tables or
+multi-branch CTE DAG merges**. The derived layer accepts exactly one
+named physical table, no LATERAL/correlation, second row source, JOIN,
+WHERE, DISTINCT, aggregate, GROUP/HAVING, TOP/LIMIT/OFFSET, ORDER,
+set operation, nested CTE/derived source, computed/CAST key or repeated
+input/output alias. Existing single-column and ordered composite keys
+may use all previously proven SQL Server exact integer, DECIMAL,
+UUID and explicit collation-matched text kinds. Host and F# both
+enforce the bounded lineage shape. Approval still binds the exact
+compiled mutation and preview rowset; the physical UNIQUE index,
+database fingerprint, ordered key types and same-transaction
+`IsCurrent` remain unchanged and fail closed on DDL drift.
+No new proof version is required: no physical or approval-fingerprint
+semantics changed, only a newly proven source query shape.
+
+SQL Server 2022 TDD runs UPDATE/DELETE, 1–3 CTE hops, two direct
+derived key renames, Preview→Approval→Commit, revoked UNIQUE index,
+and negative missing/duplicate/computed/filtered/multisource
+derived lineage. No new MCP Tool, driver, public CLR API, permission,
+unsafe SQL bypass, default DML enablement, or changes to other five
+database providers. This scope is **unreleased, develop only**.
+
 ## G9 / M05 — exact SQL Server linguistic-collation comparison proof (develop only)
 
 The sealed SQL Server F# physical KeyTuple now supports **four precisely

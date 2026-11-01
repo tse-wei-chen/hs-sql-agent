@@ -294,6 +294,48 @@ internal static class SqlServerCteLiveProofDiscovery
     /// Physical column lineage is preserved even when payload is omitted
     /// by a later hop. All output names remain unambiguous.
     /// </summary>
+    // M06: a one-level non-lateral derived table is a row-preserving
+    // projection only when it reads exactly one physical table and forwards
+    // each unique-key field directly. No WHERE/JOIN/DISTINCT/LIMIT/
+    // aggregation, scalar expressions, duplicate output aliases or nested
+    // CTE/derived source may borrow the physical UNIQUE index.
+    private static bool TryDescribeDirectDerived(
+        DerivedTableSource derived, out string physicalTable,
+        out ImmutableArray<ProjectionLineage> outputs)
+    {
+        physicalTable = "";
+        outputs = ImmutableArray<ProjectionLineage>.Empty;
+        if (derived.IsLateral || !SafeName(derived.Alias.Value)
+            || derived.Query is not SelectStatement inner
+            || inner.From is not NamedTableSource root
+            || inner.Ctes.Length != 0 || inner.Joins.Length != 0
+            || inner.Where is not null || inner.Distinct
+            || inner.DistinctOn.Length != 0 || inner.GroupBy.Length != 0
+            || inner.Having is not null || inner.OrderBy.Length != 0
+            || inner.Limit.HasValue || inner.Offset.HasValue
+            || inner.FetchPercent.HasValue || inner.FetchWithTies
+            || inner.Select.Length is < 1 or > 32
+            || !TryPhysicalTable(root.Name, out physicalTable))
+            return false;
+
+        var results = ImmutableArray.CreateBuilder<ProjectionLineage>(inner.Select.Length);
+        var usedOutputs = new HashSet<string>(StringComparer.Ordinal);
+        var usedInputs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var (item, ordinal) in inner.Select.Select((item, ordinal) => (item, ordinal)))
+        {
+            if (item.Expression is not ColumnExpr field
+                || !TryPhysicalKey(field.Name, root, out var physicalColumn))
+                return false;
+            var alias = item.Alias?.Value ?? physicalColumn;
+            if (!SafeName(alias) || !usedOutputs.Add(alias)
+                || !usedInputs.Add(physicalColumn))
+                return false;
+            results.Add(new ProjectionLineage(alias, physicalColumn, ordinal));
+        }
+        outputs = results.MoveToImmutable();
+        return !outputs.IsDefaultOrEmpty;
+    }
+
     private static bool TryBuildDirectProjectionChain(
         ImmutableArray<CteDefinition> ctes,
         out string finalCte, out ImmutableArray<ProjectionLineage> finalColumns,
@@ -319,37 +361,53 @@ internal static class SqlServerCteLiveProofDiscovery
                 || select.Limit.HasValue || select.Offset.HasValue
                 || select.FetchPercent.HasValue || select.FetchWithTies
                 || select.Select.Length is < 1 or > 32
-                || select.From is not NamedTableSource input
+                || select.From is null
                 || (!cte.ColumnAliases.IsDefaultOrEmpty
                     && cte.ColumnAliases.Length != select.Select.Length))
                 return false;
 
+            var named = select.From as NamedTableSource;
+            var derived = i == 0 ? select.From as DerivedTableSource : null;
+            var derivedColumns = ImmutableArray<ProjectionLineage>.Empty;
             if (i == 0)
             {
-                if (!TryPhysicalTable(input.Name, out physicalTable))
+                if (named is not null)
+                {
+                    if (!TryPhysicalTable(named.Name, out physicalTable))
+                        return false;
+                }
+                else if (derived is null
+                         || !TryDescribeDirectDerived(
+                             derived, out physicalTable, out derivedColumns))
                     return false;
             }
-            else if (!TrySingleName(input.Name, out var namedCte)
+            else if (named is null
+                     || !TrySingleName(named.Name, out var namedCte)
                      || !Same(namedCte, finalCte))
                 return false;
 
-            // Capture an ordinary local, not the method's out parameter.
+            // Source cardinality is still inspected by the existing
+            // physical/self/second JOIN gate. Derived roots permit NO join.
             var knownPhysicalTable = physicalTable;
-            if (select.Joins.Any(join => !ProvenSingletonJoin(join)
-                    && !(i == 0 && (HasPhysicalSelfJoinShape(input, join, knownPhysicalTable)
-                        || HasDistinctPhysicalJoinShape(input, join, knownPhysicalTable)))))
+            if (derived is not null && (select.Joins.Length != 0
+                || select.Where is not null))
+                return false;
+            if (named is not null
+                && select.Joins.Any(join => !ProvenSingletonJoin(join)
+                    && !(i == 0 && (HasPhysicalSelfJoinShape(named, join, knownPhysicalTable)
+                        || HasDistinctPhysicalJoinShape(named, join, knownPhysicalTable)))))
                 return false;
 
-            if (select.Where is not null &&
-                !SafeCteFilter(select.Where, input, i, knownPhysicalTable))
+            if (select.Where is not null
+                && (named is null
+                    || !SafeCteFilter(select.Where, named, i, knownPhysicalTable)))
                 return false;
 
             var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
             var usedOutputs = new HashSet<string>(StringComparer.Ordinal);
             var usedInputs = new HashSet<string>(StringComparer.Ordinal);
-            var qualifier = input.Alias?.Value ?? (i == 0
-                ? physicalTable.Split('.')[1]
-                : finalCte);
+            var qualifier = derived?.Alias.Value ?? named?.Alias?.Value ??
+                (i == 0 ? physicalTable.Split('.')[1] : finalCte);
             foreach (var (item, ordinal) in select.Select.Select((item, ordinal) => (item, ordinal)))
             {
                 if (item.Expression is not ColumnExpr column)
@@ -358,16 +416,19 @@ internal static class SqlServerCteLiveProofDiscovery
                 string physicalColumn;
                 int firstOrdinal;
                 string inputName;
-                if (i == 0)
+                if (i == 0 && derived is null)
                 {
-                    if (!TryPhysicalKey(column.Name, input, out inputName))
+                    if (named is null
+                        || !TryPhysicalKey(column.Name, named, out inputName))
                         return false;
                     physicalColumn = inputName;
                     firstOrdinal = ordinal;
                 }
                 else
                 {
-                    var previous = finalColumns.FirstOrDefault(p =>
+                    var previousColumns = derived is not null
+                        ? derivedColumns : finalColumns;
+                    var previous = previousColumns.FirstOrDefault(p =>
                         TrySelectedKey(column.Name, p.OutputName, qualifier));
                     if (string.IsNullOrEmpty(previous.OutputName))
                         return false;
@@ -375,7 +436,6 @@ internal static class SqlServerCteLiveProofDiscovery
                     physicalColumn = previous.PhysicalColumn;
                     firstOrdinal = previous.FirstOrdinal;
                 }
-
                 var output = cte.ColumnAliases.IsDefaultOrEmpty
                     ? item.Alias?.Value ?? inputName
                     : TrySingleName(cte.ColumnAliases[ordinal], out var columnAlias)
