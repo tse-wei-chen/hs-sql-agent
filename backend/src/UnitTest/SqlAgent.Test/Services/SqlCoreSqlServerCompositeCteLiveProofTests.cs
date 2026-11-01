@@ -122,6 +122,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 new DmlCompilationPolicy(), profile, null);
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Contains(" AND ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            // Positive control uses the exact same SQL-text overload as the
+            // negative grammar matrix below; a trivially rejecting overload
+            // must not make its fail-closed assertions vacuous.
+            var positive = SqlCoreFacade.TryCompileDml(sql,
+                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                context, new DmlCompilationPolicy(), profile, profile);
+            Assert.True(positive.Success, string.Join("; ", positive.Diagnostics));
 
             var missing = sql.Replace(
                 " AND dbo." + dst + ".k2 = " + keyAlias + ".b", "");
