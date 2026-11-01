@@ -865,14 +865,16 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     }
 
     [Theory]
-    [InlineData(true, false, 1)]
-    [InlineData(false, false, 2)]
-    [InlineData(true, false, 3)]
-    [InlineData(false, true, 1)]
-    [InlineData(true, true, 2)]
-    [InlineData(false, true, 3)]
+    [InlineData(true, false, 1, false)]
+    [InlineData(false, false, 2, false)]
+    [InlineData(true, false, 3, false)]
+    [InlineData(false, true, 1, false)]
+    [InlineData(true, true, 2, false)]
+    [InlineData(false, true, 3, false)]
+    [InlineData(true, false, 2, true)]
+    [InlineData(false, true, 3, true)]
     public async Task CorrelatedExistsAntiJoinPreservesLiveUniqueKeyRowSet(
-        bool update, bool antiJoin, int hops)
+        bool update, bool antiJoin, int hops, bool revokeBeforeCommit)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -885,6 +887,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         var tag = Guid.NewGuid().ToString("N")[..12];
         var src = "m07_exists_src_" + tag;
         var dst = "m07_exists_dst_" + tag;
+        var uniqueIndex = "m07_exists_uq_" + tag;
         await using var db = new SqlConnection(cs);
         for (var n = 0; ; n++)
         {
@@ -902,7 +905,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             await Exec("CREATE TABLE dbo.[" + dst +
                 "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, label VARCHAR(30), PRIMARY KEY(k1,k2))");
             await Exec("CREATE TABLE dbo.[" + src +
-                "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, payload INT NOT NULL, PRIMARY KEY(k1,k2))");
+                "] (k1 INT NOT NULL, k2 BIGINT NOT NULL, payload INT NOT NULL)");
+            await Exec("CREATE UNIQUE INDEX [" + uniqueIndex +
+                "] ON dbo.[" + src + "] (k1,k2)");
             await Exec("INSERT INTO dbo.[" + dst +
                 "] (k1,k2,label) VALUES (1,2147483649,'old'),(1,2147483650,'old'),(2,2147483649,'old')");
             await Exec("INSERT INTO dbo.[" + src +
@@ -955,7 +960,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 inner.Replace("f.k2 = s.k2", "f.k1 = s.k2", StringComparison.Ordinal),
                 inner.Replace(" AND f.payload = 11", " OR f.payload = 11", StringComparison.Ordinal),
                 inner.Replace(" AS f", " AS s", StringComparison.Ordinal),
-                inner.Replace("SELECT 1", "SELECT TOP 2 1", StringComparison.Ordinal)
+                inner.Replace("SELECT 1", "SELECT DISTINCT 1", StringComparison.Ordinal)
             })
             {
                 Assert.Throws<SqlCompilationException>(() =>
@@ -993,14 +998,28 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var preview = await coordinator.PreviewAsync(
                 cs, plan, "m07-exists-approver", ct, version);
             Assert.Equal(antiJoin ? 2 : 1, preview.AffectedRows);
-            var commit = await coordinator.CommitAsync(
-                cs, plan, preview.Challenge, "m07-exists-approver", ct, version);
-            Assert.True(commit.Committed);
+            if (revokeBeforeCommit)
+            {
+                // An approved semi-/anti-join must not outlive its physical
+                // source UNIQUE index. The target remains unchanged.
+                await Exec("DROP INDEX [" + uniqueIndex + "] ON dbo.[" + src + "]");
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    coordinator.CommitAsync(
+                        cs, plan, preview.Challenge, "m07-exists-approver", ct, version));
+                await using var tx = (SqlTransaction)await db.BeginTransactionAsync(ct);
+                Assert.False(proof.IsCurrent(db, tx));
+                await tx.RollbackAsync(ct);
+            }
+            else
+            {
+                var commit = await coordinator.CommitAsync(
+                    cs, plan, preview.Challenge, "m07-exists-approver", ct, version);
+                Assert.True(commit.Committed);
+            }
             await using var count = new SqlCommand(
-                "SELECT COUNT(*) FROM dbo.[" + dst +
-                "] WHERE label = 'old'", db);
-            Assert.Equal(update ? (antiJoin ? 1 : 2)
-                : (antiJoin ? 1 : 2), Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                "SELECT COUNT(*) FROM dbo.[" + dst + "] WHERE label = 'old'", db);
+            Assert.Equal(revokeBeforeCommit ? 3 : (antiJoin ? 1 : 2),
+                Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
         }
         finally
         {
