@@ -221,8 +221,10 @@ internal static class SqlServerCteLiveProofDiscovery
                      || !Same(namedCte, finalCte))
                 return false;
 
+            // Capture an ordinary local, not the method's out parameter.
+            var knownPhysicalTable = physicalTable;
             if (select.Joins.Any(join => !ProvenSingletonJoin(join)
-                    && !(i == 0 && HasPhysicalSelfJoinShape(input, join, physicalTable))))
+                    && !(i == 0 && HasPhysicalSelfJoinShape(input, join, knownPhysicalTable))))
                 return false;
 
             var next = ImmutableArray.CreateBuilder<ProjectionLineage>(select.Select.Length);
