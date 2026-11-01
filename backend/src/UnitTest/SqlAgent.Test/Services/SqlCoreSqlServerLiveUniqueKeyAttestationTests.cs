@@ -85,7 +85,7 @@ public sealed class SqlCoreSqlServerLiveUniqueKeyAttestationTests
             Assert.Equal("dbo." + target, proof.TargetTable);
             Assert.Equal("dbo." + source, proof.SourceTable);
             Assert.Equal("id", proof.SourceKeyColumn);
-            Assert.Contains("sqlserver-live-exact-key-v7", proof.ProofIdentity);
+            Assert.Contains("sqlserver-live-exact-key-v8", proof.ProofIdentity);
             Assert.Contains("source-key-types=" + type, proof.ProofIdentity);
             Assert.False(string.IsNullOrWhiteSpace(proof.ProofIdentity));
 

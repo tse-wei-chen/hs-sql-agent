@@ -1257,6 +1257,9 @@ type SqlServerCteUniqueKeyAssurance private (
                      indexes.GetString(3), indexes.GetString(4),
                      indexes.GetByte(5), indexes.GetByte(6), indexes.GetInt16(7),
                      collation, indexes.GetBoolean(9), indexes.GetBoolean(10), builtin)
+        // This reader must be released before the nullable session's
+        // @@OPTIONS scalar query (SQL Server MARS is intentionally not required).
+        indexes.Close()
         let matching =
             rows
             |> Seq.groupBy (fun (id, _, _, _, _, _, _, _, _, _, _, _) -> id)
