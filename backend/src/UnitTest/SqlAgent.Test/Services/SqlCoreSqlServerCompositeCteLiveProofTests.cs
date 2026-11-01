@@ -502,6 +502,66 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
 
+
+    [Fact]
+    public async Task UniqueIndexWithUnprovenAliasKeyCannotMasqueradeAsSingleColumnUnique()
+    {
+        var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
+        if (string.IsNullOrWhiteSpace(cs))
+        {
+            if (Environment.GetEnvironmentVariable("CI") == "true")
+                throw new InvalidOperationException("SQL Server physical alias type proof requires a real database.");
+            Assert.Skip("Real SQL Server required.");
+        }
+
+        var ct = TestContext.Current.CancellationToken;
+        var tag = Guid.NewGuid().ToString("N")[..12];
+        var target = "g9_aliasdst_" + tag;
+        var source = "g9_aliassrc_" + tag;
+        var alias = "g9_aliastype_" + tag;
+        await using var db = new SqlConnection(cs);
+        for (var retry = 0; ; retry++)
+        {
+            try { await db.OpenAsync(ct); break; }
+            catch (SqlException) when (retry < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+        async Task Exec(string sql)
+        {
+            await using var command = new SqlCommand(sql, db);
+            await command.ExecuteNonQueryAsync(ct);
+        }
+
+        try
+        {
+            await Exec("CREATE TYPE dbo.[" + alias + "] FROM DECIMAL(12,2) NOT NULL");
+            await Exec("CREATE TABLE dbo.[" + target + "] (id INT NOT NULL)");
+            await Exec("CREATE TABLE dbo.[" + source +
+                "] (id INT NOT NULL, extra dbo.[" + alias + "] NOT NULL)");
+            // UNIQUE(id,extra) does NOT establish UNIQUE(id). Dropping the
+            // unsupported alias column while collecting catalog rows would
+            // falsely make a one-column proof from this composite index.
+            await Exec("CREATE UNIQUE INDEX [uq_" + tag + "] ON dbo.[" +
+                source + "] (id,extra)");
+            var snapshot = new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "g9-alias-index-completeness", [
+                    SqlSchemaTable.WithTypes("dbo." + target,
+                        [new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric)]),
+                    SqlSchemaTable.WithTypes("dbo." + source,
+                        [new SqlSchemaColumn("id", SqlSchemaValueKind.Numeric)])
+                ]);
+            Assert.Throws<InvalidOperationException>(() =>
+                SqlServerCteUniqueKeyAssurance.VerifyLiveForJoinedMutation(
+                    db, snapshot, "dbo." + target, "id", "dbo." + source, "id"));
+        }
+        finally
+        {
+            await Exec("DROP TABLE IF EXISTS dbo.[" + source + "]");
+            await Exec("DROP TABLE IF EXISTS dbo.[" + target + "]");
+            await Exec("DROP TYPE IF EXISTS dbo.[" + alias + "]");
+        }
+    }
+
     private sealed class SqlServerConnectionFactory : IDbConnectionFactory
     {
         public DbConnection Create(string connectionString) => new SqlConnection(connectionString);
