@@ -95,9 +95,24 @@ public sealed class TypedDmlRuntime(
 
         EnsureSupportedStatement(parsedMutation.Statement);
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
-            && parsedMutation.SourceDialect != SqlAgentToolType.Sqlite)
+            && (parsedMutation.SourceDialect != provider.Type
+                || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)))
             throw new NotSupportedException(
-                "SQLite INSERT SELECT source-row approval does not authorize other source dialects.");
+                "INSERT SELECT source-row approval requires native SQLite or PostgreSQL only.");
+        if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert)
+        {
+            // Source read permission is separate from target write permission.
+            // Deny before even fetching physical source metadata.
+            var sourceShape = NativeInsertSelectSafety.RequireShape(
+                sourceInsert, parsedMutation.SourceDialect, provider.Type, policy.DmlMaxAffectedRows);
+            if (allowedTables is not null
+                && !allowedTables.Any(table => string.Equals(table, sourceShape.PhysicalSource,
+                    provider.Type == SqlAgentToolType.Postgres
+                        ? StringComparison.Ordinal
+                        : StringComparison.OrdinalIgnoreCase)))
+                throw new UnauthorizedAccessException(
+                    "INSERT SELECT source table is not in the authorized table scope.");
+        }
         ValidateApprovalContextFields(approvalContext);
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
@@ -479,7 +494,8 @@ public sealed class TypedDmlRuntime(
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
         || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
-            && SqliteInsertSelectSafety.IsBoundedShape(insert);
+            && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
+                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres));
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {

@@ -280,10 +280,22 @@ public sealed class DmlPlanFactory(
         // Other INSERT SELECT sources cannot fall through the INSERT VALUES path.
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
-            sourceSelection = SqliteInsertSelectSafety.RequireShape(
+            sourceSelection = NativeInsertSelectSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
         else if (insert.Source is not InsertValuesSource)
             throw new NotSupportedException("Unsupported INSERT source: missing source-row approval proof.");
+
+        // Independent source READ grant: enforce BEFORE any physical metadata
+        // or F# compile step. The typed runtime repeats this at its outer
+        // boundary to avoid even unauthorized source-catalog inspection.
+        if (sourceSelection is { } admission
+            && validationContext.AllowedTables is { } grants
+            && !grants.Any(table => string.Equals(table, admission.PhysicalSource,
+                targetProvider == SqlAgentToolType.Postgres
+                    ? StringComparison.Ordinal
+                    : StringComparison.OrdinalIgnoreCase)))
+            throw new UnauthorizedAccessException(
+                "INSERT SELECT physical source table is not in the authorized table scope.");
 
         var requestedTarget = IdentifierText(insert.Target.Name);
         if (string.IsNullOrWhiteSpace(requestedTarget))
@@ -353,20 +365,21 @@ public sealed class DmlPlanFactory(
         if (sourceSelection is { } selection)
         {
             var snapshot = validationContext.SchemaSnapshot;
-            if (snapshot is null || snapshot.Provider != SqlAgentToolType.Sqlite
+            if (snapshot is null || snapshot.Provider != targetProvider
+                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                 || snapshot.Tables.Count is < 1 or > 2
                 || !string.Equals(snapshot.Tables[0].Name,
                     targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
                 || (string.Equals(selection.PhysicalSource,
                         targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
-                    ? snapshot.Tables.Count != 1
+                    ? targetProvider != SqlAgentToolType.Sqlite || snapshot.Tables.Count != 1
                     : snapshot.Tables.Count != 2
                       || !string.Equals(snapshot.Tables[1].Name, selection.PhysicalSource,
                           StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException(
-                    "SQLite INSERT SELECT requires independently attested physical source and target schema snapshots.");
+                    "Native INSERT SELECT requires independently attested physical source and target schema snapshots.");
 
-            var select = SqliteInsertSelectSafety.PreviewQuery(
+            var select = NativeInsertSelectSafety.PreviewQuery(
                 selection.Query, selection.OutputColumns);
             var match = CompileMatchQuery(
                 CloneParsedWithStatement(parsedMutation, select), targetProvider,
@@ -388,7 +401,7 @@ public sealed class DmlPlanFactory(
                 ApprovalMode: DmlApprovalMode.InsertSelect,
                 SchemaSnapshot: snapshot)
             {
-                SqliteInsertSelectProof = new SqliteInsertSelectProof(
+                NativeInsertSelectProof = new NativeInsertSelectProof(
                     targetResolution.QualifiedTableName,
                     selection.PhysicalSource,
                     sourcePlanFingerprint,

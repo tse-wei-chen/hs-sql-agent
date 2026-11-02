@@ -48,9 +48,9 @@ public sealed class NativeDmlSchemaSnapshotService :
             throw new InvalidOperationException(
                 "Native DML schema proofs require identical source and target providers.");
 
-        var sqliteSource = parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert
-            && targetProvider == SqlAgentToolType.Sqlite
-            ? SqliteInsertSelectSafety.RequireShape(
+        var sourceTable = parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert
+            && targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres
+            ? NativeInsertSelectSafety.RequireShape(
                 sourceInsert, targetProvider, targetProvider, int.MaxValue - 1).PhysicalSource
             : null;
 
@@ -60,8 +60,8 @@ public sealed class NativeDmlSchemaSnapshotService :
             // The bounded INSERT SELECT attests each physical main source
             // independently; arbitrary sources never enter this path.
             InsertStatement { Source: InsertQuerySource } insert
-                when targetProvider == SqlAgentToolType.Sqlite =>
-                VerifySqliteSelfSource(insert, targetProvider),
+                when targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres =>
+                VerifyBoundedInsertSource(insert, targetProvider),
             UpdateStatement update when update.From.IsDefaultOrEmpty
                 && update.FromSources.IsDefaultOrEmpty => update.Target,
             DeleteStatement delete when delete.Using.IsDefaultOrEmpty
@@ -87,25 +87,46 @@ public sealed class NativeDmlSchemaSnapshotService :
         {
             var targetProof = await WithSqliteDdlProofAsync(
                 connection, transaction: null, snapshot, matches[0].Table, cancellationToken);
-            if (targetProof is null || sqliteSource is null
-                || string.Equals(sqliteSource, targetProof.Tables[0].Name,
+            if (targetProof is null || sourceTable is null
+                || string.Equals(sourceTable, targetProof.Tables[0].Name,
                     StringComparison.OrdinalIgnoreCase))
                 return targetProof;
 
             // Two independently catalog-attested actual main tables; the
             // full source DDL/index/trigger digest cannot be borrowed from
             // the insert target or a virtual Catalog.
-            var sourceName = sqliteSource["main.".Length..];
+            var sourceName = sourceTable["main.".Length..];
             var sourceMatches = await readers.Preview.GetDmlPlanningMetadataAsync(
                 connection, "main", sourceName, includeColumns: true,
                 cancellationToken: cancellationToken);
             var sourceBase = BuildSnapshot(targetProvider, sourceMatches);
             if (sourceBase is null || sourceBase.Tables.Count != 1
-                || !string.Equals(sourceBase.Tables[0].Name, sqliteSource,
+                || !string.Equals(sourceBase.Tables[0].Name, sourceTable,
                     StringComparison.OrdinalIgnoreCase)) return null;
             var sourceProof = await WithSqliteDdlProofAsync(
                 connection, transaction: null, sourceBase, sourceName, cancellationToken);
-            return sourceProof is null ? null : CombineSqliteSourceTarget(targetProof, sourceProof);
+            return sourceProof is null ? null : CombineNativeSourceTarget(targetProof, sourceProof);
+        }
+        if (targetProvider == SqlAgentToolType.Postgres && sourceTable is not null)
+        {
+            if (string.Equals(sourceTable, snapshot.Tables[0].Name, StringComparison.OrdinalIgnoreCase))
+                return null; // First PostgreSQL proof admits distinct source and target only.
+            var physicalTarget = await PostgresInsertSelectCatalogProof.ExtendAsync(
+                connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
+            if (physicalTarget is null) return null;
+            var sourceNames = sourceTable.Split('.');
+            if (sourceNames.Length != 2) return null;
+            var secondMatches = await readers.Preview.GetDmlPlanningMetadataAsync(
+                connection, sourceNames[0], sourceNames[1], includeColumns: true,
+                cancellationToken: cancellationToken);
+            var secondBase = BuildSnapshot(targetProvider, secondMatches);
+            if (secondBase is null || !string.Equals(secondBase.Tables[0].Name,
+                    sourceTable, StringComparison.OrdinalIgnoreCase)) return null;
+            var physicalSource = await PostgresInsertSelectCatalogProof.ExtendAsync(
+                connection, null, secondBase, secondMatches[0].Schema,
+                secondMatches[0].Table, cancellationToken);
+            return physicalSource is null ? null :
+                CombineNativeSourceTarget(physicalTarget, physicalSource);
         }
         if (targetProvider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
             return await NativeDmlSchemaDefinitionProof.ExtendAsync(
@@ -114,10 +135,10 @@ public sealed class NativeDmlSchemaSnapshotService :
         return snapshot;
     }
 
-    private static NamedTableSource VerifySqliteSelfSource(
+    private static NamedTableSource VerifyBoundedInsertSource(
         InsertStatement insert, SqlAgentToolType provider)
     {
-        SqliteInsertSelectSafety.RequireShape(
+        NativeInsertSelectSafety.RequireShape(
             insert, provider, provider, maxAffectedRows: int.MaxValue - 1);
         return insert.Target;
     }
@@ -140,6 +161,45 @@ public sealed class NativeDmlSchemaSnapshotService :
             throw new InvalidOperationException(
                 "Schema freshness transaction does not belong to its database connection.");
         if (expectedSnapshot.Provider != provider) return null;
+        if (provider == SqlAgentToolType.Postgres && expectedSnapshot.Tables.Count == 2)
+        {
+            var tables = expectedSnapshot.Tables;
+            var sourceParts = tables[1].Name.Split('.');
+            var targetParts = tables[0].Name.Split('.');
+            if (sourceParts.Length != 2 || targetParts.Length != 2
+                || sourceParts.Any(string.IsNullOrWhiteSpace)
+                || targetParts.Any(string.IsNullOrWhiteSpace)
+                || !string.Equals(sourceParts[0], targetParts[0], StringComparison.OrdinalIgnoreCase)
+                || string.Equals(tables[0].Name, tables[1].Name, StringComparison.OrdinalIgnoreCase)
+                || sourceParts[0].StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+                || sourceParts[0] == "information_schema")
+                return null;
+
+            // Acquire source SHARE ROW EXCLUSIVE lock BEFORE the first catalog
+            // SELECT and before any serializable snapshot materializes.
+            // Conflicts with concurrent ROW EXCLUSIVE writes. NOWAIT fails
+            // closed instead of waiting on a writer with an older snapshot.
+            // Lock the target too, preventing DDL replacement until commit.
+            await PinPostgresInsertSelectAsync(
+                connection, transaction, tables[1].Name, tables[0].Name, cancellationToken);
+            var verified = new List<SqlSchemaSnapshot>(2);
+            var nativeReaders = ForProvider(provider);
+            foreach (var expected in tables)
+            {
+                var names = expected.Name.Split('.');
+                var currentTables = await nativeReaders.Commit.GetDmlPlanningMetadataInTransactionAsync(
+                    connection, transaction, names[0], names[1], includeColumns: true,
+                    cancellationToken: cancellationToken);
+                var basic = BuildSnapshot(provider, currentTables);
+                if (basic is null || !string.Equals(basic.Tables[0].Name,
+                        expected.Name, StringComparison.OrdinalIgnoreCase)) return null;
+                var definition = await PostgresInsertSelectCatalogProof.ExtendAsync(
+                    connection, transaction, basic, names[0], names[1], cancellationToken);
+                if (definition is null) return null;
+                verified.Add(definition);
+            }
+            return CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
+        }
         if (provider == SqlAgentToolType.Sqlite && expectedSnapshot.Tables.Count == 2)
         {
             var verified = new List<SqlSchemaSnapshot>(2);
@@ -165,7 +225,7 @@ public sealed class NativeDmlSchemaSnapshotService :
                 if (currentProof is null) return null;
                 verified.Add(currentProof);
             }
-            return CombineSqliteSourceTarget(verified[0], verified[1])?.Sha256;
+            return CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
         }
         if (expectedSnapshot.Tables.Count != 1) return null;
 
@@ -265,6 +325,30 @@ public sealed class NativeDmlSchemaSnapshotService :
                 matches[0].Table, cancellationToken);
 
         return snapshot?.Sha256;
+    }
+
+    private static async Task PinPostgresInsertSelectAsync(
+        DbConnection connection, DbTransaction transaction, string source, string target,
+        CancellationToken token)
+    {
+        static string QuoteQualified(string physical)
+        {
+            var parts = physical.Split('.');
+            if (parts.Length != 2 || parts.Any(string.IsNullOrWhiteSpace))
+                throw new InvalidOperationException("Unproven PostgreSQL physical table.");
+            return string.Join(".", parts.Select(part =>
+                "\"" + part.Replace("\"", "\"\"", StringComparison.Ordinal) + "\""));
+        }
+        await using var lockSource = connection.CreateCommand();
+        lockSource.Transaction = transaction;
+        lockSource.CommandText =
+            $"LOCK TABLE ONLY {QuoteQualified(source)} IN SHARE ROW EXCLUSIVE MODE NOWAIT";
+        await lockSource.ExecuteNonQueryAsync(token);
+        await using var lockTarget = connection.CreateCommand();
+        lockTarget.Transaction = transaction;
+        lockTarget.CommandText =
+            $"LOCK TABLE ONLY {QuoteQualified(target)} IN ACCESS SHARE MODE NOWAIT";
+        await lockTarget.ExecuteNonQueryAsync(token);
     }
 
     private static async Task PinPostgresSchemaAsync(
@@ -435,11 +519,11 @@ public sealed class NativeDmlSchemaSnapshotService :
     /// The order is always target first, source second. The same helper is
     /// used at preview capture and inside the held commit transaction.
     /// </summary>
-    private static SqlSchemaSnapshot? CombineSqliteSourceTarget(
+    private static SqlSchemaSnapshot? CombineNativeSourceTarget(
         SqlSchemaSnapshot target, SqlSchemaSnapshot source)
     {
-        if (target.Provider != SqlAgentToolType.Sqlite
-            || source.Provider != SqlAgentToolType.Sqlite
+        if (target.Provider != source.Provider
+            || target.Provider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
             || target.Tables.Count != 1 || source.Tables.Count != 1
             || string.Equals(target.Tables[0].Name, source.Tables[0].Name,
                 StringComparison.OrdinalIgnoreCase)) return null;
@@ -450,14 +534,18 @@ public sealed class NativeDmlSchemaSnapshotService :
             digest.AppendData(BitConverter.GetBytes(bytes.Length));
             digest.AppendData(bytes);
         }
-        Append(hash, "native-sqlite-insert-select-dual-ddl-v1");
+        Append(hash, target.Provider == SqlAgentToolType.Sqlite
+            ? "native-sqlite-insert-select-dual-ddl-v1"
+            : "native-postgres-insert-select-dual-catalog-v1");
         Append(hash, target.Tables[0].Name);
         Append(hash, target.Sha256);
         Append(hash, source.Tables[0].Name);
         Append(hash, source.Sha256);
-        var version = "native-sqlite-dual-source-v1:" +
+        var version = (target.Provider == SqlAgentToolType.Sqlite
+            ? "native-sqlite-dual-source-v1:"
+            : "native-postgres-dual-source-v1:") +
             Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
-        return new SqlSchemaSnapshot(SqlAgentToolType.Sqlite,
+        return new SqlSchemaSnapshot(target.Provider,
             version, [target.Tables[0], source.Tables[0]]);
     }
 

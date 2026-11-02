@@ -216,7 +216,7 @@ public sealed class DmlSqliteInsertSelectApprovalTests
             var plan = await CreatePlanAsync(provider, snapshot, connectionString, InsertSql);
 
             Assert.Throws<InvalidOperationException>(() => DmlCoordinator.ValidatePlan(
-                plan with { SqliteInsertSelectProof = null }));
+                plan with { NativeInsertSelectProof = null }));
             Assert.Throws<InvalidOperationException>(() => DmlCoordinator.ValidatePlan(
                 plan with { RowIdentityColumns = ["name", "id"] }));
             Assert.Throws<InvalidOperationException>(() => DmlCoordinator.ValidatePlan(
