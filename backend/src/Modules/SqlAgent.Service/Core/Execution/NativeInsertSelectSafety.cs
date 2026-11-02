@@ -31,9 +31,13 @@ internal static class NativeInsertSelectSafety
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT source-row approval rejects conflict and target aliases.");
 
-        if (targetProvider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
-            && !insert.Returning.IsDefaultOrEmpty)
-            throw new NotSupportedException("This bounded MySQL/SQL Server INSERT SELECT does not admit RETURNING/OUTPUT.");
+        // MySQL 8.4 has no native RETURNING; SQL Server 2022 has proven
+        // OUTPUT INSERTED direct columns, whose no-trigger assurance and
+        // physical catalog proof are independently enforced by the compiler
+        // and the existing Host DML plan path. Keep the closed direct-column
+        // whitelist below for both OUTPUT and RETURNING.
+        if (targetProvider == SqlAgentToolType.MySQL && !insert.Returning.IsDefaultOrEmpty)
+            throw new NotSupportedException("MySQL 8.4 INSERT SELECT has no native RETURNING support.");
 
         // RETURNING produces rows only after the already approved mutation.
         // F# owns native dialect/version/type validation; Host deliberately
