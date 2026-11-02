@@ -3600,6 +3600,39 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M06 — two-level Derived Table key lineage (develop only)
+
+The SQL Server execution proof now recognizes **at most two** nested,
+non-lateral, row-preserving derived SELECT projections between one real
+physical UNIQUE-key source and the first CTE. This is a bounded extension
+of the earlier single-level support, not general CTE DAG merging:
+
+```sql
+WITH seed AS (
+  SELECT d.x AS a, d.y AS b
+  FROM (
+    SELECT mid.x AS x, mid.y AS y
+    FROM (SELECT s.k1 AS x, s.k2 AS y FROM dbo.Source AS s) AS mid
+  ) AS d
+)
+UPDATE dbo.Target SET label = 'updated'
+FROM seed
+WHERE dbo.Target.k1 = seed.a AND dbo.Target.k2 = seed.b;
+```
+
+Both derived layers and each subsequent CTE hop must project only direct
+columns, with unique input/output names and the **complete ordered** physical
+UNIQUE key. The existing closed F# cardinality engine, independent F# sealed
+mutation admission and Host live SQL Server index discovery must all agree;
+Preview/Approval, immutable SQL identity, same-transaction index freshness
+and held locks still apply. Every other provider remains fail-closed for
+this SQL Server-specific physical proof.
+
+Third-level or lateral nesting, filtered/joined/aggregated/sorted/limited
+subqueries, key casts/expressions, omitted or reordered key components,
+alias collisions and arbitrary multi-branch CTE DAG merges remain unsupported.
+This is unreleased develop functionality; no new public API or MCP tool.
+
 ## G9 / M06 — single-level Derived Table key-preserving lineage (develop only)
 
 SQL Server CTE UPDATE/DELETE now supports a **bounded, single-level

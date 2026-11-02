@@ -7,6 +7,24 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M06 — two-level Derived Table physical key lineage (develop only)
+
+- Extend the previously proven SQL Server CTE UPDATE/DELETE source from
+  one to **exactly two** nested, non-lateral, row-preserving derived
+  projections over a single physically attested UNIQUE source table.
+  Key aliases may change twice, but every ordered 1–2 component key must
+  survive both layers and the existing 1–3 CTE hops unchanged in order.
+- Retain three independent evidence gates: F# static cardinality, F#
+  sealed physical-proof admission and Host real-index discovery with
+  transaction-held `IsCurrent`. Neither CTE names nor Virtual Catalog
+  metadata can mint executable permission. Existing rowset Approval and
+  the six-provider fail-closed boundary are unchanged.
+- Reject third-level nesting, LATERAL, computed/duplicate/omitted key,
+  extra physical source, JOIN, WHERE, DISTINCT, GROUP, ORDER, LIMIT,
+  set operations and arbitrary multi-branch CTE DAG joins. Tests include
+  real SQL Server mixed-type UPDATE/DELETE, approval, index invalidation
+  and negative shape matrices. No new MCP tool, public API or driver.
+
 ### G9 / M06 — bounded Derived Table key-preserving physical lineage (develop only)
 
 - Allow one non-lateral, row-preserving derived SELECT immediately under
