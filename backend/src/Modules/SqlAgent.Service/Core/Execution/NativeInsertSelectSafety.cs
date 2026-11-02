@@ -5,7 +5,7 @@ using HsSqlAgent.SqlCore.Core.Ast;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// One bounded M09 source shape for SQLite, PostgreSQL and MySQL.
+/// One bounded M09 source shape for SQLite, PostgreSQL, MySQL and SQL Server.
 /// Host attests each distinct physical table; when PostgreSQL source and
 /// insert target coincide, a single real catalog proof is sufficient only
 /// with the same transaction-held source write-exclusion lock.
@@ -21,9 +21,9 @@ internal static class NativeInsertSelectSafety
         int maxAffectedRows)
     {
         if (sourceDialect != targetProvider ||
-            sourceDialect is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL))
+            sourceDialect is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer))
             throw new NotSupportedException(
-                "INSERT SELECT source-row approval requires the same native SQLite, PostgreSQL or MySQL source and target dialect.");
+                "INSERT SELECT source-row approval requires the same native SQLite, PostgreSQL, MySQL or SQL Server source and target dialect.");
         if (maxAffectedRows <= 0 || maxAffectedRows == int.MaxValue)
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires a positive finite maximum affected-row policy.");
@@ -31,8 +31,9 @@ internal static class NativeInsertSelectSafety
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT source-row approval rejects conflict and target aliases.");
 
-        if (targetProvider == SqlAgentToolType.MySQL && !insert.Returning.IsDefaultOrEmpty)
-            throw new NotSupportedException("MySQL 8.4 INSERT SELECT has no native RETURNING support.");
+        if (targetProvider is SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
+            && !insert.Returning.IsDefaultOrEmpty)
+            throw new NotSupportedException("This bounded MySQL/SQL Server INSERT SELECT does not admit RETURNING/OUTPUT.");
 
         // RETURNING produces rows only after the already approved mutation.
         // F# owns native dialect/version/type validation; Host deliberately
@@ -102,6 +103,12 @@ internal static class NativeInsertSelectSafety
                 && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)))
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one explicit physical main source table.");
+
+        if (targetProvider == SqlAgentToolType.MsSqlServer
+            && string.Equals(source.Name.Parts[1].Value, insert.Target.Name.Parts[1].Value,
+                StringComparison.OrdinalIgnoreCase))
+            throw new NotSupportedException(
+                "SQL Server M09 INSERT SELECT requires a distinct physical source and target.");
 
         if (!HasBoundedSourcePredicate(head.Where))
             throw new NotSupportedException(
@@ -209,7 +216,9 @@ internal static class NativeInsertSelectSafety
     private static bool IsAllowedSchema(string schema, SqlAgentToolType provider) =>
         provider == SqlAgentToolType.Sqlite
             ? string.Equals(schema, "main", StringComparison.OrdinalIgnoreCase)
-            : !string.IsNullOrWhiteSpace(schema)
+            : provider == SqlAgentToolType.MsSqlServer
+                ? string.Equals(schema, "dbo", StringComparison.OrdinalIgnoreCase)
+                : !string.IsNullOrWhiteSpace(schema)
               && (provider != SqlAgentToolType.MySQL
                   || !new[] { "mysql", "sys", "performance_schema", "information_schema" }
                       .Contains(schema, StringComparer.OrdinalIgnoreCase))
