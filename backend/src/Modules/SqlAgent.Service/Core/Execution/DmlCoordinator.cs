@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Data;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
 using Dapper;
@@ -187,9 +188,11 @@ public sealed class DmlCoordinator(
         // writer reservation before the source-row recheck. Verify that
         // provider behavior in a real SQLite concurrency test; SqlAgent.Service
         // must remain driver-free.
+        var commitIsolation = plan.ApprovalMode == DmlApprovalMode.InsertSelect
+            ? IsolationLevel.Serializable
+            : _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider);
         await using var transaction = await connection.BeginTransactionAsync(
-            _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
-            cancellationToken);
+            commitIsolation, cancellationToken);
 
         try
         {
