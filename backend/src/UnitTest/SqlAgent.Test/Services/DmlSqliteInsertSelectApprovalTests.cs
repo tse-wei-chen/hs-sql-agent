@@ -17,6 +17,61 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         "INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1";
 
     [Fact]
+    public async Task SelfSource_TwoDirectEqualityTerms_ApprovesExactRowAndCommitsOnce()
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            var provider = new SqliteProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = "INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1 AND name = 'Alice'";
+            var plan = await CreatePlanAsync(provider, native, connectionString, sql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal("Alice", Assert.Single(preview.Rows)["name"]);
+            Assert.Equal(1, preview.AffectedRows);
+            var commit = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(commit.Committed);
+            Assert.Equal(1, commit.AffectedRows);
+            Assert.Equal(3, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
+        });
+    }
+
+    [Fact]
+    public async Task SelfSource_FiveEqualityTerms_FailsAtHostShapeGate()
+    {
+        var sql = "INSERT INTO main.users (name) SELECT name FROM main.users " +
+            "WHERE id = 1 AND name = 'Alice' AND id = 1 AND name = 'Alice' AND id = 1";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite);
+        var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+        var rejection = Assert.Throws<NotSupportedException>(
+            () => NativeInsertSelectSafety.RequireShape(
+                insert, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, maxAffectedRows: 2));
+        Assert.Contains("four", rejection.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Sqlite, "main")]
+    [InlineData(SqlAgentToolType.Postgres, "app")]
+    [InlineData(SqlAgentToolType.MySQL, "app")]
+    public void FourDistinctEqualityTerms_StayInsideExistingNativeHostShapeBoundary(
+        SqlAgentToolType provider, string schema)
+    {
+        // Exact upper bound: this proves admission of four distinct direct
+        // columns without depending on a permissive virtual catalog.
+        var sql = $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.source_users " +
+            "WHERE id = 1 AND name = 'Carol' AND tenant_id = 7 AND batch_id = 3";
+        var parsed = CoreSqlTextParser.ParseDml(sql, provider);
+        var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+        var shape = NativeInsertSelectSafety.RequireShape(insert, provider, provider, maxAffectedRows: 2);
+        Assert.Equal(schema + ".source_users", shape.PhysicalSource);
+        Assert.Equal("name", Assert.Single(shape.OutputColumns));
+    }
+
+    [Fact]
     public async Task ApprovedSelfSource_InsertSelect_PreviewsExactRowsAndCommitsOnce()
     {
         await WithDatabaseAsync(async (connectionString, version) =>
