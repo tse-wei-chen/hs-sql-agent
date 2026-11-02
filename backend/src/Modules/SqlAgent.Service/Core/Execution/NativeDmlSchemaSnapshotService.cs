@@ -187,10 +187,10 @@ public sealed class NativeDmlSchemaSnapshotService :
             foreach (var expected in tables)
             {
                 var names = expected.Name.Split('.');
-                var matches = await nativeReaders.Commit.GetDmlPlanningMetadataInTransactionAsync(
+                var currentTables = await nativeReaders.Commit.GetDmlPlanningMetadataInTransactionAsync(
                     connection, transaction, names[0], names[1], includeColumns: true,
                     cancellationToken: cancellationToken);
-                var basic = BuildSnapshot(provider, matches);
+                var basic = BuildSnapshot(provider, currentTables);
                 if (basic is null || !string.Equals(basic.Tables[0].Name,
                         expected.Name, StringComparison.OrdinalIgnoreCase)) return null;
                 var definition = await PostgresInsertSelectCatalogProof.ExtendAsync(
