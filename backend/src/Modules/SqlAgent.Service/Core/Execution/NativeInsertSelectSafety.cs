@@ -103,10 +103,9 @@ internal static class NativeInsertSelectSafety
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one explicit physical main source table.");
 
-        if (head.Where is not BinaryExpr { Operator: "=", Left: ColumnExpr whereColumn, Right: LiteralExpr predicateValue }
-            || predicateValue.Value is null || whereColumn.Name.Parts.Length != 1)
+        if (!HasBoundedSourcePredicate(head.Where))
             throw new NotSupportedException(
-                "Bounded native INSERT SELECT requires a deterministic direct-column = non-null literal predicate.");
+                "Bounded native INSERT SELECT requires one to four AND-only direct-column = non-null literal predicates.");
 
         if (insert.Columns.IsDefaultOrEmpty || insert.Columns.Length != head.Select.Length)
             throw new NotSupportedException(
@@ -127,6 +126,40 @@ internal static class NativeInsertSelectSafety
         }
         return (query, columns.ToImmutable(),
             source.Name.Parts[0].Value + "." + source.Name.Parts[1].Value);
+    }
+
+    // Only the already-attested single table may supply the source rows.
+    // An iterative node budget prevents deep/malformed predicate trees from
+    // acquiring approval by escaping a recursive expression whitelist.
+    private static bool HasBoundedSourcePredicate(SqlExpr? predicate)
+    {
+        if (predicate is null) return false;
+        const int maxTerms = 4;
+        const int maxNodes = 2 * maxTerms - 1;
+        var pending = new Stack<SqlExpr>();
+        pending.Push(predicate);
+        var nodes = 0;
+        var terms = 0;
+        while (pending.Count > 0)
+        {
+            if (++nodes > maxNodes) return false;
+            var current = pending.Pop();
+            if (current is BinaryExpr conjunction
+                && string.Equals(conjunction.Operator, "AND", StringComparison.OrdinalIgnoreCase))
+            {
+                pending.Push(conjunction.Right);
+                pending.Push(conjunction.Left);
+            }
+            else if (current is BinaryExpr equality
+                && string.Equals(equality.Operator, "=", StringComparison.Ordinal)
+                && equality.Left is ColumnExpr { Name.Parts.Length: 1 }
+                && equality.Right is LiteralExpr { Value: not null })
+            {
+                if (++terms > maxTerms) return false;
+            }
+            else return false;
+        }
+        return terms > 0;
     }
 
     internal static bool IsBoundedShape(InsertStatement insert, SqlAgentToolType provider)
