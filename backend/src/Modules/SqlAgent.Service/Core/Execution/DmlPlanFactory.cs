@@ -380,6 +380,9 @@ public sealed class DmlPlanFactory(
                       || (targetProvider == SqlAgentToolType.Postgres
                           && !snapshot.Version.StartsWith(
                               "native-postgres-insert-source-v1:", StringComparison.Ordinal))
+                      || (targetProvider == SqlAgentToolType.MySQL
+                          && !snapshot.Version.StartsWith(
+                              "native-mysql84-innodb-source-v2:", StringComparison.Ordinal))
                     : snapshot.Tables.Count != 2
                       || (targetProvider == SqlAgentToolType.MySQL
                           && !snapshot.Version.StartsWith(
