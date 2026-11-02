@@ -127,6 +127,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 3, false, true, "DIAMOND_PAYLOAD", "INT", "BIGINT")]
     [InlineData(false, false, 3, false, true, "DIAMOND_PAYLOAD", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
     [InlineData(true, false, 3, true, true, "DIAMOND_PAYLOAD", "NVARCHAR(32)", "INT")]
+    // M07: actual correlated full-key semi/anti filtering inside either
+    // physical CTE branch, followed by the proven two-key INNER diamond.
+    [InlineData(true, false, 3, false, false, "DIAMOND_SEMI_LEFT", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DIAMOND_SEMI_RIGHT", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 3, false, false, "DIAMOND_ANTI_LEFT", "NVARCHAR(32)", "INT")]
+    [InlineData(false, false, 3, true, false, "DIAMOND_ANTI_RIGHT", "INT", "SMALLINT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -300,7 +306,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     src + "] AS innerSrc) AS middle) AS d";
                 firstProjection = "d.x AS a, d.y AS b";
             }
-            if (joined is "DIAMOND" or "DIAMOND_PAYLOAD")
+            if (joined.StartsWith("DIAMOND", StringComparison.Ordinal))
             {
                 physicalSource = "dbo.[" + src + "] AS s";
                 firstProjection = joined == "DIAMOND_PAYLOAD"
@@ -316,16 +322,31 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" or "DERIVED" or "DERIVED2" or "DIAMOND" or "DIAMOND_PAYLOAD" => "",
+                "NONE" or "DERIVED" or "DERIVED2" or "DIAMOND" or "DIAMOND_PAYLOAD"
+                    or "DIAMOND_SEMI_LEFT" or "DIAMOND_SEMI_RIGHT"
+                    or "DIAMOND_ANTI_LEFT" or "DIAMOND_ANTI_RIGHT" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
-            var isDiamond = joined is "DIAMOND" or "DIAMOND_PAYLOAD";
+            var isDiamond = joined.StartsWith("DIAMOND", StringComparison.Ordinal);
             var withPayload = joined == "DIAMOND_PAYLOAD";
+            var semiAnti = joined.StartsWith("DIAMOND_SEMI_", StringComparison.Ordinal)
+                || joined.StartsWith("DIAMOND_ANTI_", StringComparison.Ordinal);
+            var filterRight = joined.EndsWith("_RIGHT", StringComparison.Ordinal);
+            var anti = joined.StartsWith("DIAMOND_ANTI_", StringComparison.Ordinal);
+            var queryAlias = filterRight ? "t" : "s";
+            var correlatedFilter = semiAnti
+                ? " WHERE " + (anti ? "NOT EXISTS" : "EXISTS") +
+                  " (SELECT 1 FROM dbo.[" + src + "] AS e" +
+                  " WHERE e.k1 = " + queryAlias + ".k1" +
+                  " AND e.k2 = " + queryAlias + ".k2 AND e.payload = 11)"
+                : "";
             var cte = isDiamond
-                ? "WITH seed AS (SELECT " + firstProjection + " FROM " + physicalSource + "), " +
+                ? "WITH seed AS (SELECT " + firstProjection + " FROM " + physicalSource +
+                  (semiAnti && !filterRight ? correlatedFilter : "") + "), " +
                   "twin AS (SELECT " + (withPayload
                     ? "t.k1 AS x, t.payload AS side, t.k2 AS y"
-                    : "t.k1 AS x, t.k2 AS y") + " FROM dbo.[" + src + "] AS t), " +
+                    : "t.k1 AS x, t.k2 AS y") + " FROM dbo.[" + src + "] AS t" +
+                  (semiAnti && filterRight ? correlatedFilter : "") + "), " +
                   "matched AS (SELECT " + (withPayload
                     ? "l.a AS a, l.extra AS projected, l.b AS b"
                     : "l.a AS a, l.b AS b") + " FROM seed AS l " +
@@ -445,7 +466,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 }
             }
 
-            if (isDiamond)
+            if (isDiamond && !semiAnti)
             {
                 // These queries are syntactically valid; the protected
                 // execution proof must reject them at the capability fence.
@@ -500,6 +521,38 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     Assert.ThrowsAny<Exception>(() =>
                         SqlCoreFacade.CompileDml(
                             CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (semiAnti)
+            {
+                // A filter can reduce the approved row set but cannot
+                // borrow any incomplete, computed, or foreign source key.
+                foreach (var rejected in new[]
+                {
+                    sql.Replace(" AND e.k2 = " + queryAlias + ".k2", "", StringComparison.Ordinal),
+                    sql.Replace(" AND e.k2 = " + queryAlias + ".k2",
+                        " OR e.k2 = " + queryAlias + ".k2", StringComparison.Ordinal),
+                    sql.Replace("e.k1 = " + queryAlias + ".k1", "e.k1 = e.k1", StringComparison.Ordinal),
+                    sql.Replace("e.k2 = " + queryAlias + ".k2",
+                        "e.k2 + 0 = " + queryAlias + ".k2", StringComparison.Ordinal),
+                    sql.Replace("FROM dbo.[" + src + "] AS e",
+                        "FROM dbo.[" + dst + "] AS e", StringComparison.Ordinal),
+                    sql.Replace(" AND e.payload = 11", " OR e.payload = 11", StringComparison.Ordinal),
+                    sql.Replace("e.payload = 11", "e.payload + 0 = 11", StringComparison.Ordinal),
+                    sql.Replace("SELECT 1 FROM dbo.[" + src + "] AS e",
+                        "SELECT 1 FROM dbo.[" + src + "] AS e " +
+                        "INNER JOIN dbo.[" + src + "] AS j ON e.k1 = j.k1",
+                        StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
                                 SqlAgentToolType.MsSqlServer, profile),
                             SqlAgentToolType.MsSqlServer, context,
                             new DmlCompilationPolicy(), profile, null));
@@ -644,7 +697,8 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var serverVersion = db.ServerVersion.Trim();
             var preview = await coordinator.PreviewAsync(
                 cs, plan, "g7-composite-approver", ct, serverVersion);
-            Assert.Equal(3, preview.AffectedRows);
+            var expectedAffected = !semiAnti ? 3 : anti ? 2 : 1;
+            Assert.Equal(expectedAffected, preview.AffectedRows);
             if (revokeBeforeCommit)
             {
                 // Preview/approval already happened. Removing physical
@@ -666,7 +720,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 Assert.True(committed.Committed);
                 await using var count = new SqlCommand(
                     "SELECT COUNT(*) FROM dbo.[" + dst + "]", db);
-                Assert.Equal(update ? 3 : 0, Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                Assert.Equal(update ? 3 : 3 - expectedAffected,
+                    Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                if (semiAnti && update)
+                {
+                    await using var changed = new SqlCommand(
+                        "SELECT COUNT(*) FROM dbo.[" + dst + "] WHERE label = 'changed'", db);
+                    Assert.Equal(expectedAffected,
+                        Convert.ToInt32(await changed.ExecuteScalarAsync(ct)));
+                }
                 if (update && withPayload)
                 {
                     // Confirm payload is not merely an unused SELECT column:

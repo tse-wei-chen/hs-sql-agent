@@ -416,7 +416,7 @@ internal static class SqlServerCteLiveProofDiscovery
                 || q.From is not NamedTableSource table
                 || !cte.ColumnAliases.IsDefaultOrEmpty
                 || q.Ctes.Length != 0 || q.Joins.Length != 0
-                || q.Where is not null || q.Distinct || q.DistinctOn.Length != 0
+                || q.Distinct || q.DistinctOn.Length != 0
                 || q.GroupBy.Length != 0 || q.Having is not null
                 || q.OrderBy.Length != 0 || q.Limit.HasValue
                 || q.Offset.HasValue || q.FetchPercent.HasValue
@@ -529,6 +529,31 @@ internal static class SqlServerCteLiveProofDiscovery
         diamondJoinKeys = lhs.Where(p => joinFields.Contains(p.PhysicalColumn))
             .OrderBy(p => p.FirstOrdinal).Select(p => p.PhysicalColumn)
             .ToImmutableArray();
+
+        // Live candidate discovery must independently attest EVERY filtered
+        // branch against the exact same original physical key tuple chosen
+        // by the merge and the outer DML target. An unrelated EXISTS is a
+        // nonmultiplying filter in SQL, but not a verified read source in
+        // this deliberately closed M07 executable subset.
+        foreach (var definition in ctes.Take(2))
+        {
+            if (definition.Query is not SelectStatement branchQuery)
+                return false;
+            if (branchQuery.Where is null) continue;
+            if (branchQuery.From is not NamedTableSource physicalBranch
+                || physicalBranch.Alias is null
+                || !SafeName(physicalBranch.Alias.Value)) return false;
+            var correlated = branchQuery.Where switch
+            {
+                ExistsExpr exists => exists,
+                UnaryExpr unary when SameOperator(unary.Operator, "NOT")
+                                     && unary.Operand is ExistsExpr negated => negated,
+                _ => null
+            };
+            if (correlated is null || !ProvenCorrelatedKeyExists(
+                correlated, physicalBranch.Alias.Value, physicalTable,
+                diamondJoinKeys)) return false;
+        }
         outputs = projected.MoveToImmutable();
         return true;
     }

@@ -3600,6 +3600,45 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M07 — correlated EXISTS / NOT EXISTS in a bounded CTE diamond (develop only)
+
+The independently proved three-CTE SQL Server diamond may have a
+**semi-join or anti-join Boolean filter** on either direct source branch.
+Each whole-branch `WHERE` must be a correlated `EXISTS` or
+`NOT EXISTS` subquery over the same physically verified source table.
+Every component of the exact original two-column UNIQUE key must be
+compared with ordinary `AND`-connected equality. An additional inner
+field/literal equality can restrict the affected rows:
+
+```sql
+WITH seed AS (
+  SELECT s.k1 AS a, s.k2 AS b FROM dbo.Source AS s
+  WHERE EXISTS (
+    SELECT 1 FROM dbo.Source AS e
+    WHERE e.k1 = s.k1 AND e.k2 = s.k2 AND e.payload = 11
+  )
+), twin AS (
+  SELECT t.k1 AS x, t.k2 AS y FROM dbo.Source AS t
+), matched AS (
+  SELECT l.a, l.b FROM seed AS l
+  INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y
+)
+UPDATE dbo.Target SET label = 'changed' FROM matched
+WHERE dbo.Target.k1 = matched.a AND dbo.Target.k2 = matched.b;
+```
+
+`NOT EXISTS` is the corresponding anti-join filter. Filtering may
+remove qualifying source rows; it never multiplies any original
+physical-key row. Three independent checks remain: F# static
+cardinality, F# sealed mutation admission and Host real database
+UNIQUE-index lineage, followed by exact Preview/Approval row set and
+held same-transaction `IsCurrent`.
+
+Missing or ambiguous key correlation, unrelated tables, `OR`,
+computed keys, extra JOINs, scalar subqueries, other filters, extra
+CTE branches and uncontrolled multi-source mutations remain denied.
+No other provider, API, MCP tool or DML-off default is changed.
+
 ## G9 / M06 — direct payload through a key-proven CTE diamond (develop only)
 
 The same bounded SQL Server three-CTE diamond can preserve **direct

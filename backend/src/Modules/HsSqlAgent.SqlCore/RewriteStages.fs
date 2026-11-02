@@ -879,6 +879,27 @@ module internal RewriteStages =
         // static cardinality model and Host live sys.index_columns discovery.
         let proveDiamond () =
             let sourceKeys = proof.SourceKeyColumns |> Seq.toList
+            // Independent execution gate: both branch filters must be
+            // exactly a correlated EXISTS/NOT EXISTS over the same proven
+            // physical source and complete ordinal UNIQUE key. Non-EXISTS
+            // filters are deliberately not included in this capability.
+            let validBranchFilter (head: Select) =
+                match head.Where with
+                | None -> true
+                | Some predicate ->
+                    match head.From with
+                    | Some(NamedTable(physical, Some alias))
+                        when qualified physical proof.SourceTable ->
+                        match Expr.unspan predicate with
+                        | Exists(query, _) ->
+                            provenCorrelatedExists alias.Value query
+                        | Unary(UnaryOperator.Not, inner) ->
+                            match Expr.unspan inner with
+                            | Exists(query, _) ->
+                                provenCorrelatedExists alias.Value query
+                            | _ -> false
+                        | _ -> false
+                    | _ -> false
             if ctes.Length <> 3 || sourceKeys.Length <> 2 then None
             else
                 let branch (cte: Cte) =
@@ -889,7 +910,8 @@ module internal RewriteStages =
                        || query.Limit.IsSome || query.Offset.IsSome
                        || query.FetchPercent.IsSome || query.FetchWithTies
                        || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
-                       || head.Where.IsSome || not head.GroupBy.IsEmpty
+                       || not (validBranchFilter head)
+                       || not head.GroupBy.IsEmpty
                        || head.Having.IsSome
                        || head.DistinctMode <> SelectDistinct.AllRows
                        || head.Projection.Length < sourceKeys.Length
