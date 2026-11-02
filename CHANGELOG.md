@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — four-provider bounded native INSERT SELECT IN/OR source predicates (develop only)
+
+- Existing physically attested **SQLite, PostgreSQL, MySQL 8.4 InnoDB
+  and SQL Server 2022** single-/dual-source `INSERT SELECT` approval
+  supports direct `column IN (literal, ...)` and parenthesized `AND`/`OR`
+  combinations of direct non-NULL literal equalities. This replaces the
+  earlier AND-only approval-time source-predicate grammar, not unrelated
+  SQL Server CTE/JOIN cardinality proofs.
+- Host consumes **only the F# closed SQL AST**, enforcing a combined maximum
+  of **4 comparison literals** and **7 Boolean nodes**. NOT, NOT IN,
+  `OR 1=1`, NULL members, IN subqueries, computed expressions, excessive
+  literals and unproven providers remain fail-closed. No raw SQL whitelist,
+  another parser, execution tool or driver is introduced.
+- The source physical Catalog, transaction-held locks, complete source-row
+  multiset Preview→Approval→Commit recheck, finite row cap and actual native
+  affected-row parity remain mandatory. PostgreSQL/SQLite RETURNING and
+  SQL Server OUTPUT INSERTED continue exposing real generated target rows
+  only after successful commit. Live database integration tests cover
+  all four providers, multi-row inserts, source drift and row-policy excess.
+- Frontend default remains four read-only tools selected and DML disabled.
+
 ### G9/M09 — SQL Server 2022 native INSERT SELECT OUTPUT INSERTED (develop only)
 
 - Reuse existing real physical single-/two-table source-row approval to admit
