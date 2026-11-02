@@ -46,11 +46,20 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (plans.Count == 0 || plans.Count != approvedPreviews.Count)
             throw new InvalidOperationException("Atomic DML transaction requires matching non-empty plan and preview sets.");
 
-        // The first source-row INSERT SELECT proof covers a single statement only.
-        // Never silently inherit the multi-statement atomic approval contract.
-        if (plans.Any(plan => plan.ApprovalMode == DmlApprovalMode.InsertSelect))
+        // Strictly one physical-source INSERT SELECT is admissible only in a
+        // multi-statement SQLite batch with the built-in native verifier.
+        // Other providers require separate cross-statement lock-order proofs.
+        // ValidatePlan below verifies the child sealed source plan and exact
+        // compiled source-query fingerprint before opening the connection.
+        var sourceInsertCount = plans.Count(plan => plan.ApprovalMode == DmlApprovalMode.InsertSelect);
+        if (sourceInsertCount > 0
+            && (plans.Count < 2
+                || sourceInsertCount != 1
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService
+                || plans.Any(plan => plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite)))
             throw new NotSupportedException(
-                "SQLite INSERT SELECT source-row approval is single-statement only.");
+                "Atomic INSERT SELECT requires one physically attested SQLite source-row plan, " +
+                "a built-in live schema verifier and at least two same-provider statements.");
 
         // Shared plan rules, plus child approval binding, before touching the DB.
         for (var index = 0; index < plans.Count; index++)
