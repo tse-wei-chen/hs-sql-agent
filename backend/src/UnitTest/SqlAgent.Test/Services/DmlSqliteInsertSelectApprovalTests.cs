@@ -53,6 +53,24 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         Assert.Contains("four", rejection.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Sqlite, "main")]
+    [InlineData(SqlAgentToolType.Postgres, "app")]
+    [InlineData(SqlAgentToolType.MySQL, "app")]
+    public void FourDistinctEqualityTerms_StayInsideExistingNativeHostShapeBoundary(
+        SqlAgentToolType provider, string schema)
+    {
+        // Exact upper bound: this proves admission of four distinct direct
+        // columns without depending on a permissive virtual catalog.
+        var sql = $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.source_users " +
+            "WHERE id = 1 AND name = 'Carol' AND tenant_id = 7 AND batch_id = 3";
+        var parsed = CoreSqlTextParser.ParseDml(sql, provider);
+        var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+        var shape = NativeInsertSelectSafety.RequireShape(insert, provider, provider, maxAffectedRows: 2);
+        Assert.Equal(schema + ".source_users", shape.PhysicalSource);
+        Assert.Equal(["name"], shape.OutputColumns);
+    }
+
     [Fact]
     public async Task ApprovedSelfSource_InsertSelect_PreviewsExactRowsAndCommitsOnce()
     {
