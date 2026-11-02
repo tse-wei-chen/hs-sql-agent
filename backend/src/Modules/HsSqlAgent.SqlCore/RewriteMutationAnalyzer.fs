@@ -364,6 +364,34 @@ module internal RewriteMutationSourceMatchProof =
                                           SqliteIntegerColumns = Set.empty
                                           UniqueKeys = keys }
 
+                // Each derived layer must preserve a single physical row
+                // identity with a direct, injective column projection. Two
+                // layers are the bounded M06 extension; deeper nesting,
+                // correlated/lateral or multiplicative sources remain closed.
+                let rec derivedSource depth (query: Query) (alias: IdentifierPart) =
+                    let head = query.Head
+                    if depth > 2 || not query.SetOperations.IsEmpty
+                       || not query.OrderBy.IsEmpty
+                       || query.Limit.IsSome || query.Offset.IsSome
+                       || query.FetchPercent.IsSome || query.FetchWithTies
+                       || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+                       || head.Where.IsSome || not head.GroupBy.IsEmpty
+                       || head.Having.IsSome
+                       || head.DistinctMode <> SelectDistinct.AllRows
+                       || head.Projection.Length > 32 then None
+                    else
+                        let input =
+                            match head.From with
+                            | Some(NamedTable(name, physicalAlias)) ->
+                                create 0 name physicalAlias
+                            | Some(DerivedTable(nested, nestedAlias)) when depth < 2 ->
+                                derivedSource (depth + 1) nested nestedAlias
+                            | _ -> None
+                        input
+                        |> Option.bind (projectRelation head.Projection [])
+                        |> Option.map (fun relation ->
+                            { relation with
+                                Qualifiers = Set.singleton (keyPart dialect alias |> escaped) })
                 let cteSource = function
                     | NamedTable(name, alias) -> create 0 name alias
                     | CteTable(name, alias) ->
@@ -373,28 +401,7 @@ module internal RewriteMutationSourceMatchProof =
                             |> Option.map (fun relation ->
                                 { relation with Qualifiers = sourceQualifiers dialect name alias })
                         | _ -> None
-                    | DerivedTable(query, alias) ->
-                        // One finite, non-lateral, nonmultiplying read from one
-                        // physical table. No CTE inside, filter, JOIN, top,
-                        // set operations, ordering or computed projections.
-                        let head = query.Head
-                        if not query.SetOperations.IsEmpty || not query.OrderBy.IsEmpty
-                           || query.Limit.IsSome || query.Offset.IsSome
-                           || query.FetchPercent.IsSome || query.FetchWithTies
-                           || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
-                           || head.Where.IsSome || not head.GroupBy.IsEmpty
-                           || head.Having.IsSome
-                           || head.DistinctMode <> SelectDistinct.AllRows
-                           || head.Projection.Length > 32 then None
-                        else
-                            match head.From with
-                            | Some(NamedTable(name, physicalAlias)) ->
-                                create 0 name physicalAlias
-                                |> Option.bind (projectRelation head.Projection [])
-                                |> Option.map (fun projected ->
-                                    { projected with
-                                        Qualifiers = Set.singleton (keyPart dialect alias |> escaped) })
-                            | _ -> None
+                    | DerivedTable(query, alias) -> derivedSource 1 query alias
                     | LateralDerivedTable _ -> None
                 for cte in ctes do
                     RewriteResourceBudget.checkpoint ()
