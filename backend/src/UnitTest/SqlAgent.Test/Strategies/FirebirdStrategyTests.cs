@@ -16,16 +16,34 @@ public class FirebirdFixture : IDbFixture
 
     public FirebirdFixture()
     {
-        Container = new FirebirdSqlBuilder("firebirdsql/firebird:latest")
+        Container = new FirebirdSqlBuilder("firebirdsql/firebird:5.0.4-bookworm")
             .WithPassword("TestPass123!")
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilMessageIsLogged("Firebird TCP/IP server version"))
+            // The log banner is emitted before Firebird is guaranteed ready
+            // to complete a database-creation protocol round trip.
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(3050))
             .Build();
     }
 
     public async ValueTask InitializeAsync()
     {
         await Container.StartAsync();
-        FbConnection.CreateDatabase(ConnectionString);
+
+        // Transport-level startup readiness is not the same as a successful
+        // Firebird wire-protocol handshake. Retry only actual socket/stream
+        // disconnects (never authentication, DDL or SQL errors), with a bound.
+        // Missing/unhealthy Firebird remains a hard CI failure.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                FbConnection.CreateDatabase(ConnectionString);
+                break;
+            }
+            catch (FbException ex) when (attempt < 8 && IsTransportDisconnect(ex))
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250));
+            }
+        }
         var strategy = new FirebirdStrategy();
         using var conn = strategy.CreateConnection(ConnectionString);
         await conn.OpenAsync();
@@ -80,6 +98,14 @@ public class FirebirdFixture : IDbFixture
         await cmd.ExecuteNonQueryAsync();
         cmd.CommandText = "INSERT INTO ORDER_DETAILS (ID, UNIT_PRICE, QUANTITY, DISCOUNT) VALUES (2, 20.456, 1, 0.05)";
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    private static bool IsTransportDisconnect(Exception failure)
+    {
+        for (Exception? current = failure; current is not null; current = current.InnerException)
+            if (current is IOException or System.Net.Sockets.SocketException)
+                return true;
+        return false;
     }
 
     public async ValueTask DisposeAsync()
