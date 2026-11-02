@@ -99,8 +99,7 @@ internal static class NativeInsertSelectSafety
             || string.IsNullOrWhiteSpace(source.Name.Parts[1].Value)
             || source.Name.Parts[1].Value.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase)
             || (targetProvider == SqlAgentToolType.Postgres
-                && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
-            )
+                && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)))
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one explicit physical main source table.");
 
