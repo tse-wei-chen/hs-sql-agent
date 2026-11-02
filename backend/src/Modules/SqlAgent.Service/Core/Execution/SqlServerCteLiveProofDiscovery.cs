@@ -448,8 +448,10 @@ internal static class SqlServerCteLiveProofDiscovery
             || merge.From is not NamedTableSource left
             || left.Alias is null || !SafeName(left.Alias.Value)
             || !TrySingleName(left.Name, out var leftCte) || !Same(leftCte, lhsCte)
-            || merge.Joins.Length != 1 || merge.Joins[0] is not var join
-            || join.IsNatural || !join.UsingColumns.IsDefaultOrEmpty
+            || merge.Joins.Length != 1)
+            return false;
+        var join = merge.Joins[0];
+        if (join.IsNatural || !join.UsingColumns.IsDefaultOrEmpty
             || !SameOperator(join.Kind, "INNER") || join.Predicate is null
             || join.Source is not NamedTableSource right
             || right.Alias is null || !SafeName(right.Alias.Value)
