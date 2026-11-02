@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — MySQL 8.4 InnoDB INSERT SELECT source-row approval (develop only)
+
+- Strict **single-statement, two different real InnoDB base tables** in the
+  same non-system MySQL database; explicit unique target columns, direct
+  unaliased source projections, `WHERE column = non-NULL literal`, finite
+  positive row cap. MySQL **RETURNING**, JOIN, CTE, computed projections,
+  same-table source, ON DUPLICATE KEY/UPSERT, multiple statements and other
+  previously unsupported providers remain fail-closed.
+- New physical MySQL 8.4 native table proof verifies each table's exact
+  physical name, InnoDB engine, real `SHOW CREATE TABLE` DDL (including
+  column definitions, indexes and constraints), absence of foreign keys and
+  triggers, plus **global TRIGGER and PROCESS catalog visibility held by the
+  current SQL user**. Binds the actual InnoDB `TABLE_ID` and MySQL
+  `@@server_uuid` to the snapshot, denying identical-DDL table replacement.
+  Missing privilege or metadata denies approval, never means empty triggers.
+- Preview binds complete selected source values and immutable policy/plan
+  fingerprints. A `SERIALIZABLE` MySQL commit transaction pins source and
+  target metadata locks through ordinary SQL table references (**never
+  `LOCK TABLES`**, which would implicitly commit), revalidates both native
+  structures and the selected source-row multiset, executes exactly once and
+  compares affected rows before commit. Unexpected source/index/DDL drift,
+  concurrent source writes, MyISAM and approval replay fail closed.
+- Native MySQL 8.4 integration tests cover commit, source values and index
+  drift, source locking, nontransactional engine, triggers, FKs, missing
+  source grant, over-cap rows and unsupported syntax. No additional public
+  SqlCore API, MCP tool, SQL renderer or third-party dependency. UI defaults
+  remain four read-only tools selected, DML disabled.
+
 ### G9 / M09 — PostgreSQL self-source INSERT SELECT approval (develop only)
 
 - Extend strict PostgreSQL `INSERT ... SELECT` to the case where the

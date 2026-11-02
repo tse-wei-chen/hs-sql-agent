@@ -21,15 +21,18 @@ internal static class NativeInsertSelectSafety
         int maxAffectedRows)
     {
         if (sourceDialect != targetProvider ||
-            sourceDialect is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres))
+            sourceDialect is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL))
             throw new NotSupportedException(
-                "INSERT SELECT source-row approval requires the same native SQLite or PostgreSQL source and target dialect.");
+                "INSERT SELECT source-row approval requires the same native SQLite, PostgreSQL or MySQL source and target dialect.");
         if (maxAffectedRows <= 0 || maxAffectedRows == int.MaxValue)
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires a positive finite maximum affected-row policy.");
         if (insert.Conflict is not null || insert.Target.Alias is not null)
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT source-row approval rejects conflict and target aliases.");
+
+        if (targetProvider == SqlAgentToolType.MySQL && !insert.Returning.IsDefaultOrEmpty)
+            throw new NotSupportedException("MySQL 8.4 INSERT SELECT has no native RETURNING support.");
 
         // RETURNING produces rows only after the already approved mutation.
         // F# owns native dialect/version/type validation; Host deliberately
@@ -90,13 +93,16 @@ internal static class NativeInsertSelectSafety
             || source.Name.Parts.Length != 2
             || !IsAllowedSchema(source.Name.Parts[0].Value, targetProvider)
             || !string.Equals(source.Name.Parts[0].Value, insert.Target.Name.Parts[0].Value,
-                targetProvider == SqlAgentToolType.Postgres
+                targetProvider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
                     ? StringComparison.Ordinal
                     : StringComparison.OrdinalIgnoreCase)
             || string.IsNullOrWhiteSpace(source.Name.Parts[1].Value)
             || source.Name.Parts[1].Value.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase)
             || (targetProvider == SqlAgentToolType.Postgres
-                && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)))
+                && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
+            || (targetProvider == SqlAgentToolType.MySQL
+                && string.Equals(source.Name.Parts[1].Value, insert.Target.Name.Parts[1].Value,
+                    StringComparison.Ordinal)))
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one explicit physical main source table.");
 
@@ -174,6 +180,9 @@ internal static class NativeInsertSelectSafety
         provider == SqlAgentToolType.Sqlite
             ? string.Equals(schema, "main", StringComparison.OrdinalIgnoreCase)
             : !string.IsNullOrWhiteSpace(schema)
+              && (provider != SqlAgentToolType.MySQL
+                  || !new[] { "mysql", "sys", "performance_schema", "information_schema" }
+                      .Contains(schema, StringComparer.OrdinalIgnoreCase))
               && !schema.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
               && !string.Equals(schema, "information_schema", StringComparison.OrdinalIgnoreCase)
               && !schema.Contains('.');
