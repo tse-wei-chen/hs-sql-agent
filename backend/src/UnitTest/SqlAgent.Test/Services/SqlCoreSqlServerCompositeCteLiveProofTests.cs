@@ -474,19 +474,23 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 sql.Replace(keyAlias + ".b",
                     "CAST(" + keyAlias + ".b AS BIGINT)", StringComparison.Ordinal),
                 sql.Replace(firstProjection,
-                    payload ? "k2 AS a, payload AS extra, k1 AS b"
-                            : "k2 AS a, k1 AS b", StringComparison.Ordinal),
+                    joined == "DIAMOND" ? "s.k2 AS a, s.k1 AS b"
+                            : payload ? "k2 AS a, payload AS extra, k1 AS b"
+                                      : "k2 AS a, k1 AS b", StringComparison.Ordinal),
                 sql.Replace(firstProjection,
-                    payload ? "k1 AS a, payload AS extra, k1 AS b"
-                            : "k1 AS a, k1 AS b", StringComparison.Ordinal),
+                    joined == "DIAMOND" ? "s.k1 AS a, s.k1 AS b"
+                            : payload ? "k1 AS a, payload AS extra, k1 AS b"
+                                      : "k1 AS a, k1 AS b", StringComparison.Ordinal),
                 // Payload must not be allowed to mask or overwrite a key.
                 sql.Replace(firstProjection,
-                    payload ? "k1 AS a, payload AS extra, payload AS b"
-                            : "k1 AS a, k2 + 0 AS b", StringComparison.Ordinal),
+                    joined == "DIAMOND" ? "s.k1 AS a, s.k2 + 0 AS b"
+                            : payload ? "k1 AS a, payload AS extra, payload AS b"
+                                      : "k1 AS a, k2 + 0 AS b", StringComparison.Ordinal),
                 // Extra projection aliases cannot introduce ambiguity.
                 sql.Replace(firstProjection,
-                    payload ? "k1 AS a, payload AS a, k2 AS b"
-                            : "k1 AS a, k2 AS a", StringComparison.Ordinal)
+                    joined == "DIAMOND" ? "s.k1 AS a, s.k2 AS a"
+                            : payload ? "k1 AS a, payload AS a, k2 AS b"
+                                      : "k1 AS a, k2 AS a", StringComparison.Ordinal)
             })
             {
                 // Use the same profile-verified parsed-statement compiler
