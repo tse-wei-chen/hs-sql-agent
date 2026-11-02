@@ -202,9 +202,22 @@ public sealed class TypedDmlRuntime(
             throw new UnauthorizedAccessException(
                 $"DML transaction contains {parsedBatch.Count} statements; maximum is {MaxStatementsPerTransaction}.");
 
-        if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Source: InsertQuerySource }))
+        // A bounded physical-source INSERT SELECT may be one member of an
+        // already-approved SQLite atomic batch. Do not promote the single-
+        // statement source proof to a different provider, multiple source
+        // insertions, or a caller-supplied virtual schema/freshness attestation.
+        var sourceInsertCount = parsedBatch.Statements.Count(item =>
+            item.Statement is InsertStatement { Source: InsertQuerySource });
+        if (sourceInsertCount > 0
+            && (provider.Type != SqlAgentToolType.Sqlite
+                || parsedBatch.Count < 2
+                || sourceInsertCount != 1
+                || parsedBatch.Statements.Any(item => item.SourceDialect != SqlAgentToolType.Sqlite)
+                || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
             throw new NotSupportedException(
-                "SQLite INSERT SELECT source-row approval is single-statement only.");
+                "Atomic INSERT SELECT requires exactly one real SQLite physical-source proof " +
+                "in a multi-statement SQLite batch and the built-in native schema attestation/verifier.");
 
         var builder = ImmutableArray.CreateBuilder<TypedDmlApprovalSession>(parsedBatch.Count);
         try
