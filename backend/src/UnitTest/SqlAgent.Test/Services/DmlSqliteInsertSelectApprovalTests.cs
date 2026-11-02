@@ -36,7 +36,7 @@ public sealed class DmlSqliteInsertSelectApprovalTests
             var native = new NativeDmlSchemaSnapshotService();
             var plan = await CreatePlanAsync(provider, native, connectionString,
                 "INSERT INTO main.users (name) SELECT name FROM main.other_users " +
-                $"WHERE {predicate} RETURNING id, name");
+                $"WHERE {predicate} RETURNING id, name", useVerifiedProfile: true);
             Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
             var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
             var preview = await coordinator.PreviewAsync(connectionString, plan, Approval,
