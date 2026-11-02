@@ -276,11 +276,14 @@ public sealed class DmlPlanFactory(
         CancellationToken cancellationToken,
         SqlProviderCapabilityProfile? targetProfile)
     {
-        if (insert.Source is not InsertValuesSource values)
-        {
-            throw new NotSupportedException(
-                "INSERT ... SELECT remains fail-closed until source-rowset approval semantics are defined.");
-        }
+        // A separate closed shape proof is required before any metadata access.
+        // Other INSERT SELECT sources cannot fall through the INSERT VALUES path.
+        (QueryStatement Query, ImmutableArray<string> OutputColumns)? sourceSelection = null;
+        if (insert.Source is InsertQuerySource)
+            sourceSelection = SqliteInsertSelectSafety.RequireShape(
+                insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
+        else if (insert.Source is not InsertValuesSource)
+            throw new NotSupportedException("Unsupported INSERT source: missing source-row approval proof.");
 
         var requestedTarget = IdentifierText(insert.Target.Name);
         if (string.IsNullOrWhiteSpace(requestedTarget))
@@ -347,6 +350,49 @@ public sealed class DmlPlanFactory(
             effectiveValidationContext,
             compilationPolicy,
             targetProfile);
+        if (sourceSelection is { } selection)
+        {
+            var snapshot = validationContext.SchemaSnapshot;
+            if (snapshot is null || snapshot.Provider != SqlAgentToolType.Sqlite
+                || snapshot.Tables.Count != 1
+                || !string.Equals(snapshot.Tables[0].Name,
+                    targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "SQLite INSERT SELECT requires one native physical-table schema snapshot covering the source and target.");
+
+            var select = SqliteInsertSelectSafety.PreviewQuery(
+                selection.Query, selection.OutputColumns);
+            var match = CompileMatchQuery(
+                CloneParsedWithStatement(parsedMutation, select), targetProvider,
+                validationContext, targetProfile, maxAffectedRows + 1);
+            var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
+                mutationCommand, validationContext.PolicyVersion);
+
+            return new ValidatedDmlPlan(
+                DmlOperation.Insert,
+                targetResolution.QualifiedTableName,
+                mutationCommand,
+                MatchQueryCommand: match,
+                RowIdentityColumns: selection.OutputColumns,
+                RowIdentityAssurance: DmlRowIdentityAssurance.Strict,
+                PlanFingerprint: fingerprint,
+                PolicyVersion: validationContext.PolicyVersion,
+                ApprovalTtl: approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
+                MaxAffectedRows: maxAffectedRows,
+                ApprovalMode: DmlApprovalMode.InsertSelect,
+                SchemaSnapshot: snapshot)
+            {
+                SqliteInsertSelectProof = new SqliteInsertSelectProof(
+                    targetResolution.QualifiedTableName,
+                    fingerprint,
+                    DmlFingerprintService.ComputePlanFingerprint(
+                        match, validationContext.PolicyVersion),
+                    snapshot.Sha256,
+                    selection.OutputColumns)
+            };
+        }
+
+        var values = (InsertValuesSource)insert.Source;
         var previewRows = BuildInsertPreviewRows(resolvedInsert, values);
 
         if (maxAffectedRows > 0 && previewRows.Length > maxAffectedRows)
@@ -561,15 +607,19 @@ public sealed class DmlPlanFactory(
         ParsedStatement parsed,
         SqlAgentToolType targetProvider,
         SqlPlanValidationContext validationContext,
-        SqlProviderCapabilityProfile? targetProfile)
+        SqlProviderCapabilityProfile? targetProfile,
+        int? queryMaxRows = null)
     {
+        var queryPolicy = queryMaxRows.HasValue
+            ? new SqlExecutionPlanPolicy(QueryMaxRows: queryMaxRows.Value)
+            : new SqlExecutionPlanPolicy();
         if (_queryCompiler is not null)
         {
             return _queryCompiler.Compile(
                 parsed,
                 targetProvider,
                 validationContext,
-                new SqlExecutionPlanPolicy(),
+                queryPolicy,
                 targetProfile);
         }
 
@@ -577,7 +627,7 @@ public sealed class DmlPlanFactory(
             parsed,
             targetProvider,
             validationContext,
-            new SqlExecutionPlanPolicy(),
+            queryPolicy,
             targetProfile);
     }
 
