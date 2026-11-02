@@ -997,7 +997,23 @@ module internal RewriteStages =
            || ctes.IsEmpty || ctes.Length > 3 then false
         else
             match sources with
-            | [CteTable(cteIdentifier, outerAlias)] ->
+            | [CteTable(cteIdentifier, outerAlias)]
+            | [CteTable(cteIdentifier, outerAlias); NamedTable(_, _)] ->
+                // Native two-source SQL Server DML: never borrow the CTE's
+                // physical UNIQUE proof for the distinct second relation.
+                // The independent physical index token must name and bind
+                // the exact additional FROM source before checking edges.
+                let outerSecond =
+                    match sources with
+                    | [_] -> Some None
+                    | [_; NamedTable(physical, Some alias)]
+                        when not (isNull proof.JoinedSourceTable)
+                             && qualified physical proof.JoinedSourceTable
+                             && not (same proof.JoinedSourceTable proof.SourceTable)
+                             && not (same proof.JoinedSourceTable proof.TargetTable)
+                             && proof.JoinedSourceKeyColumns.Count = proof.SourceKeyColumns.Count ->
+                        Some(Some alias.Value)
+                    | _ -> None
                 let sourceKeys = proof.SourceKeyColumns |> Seq.toList
                 let targetKeys = proof.TargetKeyColumns |> Seq.toArray
                 let mutable valid = true
@@ -1128,6 +1144,7 @@ module internal RewriteStages =
                     | [name] -> same name.Value lastName
                     | _ -> false
                 if not valid || not outerNameMatches
+                   || outerSecond.IsNone
                    || List.length lastKeys <> targetKeys.Length then false
                 else
                     let qualifier = match outerAlias with
@@ -1136,6 +1153,7 @@ module internal RewriteStages =
                     let pending = ResizeArray<Expr>()
                     predicate |> Option.iter pending.Add
                     let proven = Array.create targetKeys.Length false
+                    let otherProven = Array.create targetKeys.Length false
                     let mutable duplicate = false
                     while pending.Count > 0 do
                         RewriteResourceBudget.checkpoint ()
@@ -1154,8 +1172,22 @@ module internal RewriteStages =
                                        && isColumn left qualifier lastKeys.[i]) then
                                     if proven.[i] then duplicate <- true
                                     else proven.[i] <- true
+                                match outerSecond with
+                                | Some(Some secondQualifier) ->
+                                    let secondKey = proof.JoinedSourceKeyColumns.[i]
+                                    if (isColumn left qualifier lastKeys.[i]
+                                        && isColumn right secondQualifier secondKey)
+                                       || (isColumn right qualifier lastKeys.[i]
+                                           && isColumn left secondQualifier secondKey) then
+                                        if otherProven.[i] then duplicate <- true
+                                        else otherProven.[i] <- true
+                                | _ -> ()
                         | _ -> ()
                     not duplicate && (proven |> Array.forall id)
+                    && (match outerSecond with
+                        | Some None -> true
+                        | Some(Some _) -> otherProven |> Array.forall id
+                        | None -> false)
             | _ -> false
 
     /// Public CLR mutation statements may be constructed without the native
