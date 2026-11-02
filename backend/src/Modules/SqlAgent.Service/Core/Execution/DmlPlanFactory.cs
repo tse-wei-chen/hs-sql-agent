@@ -278,7 +278,7 @@ public sealed class DmlPlanFactory(
     {
         // A separate closed shape proof is required before any metadata access.
         // Other INSERT SELECT sources cannot fall through the INSERT VALUES path.
-        (QueryStatement Query, ImmutableArray<string> OutputColumns)? sourceSelection = null;
+        (SqlStatement Query, ImmutableArray<string> OutputColumns)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
             sourceSelection = SqliteInsertSelectSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
