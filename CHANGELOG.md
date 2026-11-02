@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — PostgreSQL two-table INSERT SELECT approval (develop only)
+
+- Native PostgreSQL now admits a **single distinct physical source table** and
+  **one target table in the same non-system schema**, for bounded
+  `INSERT ... SELECT` with unique explicit target columns, direct source
+  projections and one `column = non-NULL literal` predicate. Supports
+  direct-column `RETURNING`; other expressions, CTE/JOIN, ON CONFLICT,
+  batch mutation and other providers remain fail-closed.
+- Source and target both require independent physical metadata and catalog
+  attestation (relation OID, column definitions/defaults, indexes and
+  constraints). Only permanent, nonpartitioned, noninherited ordinary tables
+  without RLS, user triggers or rewrite rules can receive execution proof.
+- At commit, PostgreSQL SERIALIZABLE holds a source SHARE ROW EXCLUSIVE NOWAIT
+  lock acquired **before its first catalog SELECT**, and a target ACCESS
+  SHARE lock, then reattests both definitions and the entire approved
+  projected source row multiset before one mutation. Lock conflicts, catalog
+  drift and source-value drift reject or roll back. Source read permission
+  is checked independently of target write permission before metadata reads.
+- Real PostgreSQL tests exercise approved inserted RETURNING rows, replay
+  denial, source update/index drift, row-limit rejection, locked concurrent
+  writes and user-trigger rejection. Opt-in native schema freshness and
+  adequate PostgreSQL table lock privileges are required. No new MCP tool
+  or package; four read-only tools remain selected and DML remains off.
+
 ### G9 / M09 — SQLite INSERT SELECT direct RETURNING result rows (develop only)
 
 - Allow native SQLite **3.35+** bounded, single-statement `INSERT ... SELECT
