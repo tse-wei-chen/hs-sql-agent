@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — Bounded conjunctive native INSERT SELECT source predicates (develop only)
+
+- Allow one to four direct `column = non-NULL literal` source predicates joined
+  only by `AND` for the existing native SQLite, PostgreSQL and MySQL 8.4
+  InnoDB `INSERT SELECT` approval paths. Both same-table and independently
+  proven separate-table modes retain their existing provider, version, schema,
+  source grant, maximum row count and approval requirements.
+- A single iterative closed Host shape gate now rejects over-four predicates,
+  `OR`, `NOT`, null/functional/computed comparisons, CTEs, JOINs and unknown
+  query shapes; the F# parser/compiler and native SQL rendering remain the
+  sole SQL semantic owners. Full projected source values are revalidated in
+  the existing transaction-held native schema and row-lock proof before insert.
+- Real SQLite, PostgreSQL and MySQL integration tests prove exact approved
+  rows and committed mutations; bounded negative gates reject five-condition
+  predicates at the correct Host stage. No new MCP tool, driver, public SqlCore
+  API, transaction coordinator or change to the four selected read-only tools
+  and disabled-by-default DML behavior.
+
 ### G9 / M09 — MySQL 8.4 InnoDB same-table INSERT SELECT approval (develop only)
 
 - Extend native bounded `INSERT INTO db.target (name) SELECT name FROM db.target
