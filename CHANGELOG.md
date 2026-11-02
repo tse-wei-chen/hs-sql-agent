@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — SQLite self-source INSERT SELECT approval (develop only)
+
+- Admit only explicitly bounded native SQLite `INSERT INTO main.table (columns) SELECT direct_columns FROM main.table WHERE column = literal`, with the source and target being the **same physical main table**. Preview hashes every projected source value, including duplicate rows; the approved row count and immutable compiler-generated SQL are bound into a one-time challenge.
+- A real SQLite IMMEDIATE write transaction revalidates the physical schema and complete projected source row multiset before executing the approved native insert once. Changed source values, row count, schema, runtime database version or authorization context fail closed or roll back; no new MCP tool.
+- Requires explicit `AddHsSqlAgentNativeDmlSchemaFreshness()`, a finite positive DML row limit and existing DML approval. No CTE, JOIN, aggregate, expression projection, RETURNING, UPSERT, second source table, attached database or atomic DML batch. Other five providers remain unchanged.
+
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
