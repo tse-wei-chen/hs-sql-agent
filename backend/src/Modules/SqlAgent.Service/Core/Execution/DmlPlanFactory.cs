@@ -353,18 +353,19 @@ public sealed class DmlPlanFactory(
         if (sourceSelection is { } selection)
         {
             var snapshot = validationContext.SchemaSnapshot;
-            if (snapshot is null || snapshot.Provider != SqlAgentToolType.Sqlite
+            if (snapshot is null || snapshot.Provider != targetProvider
+                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                 || snapshot.Tables.Count is < 1 or > 2
                 || !string.Equals(snapshot.Tables[0].Name,
                     targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
                 || (string.Equals(selection.PhysicalSource,
                         targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
-                    ? snapshot.Tables.Count != 1
+                    ? targetProvider != SqlAgentToolType.Sqlite || snapshot.Tables.Count != 1
                     : snapshot.Tables.Count != 2
                       || !string.Equals(snapshot.Tables[1].Name, selection.PhysicalSource,
                           StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException(
-                    "SQLite INSERT SELECT requires independently attested physical source and target schema snapshots.");
+                    "Native INSERT SELECT requires independently attested physical source and target schema snapshots.");
 
             var select = NativeInsertSelectSafety.PreviewQuery(
                 selection.Query, selection.OutputColumns);
