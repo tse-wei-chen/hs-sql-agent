@@ -45,6 +45,57 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
     }
 
     [Fact]
+    public async Task SelfSource_InsertedRowsMatchingSamePredicate_AreNotRevisitedWithinOneInsert()
+    {
+        await WithTablesAsync(async (cs, target, _, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, target,
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{target}] WHERE name = 'Alice'");
+            Assert.Single(plan.SchemaSnapshot!.Tables);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Alice", Assert.Single(preview.Rows)["name"]);
+            var commit = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(commit.Committed);
+            Assert.Equal(1, commit.AffectedRows);
+            Assert.Equal(3, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+            Assert.Equal(2, await ScalarAsync(cs,
+                $"SELECT COUNT(*) FROM dbo.[{target}] WHERE name = 'Alice'"));
+        });
+    }
+
+    [Fact]
+    public async Task SelfSource_ReadCommittedTransaction_CannotAttestLivePhysicalSource()
+    {
+        await WithTablesAsync(async (cs, target, _, _) =>
+        {
+            var native = new NativeDmlSchemaSnapshotService();
+            var provider = new MsSqlServerProvider();
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{target}] WHERE id = 1",
+                SqlAgentToolType.MsSqlServer);
+            await using var conn = provider.Connections.Create(cs);
+            await conn.OpenAsync(TestContext.Current.CancellationToken);
+            var snapshot = await native.CaptureAsync(
+                conn, SqlAgentToolType.MsSqlServer, parsed, TestContext.Current.CancellationToken);
+            Assert.NotNull(snapshot);
+            Assert.Single(snapshot.Tables);
+            await using var tx = await conn.BeginTransactionAsync(
+                System.Data.IsolationLevel.ReadCommitted, TestContext.Current.CancellationToken);
+            Assert.Null(await native.ReadCurrentSchemaDigestAsync(
+                conn, tx, SqlAgentToolType.MsSqlServer, snapshot,
+                TestContext.Current.CancellationToken));
+            await tx.RollbackAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Fact]
     public async Task SelfSource_ApprovedSourceChanged_RejectsWithoutAnyInsert()
     {
         await WithTablesAsync(async (cs, target, _, version) =>
