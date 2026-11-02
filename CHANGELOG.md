@@ -15,7 +15,9 @@ All notable changes to this project will be documented in this file.
 - New physical MySQL 8.4 native table proof verifies each table's exact
   physical name, InnoDB engine, real `SHOW CREATE TABLE` DDL (including
   column definitions, indexes and constraints), absence of foreign keys and
-  triggers, plus **global TRIGGER visibility held by the current SQL user**.
+  triggers, plus **global TRIGGER and PROCESS catalog visibility held by the
+  current SQL user**. Binds the actual InnoDB `TABLE_ID` and MySQL
+  `@@server_uuid` to the snapshot, denying identical-DDL table replacement.
   Missing privilege or metadata denies approval, never means empty triggers.
 - Preview binds complete selected source values and immutable policy/plan
   fingerprints. A `SERIALIZABLE` MySQL commit transaction pins source and
