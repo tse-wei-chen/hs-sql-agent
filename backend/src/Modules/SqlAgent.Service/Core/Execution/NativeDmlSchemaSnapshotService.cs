@@ -181,10 +181,10 @@ public sealed class NativeDmlSchemaSnapshotService :
             // the first catalog read / SERIALIZABLE snapshot is established.
             await PinPostgresInsertSelectAsync(
                 connection, transaction, expectedTable, expectedTable, cancellationToken);
-            var matches = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
+            var selfSourceMetadata = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
                 connection, transaction, names[0], names[1], includeColumns: true,
                 cancellationToken: cancellationToken);
-            var basic = BuildSnapshot(provider, matches);
+            var basic = BuildSnapshot(provider, selfSourceMetadata);
             if (basic is null || basic.Tables.Count != 1
                 || !string.Equals(basic.Tables[0].Name, expectedTable, StringComparison.Ordinal))
                 return null;
