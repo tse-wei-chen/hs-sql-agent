@@ -291,12 +291,12 @@ public sealed class DmlSqliteInsertSelectApprovalTests
 
     [Theory]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users")]
-    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1 OR id = 2")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1 OR 1 = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT upper(name) FROM main.users WHERE id = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM other_users WHERE id = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users AS s WHERE id = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT upper(name) FROM main.other_users WHERE id = 1")]
-    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 OR id = 2")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 OR 1 = 1")]
     public async Task UnsupportedOrUnboundedSource_FailsClosedBeforePreview(string sql)
     {
         await WithDatabaseAsync(async (connectionString, _) =>
