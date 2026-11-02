@@ -95,7 +95,8 @@ public sealed class TypedDmlRuntime(
 
         EnsureSupportedStatement(parsedMutation.Statement);
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
-            && parsedMutation.SourceDialect != provider.Type || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres))
+            && (parsedMutation.SourceDialect != provider.Type
+                || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)))
             throw new NotSupportedException(
                 "INSERT SELECT source-row approval requires native SQLite or PostgreSQL only.");
         ValidateApprovalContextFields(approvalContext);
