@@ -575,7 +575,7 @@ public sealed class DmlCoordinator(
                     || plan.SchemaSnapshot.Tables.Count is < 1 or > 2
                     || !plan.InsertRows.IsDefaultOrEmpty
                     || plan.RowIdentityColumns.IsDefaultOrEmpty
-                    || plan.SqliteInsertSelectProof is not { } sourceProof
+                    || plan.NativeInsertSelectProof is not { } sourceProof
                     || !string.Equals(sourceProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
                     || !string.Equals(plan.SchemaSnapshot.Tables[0].Name, plan.TableName,
                         StringComparison.OrdinalIgnoreCase)
@@ -599,7 +599,7 @@ public sealed class DmlCoordinator(
                 return;
 
             case DmlApprovalMode.RowSetMutation:
-                if (plan.SqliteInsertSelectProof is not null)
+                if (plan.NativeInsertSelectProof is not null)
                     throw new InvalidOperationException(
                         "SQLite INSERT SELECT proof cannot be reused for row-set UPDATE/DELETE.");
                 if (plan.Operation == HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)

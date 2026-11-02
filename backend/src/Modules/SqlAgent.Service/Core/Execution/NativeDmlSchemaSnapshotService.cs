@@ -50,7 +50,7 @@ public sealed class NativeDmlSchemaSnapshotService :
 
         var sqliteSource = parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert
             && targetProvider == SqlAgentToolType.Sqlite
-            ? SqliteInsertSelectSafety.RequireShape(
+            ? NativeInsertSelectSafety.RequireShape(
                 sourceInsert, targetProvider, targetProvider, int.MaxValue - 1).PhysicalSource
             : null;
 
@@ -117,7 +117,7 @@ public sealed class NativeDmlSchemaSnapshotService :
     private static NamedTableSource VerifySqliteSelfSource(
         InsertStatement insert, SqlAgentToolType provider)
     {
-        SqliteInsertSelectSafety.RequireShape(
+        NativeInsertSelectSafety.RequireShape(
             insert, provider, provider, maxAffectedRows: int.MaxValue - 1);
         return insert.Target;
     }

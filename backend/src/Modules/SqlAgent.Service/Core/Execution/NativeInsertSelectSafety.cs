@@ -11,7 +11,7 @@ namespace SqlAgent.Service.Core.Execution;
 /// Neither caller-provided virtual metadata nor arbitrary INSERT SELECT joins
 /// can promote themselves to this proof.
 /// </summary>
-internal static class SqliteInsertSelectSafety
+internal static class NativeInsertSelectSafety
 {
     internal static (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource) RequireShape(
         InsertStatement insert,
@@ -19,10 +19,10 @@ internal static class SqliteInsertSelectSafety
         SqlAgentToolType targetProvider,
         int maxAffectedRows)
     {
-        if (sourceDialect != SqlAgentToolType.Sqlite
-            || targetProvider != SqlAgentToolType.Sqlite)
+        if (sourceDialect != targetProvider ||
+            sourceDialect is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres))
             throw new NotSupportedException(
-                "INSERT SELECT source-row approval is proven only for native SQLite.");
+                "INSERT SELECT source-row approval requires the same native SQLite or PostgreSQL source and target dialect.");
         if (maxAffectedRows <= 0 || maxAffectedRows == int.MaxValue)
             throw new NotSupportedException(
                 "SQLite INSERT SELECT requires a positive finite maximum affected-row policy.");
@@ -51,7 +51,9 @@ internal static class SqliteInsertSelectSafety
                     "SQLite INSERT SELECT RETURNING is limited to 32 direct target columns.");
         }
         if (insert.Target.Name.Parts.Length != 2
-            || !IsMain(insert.Target.Name.Parts[0].Value))
+            || !IsAllowedSchema(insert.Target.Name.Parts[0].Value, targetProvider)
+            || string.IsNullOrWhiteSpace(insert.Target.Name.Parts[1].Value)
+            || insert.Target.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException(
                 "SQLite INSERT SELECT requires a schema-qualified main table target.");
         if (insert.Source is not InsertQuerySource sourceInput)
@@ -84,9 +86,15 @@ internal static class SqliteInsertSelectSafety
 
         if (head.From is not NamedTableSource source || source.Alias is not null
             || source.Name.Parts.Length != 2
-            || !IsMain(source.Name.Parts[0].Value)
+            || !IsAllowedSchema(source.Name.Parts[0].Value, targetProvider)
+            || !string.Equals(source.Name.Parts[0].Value, insert.Target.Name.Parts[0].Value,
+                StringComparison.OrdinalIgnoreCase)
             || string.IsNullOrWhiteSpace(source.Name.Parts[1].Value)
-            || source.Name.Parts[1].Value.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase))
+            || source.Name.Parts[1].Value.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase)
+            || source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+            || (targetProvider == SqlAgentToolType.Postgres
+                && string.Equals(source.Name.Parts[1].Value, insert.Target.Name.Parts[1].Value,
+                    StringComparison.OrdinalIgnoreCase)))
             throw new NotSupportedException(
                 "SQLite INSERT SELECT requires one explicit physical main source table.");
 
@@ -112,14 +120,15 @@ internal static class SqliteInsertSelectSafety
                     "SQLite INSERT SELECT supports only unique target columns and direct unaliased column projections.");
             columns.Add(target.Parts[0].Value);
         }
-        return (query, columns.ToImmutable(), "main." + source.Name.Parts[1].Value);
+        return (query, columns.ToImmutable(),
+            source.Name.Parts[0].Value + "." + source.Name.Parts[1].Value);
     }
 
-    internal static bool IsBoundedShape(InsertStatement insert)
+    internal static bool IsBoundedShape(InsertStatement insert, SqlAgentToolType provider)
     {
         try
         {
-            RequireShape(insert, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, 1);
+            RequireShape(insert, provider, provider, 1);
             return true;
         }
         catch (NotSupportedException)
@@ -159,6 +168,11 @@ internal static class SqliteInsertSelectSafety
         return preview;
     }
 
-    private static bool IsMain(string value) =>
-        string.Equals(value, "main", StringComparison.OrdinalIgnoreCase);
+    private static bool IsAllowedSchema(string schema, SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.Sqlite
+            ? string.Equals(schema, "main", StringComparison.OrdinalIgnoreCase)
+            : !string.IsNullOrWhiteSpace(schema)
+              && !schema.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+              && !string.Equals(schema, "information_schema", StringComparison.OrdinalIgnoreCase)
+              && !schema.Contains('.');
 }

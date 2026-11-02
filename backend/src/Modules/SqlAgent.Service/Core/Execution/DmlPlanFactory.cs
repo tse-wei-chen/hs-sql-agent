@@ -280,7 +280,7 @@ public sealed class DmlPlanFactory(
         // Other INSERT SELECT sources cannot fall through the INSERT VALUES path.
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
-            sourceSelection = SqliteInsertSelectSafety.RequireShape(
+            sourceSelection = NativeInsertSelectSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
         else if (insert.Source is not InsertValuesSource)
             throw new NotSupportedException("Unsupported INSERT source: missing source-row approval proof.");
@@ -366,7 +366,7 @@ public sealed class DmlPlanFactory(
                 throw new InvalidOperationException(
                     "SQLite INSERT SELECT requires independently attested physical source and target schema snapshots.");
 
-            var select = SqliteInsertSelectSafety.PreviewQuery(
+            var select = NativeInsertSelectSafety.PreviewQuery(
                 selection.Query, selection.OutputColumns);
             var match = CompileMatchQuery(
                 CloneParsedWithStatement(parsedMutation, select), targetProvider,
@@ -388,7 +388,7 @@ public sealed class DmlPlanFactory(
                 ApprovalMode: DmlApprovalMode.InsertSelect,
                 SchemaSnapshot: snapshot)
             {
-                SqliteInsertSelectProof = new SqliteInsertSelectProof(
+                NativeInsertSelectProof = new NativeInsertSelectProof(
                     targetResolution.QualifiedTableName,
                     selection.PhysicalSource,
                     sourcePlanFingerprint,

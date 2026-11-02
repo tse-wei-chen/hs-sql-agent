@@ -18,12 +18,12 @@ public enum DmlApprovalMode
 {
     RowSetMutation,
     InsertValues,
-    /// <summary>SQLite bounded physical source rows, bound by full projected-value fingerprint.</summary>
+    /// <summary>Native bounded physical source rows, bound by full projected-value fingerprint.</summary>
     InsertSelect
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
-internal sealed record SqliteInsertSelectProof(
+internal sealed record NativeInsertSelectProof(
     string PhysicalTarget,
     string PhysicalSource,
     string MutationFingerprint,
@@ -57,7 +57,7 @@ public sealed record ValidatedDmlPlan(
     /// Host-internal admission proof. External callers cannot construct or set it,
     /// even though ValidatedDmlPlan remains a CLR-friendly public record.
     /// </summary>
-    internal SqliteInsertSelectProof? SqliteInsertSelectProof { get; init; }
+    internal NativeInsertSelectProof? NativeInsertSelectProof { get; init; }
 }
 
 public sealed record DmlPreview(
