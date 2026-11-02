@@ -3600,6 +3600,48 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M08 — two native DML FROM sources with independent key proof (develop only)
+
+SQL Server `UPDATE FROM` / `DELETE FROM` can now combine **one
+direct, read-only CTE source** with **one separate physical UNIQUE
+table**. Each source requires an independent database-attested
+ordered composite UNIQUE key, and the target must have an equally
+exact physical identity. Both target→CTE and CTE→second-source
+must be fully linked by ordinary `AND`-connected key equalities.
+
+```sql
+WITH seed AS (
+  SELECT s.k1 AS a, s.k2 AS b FROM dbo.Source AS s
+)
+UPDATE dbo.Target SET label = 'changed'
+FROM seed, dbo.Other AS j
+WHERE dbo.Target.k1 = seed.a
+  AND dbo.Target.k2 = seed.b
+  AND seed.a = j.j1
+  AND seed.b = j.j2
+  AND j.extra = 5;
+```
+
+For `DELETE`, use SQL Server's native `DELETE FROM dbo.Target
+FROM seed, dbo.Other AS j WHERE ...` form. The two separate
+physical sources are authorized only when three independent
+evidence owners agree: F# static cardinality, F# sealed
+mutation-admission equality proof, and Host runtime discovery of
+the **second** ordered physical key tuple. The same real
+`VerifyLiveForKeyPreservingJoin` checks both UNIQUE indexes,
+exact type/collation, schema identity and same-transaction
+`IsCurrent`; preview approval remains bound to the immutable
+row-set and compiled SQL.
+
+The second table cannot borrow the first source's UNIQUE proof.
+Missing, duplicated, `OR`-connected, swapped or computed keys,
+unknown/non-unique joined indexes, target/source substitution,
+a third physical input, unrelated subqueries or unsafe
+cross-provider lowering all fail closed. This is **one bounded
+native SQL Server M08 slice**; it does not enable general
+multi-source DML or PostgreSQL `DELETE USING`. Other five DBs
+and the default four read-only MCP tools (DML off) remain unchanged.
+
 ## G9 / M07 — correlated EXISTS / NOT EXISTS in a bounded CTE diamond (develop only)
 
 The independently proved three-CTE SQL Server diamond may have a
