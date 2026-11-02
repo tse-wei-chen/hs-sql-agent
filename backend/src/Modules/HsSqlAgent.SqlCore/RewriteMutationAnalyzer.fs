@@ -421,11 +421,84 @@ module internal RewriteMutationSourceMatchProof =
                                || head.DistinctMode <> SelectDistinct.AllRows
                                || query.FetchWithTies then None
                             else head.From |> Option.bind cteSource
-                        match source with
-                        | Some input ->
-                            match projectRelation head.Projection cte.ColumnAliases input with
-                            | Some relation -> proven <- Map.add name relation proven
-                            | None -> ()
+                        // Strict M06 three-node diamond: two direct CTE
+                        // projections of the SAME physical table join by a
+                        // complete ordered UNIQUE pair, preserving the left
+                        // relation's source identity. This is a STATIC fact,
+                        // never sufficient by itself to execute mutation.
+                        let diamond =
+                            match ctes with
+                            | [first; second; final] when final.Name.Value = cte.Name.Value
+                                && not first.RecursiveScope
+                                && not second.RecursiveScope
+                                && first.Query.Head.Where.IsNone
+                                && second.Query.Head.Where.IsNone
+                                && first.Query.Head.Joins.IsEmpty
+                                && second.Query.Head.Joins.IsEmpty
+                                && cte.ColumnAliases.IsEmpty
+                                && query.SetOperations.IsEmpty
+                                && query.OrderBy.IsEmpty
+                                && query.Limit.IsNone && query.Offset.IsNone
+                                && query.FetchPercent.IsNone && not query.FetchWithTies
+                                && head.Ctes.IsEmpty && head.Where.IsNone
+                                && head.GroupBy.IsEmpty && head.Having.IsNone
+                                && head.DistinctMode = SelectDistinct.AllRows
+                                && head.Projection.Length = 2 ->
+                                match first.Query.Head.From, second.Query.Head.From,
+                                      head.From, head.Joins with
+                                | Some(NamedTable(physical1, _)), Some(NamedTable(physical2, _)),
+                                  Some(CteTable(leftName, Some leftAlias)),
+                                  [OnJoin(OnJoinKind.Inner,
+                                          CteTable(rightName, Some rightAlias), joinExpr)]
+                                    when identifierKey dialect physical1 = identifierKey dialect physical2
+                                         && (match Identifier.parts leftName,
+                                                   Identifier.parts rightName with
+                                             | [l], [r] ->
+                                                 keyPart dialect l = keyPart dialect first.Name
+                                                 && keyPart dialect r = keyPart dialect second.Name
+                                             | _ -> false)
+                                         && keyPart dialect leftAlias <> keyPart dialect rightAlias ->
+                                    match cteSource (CteTable(leftName, Some leftAlias)),
+                                          cteSource (CteTable(rightName, Some rightAlias)) with
+                                    | Some lhs, Some rhs ->
+                                        let relations =
+                                            [{ lhs with Position = 1 }; { rhs with Position = 2 }]
+                                        let direct index leftKey rightKey expr =
+                                            match Expr.unspan expr with
+                                            | Binary(BinaryOperator.Equal, l, r) ->
+                                                match resolveField dialect relations l,
+                                                      resolveField dialect relations r with
+                                                | Some(Field(1, ln)), Some(Field(2, rn))
+                                                | Some(Field(2, rn)), Some(Field(1, ln)) ->
+                                                    ln = leftKey && rn = rightKey
+                                                | _ -> false
+                                            | _ -> false
+                                        let fullKey =
+                                            match Expr.unspan joinExpr with
+                                            | Binary(BinaryOperator.And, a, b) ->
+                                                lhs.UniqueKeys
+                                                |> List.exists (function
+                                                    | [l1; l2] ->
+                                                        rhs.UniqueKeys
+                                                        |> List.exists (function
+                                                            | [r1; r2] ->
+                                                                (direct 0 l1 r1 a && direct 1 l2 r2 b)
+                                                                || (direct 1 l2 r2 a && direct 0 l1 r1 b)
+                                                            | _ -> false)
+                                                    | _ -> false)
+                                            | _ -> false
+                                        if fullKey then
+                                            projectRelation head.Projection [] lhs
+                                        else None
+                                    | _ -> None
+                                | _ -> None
+                            | _ -> None
+                        let relation =
+                            match source with
+                            | Some input -> projectRelation head.Projection cte.ColumnAliases input
+                            | None -> diamond
+                        match relation with
+                        | Some verified -> proven <- Map.add name verified proven
                         | None -> ()
                 proven
         let targetRelation = create 0 target targetAlias

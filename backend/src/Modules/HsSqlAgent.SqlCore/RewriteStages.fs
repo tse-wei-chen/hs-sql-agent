@@ -873,6 +873,110 @@ module internal RewriteStages =
                     projectDerivedKeys keys qualifier head.Projection)
         let provenDirectDerivedKeys (derived: Query) = derivedKeyChain 1 derived
 
+        // M06: two independently read, directly projected instances of ONE
+        // physical UNIQUE table may reconverge only through exact full-key
+        // INNER equalities. This admission proof is independent of both the
+        // static cardinality model and Host live sys.index_columns discovery.
+        let proveDiamond () =
+            let sourceKeys = proof.SourceKeyColumns |> Seq.toList
+            if ctes.Length <> 3 || sourceKeys.Length <> 2 then None
+            else
+                let branch (cte: Cte) =
+                    let query = cte.Query
+                    let head = query.Head
+                    if cte.RecursiveScope || not cte.ColumnAliases.IsEmpty
+                       || not query.SetOperations.IsEmpty || not query.OrderBy.IsEmpty
+                       || query.Limit.IsSome || query.Offset.IsSome
+                       || query.FetchPercent.IsSome || query.FetchWithTies
+                       || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+                       || head.Where.IsSome || not head.GroupBy.IsEmpty
+                       || head.Having.IsSome
+                       || head.DistinctMode <> SelectDistinct.AllRows
+                       || head.Projection.Length <> sourceKeys.Length then None
+                    else
+                        match head.From with
+                        | Some(NamedTable(physical, alias))
+                            when qualified physical proof.SourceTable ->
+                            let owner =
+                                match alias, Identifier.parts physical with
+                                | Some value, _ -> value.Value
+                                | None, [_; table] -> table.Value
+                                | _ -> ""
+                            let names =
+                                head.Projection
+                                |> List.mapi (fun index item ->
+                                    if isColumn item.Expression owner sourceKeys.[index] then
+                                        Some(defaultArg
+                                            (item.Alias |> Option.map (fun a -> a.Value))
+                                            sourceKeys.[index])
+                                    else None)
+                            if names |> List.forall Option.isSome then
+                                let outputs = names |> List.choose id
+                                if outputs |> List.distinct |> List.length = outputs.Length then
+                                    Some outputs
+                                else None
+                            else None
+                        | _ -> None
+                let left = ctes.[0]
+                let right = ctes.[1]
+                let combined = ctes.[2]
+                let query = combined.Query
+                let head = query.Head
+                match branch left, branch right with
+                | Some leftKeys, Some rightKeys
+                    when not (same left.Name.Value right.Name.Value)
+                         && not (same left.Name.Value combined.Name.Value)
+                         && not (same right.Name.Value combined.Name.Value)
+                         && not combined.RecursiveScope
+                         && combined.ColumnAliases.IsEmpty
+                         && query.SetOperations.IsEmpty && query.OrderBy.IsEmpty
+                         && query.Limit.IsNone && query.Offset.IsNone
+                         && query.FetchPercent.IsNone && not query.FetchWithTies
+                         && head.Ctes.IsEmpty && head.Where.IsNone
+                         && head.GroupBy.IsEmpty && head.Having.IsNone
+                         && head.DistinctMode = SelectDistinct.AllRows
+                         && head.Projection.Length = 2 ->
+                    match head.From, head.Joins with
+                    | Some(CteTable(leftRef, Some leftAlias)),
+                      [OnJoin(OnJoinKind.Inner,
+                              CteTable(rightRef, Some rightAlias), joinPredicate)]
+                        when (match Identifier.parts leftRef, Identifier.parts rightRef with
+                              | [l], [r] ->
+                                  same l.Value left.Name.Value
+                                  && same r.Value right.Name.Value
+                              | _ -> false)
+                             && not (same leftAlias.Value rightAlias.Value) ->
+                        let equal index expr =
+                            match Expr.unspan expr with
+                            | Binary(BinaryOperator.Equal, l, r) ->
+                                (isColumn l leftAlias.Value leftKeys.[index]
+                                 && isColumn r rightAlias.Value rightKeys.[index])
+                                || (isColumn r leftAlias.Value leftKeys.[index]
+                                    && isColumn l rightAlias.Value rightKeys.[index])
+                            | _ -> false
+                        let completeJoin =
+                            match Expr.unspan joinPredicate with
+                            | Binary(BinaryOperator.And, first, second) ->
+                                (equal 0 first && equal 1 second)
+                                || (equal 1 first && equal 0 second)
+                            | _ -> false
+                        let projected =
+                            head.Projection
+                            |> List.mapi (fun index item ->
+                                if isColumn item.Expression leftAlias.Value leftKeys.[index] then
+                                    Some(defaultArg
+                                        (item.Alias |> Option.map (fun a -> a.Value))
+                                        leftKeys.[index])
+                                else None)
+                        if completeJoin && (projected |> List.forall Option.isSome) then
+                            let outputs = projected |> List.choose id
+                            if outputs |> List.distinct |> List.length = outputs.Length then
+                                Some outputs
+                            else None
+                        else None
+                    | _ -> None
+                | _ -> None
+
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
@@ -1001,6 +1105,17 @@ module internal RewriteStages =
                     else
                         lastName <- cte.Name.Value
                         lastKeys <- directProjection.Value
+                // A strict diamond is not a linear chain, so run its
+                // independent sealed proof only when that legacy path
+                // declines. It still shares the mandatory target equality
+                // and live metadata/transaction checks below.
+                if not valid && ctes.Length = 3 then
+                    match proveDiamond () with
+                    | Some keys ->
+                        valid <- true
+                        lastName <- ctes.[2].Name.Value
+                        lastKeys <- keys
+                    | None -> ()
                 let outerNameMatches =
                     match Identifier.parts cteIdentifier with
                     | [name] -> same name.Value lastName

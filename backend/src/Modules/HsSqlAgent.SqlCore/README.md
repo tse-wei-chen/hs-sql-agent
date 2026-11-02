@@ -3600,6 +3600,34 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M06 — a bounded three-CTE diamond (develop only)
+
+SQL Server UPDATE/DELETE now admits two **independent** CTE projections
+of the **same live UNIQUE-key source**, merged by a third CTE through
+exactly two ordinary, original-order INNER key equalities.
+
+```sql
+WITH seed AS (SELECT s.k1 AS a, s.k2 AS b FROM dbo.Source AS s),
+     twin AS (SELECT t.k1 AS x, t.k2 AS y FROM dbo.Source AS t),
+     matched AS (
+       SELECT l.a AS a, l.b AS b FROM seed AS l
+       INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y
+     )
+UPDATE dbo.Target SET label = 'changed'
+FROM matched
+WHERE dbo.Target.k1 = matched.a AND dbo.Target.k2 = matched.b;
+```
+
+A static Catalog cannot authorize a write. F# cardinality, F# sealed
+execution admission and Host real physical-index discovery independently
+verify the complete ordered key. Preview/independent Approval, unchanged
+compiled SQL identity and transaction-held `IsCurrent` remain required.
+
+This is **not** general CTE DAG support: third branches, other source
+tables, missing or swapped keys, OR, LEFT JOIN, WHERE, casts, calculated
+fields, extra JOINs, grouping, paging or ambiguous aliases are denied.
+Other providers, public APIs, MCP tools and DML-off defaults are unchanged.
+
 ## G9 / M06 — two-level Derived Table key lineage (develop only)
 
 The SQL Server execution proof now recognizes **at most two** nested,

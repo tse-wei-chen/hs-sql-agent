@@ -7,6 +7,18 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M06 — bounded key-preserving CTE diamond (develop only)
+
+- Two independent SQL Server CTEs can project the same live UNIQUE source,
+  reconverging through a third CTE's complete two-column INNER key JOIN.
+  The direct projection still requires both target key equalities.
+- F# static cardinality, F# sealed execution admission and Host live index
+  discovery remain independent. Physical metadata, approval row-set and
+  same-transaction `IsCurrent` remain mandatory.
+- All other DAG shapes, extra physical sources, computed/cast keys,
+  missing/duplicated JOIN edges, OR, LEFT JOIN, WHERE, aggregation and
+  ambiguous aliases are fail-closed. No new tool, API or provider grants.
+
 ### G9 / M06 — two-level Derived Table physical key lineage (develop only)
 
 - Extend the previously proven SQL Server CTE UPDATE/DELETE source from
