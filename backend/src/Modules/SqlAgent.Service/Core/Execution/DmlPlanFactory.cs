@@ -365,7 +365,7 @@ public sealed class DmlPlanFactory(
             var match = CompileMatchQuery(
                 CloneParsedWithStatement(parsedMutation, select), targetProvider,
                 validationContext, targetProfile, maxAffectedRows + 1);
-            var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
+            var sourcePlanFingerprint = DmlFingerprintService.ComputePlanFingerprint(
                 mutationCommand, validationContext.PolicyVersion);
 
             return new ValidatedDmlPlan(
@@ -375,7 +375,7 @@ public sealed class DmlPlanFactory(
                 MatchQueryCommand: match,
                 RowIdentityColumns: selection.OutputColumns,
                 RowIdentityAssurance: DmlRowIdentityAssurance.Strict,
-                PlanFingerprint: fingerprint,
+                PlanFingerprint: sourcePlanFingerprint,
                 PolicyVersion: validationContext.PolicyVersion,
                 ApprovalTtl: approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
                 MaxAffectedRows: maxAffectedRows,
@@ -384,7 +384,7 @@ public sealed class DmlPlanFactory(
             {
                 SqliteInsertSelectProof = new SqliteInsertSelectProof(
                     targetResolution.QualifiedTableName,
-                    fingerprint,
+                    sourcePlanFingerprint,
                     DmlFingerprintService.ComputePlanFingerprint(
                         match, validationContext.PolicyVersion),
                     snapshot.Sha256,
@@ -611,7 +611,7 @@ public sealed class DmlPlanFactory(
         int? queryMaxRows = null)
     {
         var queryPolicy = queryMaxRows.HasValue
-            ? new SqlExecutionPlanPolicy(QueryMaxRows: queryMaxRows.Value)
+            ? new SqlExecutionPlanPolicy(queryMaxRows.Value)
             : new SqlExecutionPlanPolicy();
         if (_queryCompiler is not null)
         {
