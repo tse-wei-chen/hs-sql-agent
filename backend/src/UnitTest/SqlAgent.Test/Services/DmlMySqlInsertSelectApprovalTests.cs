@@ -372,7 +372,7 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     [Theory]
     [InlineData("RETURNING name")]
     [InlineData("SELECT upper(name) FROM {0} WHERE id = 1")]
-    [InlineData("SELECT name FROM {0} WHERE id = 1 OR id = 2")]
+    [InlineData("SELECT name FROM {0} WHERE id = 1 OR 1 = 1")]
     [InlineData("SELECT name FROM {0}")]
     public async Task UnprovenMutationShape_FailsClosed(string suffix)
     {
