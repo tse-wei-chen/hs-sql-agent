@@ -14,6 +14,93 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
     private const string Approval = "sqlserver2022-physical-source-m09-approval-v1";
 
     [Theory]
+    [InlineData(false, "in")]
+    [InlineData(false, "or")]
+    [InlineData(false, "mixed")]
+    [InlineData(true, "in")]
+    [InlineData(true, "or")]
+    [InlineData(true, "mixed")]
+    public async Task BoundedInOr_SourceRows_AreApprovedAndInsertedOnceWithRealIdentity(
+        bool selfSource, string predicateKind)
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var from = selfSource ? target : source;
+            var predicate = predicateKind switch
+            {
+                "in" => "id IN (1, 2)",
+                "or" => "id = 1 OR id = 2",
+                _ => " (id = 1 OR id = 2) AND name IN ('" +
+                    (selfSource ? "Alice', 'Bob'" : "Carol', 'Dave'") + ")"
+            };
+            var sql = $"INSERT INTO dbo.[{target}] (name) OUTPUT INSERTED.id, INSERTED.name " +
+                $"SELECT name FROM dbo.[{from}] WHERE {predicate}";
+            var plan = await CreatePlanAsync(provider, native, cs, target, from, sql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            Assert.Equal(selfSource ? 1 : 2, plan.SchemaSnapshot!.Tables.Count);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            var sourceNames = selfSource ? new[] { "Alice", "Bob" } : new[] { "Carol", "Dave" };
+            Assert.Equal(sourceNames, preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.All(preview.Rows, row => Assert.False(row.ContainsKey("id")));
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+            var committed = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(2, committed.AffectedRows);
+            Assert.Equal(sourceNames, committed.ReturnedRows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.Equal(new[] { 3, 4 }, committed.ReturnedRows.Select(x => Convert.ToInt32(x["id"])).OrderBy(x => x).ToArray());
+            Assert.Equal(4, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Fact]
+    public async Task BoundedInOr_SourceValueChangedAfterApproval_RejectsBothRowsWithoutOutput()
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) OUTPUT INSERTED.id " +
+                $"SELECT name FROM dbo.[{source}] WHERE id IN (1,2)");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            await ExecuteAsync(cs, $"UPDATE dbo.[{source}] SET name = 'Eve' WHERE id = 2");
+            var result = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.False(result.Committed);
+            Assert.Empty(result.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Fact]
+    public async Task BoundedInOr_ThreeMatchingSourceRows_AreDeniedAtPreview()
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            await ExecuteAsync(cs, $"INSERT INTO dbo.[{source}] (id, name) VALUES (3, 'Eve')");
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{source}] WHERE id IN (1,2,3)");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
