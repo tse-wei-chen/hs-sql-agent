@@ -243,13 +243,99 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         });
     }
 
+    [Fact]
+    public async Task CrossTableInsertSelect_ReturningTwoColumns_EmitsCommittedRowsAfterApprovedSourceRecheck()
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO other_users (id, name) VALUES (1, 'Carol')");
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 RETURNING id, name",
+                useVerifiedProfile: true);
+            Assert.True(plan.MutationCommand.ReturnsRows);
+            Assert.Equal(2, plan.SchemaSnapshot!.Tables.Count);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Carol", preview.Rows.Single()["name"]);
+            Assert.DoesNotContain(preview.Rows.Single().Keys,
+                column => string.Equals(column, "id", StringComparison.OrdinalIgnoreCase));
+
+            var committed = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            var returned = Assert.Single(committed.ReturnedRows);
+            Assert.Equal(3L, Convert.ToInt64(returned["id"]));
+            Assert.Equal("Carol", returned["name"]);
+            Assert.Equal(3, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Fact]
+    public async Task CrossTableReturning_SourceValueDrift_DoesNotLeakOrCommitReturnedRows()
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO other_users (id, name) VALUES (1, 'Carol')");
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 RETURNING id, name",
+                useVerifiedProfile: true);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(connectionString, "UPDATE other_users SET name = 'Mallory' WHERE id = 1");
+            var rejected = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.False(rejected.Committed);
+            Assert.Equal(0, rejected.AffectedRows);
+            Assert.Empty(rejected.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
+        });
+    }
+
+    [Theory]
+    [InlineData("RETURNING *")]
+    [InlineData("RETURNING upper(name)")]
+    [InlineData("RETURNING id, id")]
+    public async Task CrossTableInsertSelect_NonDirectOrDuplicatedReturning_FailsClosed(string returning)
+    {
+        await WithDatabaseAsync(async (connectionString, _) =>
+        {
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAnyAsync<Exception>(() => CreatePlanAsync(
+                provider, snapshot, connectionString,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 " + returning,
+                useVerifiedProfile: true));
+            Assert.Equal(2, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
+        });
+    }
+
     private static async Task<ValidatedDmlPlan> CreatePlanAsync(
         SqliteProvider provider, NativeDmlSchemaSnapshotService snapshot,
-        string connectionString, string sql)
+        string connectionString, string sql, bool useVerifiedProfile = false)
     {
-        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite);
         await using var connection = provider.Connections.Create(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
+        var profile = useVerifiedProfile
+            ? RuntimeServerProfileVerifier.Capture(SqlAgentToolType.Sqlite, connection).TargetProfile
+            : null;
+        var parsed = profile is null
+            ? CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite)
+            : CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Sqlite, profile);
         var schema = await snapshot.CaptureAsync(
             connection, SqlAgentToolType.Sqlite, parsed, TestContext.Current.CancellationToken);
         Assert.NotNull(schema);
@@ -259,7 +345,8 @@ public sealed class DmlSqliteInsertSelectApprovalTests
             .WithSchemaSnapshot(schema);
         return await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
             connection, connectionString, parsed, SqlAgentToolType.Sqlite, context,
-            maxAffectedRows: 2, cancellationToken: TestContext.Current.CancellationToken);
+            maxAffectedRows: 2, cancellationToken: TestContext.Current.CancellationToken,
+            targetProfile: profile);
     }
 
     private static async Task WithDatabaseAsync(Func<string, string, Task> test)
