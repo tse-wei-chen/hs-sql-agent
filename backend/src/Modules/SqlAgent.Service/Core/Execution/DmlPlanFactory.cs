@@ -366,11 +366,11 @@ public sealed class DmlPlanFactory(
         {
             // PostgreSQL quoted identifiers are case-sensitive; SQLite physical
             // table identity is case-insensitive. Do not coalesce two PG tables.
-            var physicalComparison = targetProvider == SqlAgentToolType.Postgres
+            var physicalComparison = targetProvider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
                 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null || snapshot.Provider != targetProvider
-                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
+                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)
                 || snapshot.Tables.Count is < 1 or > 2
                 || !string.Equals(snapshot.Tables[0].Name,
                     targetResolution.QualifiedTableName, physicalComparison)
@@ -381,6 +381,9 @@ public sealed class DmlPlanFactory(
                           && !snapshot.Version.StartsWith(
                               "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                     : snapshot.Tables.Count != 2
+                      || (targetProvider == SqlAgentToolType.MySQL
+                          && !snapshot.Version.StartsWith(
+                              "native-mysql84-dual-source-v1:", StringComparison.Ordinal))
                       || !string.Equals(snapshot.Tables[1].Name, selection.PhysicalSource,
                           physicalComparison)))
                 throw new InvalidOperationException(

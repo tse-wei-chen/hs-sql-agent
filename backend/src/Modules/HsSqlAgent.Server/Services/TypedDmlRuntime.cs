@@ -96,7 +96,7 @@ public sealed class TypedDmlRuntime(
         EnsureSupportedStatement(parsedMutation.Statement);
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
             && (parsedMutation.SourceDialect != provider.Type
-                || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)))
+                || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)))
             throw new NotSupportedException(
                 "INSERT SELECT source-row approval requires native SQLite or PostgreSQL only.");
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert)
@@ -107,7 +107,7 @@ public sealed class TypedDmlRuntime(
                 sourceInsert, parsedMutation.SourceDialect, provider.Type, policy.DmlMaxAffectedRows);
             if (allowedTables is not null
                 && !allowedTables.Any(table => string.Equals(table, sourceShape.PhysicalSource,
-                    provider.Type == SqlAgentToolType.Postgres
+                    provider.Type is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
                         ? StringComparison.Ordinal
                         : StringComparison.OrdinalIgnoreCase)))
                 throw new UnauthorizedAccessException(
@@ -495,7 +495,8 @@ public sealed class TypedDmlRuntime(
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
         || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
             && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
-                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres));
+                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres)
+                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.MySQL));
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {

@@ -71,7 +71,10 @@ public sealed class DmlCoordinator(
         await using var transaction = await _previewTransactionFactory.BeginAsync(
             connection,
             matchCommand.TargetProvider,
-            _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
+            plan.ApprovalMode == DmlApprovalMode.InsertSelect
+                && matchCommand.TargetProvider == SqlAgentToolType.MySQL
+                ? IsolationLevel.Serializable
+                : _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
             cancellationToken);
 
         if (plan.ApprovalMode == DmlApprovalMode.InsertSelect)
@@ -564,14 +567,14 @@ public sealed class DmlCoordinator(
                 return;
 
             case DmlApprovalMode.InsertSelect:
-                var physicalComparison = plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                var physicalComparison = plan.MutationCommand.TargetProvider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
                     ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
                 if (plan.Operation != DmlOperation.Insert
-                    || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
+                    || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)
                     || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
                     || plan.MaxAffectedRows <= 0 || plan.MaxAffectedRows == int.MaxValue
                     || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres } match
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL } match
                     || match.TargetProvider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot is null
                     || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
@@ -589,6 +592,9 @@ public sealed class DmlCoordinator(
                               && !plan.SchemaSnapshot.Version.StartsWith(
                                   "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                         : plan.SchemaSnapshot.Tables.Count != 2
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MySQL
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-mysql84-dual-source-v1:", StringComparison.Ordinal))
                           || !string.Equals(plan.SchemaSnapshot.Tables[1].Name,
                               sourceProof.PhysicalSource, physicalComparison))
                     || !string.Equals(sourceProof.SchemaSha256, plan.SchemaSnapshot.Sha256,

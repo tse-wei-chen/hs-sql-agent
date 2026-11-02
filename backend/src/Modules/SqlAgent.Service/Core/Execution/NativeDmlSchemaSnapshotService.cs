@@ -49,7 +49,7 @@ public sealed class NativeDmlSchemaSnapshotService :
                 "Native DML schema proofs require identical source and target providers.");
 
         var sourceTable = parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert
-            && targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres
+            && targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
             ? NativeInsertSelectSafety.RequireShape(
                 sourceInsert, targetProvider, targetProvider, int.MaxValue - 1).PhysicalSource
             : null;
@@ -60,7 +60,7 @@ public sealed class NativeDmlSchemaSnapshotService :
             // The bounded INSERT SELECT attests each physical main source
             // independently; arbitrary sources never enter this path.
             InsertStatement { Source: InsertQuerySource } insert
-                when targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres =>
+                when targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL =>
                 VerifyBoundedInsertSource(insert, targetProvider),
             UpdateStatement update when update.From.IsDefaultOrEmpty
                 && update.FromSources.IsDefaultOrEmpty => update.Target,
@@ -105,6 +105,28 @@ public sealed class NativeDmlSchemaSnapshotService :
                     StringComparison.OrdinalIgnoreCase)) return null;
             var sourceProof = await WithSqliteDdlProofAsync(
                 connection, transaction: null, sourceBase, sourceName, cancellationToken);
+            return sourceProof is null ? null : CombineNativeSourceTarget(targetProof, sourceProof);
+        }
+        if (targetProvider == SqlAgentToolType.MySQL && sourceTable is not null)
+        {
+            // First MySQL slice is two different real InnoDB base tables.
+            // Both table DDLs are physical and captured independently.
+            if (string.Equals(sourceTable, snapshot.Tables[0].Name, StringComparison.Ordinal))
+                return null;
+            var targetProof = await MySqlInsertSelectCatalogProof.ExtendAsync(
+                connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
+            if (targetProof is null) return null;
+            var sourceNames = sourceTable.Split('.');
+            if (sourceNames.Length != 2) return null;
+            var sourceMatches = await readers.Preview.GetDmlPlanningMetadataAsync(
+                connection, sourceNames[0], sourceNames[1], includeColumns: true,
+                cancellationToken: cancellationToken);
+            var sourceBase = BuildSnapshot(targetProvider, sourceMatches);
+            if (sourceBase is null || !string.Equals(sourceBase.Tables[0].Name,
+                    sourceTable, StringComparison.Ordinal)) return null;
+            var sourceProof = await MySqlInsertSelectCatalogProof.ExtendAsync(
+                connection, null, sourceBase, sourceMatches[0].Schema,
+                sourceMatches[0].Table, cancellationToken);
             return sourceProof is null ? null : CombineNativeSourceTarget(targetProof, sourceProof);
         }
         if (targetProvider == SqlAgentToolType.Postgres && sourceTable is not null)
@@ -165,6 +187,51 @@ public sealed class NativeDmlSchemaSnapshotService :
             throw new InvalidOperationException(
                 "Schema freshness transaction does not belong to its database connection.");
         if (expectedSnapshot.Provider != provider) return null;
+        if (provider == SqlAgentToolType.MySQL && expectedSnapshot.Tables.Count == 2)
+        {
+            // Strict SERIALIZABLE is essential: InnoDB turns plain SELECT into
+            // locking reads, including next-key locks on the selected range.
+            // NEVER use LOCK TABLES here; that would implicitly commit DML.
+            if (transaction.IsolationLevel != System.Data.IsolationLevel.Serializable
+                || !expectedSnapshot.Version.StartsWith(
+                    "native-mysql84-dual-source-v1:", StringComparison.Ordinal))
+                return null;
+            var sourceName = expectedSnapshot.Tables[1].Name;
+            var targetName = expectedSnapshot.Tables[0].Name;
+            var sourceParts = sourceName.Split('.');
+            var targetParts = targetName.Split('.');
+            if (sourceParts.Length != 2 || targetParts.Length != 2
+                || !string.Equals(sourceParts[0], targetParts[0], StringComparison.Ordinal)
+                || string.Equals(sourceName, targetName, StringComparison.Ordinal)
+                || sourceParts.Any(string.IsNullOrWhiteSpace)
+                || targetParts.Any(string.IsNullOrWhiteSpace))
+                return null;
+
+            // A table reference acquires MDL retained by this transaction.
+            // Order SOURCE before TARGET, before any metadata or row recheck;
+            // serializable SELECT also locks source records/gaps.
+            await PinMySqlSchemaAsync(
+                connection, transaction, sourceParts[0], sourceParts[1], cancellationToken);
+            await PinMySqlSchemaAsync(
+                connection, transaction, targetParts[0], targetParts[1], cancellationToken);
+
+            var verified = new List<SqlSchemaSnapshot>(2);
+            foreach (var current in expectedSnapshot.Tables)
+            {
+                var names = current.Name.Split('.');
+                var matches = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
+                    connection, transaction, names[0], names[1], includeColumns: true,
+                    cancellationToken: cancellationToken);
+                var basic = BuildSnapshot(provider, matches);
+                if (basic is null || !string.Equals(basic.Tables[0].Name,
+                        current.Name, StringComparison.Ordinal)) return null;
+                var definition = await MySqlInsertSelectCatalogProof.ExtendAsync(
+                    connection, transaction, basic, names[0], names[1], cancellationToken);
+                if (definition is null) return null;
+                verified.Add(definition);
+            }
+            return CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
+        }
         if (provider == SqlAgentToolType.Postgres
             && expectedSnapshot.Tables.Count == 1
             && expectedSnapshot.Version.StartsWith(
@@ -561,10 +628,10 @@ public sealed class NativeDmlSchemaSnapshotService :
         SqlSchemaSnapshot target, SqlSchemaSnapshot source)
     {
         if (target.Provider != source.Provider
-            || target.Provider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
+            || target.Provider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)
             || target.Tables.Count != 1 || source.Tables.Count != 1
             || string.Equals(target.Tables[0].Name, source.Tables[0].Name,
-                target.Provider == SqlAgentToolType.Postgres
+                target.Provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
                     ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)) return null;
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         static void Append(IncrementalHash digest, string value)
@@ -573,16 +640,22 @@ public sealed class NativeDmlSchemaSnapshotService :
             digest.AppendData(BitConverter.GetBytes(bytes.Length));
             digest.AppendData(bytes);
         }
-        Append(hash, target.Provider == SqlAgentToolType.Sqlite
-            ? "native-sqlite-insert-select-dual-ddl-v1"
-            : "native-postgres-insert-select-dual-catalog-v1");
+        Append(hash, target.Provider switch
+        {
+            SqlAgentToolType.Sqlite => "native-sqlite-insert-select-dual-ddl-v1",
+            SqlAgentToolType.Postgres => "native-postgres-insert-select-dual-catalog-v1",
+            _ => "native-mysql84-innodb-insert-select-dual-catalog-v1"
+        });
         Append(hash, target.Tables[0].Name);
         Append(hash, target.Sha256);
         Append(hash, source.Tables[0].Name);
         Append(hash, source.Sha256);
-        var version = (target.Provider == SqlAgentToolType.Sqlite
-            ? "native-sqlite-dual-source-v1:"
-            : "native-postgres-dual-source-v1:") +
+        var version = (target.Provider switch
+        {
+            SqlAgentToolType.Sqlite => "native-sqlite-dual-source-v1:",
+            SqlAgentToolType.Postgres => "native-postgres-dual-source-v1:",
+            _ => "native-mysql84-dual-source-v1:"
+        }) +
             Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
         return new SqlSchemaSnapshot(target.Provider,
             version, [target.Tables[0], source.Tables[0]]);
