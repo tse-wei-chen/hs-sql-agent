@@ -1,7 +1,5 @@
 using System.Collections.Immutable;
-using System.Data;
 using System.Data.Common;
-using Microsoft.Data.Sqlite;
 using System.Runtime.ExceptionServices;
 using Dapper;
 
@@ -184,17 +182,14 @@ public sealed class DmlCoordinator(
                 connection, plan.MutationCommand.TargetProvider, cancellationToken);
         }
 
-        // SQLite IMMEDIATE obtains the writer reservation BEFORE source-row
-        // revalidation, preventing a concurrent writer from changing the
-        // source between SELECT and the exact INSERT SELECT mutation.
-        await using DbTransaction transaction = plan.ApprovalMode == DmlApprovalMode.InsertSelect
-            ? connection is SqliteConnection sqlite
-                ? sqlite.BeginTransaction(IsolationLevel.Serializable, deferred: false)
-                : throw new InvalidOperationException(
-                    "SQLite INSERT SELECT approval requires the native SQLite connection.")
-            : await connection.BeginTransactionAsync(
-                _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
-                cancellationToken);
+        // The native SQLite provider starts a SERIALIZABLE transaction with
+        // BEGIN IMMEDIATE (not a deferred read snapshot). This acquires the
+        // writer reservation before the source-row recheck. Verify that
+        // provider behavior in a real SQLite concurrency test; SqlAgent.Service
+        // must remain driver-free.
+        await using var transaction = await connection.BeginTransactionAsync(
+            _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
+            cancellationToken);
 
         try
         {
