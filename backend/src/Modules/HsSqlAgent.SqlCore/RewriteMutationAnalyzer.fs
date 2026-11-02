@@ -421,6 +421,21 @@ module internal RewriteMutationSourceMatchProof =
                                || head.DistinctMode <> SelectDistinct.AllRows
                                || query.FetchWithTies then None
                             else head.From |> Option.bind cteSource
+                        // EXISTS/NOT EXISTS are row filters, not row
+                        // sources: their Boolean result can remove rows but
+                        // can never multiply the original UNIQUE identity.
+                        // This static fact is not an execution permission;
+                        // F# admission and Host separately verify the exact
+                        // full-key physical correlation and bounded grammar.
+                        let isSemiAntiFilter (value: Expr option) =
+                            match value |> Option.map Expr.unspan with
+                            | None -> true
+                            | Some(Exists _) -> true
+                            | Some(Unary(UnaryOperator.Not, nested)) ->
+                                match Expr.unspan nested with
+                                | Exists _ -> true
+                                | _ -> false
+                            | _ -> false
                         // Strict M06 three-node diamond: two direct CTE
                         // projections of the SAME physical table join by a
                         // complete ordered UNIQUE pair, preserving the left
@@ -431,8 +446,8 @@ module internal RewriteMutationSourceMatchProof =
                             | [first; second; final] when final.Name.Value = cte.Name.Value
                                 && not first.RecursiveScope
                                 && not second.RecursiveScope
-                                && first.Query.Head.Where.IsNone
-                                && second.Query.Head.Where.IsNone
+                                && isSemiAntiFilter first.Query.Head.Where
+                                && isSemiAntiFilter second.Query.Head.Where
                                 && first.Query.Head.Joins.IsEmpty
                                 && second.Query.Head.Joins.IsEmpty
                                 && cte.ColumnAliases.IsEmpty
