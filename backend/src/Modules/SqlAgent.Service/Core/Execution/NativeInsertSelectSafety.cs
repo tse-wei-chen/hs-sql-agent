@@ -110,7 +110,7 @@ internal static class NativeInsertSelectSafety
 
         if (!HasBoundedSourcePredicate(head.Where))
             throw new NotSupportedException(
-                "Bounded native INSERT SELECT requires one to four AND-only direct-column = non-null literal predicates.");
+                "Bounded native INSERT SELECT requires one to four direct-column =/IN non-null literal comparisons joined by bounded AND/OR.");
 
         if (insert.Columns.IsDefaultOrEmpty || insert.Columns.Length != head.Select.Length)
             throw new NotSupportedException(
@@ -134,8 +134,10 @@ internal static class NativeInsertSelectSafety
     }
 
     // Only the already-attested single table may supply the source rows.
-    // An iterative node budget prevents deep/malformed predicate trees from
-    // acquiring approval by escaping a recursive expression whitelist.
+    // Admission is structural: no SQL text matching, functions, expressions,
+    // NOT, subqueries or implicit arbitrary tautologies. Count each IN item
+    // as one comparison value, including when mixed with AND/OR equalities.
+    // Iterative Boolean-node and literal budgets reject deep or broad trees.
     private static bool HasBoundedSourcePredicate(SqlExpr? predicate)
     {
         if (predicate is null) return false;
@@ -149,11 +151,12 @@ internal static class NativeInsertSelectSafety
         {
             if (++nodes > maxNodes) return false;
             var current = pending.Pop();
-            if (current is BinaryExpr conjunction
-                && string.Equals(conjunction.Operator, "AND", StringComparison.OrdinalIgnoreCase))
+            if (current is BinaryExpr combination
+                && (string.Equals(combination.Operator, "AND", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(combination.Operator, "OR", StringComparison.OrdinalIgnoreCase)))
             {
-                pending.Push(conjunction.Right);
-                pending.Push(conjunction.Left);
+                pending.Push(combination.Right);
+                pending.Push(combination.Left);
             }
             else if (current is BinaryExpr equality
                 && string.Equals(equality.Operator, "=", StringComparison.Ordinal)
@@ -161,6 +164,15 @@ internal static class NativeInsertSelectSafety
                 && equality.Right is LiteralExpr { Value: not null })
             {
                 if (++terms > maxTerms) return false;
+            }
+            else if (current is InExpr { IsNegated: false } membership
+                && membership.Value is ColumnExpr { Name.Parts.Length: 1 }
+                && !membership.Items.IsDefaultOrEmpty)
+            {
+                if (membership.Items.Length > maxTerms - terms
+                    || membership.Items.Any(item => item is not LiteralExpr { Value: not null }))
+                    return false;
+                terms += membership.Items.Length;
             }
             else return false;
         }
