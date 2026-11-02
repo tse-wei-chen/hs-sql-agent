@@ -192,7 +192,7 @@ internal static class SqlServerCteLiveProofDiscovery
 
         if (target is null || target.Alias is not null
             || ctes.IsDefaultOrEmpty || ctes.Length > 3
-            || sources.Length != 1
+            || sources.Length is < 1 or > 2
             || !TryPhysicalTable(target.Name, out var targetTable)
             || sources[0] is not NamedTableSource cteReference
             || !TrySingleName(cteReference.Name, out var referencedName)
@@ -286,6 +286,80 @@ internal static class SqlServerCteLiveProofDiscovery
                     out joinedTable, out joinedKeys))
                     return false;
             }
+        }
+        // M08 is one additional physical DML FROM/USING relation, not a
+        // free cross-product. It must have its own enabled, unfiltered
+        // actual UNIQUE index; the source->second full key edges must
+        // be mandatory equalities in the same DML predicate.
+        if (sources.Length == 2)
+        {
+            if (joinedTable is not null || ctes[0].Query is not SelectStatement root
+                || root.Joins.Length != 0
+                || root.From is not NamedTableSource firstPhysical
+                || !TryPhysicalTable(firstPhysical.Name, out var rootTable)
+                || !Same(rootTable, sourceTable)
+                || sources[1] is not NamedTableSource second
+                || second.Alias is null || !SafeName(second.Alias.Value)
+                || Same(second.Alias.Value, cteQualifier)
+                || !TryPhysicalTable(second.Name, out var otherPhysical)
+                || Same(otherPhysical, sourceTable)
+                || Same(otherPhysical, targetTable))
+                return false;
+
+            var otherKeyTuple = new string?[ordered.Length];
+            var otherPredicate = new Stack<SqlExpr>();
+            if (predicate is not null) otherPredicate.Push(predicate);
+            var otherBudget = 256;
+            while (otherPredicate.Count != 0)
+            {
+                if (--otherBudget < 0) return false;
+                if (otherPredicate.Pop() is not BinaryExpr comparison) return false;
+                if (SameOperator(comparison.Operator, "AND"))
+                {
+                    otherPredicate.Push(comparison.Right);
+                    otherPredicate.Push(comparison.Left);
+                    continue;
+                }
+                if (!SameOperator(comparison.Operator, "=")) return false;
+                var accepted = false;
+                for (var ordinal = 0; ordinal < ordered.Length; ordinal++)
+                {
+                    var sourceName = ordered[ordinal].Source.OutputName;
+                    if ((IsCteKey(comparison.Left, cteQualifier, sourceName)
+                         && TryAliasKey(comparison.Right, second.Alias.Value, out var name))
+                        || (IsCteKey(comparison.Right, cteQualifier, sourceName)
+                            && TryAliasKey(comparison.Left, second.Alias.Value, out name)))
+                    {
+                        if (otherKeyTuple[ordinal] is not null) return false;
+                        otherKeyTuple[ordinal] = name;
+                        accepted = true;
+                    }
+                    if ((TryTargetKey(comparison.Left, targetTable, out var targetKey)
+                         && Same(targetKey, ordered[ordinal].Target)
+                         && IsCteKey(comparison.Right, cteQualifier, sourceName))
+                        || (TryTargetKey(comparison.Right, targetTable, out targetKey)
+                            && Same(targetKey, ordered[ordinal].Target)
+                            && IsCteKey(comparison.Left, cteQualifier, sourceName)))
+                        accepted = true;
+                }
+                if (!accepted)
+                {
+                    // The only additional M08 condition is a direct second-
+                    // source column compared with a literal; never execute
+                    // hidden subqueries, expressions or unrelated reads
+                    // under the attested two-source cardinality token.
+                    accepted = (TryAliasKey(comparison.Left, second.Alias.Value, out _)
+                                && comparison.Right is LiteralExpr)
+                               || (TryAliasKey(comparison.Right, second.Alias.Value, out _)
+                                   && comparison.Left is LiteralExpr);
+                }
+                if (!accepted) return false;
+            }
+            if (otherKeyTuple.Any(x => x is null)
+                || otherKeyTuple.Distinct(StringComparer.Ordinal).Count() != ordered.Length)
+                return false;
+            joinedTable = otherPhysical;
+            joinedKeys = otherKeyTuple.Select(x => x!).ToImmutableArray();
         }
         candidate = new Candidate(targetTable,
             ordered.Select(m => m.Target).ToImmutableArray(),

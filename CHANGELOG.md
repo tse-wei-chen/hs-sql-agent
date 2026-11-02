@@ -7,6 +7,31 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M08 — bounded SQL Server native multi-source DML (develop only)
+
+- SQL Server `WITH ... UPDATE ... FROM` and `WITH ... DELETE ... FROM`
+  now admit **two separate native DML FROM sources**: a direct
+  row-preserving CTE over a physically verified UNIQUE source, and
+  exactly one additional, different, physically UNIQUE table. The
+  complete 1–2 component original ordered key tuple must link
+  target→CTE and CTE→second source by mandatory ordinary `AND`
+  equalities. Each physical table has independent real enabled,
+  unfiltered UNIQUE-index metadata and exact type/collation proof.
+- Sealed F# execution admission proves both key equality sets.
+  Host independently derives the physical second key tuple and
+  uses the existing combined source+joined index assurance,
+  including same-transaction `IsCurrent` and immutable row-set
+  Preview→Approval. The independent static F# cardinality graph
+  remains unchanged and fails closed without proven catalog facts.
+- Real SQL Server UPDATE/DELETE integration tests verify one
+  actually affected row out of three through a second-source filter;
+  missing/swapped/computed/OR key comparisons, foreign second source,
+  absent joined proof and index drift remain rejected.
+- This is **not arbitrary multi-source UPDATE FROM/DELETE USING**,
+  nor new PostgreSQL/other-provider mutation permissions. No new
+  MCP tool, public API, driver, privilege or dependency. Four
+  read-only tools remain selected by default and DML remains off.
+
 ### G9 / M07 — correlated semi/anti filters inside physical CTE diamond (develop only)
 
 - Extend the bounded SQL Server three-CTE, same-physical-source, two-column
