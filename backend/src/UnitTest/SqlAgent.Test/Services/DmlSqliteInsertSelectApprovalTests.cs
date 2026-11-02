@@ -1,3 +1,4 @@
+using System.Data;
 using HsSqlAgent.Provider.Sqlite;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Pipeline;
@@ -84,6 +85,70 @@ public sealed class DmlSqliteInsertSelectApprovalTests
             await Assert.ThrowsAnyAsync<Exception>(() =>
                 CreatePlanAsync(provider, snapshot, connectionString, sql));
             Assert.Equal(2, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
+        });
+    }
+
+    [Fact]
+    public async Task NativeSqliteSerializableTransaction_ReservesWriterBeforeSourceRevalidation()
+    {
+        await WithDatabaseAsync(async (connectionString, _) =>
+        {
+            var provider = new SqliteProvider();
+            await using var first = provider.Connections.Create(connectionString);
+            await first.OpenAsync(TestContext.Current.CancellationToken);
+            await using var transaction = await first.BeginTransactionAsync(
+                IsolationLevel.Serializable, TestContext.Current.CancellationToken);
+
+            // A second writer cannot get between the source recheck and the
+            // approved INSERT when the provider begins an IMMEDIATE transaction.
+            await using var rival = new SqliteConnection(connectionString);
+            await rival.OpenAsync(TestContext.Current.CancellationToken);
+            await using var rivalWrite = rival.CreateCommand();
+            rivalWrite.CommandText = "UPDATE users SET name = 'hijack' WHERE id = 1";
+            rivalWrite.CommandTimeout = 1;
+            var denied = await Assert.ThrowsAsync<SqliteException>(() =>
+                rivalWrite.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(5, denied.SqliteErrorCode);
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(1, await ScalarAsync(connectionString,
+                "SELECT COUNT(*) FROM users WHERE name = 'Alice'"));
+        });
+    }
+
+    [Fact]
+    public async Task ForgedOrModifiedSourcePlan_CannotPassCoordinatorValidation()
+    {
+        await WithDatabaseAsync(async (connectionString, _) =>
+        {
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, InsertSql);
+
+            Assert.Throws<InvalidOperationException>(() => DmlCoordinator.ValidatePlan(
+                plan with { SqliteInsertSelectProof = null }));
+            Assert.Throws<InvalidOperationException>(() => DmlCoordinator.ValidatePlan(
+                plan with { RowIdentityColumns = ["name", "id"] }));
+            Assert.Throws<InvalidOperationException>(() => DmlCoordinator.ValidatePlan(
+                plan with { MaxAffectedRows = 0 }));
+        });
+    }
+
+    [Fact]
+    public async Task ExcessSourceRows_RefusesApprovalBeforeAnyInsert()
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO users (id, name) VALUES (3, 'Alice'), (4, 'Alice')");
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(
+                provider, snapshot, connectionString,
+                "INSERT INTO main.users (name) SELECT name FROM main.users WHERE name = 'Alice'");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(4, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
         });
     }
 
