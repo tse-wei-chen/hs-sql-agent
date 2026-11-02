@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — SQL Server 2022 physical INSERT SELECT source-row approval (develop only)
+
+- Enable single-statement bounded `INSERT INTO dbo.target(name) SELECT name FROM dbo.source
+  WHERE id = 1` only between **two distinct permanent physical SQL Server 2022
+  base tables**, using the existing F# native compiler, strict source-read and
+  target-write grants, one-time DML approval and complete projected source-row proof.
+- The SQL Server Host now attests real physical server/database/object identity,
+  creation and modification timestamps, columns, ordered indexes and key
+  constraints. `VIEW DEFINITION` is required; user triggers, foreign keys,
+  defaults, check constraints, row-level security, temporal/ledger/graph tables,
+  computed or hidden columns and unprovable catalog state fail closed.
+- Commit uses SERIALIZABLE and stable-order, transaction-held **TABLOCKX/HOLDLOCK**
+  on both source and target before any live schema/catalog recheck, then checks
+  the exact approved source multiset immediately before native INSERT. This
+  strict opt-in proof can block concurrent writes. Schema/source drift, stale
+  challenge or lock conflicts deny or roll back without writing.
+- Self-source INSERT SELECT, SQL Server OUTPUT, CTEs, JOINs, UPSERT, computed
+  projections, unbounded predicates and other unproven providers remain denied.
+  Real SQL Server integration cases are routed to the pre-existing
+  `sqlagent-fence-sqlserver` CI job. No new MCP tool, public SqlCore API or
+  provider driver. Four default read-only tools, DML disabled.
+
 ### G9 / M09 — Bounded conjunctive native INSERT SELECT source predicates (develop only)
 
 - Allow one to four direct `column = non-NULL literal` source predicates joined
