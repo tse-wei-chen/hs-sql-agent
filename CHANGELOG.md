@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — SQL Server 2022 single-physical-table INSERT SELECT (develop only)
+
+- Extend existing bounded SQL Server 2022 native `INSERT SELECT` source-row approval
+  to **one ordinary permanent dbo table used as both source and target**.
+  Neither the plan nor its schema snapshot can invent a second physical
+  entity; a single native ObjectID/definition digest is shared throughout.
+- The commit path obtains **one transaction-held TABLOCKX/HOLDLOCK lock** in
+  SERIALIZABLE isolation before live catalog reads, then reattests the one
+  real table and the complete approved source-row multiset before one native
+  insert. Actual row-count parity and one-time approval remain mandatory.
+- Real SQL Server tests cover successful generated-ID self-insert/replay denial,
+  changed source rows, index drift, same-DDL physical table recreation,
+  competing source writer, excessive source rows and unsupported shapes.
+  No new Parser/Renderer, MCP tool, provider driver or public SqlCore API;
+  other Providers and SQL Server two-table paths are unchanged.
+  Strict privileges remain SELECT/INSERT/VIEW DEFINITION on the same table.
+
 ### G9/M09 — SQL Server 2022 physical INSERT SELECT source-row approval (develop only)
 
 - Enable single-statement bounded `INSERT INTO dbo.target(name) SELECT name FROM dbo.source

@@ -377,6 +377,9 @@ public sealed class DmlPlanFactory(
                 || (string.Equals(selection.PhysicalSource,
                         targetResolution.QualifiedTableName, physicalComparison)
                     ? snapshot.Tables.Count != 1
+                      || (targetProvider == SqlAgentToolType.MsSqlServer
+                          && !snapshot.Version.StartsWith(
+                              "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal))
                       || (targetProvider == SqlAgentToolType.Postgres
                           && !snapshot.Version.StartsWith(
                               "native-postgres-insert-source-v1:", StringComparison.Ordinal))
