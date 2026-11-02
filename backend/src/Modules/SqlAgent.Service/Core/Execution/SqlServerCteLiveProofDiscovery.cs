@@ -196,8 +196,9 @@ internal static class SqlServerCteLiveProofDiscovery
             || !TryPhysicalTable(target.Name, out var targetTable)
             || sources[0] is not NamedTableSource cteReference
             || !TrySingleName(cteReference.Name, out var referencedName)
-            || !TryBuildDirectProjectionChain(
-                ctes, out var cteName, out var outputs, out var sourceTable)
+            || !TryBuildCteLineage(
+                ctes, out var cteName, out var outputs, out var sourceTable,
+                out var isDiamond)
             || !Same(cteName, referencedName)
             || Same(targetTable, sourceTable))
             return false;
@@ -242,6 +243,9 @@ internal static class SqlServerCteLiveProofDiscovery
         // attested tuple; sys.index_columns.key_ordinal verifies that exact
         // order. Payload positions do not become index components.
         var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
+        // A diamond must correlate both source key components to the
+        // physical target. The live index proof establishes their identity.
+        if (isDiamond && ordered.Length != 2) return false;
         // The Host's initial shape check cannot choose the key tuple.
         // Once the actual outer target equality establishes its ordered
         // components, independently require the correlated EXISTS filter
@@ -366,6 +370,146 @@ internal static class SqlServerCteLiveProofDiscovery
         }
         outputs = results.MoveToImmutable();
         return !outputs.IsDefaultOrEmpty;
+    }
+
+    // A real three-node CTE DAG (two physical source branches converging
+    // through an INNER JOIN) is separate from the historical linear chain.
+    // The Host only discovers candidate physical lineage; the F# admission
+    // gate and live sys.index_columns proof remain independent authorities.
+    private static bool TryBuildCteLineage(
+        ImmutableArray<CteDefinition> ctes,
+        out string finalCte, out ImmutableArray<ProjectionLineage> outputs,
+        out string physicalTable, out bool isDiamond)
+    {
+        isDiamond = false;
+        if (TryBuildDirectProjectionChain(ctes, out finalCte, out outputs,
+            out physicalTable)) return true;
+        isDiamond = TryBuildDiamond(ctes, out finalCte, out outputs,
+            out physicalTable);
+        return isDiamond;
+    }
+
+    private static bool TryBuildDiamond(
+        ImmutableArray<CteDefinition> ctes,
+        out string finalCte, out ImmutableArray<ProjectionLineage> outputs,
+        out string physicalTable)
+    {
+        finalCte = physicalTable = "";
+        outputs = ImmutableArray<ProjectionLineage>.Empty;
+        if (ctes.Length != 3 || !TrySingleName(ctes[2].Name, out finalCte)
+            || !TrySingleName(ctes[0].Name, out var lhsCte)
+            || !TrySingleName(ctes[1].Name, out var rhsCte)
+            || Same(lhsCte, rhsCte) || Same(lhsCte, finalCte)
+            || Same(rhsCte, finalCte) || ctes.Any(c => c.RecursiveScope))
+            return false;
+
+        bool Branch(CteDefinition cte, out string physical,
+            out ImmutableArray<ProjectionLineage> fields)
+        {
+            physical = "";
+            fields = ImmutableArray<ProjectionLineage>.Empty;
+            if (cte.Query is not SelectStatement q
+                || q.From is not NamedTableSource table
+                || !cte.ColumnAliases.IsDefaultOrEmpty
+                || q.Ctes.Length != 0 || q.Joins.Length != 0
+                || q.Where is not null || q.Distinct || q.DistinctOn.Length != 0
+                || q.GroupBy.Length != 0 || q.Having is not null
+                || q.OrderBy.Length != 0 || q.Limit.HasValue
+                || q.Offset.HasValue || q.FetchPercent.HasValue
+                || q.FetchWithTies || q.Select.Length != 2
+                || !TryPhysicalTable(table.Name, out physical)) return false;
+            var builder = ImmutableArray.CreateBuilder<ProjectionLineage>(2);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            var sourceFields = new HashSet<string>(StringComparer.Ordinal);
+            for (var i = 0; i < 2; i++)
+            {
+                var item = q.Select[i];
+                if (item.Expression is not ColumnExpr column
+                    || !TryPhysicalKey(column.Name, table, out var field))
+                    return false;
+                var name = item.Alias?.Value ?? field;
+                if (!SafeName(name) || !names.Add(name)
+                    || !sourceFields.Add(field)) return false;
+                builder.Add(new ProjectionLineage(name, field, i));
+            }
+            fields = builder.MoveToImmutable();
+            return true;
+        }
+
+        if (!Branch(ctes[0], out physicalTable, out var lhs)
+            || !Branch(ctes[1], out var otherTable, out var rhs)
+            || !Same(physicalTable, otherTable)
+            || lhs.Length != 2 || rhs.Length != 2
+            || !Same(lhs[0].PhysicalColumn, rhs[0].PhysicalColumn)
+            || !Same(lhs[1].PhysicalColumn, rhs[1].PhysicalColumn)
+            || ctes[2].Query is not SelectStatement merge
+            || !ctes[2].ColumnAliases.IsDefaultOrEmpty
+            || merge.Ctes.Length != 0
+            || merge.From is not NamedTableSource left
+            || left.Alias is null || !SafeName(left.Alias.Value)
+            || !TrySingleName(left.Name, out var leftCte) || !Same(leftCte, lhsCte)
+            || merge.Joins.Length != 1 || merge.Joins[0] is not var join
+            || join.IsNatural || !join.UsingColumns.IsDefaultOrEmpty
+            || !SameOperator(join.Kind, "INNER") || join.Predicate is null
+            || join.Source is not NamedTableSource right
+            || right.Alias is null || !SafeName(right.Alias.Value)
+            || Same(left.Alias.Value, right.Alias.Value)
+            || !TrySingleName(right.Name, out var rightCte) || !Same(rightCte, rhsCte)
+            || merge.Where is not null || merge.Distinct
+            || merge.DistinctOn.Length != 0 || merge.GroupBy.Length != 0
+            || merge.Having is not null || merge.OrderBy.Length != 0
+            || merge.Limit.HasValue || merge.Offset.HasValue
+            || merge.FetchPercent.HasValue || merge.FetchWithTies
+            || merge.Select.Length != 2)
+            return false;
+
+        // Only exactly two ordinary equalities, one for each ORIGINAL
+        // physical key position, may make the right branch nonmultiplying.
+        var comparisons = new Stack<SqlExpr>();
+        comparisons.Push(join.Predicate);
+        var seen = new HashSet<int>();
+        while (comparisons.Count > 0)
+        {
+            if (seen.Count > 2 || comparisons.Count > 4) return false;
+            if (comparisons.Pop() is not BinaryExpr comparison) return false;
+            if (SameOperator(comparison.Operator, "AND"))
+            {
+                comparisons.Push(comparison.Left);
+                comparisons.Push(comparison.Right);
+                continue;
+            }
+            if (!SameOperator(comparison.Operator, "=")) return false;
+            var matched = false;
+            for (var i = 0; i < 2; i++)
+            {
+                if ((IsCteKey(comparison.Left, left.Alias.Value, lhs[i].OutputName)
+                     && IsCteKey(comparison.Right, right.Alias.Value, rhs[i].OutputName))
+                    || (IsCteKey(comparison.Right, left.Alias.Value, lhs[i].OutputName)
+                        && IsCteKey(comparison.Left, right.Alias.Value, rhs[i].OutputName)))
+                {
+                    if (!seen.Add(i)) return false;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) return false;
+        }
+        if (seen.Count != 2) return false;
+
+        var projected = ImmutableArray.CreateBuilder<ProjectionLineage>(2);
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < 2; i++)
+        {
+            var item = merge.Select[i];
+            if (item.Expression is not ColumnExpr col
+                || !TrySelectedKey(col.Name, lhs[i].OutputName, left.Alias.Value))
+                return false;
+            var alias = item.Alias?.Value ?? lhs[i].OutputName;
+            if (!SafeName(alias) || !used.Add(alias)) return false;
+            projected.Add(new ProjectionLineage(alias, lhs[i].PhysicalColumn, i));
+        }
+        outputs = projected.MoveToImmutable();
+        return true;
     }
 
     private static bool TryBuildDirectProjectionChain(
