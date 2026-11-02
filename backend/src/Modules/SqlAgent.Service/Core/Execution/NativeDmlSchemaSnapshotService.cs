@@ -219,10 +219,10 @@ public sealed class NativeDmlSchemaSnapshotService :
             foreach (var current in expectedSnapshot.Tables)
             {
                 var names = current.Name.Split('.');
-                var matches = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
+                var mysqlSourceMetadata = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
                     connection, transaction, names[0], names[1], includeColumns: true,
                     cancellationToken: cancellationToken);
-                var basic = BuildSnapshot(provider, matches);
+                var basic = BuildSnapshot(provider, mysqlSourceMetadata);
                 if (basic is null || !string.Equals(basic.Tables[0].Name,
                         current.Name, StringComparison.Ordinal)) return null;
                 var definition = await MySqlInsertSelectCatalogProof.ExtendAsync(
