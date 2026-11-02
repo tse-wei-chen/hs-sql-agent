@@ -1034,13 +1034,22 @@ jobs:
       - name: Verify real SQL Server DML fencing and DDL Catalog differential parity
         # Dedicated service job to keep the regular SQL test shards lightweight.
         # Missing/unready SQL Server is a hard failure in CI, never a skip.
-        # The same live SQL Server 2022 instance is used by both test classes.
+        # The same live SQL Server 2022 instance is reused by ordered steps.
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
-          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests|FullyQualifiedName~SqlCoreSqlServerCompositeCteLiveProofTests|FullyQualifiedName~DmlSqlServerInsertSelectApprovalTests|FullyQualifiedName~SqlCoreBoundedExactNumericLiveParityTests'
+          --filter 'FullyQualifiedName~DmlTargetFenceSqlServerIntegrationTests|FullyQualifiedName~SqlCoreSqlServerLiveDdlParityTests|FullyQualifiedName~SqlCoreSqlServerApplyLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithMutationCteLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithInsertSelectLiveParityTests|FullyQualifiedName~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests|FullyQualifiedName~SqlCoreSqlServerLiveUniqueKeyAttestationTests|FullyQualifiedName~SqlCoreSqlServerCompositeCteLiveProofTests|FullyQualifiedName~SqlCoreBoundedExactNumericLiveParityTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
           SQLCORE_EXACT_NUMERIC_LIVE_PROVIDER: MsSqlServer
+      - name: Verify bounded SQL Server INSERT SELECT source-row approval against live physical tables
+        # These transactional TABLOCKX/HOLDLOCK tests must not race unrelated
+        # sys-catalog DDL fixtures running in parallel within the same DB.
+        # Keep ALL cases; isolate only this class, in the existing SQL Server job.
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~DmlSqlServerInsertSelectApprovalTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
   sqlagent-firebird-ddl-parity:
     runs-on: ubuntu-latest
