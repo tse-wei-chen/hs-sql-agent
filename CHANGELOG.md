@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — SQLite bounded INSERT SELECT in ordered atomic DML approval (develop only)
+
+- Reuse the **existing** 2–16-statement typed atomic DML transaction
+  and one-time aggregate approval; admit **exactly one** SQLite native
+  physical-source `INSERT SELECT` alongside ordinary INSERT VALUES,
+  UPDATE or DELETE statements. No `execute_dml_sql_batch` tool, driver,
+  parser, second transaction coordinator or public API is introduced.
+- Require the built-in **live SQLite physical Catalog snapshot source and
+  verifier**, the existing sealed `NativeInsertSelectProof`, independently
+  authorized source and target tables, bounded direct SELECT shape, positive
+  finite row cap, strict per-child fingerprint, and aggregate row-count policy.
+  Multi-source-select batches and cross-provider batches remain denied.
+- The entire batch uses **one SQLite SERIALIZABLE write transaction**:
+  re-attest schema and compare each child source's **full projected row
+  multiset immediately before that child**, including earlier statements'
+  effects. A stale/widened source row set, primary-key conflict, or failed
+  child triggers full rollback; the failed batch exposes no generated target
+  rows. Actual `RETURNING` IDs become visible **only after all children
+  commit**. One-time aggregate challenge replay still fails.
+- Real filesystem SQLite integration exercises successful mixed batch,
+  post-commit generated row images, aggregate replay denial, source drift,
+  earlier-child source widening, second-statement unique-key failure and
+  aggregate row-cap rejection. Unsupported provider, multiple source inserts,
+  single-statement batch and unverified source metadata are rejected before
+  connecting to the database.
+- Four read-only tools remain selected by default; DML remains disabled.
+
 ### G9/M09 — bounded native BETWEEN for four physical INSERT SELECT sources (develop only)
 
 - Four already-attested native provider source predicates (SQLite, PostgreSQL,
