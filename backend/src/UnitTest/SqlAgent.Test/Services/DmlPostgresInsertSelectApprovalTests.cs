@@ -14,6 +14,46 @@ public sealed class DmlPostgresInsertSelectApprovalTests
     private const string Approval = "postgres-insert-select-source-row-approval-v1";
 
     [Fact]
+    public async Task DistinctSource_TwoDirectEqualityTerms_ApprovesRowAndReturnsNativeInsertResult()
+    {
+        await WithTablesAsync(async (connectionString, schema, version) =>
+        {
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.source_users " +
+                "WHERE id = 1 AND name = 'Carol' RETURNING id, name";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, sql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Carol", Assert.Single(preview.Rows)["name"]);
+            var committed = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            Assert.Equal("Carol", Assert.Single(committed.ReturnedRows)["name"]);
+            Assert.Equal(3, await ScalarAsync(connectionString, $"SELECT COUNT(*) FROM {schema}.users"));
+        });
+    }
+
+    [Fact]
+    public void DistinctSource_FiveEqualityTerms_RejectsAtHostShapeGate()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO public.users (name) SELECT name FROM public.source_users " +
+            "WHERE id = 1 AND name = 'Carol' AND id = 1 AND name = 'Carol' AND id = 1",
+            SqlAgentToolType.Postgres);
+        var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+        var rejection = Assert.Throws<NotSupportedException>(
+            () => NativeInsertSelectSafety.RequireShape(
+                insert, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, maxAffectedRows: 2));
+        Assert.Contains("four", rejection.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task DifferentPhysicalTables_PreviewApprovesSourceAndCommitReturnsActualNewRow()
     {
         await WithTablesAsync(async (connectionString, schema, version) =>
