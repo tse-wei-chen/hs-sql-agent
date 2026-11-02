@@ -17,8 +17,18 @@ public enum DmlRowIdentityAssurance
 public enum DmlApprovalMode
 {
     RowSetMutation,
-    InsertValues
+    InsertValues,
+    /// <summary>SQLite same-table source rows, bound by full projected-value fingerprint.</summary>
+    InsertSelect
 }
+
+/// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
+internal sealed record SqliteInsertSelectProof(
+    string PhysicalTarget,
+    string MutationFingerprint,
+    string SourceQueryFingerprint,
+    string SchemaSha256,
+    ImmutableArray<string> ProjectedColumns);
 
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
@@ -41,6 +51,12 @@ public sealed record ValidatedDmlPlan(
     /// connection and transaction. It does not authorize unproven CTE DML.
     /// </summary>
     public SqlServerCteUniqueKeyAssurance? SqlServerCteUniqueKeyAssurance { get; init; }
+
+    /// <summary>
+    /// Host-internal admission proof. External callers cannot construct or set it,
+    /// even though ValidatedDmlPlan remains a CLR-friendly public record.
+    /// </summary>
+    internal SqliteInsertSelectProof? SqliteInsertSelectProof { get; init; }
 }
 
 public sealed record DmlPreview(

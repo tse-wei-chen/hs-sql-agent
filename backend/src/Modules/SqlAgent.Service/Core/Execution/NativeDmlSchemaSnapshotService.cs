@@ -51,6 +51,11 @@ public sealed class NativeDmlSchemaSnapshotService :
         var target = parsedMutation.Statement switch
         {
             InsertStatement { Source: InsertValuesSource } insert => insert.Target,
+            // Self-source INSERT SELECT reuses exactly the same physical-table
+            // schema proof; never widen this to a second or unknown source.
+            InsertStatement { Source: InsertQuerySource } insert
+                when targetProvider == SqlAgentToolType.Sqlite =>
+                VerifySqliteSelfSource(insert, targetProvider),
             UpdateStatement update when update.From.IsDefaultOrEmpty
                 && update.FromSources.IsDefaultOrEmpty => update.Target,
             DeleteStatement delete when delete.Using.IsDefaultOrEmpty
@@ -80,6 +85,14 @@ public sealed class NativeDmlSchemaSnapshotService :
                 connection, transaction: null, snapshot, matches[0].Schema,
                 matches[0].Table, cancellationToken);
         return snapshot;
+    }
+
+    private static NamedTableSource VerifySqliteSelfSource(
+        InsertStatement insert, SqlAgentToolType provider)
+    {
+        SqliteInsertSelectSafety.RequireShape(
+            insert, provider, provider, maxAffectedRows: int.MaxValue - 1);
+        return insert.Target;
     }
 
     public async Task<string?> ReadCurrentSchemaDigestAsync(

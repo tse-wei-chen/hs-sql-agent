@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Data;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
 using Dapper;
@@ -58,6 +59,11 @@ public sealed class DmlCoordinator(
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             return await PreviewInsertValuesAsync(plan, approvalContextFingerprint, cancellationToken);
 
+        if (plan.ApprovalMode == DmlApprovalMode.InsertSelect
+            && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
+            throw new InvalidOperationException(
+                "SQLite INSERT SELECT requires the native live schema verifier before reading the source.");
+
         var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -67,6 +73,11 @@ public sealed class DmlCoordinator(
             matchCommand.TargetProvider,
             _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
             cancellationToken);
+
+        if (plan.ApprovalMode == DmlApprovalMode.InsertSelect)
+            await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
+                connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
+                _schemaFreshnessVerifier, cancellationToken);
 
         var rows = await QueryRowsAsync(
             connection,
@@ -133,6 +144,10 @@ public sealed class DmlCoordinator(
         if (witnessEvidence is not null && _targetCommitWitness is null)
             throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
+        if (plan.ApprovalMode == DmlApprovalMode.InsertSelect
+            && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
+            throw new InvalidOperationException(
+                "SQLite INSERT SELECT cannot commit without native source/target schema freshness proof.");
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
         ValidateChallenge(plan, approvedChallenge, approvalContextFingerprint);
@@ -168,9 +183,16 @@ public sealed class DmlCoordinator(
                 connection, plan.MutationCommand.TargetProvider, cancellationToken);
         }
 
+        // The native SQLite provider starts a SERIALIZABLE transaction with
+        // BEGIN IMMEDIATE (not a deferred read snapshot). This acquires the
+        // writer reservation before the source-row recheck. Verify that
+        // provider behavior in a real SQLite concurrency test; SqlAgent.Service
+        // must remain driver-free.
+        var commitIsolation = plan.ApprovalMode == DmlApprovalMode.InsertSelect
+            ? IsolationLevel.Serializable
+            : _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider);
         await using var transaction = await connection.BeginTransactionAsync(
-            _transactionIsolationPolicy.CommitIsolation(plan.MutationCommand.TargetProvider),
-            cancellationToken);
+            commitIsolation, cancellationToken);
 
         try
         {
@@ -240,7 +262,9 @@ public sealed class DmlCoordinator(
                 return new DmlCommitResult(
                     false,
                     0,
-                    "DML execution cancelled: the matched row set changed after approval.");
+                    plan.ApprovalMode == DmlApprovalMode.InsertSelect
+                        ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
+                        : "DML execution cancelled: the matched row set changed after approval.");
             }
 
             var execution = await ExecuteMutationAsync(
@@ -539,7 +563,39 @@ public sealed class DmlCoordinator(
                     throw new InvalidOperationException("INSERT VALUES payload exceeds the validated maximum affected row count.");
                 return;
 
+            case DmlApprovalMode.InsertSelect:
+                if (plan.Operation != DmlOperation.Insert
+                    || plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
+                    || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                    || plan.MaxAffectedRows <= 0 || plan.MaxAffectedRows == int.MaxValue
+                    || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Sqlite } match
+                    || plan.SchemaSnapshot is null
+                    || plan.SchemaSnapshot.Provider != SqlAgentToolType.Sqlite
+                    || plan.SchemaSnapshot.Tables.Count != 1
+                    || !plan.InsertRows.IsDefaultOrEmpty
+                    || plan.RowIdentityColumns.IsDefaultOrEmpty
+                    || plan.SqliteInsertSelectProof is not { } sourceProof
+                    || !string.Equals(sourceProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
+                    || !string.Equals(plan.SchemaSnapshot.Tables[0].Name, plan.TableName,
+                        StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(sourceProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
+                        StringComparison.Ordinal)
+                    || !string.Equals(sourceProof.MutationFingerprint, plan.PlanFingerprint,
+                        StringComparison.Ordinal)
+                    || !string.Equals(sourceProof.SourceQueryFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(match, plan.PolicyVersion),
+                        StringComparison.Ordinal)
+                    || !sourceProof.ProjectedColumns.SequenceEqual(
+                        plan.RowIdentityColumns, StringComparer.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "SQLite INSERT SELECT requires a sealed, bounded, same-table source-row proof.");
+                return;
+
             case DmlApprovalMode.RowSetMutation:
+                if (plan.SqliteInsertSelectProof is not null)
+                    throw new InvalidOperationException(
+                        "SQLite INSERT SELECT proof cannot be reused for row-set UPDATE/DELETE.");
                 if (plan.Operation == HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)
                     throw new InvalidOperationException("INSERT cannot use row-set mutation approval mode.");
                 if (plan.MatchQueryCommand is null)

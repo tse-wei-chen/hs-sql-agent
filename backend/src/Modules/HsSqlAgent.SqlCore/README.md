@@ -24,7 +24,7 @@ var command = SqlCoreFacade.CompileQuery(
     SqlAgentToolType.Postgres,
     SqlAgentToolType.Postgres,
     new SqlPlanValidationContext("my-query-policy"),
-    new SqlExecutionPlanPolicy(QueryMaxRows: 100));
+    new SqlExecutionPlanPolicy(100));
 
 Console.WriteLine(command.Sql);
 ```

@@ -94,6 +94,10 @@ public sealed class TypedDmlRuntime(
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         EnsureSupportedStatement(parsedMutation.Statement);
+        if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
+            && parsedMutation.SourceDialect != SqlAgentToolType.Sqlite)
+            throw new NotSupportedException(
+                "SQLite INSERT SELECT source-row approval does not authorize other source dialects.");
         ValidateApprovalContextFields(approvalContext);
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
@@ -182,6 +186,10 @@ public sealed class TypedDmlRuntime(
         if (parsedBatch.Count > MaxStatementsPerTransaction)
             throw new UnauthorizedAccessException(
                 $"DML transaction contains {parsedBatch.Count} statements; maximum is {MaxStatementsPerTransaction}.");
+
+        if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Source: InsertQuerySource }))
+            throw new NotSupportedException(
+                "SQLite INSERT SELECT source-row approval is single-statement only.");
 
         var builder = ImmutableArray.CreateBuilder<TypedDmlApprovalSession>(parsedBatch.Count);
         try
@@ -469,7 +477,9 @@ public sealed class TypedDmlRuntime(
     internal static bool SupportsStatement(SqlStatement statement) =>
         statement is UpdateStatement
             or DeleteStatement
-            or InsertStatement { Source: InsertValuesSource, Conflict: null };
+            or InsertStatement { Source: InsertValuesSource, Conflict: null }
+        || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
+            && SqliteInsertSelectSafety.IsBoundedShape(insert);
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {
