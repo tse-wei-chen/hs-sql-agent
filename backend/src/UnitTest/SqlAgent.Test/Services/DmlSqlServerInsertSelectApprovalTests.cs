@@ -14,6 +14,90 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
     private const string Approval = "sqlserver2022-physical-source-m09-approval-v1";
 
     [Theory]
+    [InlineData(false, "between")]
+    [InlineData(false, "and")]
+    [InlineData(false, "or")]
+    [InlineData(true, "between")]
+    [InlineData(true, "and")]
+    [InlineData(true, "or")]
+    public async Task BoundedBetween_RealSqlServerRows_ApproveExactSourceAndReturnIdentity(
+        bool selfSource, string kind)
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var from = selfSource ? target : source;
+            var names = selfSource ? new[] { "Alice", "Bob" } : new[] { "Carol", "Dave" };
+            var condition = kind switch
+            {
+                "between" => "id BETWEEN 1 AND 2",
+                "and" => $"id BETWEEN 1 AND 2 AND name IN ('{names[0]}','{names[1]}')",
+                _ => "id BETWEEN 1 AND 1 OR id = 2"
+            };
+            var sql = $"INSERT INTO dbo.[{target}] (name) OUTPUT INSERTED.id, INSERTED.name " +
+                $"SELECT name FROM dbo.[{from}] WHERE {condition}";
+            var plan = await CreatePlanAsync(provider, native, cs, target, from, sql);
+            Assert.Equal(selfSource ? 1 : 2, plan.SchemaSnapshot!.Tables.Count);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            Assert.Equal(names, preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.All(preview.Rows, row => Assert.False(row.ContainsKey("id")));
+            var result = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(result.Committed);
+            Assert.Equal(2, result.AffectedRows);
+            Assert.Equal(names, result.ReturnedRows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.Equal(new[] { 3, 4 }, result.ReturnedRows.Select(x => Convert.ToInt32(x["id"])).OrderBy(x => x).ToArray());
+            Assert.Equal(4, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Fact]
+    public async Task BoundedBetween_SourceDriftAfterApproval_RejectsWithoutReturningOrWriting()
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) OUTPUT INSERTED.id " +
+                $"SELECT name FROM dbo.[{source}] WHERE id BETWEEN 1 AND 2");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            await ExecuteAsync(cs, $"UPDATE dbo.[{source}] SET name = 'Eve' WHERE id = 2");
+            var rejected = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.False(rejected.Committed);
+            Assert.Empty(rejected.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Fact]
+    public async Task BoundedBetween_ThirdMatchingRow_EnforcesFiniteAffectedRowCap()
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            await ExecuteAsync(cs, $"INSERT INTO dbo.[{source}] (id, name) VALUES (3, 'Eve')");
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{source}] WHERE id BETWEEN 1 AND 3");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Theory]
     [InlineData(false, "in")]
     [InlineData(false, "or")]
     [InlineData(false, "mixed")]
