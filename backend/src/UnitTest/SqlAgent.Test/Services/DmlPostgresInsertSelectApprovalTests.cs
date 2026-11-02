@@ -183,7 +183,7 @@ public sealed class DmlPostgresInsertSelectApprovalTests
     [InlineData("SELECT name FROM {0}.source_users")]
     [InlineData("SELECT upper(name) FROM {0}.source_users WHERE id = 1")]
     [InlineData("SELECT s.name FROM {0}.source_users AS s WHERE id = 1")]
-    [InlineData("SELECT name FROM {0}.source_users WHERE id = 1 OR id = 2")]
+    [InlineData("SELECT name FROM {0}.source_users WHERE id = 1 OR 1 = 1")]
     public async Task UnsupportedSourceShape_StaysFailClosed(string sourceTemplate)
     {
         await WithTablesAsync(async (connectionString, schema, _) =>
