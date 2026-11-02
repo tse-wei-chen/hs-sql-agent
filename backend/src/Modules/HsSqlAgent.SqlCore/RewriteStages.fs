@@ -1155,6 +1155,15 @@ module internal RewriteStages =
                     let proven = Array.create targetKeys.Length false
                     let otherProven = Array.create targetKeys.Length false
                     let mutable duplicate = false
+                    let mutable safeExtra = true
+                    let directSecondColumn field (secondQualifier: string) =
+                        match Expr.unspan field with
+                        | Column identifier
+                        | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                            match Identifier.parts identifier with
+                            | [owner; _] -> same owner.Value secondQualifier
+                            | _ -> false
+                        | _ -> false
                     while pending.Count > 0 do
                         RewriteResourceBudget.checkpoint ()
                         let last = pending.Count - 1
@@ -1165,11 +1174,13 @@ module internal RewriteStages =
                             pending.Add right
                             pending.Add left
                         | Binary(BinaryOperator.Equal, left, right) ->
+                            let mutable matchedKey = false
                             for i = 0 to targetKeys.Length - 1 do
                                 if (isTargetKey left proof.TargetTable targetKeys.[i]
                                     && isColumn right qualifier lastKeys.[i])
                                    || (isTargetKey right proof.TargetTable targetKeys.[i]
                                        && isColumn left qualifier lastKeys.[i]) then
+                                    matchedKey <- true
                                     if proven.[i] then duplicate <- true
                                     else proven.[i] <- true
                                 match outerSecond with
@@ -1179,11 +1190,30 @@ module internal RewriteStages =
                                         && isColumn right secondQualifier secondKey)
                                        || (isColumn right qualifier lastKeys.[i]
                                            && isColumn left secondQualifier secondKey) then
+                                        matchedKey <- true
                                         if otherProven.[i] then duplicate <- true
                                         else otherProven.[i] <- true
                                 | _ -> ()
-                        | _ -> ()
-                    not duplicate && (proven |> Array.forall id)
+                            // M08's only auxiliary predicate is a direct
+                            // column of its independently attested second
+                            // source compared to a literal. Reject hidden
+                            // subqueries and computed/volatile expressions.
+                            match outerSecond with
+                            | Some(Some secondQualifier) when not matchedKey ->
+                                let literalFilter =
+                                    match Expr.unspan left, Expr.unspan right with
+                                    | Literal _, _ ->
+                                        directSecondColumn right secondQualifier
+                                    | _, Literal _ ->
+                                        directSecondColumn left secondQualifier
+                                    | _ -> false
+                                if not literalFilter then safeExtra <- false
+                            | _ -> ()
+                        | _ ->
+                            match outerSecond with
+                            | Some(Some _) -> safeExtra <- false
+                            | _ -> ()
+                    safeExtra && not duplicate && (proven |> Array.forall id)
                     && (match outerSecond with
                         | Some None -> true
                         | Some(Some _) -> otherProven |> Array.forall id
