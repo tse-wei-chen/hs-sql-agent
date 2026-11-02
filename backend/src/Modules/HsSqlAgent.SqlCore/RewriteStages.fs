@@ -798,68 +798,80 @@ module internal RewriteStages =
         // may only rename direct columns of the attested physical source.
         // The complete key tuple must retain the original index ordinal;
         // never mint authority from display aliases or the Virtual Catalog.
-        let provenDirectDerivedKeys (derived: Query) =
+        // This is the execution-admission proof, independent of the
+        // static mutation cardinality and Host physical index discovery.
+        // Every layer preserves the *ordered* attested key columns, with
+        // direct references only and no alias/input ambiguity.
+        let projectDerivedKeys (keys: string list) qualifier (items: SelectItem list) =
+            if items.Length < keys.Length || items.Length > 32 then None
+            else
+                let columns =
+                    items
+                    |> List.map (fun item ->
+                        let input =
+                            match Expr.unspan item.Expression with
+                            | Column identifier
+                            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                                match Identifier.parts identifier with
+                                | [column] -> Some column.Value
+                                | [owner; column] when same owner.Value qualifier ->
+                                    Some column.Value
+                                | _ -> None
+                            | _ -> None
+                        input |> Option.map (fun name ->
+                            name, defaultArg
+                                (item.Alias |> Option.map (fun a -> a.Value)) name))
+                if columns |> List.exists Option.isNone then None
+                else
+                    let mapping = columns |> List.choose id
+                    let inputs = mapping |> List.map fst
+                    let outputs = mapping |> List.map snd
+                    if (inputs |> List.distinct |> List.length) <> mapping.Length
+                       || (outputs |> List.distinct |> List.length) <> mapping.Length then None
+                    else
+                        let selected =
+                            keys
+                            |> List.map (fun key ->
+                                mapping
+                                |> List.mapi (fun ordinal (name, output) ->
+                                    if same name key then Some(ordinal, output) else None)
+                                |> List.choose id)
+                        if selected |> List.exists (fun matches -> matches.Length <> 1) then None
+                        else
+                            let ordered = selected |> List.collect id
+                            if ordered |> List.pairwise
+                               |> List.forall (fun ((before, _), (after, _)) -> before < after) then
+                                Some(ordered |> List.map snd)
+                            else None
+        let rec derivedKeyChain depth (derived: Query) =
             let head = derived.Head
-            let sourceKeys = proof.SourceKeyColumns |> Seq.toList
-            if not derived.SetOperations.IsEmpty
+            if depth > 2 || not derived.SetOperations.IsEmpty
                || not derived.OrderBy.IsEmpty
                || derived.Limit.IsSome || derived.Offset.IsSome
                || derived.FetchPercent.IsSome || derived.FetchWithTies
                || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
                || head.Where.IsSome || not head.GroupBy.IsEmpty
                || head.Having.IsSome
-               || head.DistinctMode <> SelectDistinct.AllRows
-               || head.Projection.Length < sourceKeys.Length
-               || head.Projection.Length > 32 then None
+               || head.DistinctMode <> SelectDistinct.AllRows then None
             else
-                match head.From with
-                | Some(NamedTable(source, sourceAlias))
-                    when qualified source proof.SourceTable ->
-                    let qualifier =
-                        match sourceAlias, Identifier.parts source with
-                        | Some value, _ -> value.Value
-                        | None, [_; table] -> table.Value
-                        | _ -> ""
-                    let columns =
-                        head.Projection
-                        |> List.map (fun item ->
-                            let name =
-                                match Expr.unspan item.Expression with
-                                | Column identifier
-                                | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
-                                    match Identifier.parts identifier with
-                                    | [column] -> Some column.Value
-                                    | [owner; column] when same owner.Value qualifier ->
-                                        Some column.Value
-                                    | _ -> None
-                                | _ -> None
-                            name |> Option.map (fun sourceName ->
-                                sourceName, defaultArg
-                                    (item.Alias |> Option.map (fun a -> a.Value))
-                                    sourceName))
-                    if columns |> List.exists Option.isNone then None
-                    else
-                        let mappings = columns |> List.choose id
-                        let inputs = mappings |> List.map fst
-                        let outputs = mappings |> List.map snd
-                        if (inputs |> List.distinct |> List.length) <> mappings.Length
-                           || (outputs |> List.distinct |> List.length) <> mappings.Length then None
-                        else
-                            let keys =
-                                sourceKeys
-                                |> List.map (fun key ->
-                                    mappings
-                                    |> List.mapi (fun pos (physical, alias) ->
-                                        if same physical key then Some(pos, alias) else None)
-                                    |> List.choose id)
-                            if keys |> List.exists (fun matches -> matches.Length <> 1) then None
-                            else
-                                let ordered = keys |> List.collect id
-                                if ordered |> List.pairwise
-                                   |> List.forall (fun ((before, _), (after, _)) -> before < after) then
-                                    Some(ordered |> List.map snd)
-                                else None
-                | _ -> None
+                let source =
+                    match head.From with
+                    | Some(NamedTable(physical, physicalAlias))
+                        when qualified physical proof.SourceTable ->
+                        let qualifier =
+                            match physicalAlias, Identifier.parts physical with
+                            | Some alias, _ -> alias.Value
+                            | None, [_; table] -> table.Value
+                            | _ -> ""
+                        Some(proof.SourceKeyColumns |> Seq.toList, qualifier)
+                    | Some(DerivedTable(nested, nestedAlias)) when depth < 2 ->
+                        derivedKeyChain (depth + 1) nested
+                        |> Option.map (fun keys -> keys, nestedAlias.Value)
+                    | _ -> None
+                source
+                |> Option.bind (fun (keys, qualifier) ->
+                    projectDerivedKeys keys qualifier head.Projection)
+        let provenDirectDerivedKeys (derived: Query) = derivedKeyChain 1 derived
 
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
