@@ -183,6 +183,10 @@ public sealed class TypedDmlRuntime(
             throw new UnauthorizedAccessException(
                 $"DML transaction contains {parsedBatch.Count} statements; maximum is {MaxStatementsPerTransaction}.");
 
+        if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Source: InsertQuerySource }))
+            throw new NotSupportedException(
+                "SQLite INSERT SELECT source-row approval is single-statement only.");
+
         var builder = ImmutableArray.CreateBuilder<TypedDmlApprovalSession>(parsedBatch.Count);
         try
         {
@@ -469,7 +473,8 @@ public sealed class TypedDmlRuntime(
     internal static bool SupportsStatement(SqlStatement statement) =>
         statement is UpdateStatement
             or DeleteStatement
-            or InsertStatement { Source: InsertValuesSource, Conflict: null };
+            or InsertStatement { Source: InsertValuesSource, Conflict: null }
+            or InsertStatement { Source: InsertQuerySource, Conflict: null };
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {
