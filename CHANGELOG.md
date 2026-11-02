@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — SQLite INSERT SELECT direct RETURNING result rows (develop only)
+
+- Allow native SQLite **3.35+** bounded, single-statement `INSERT ... SELECT
+  ... RETURNING` with distinct, unqualified direct target columns only
+  (at most 32). Source/target may be the same or two separately attested
+  real `main` tables; all earlier source-row approval proofs still apply.
+- Preview binds complete selected source values, **not** generated target IDs.
+  After revalidating both live schemas, source values and row count under the
+  SQLite writer transaction, execute the compiled INSERT once and expose
+  native RETURNING rows only following a confirmed commit. A source drift or
+  returned-row count mismatch rolls back and returns no result rows.
+- Real SQLite TDD covers commit, generated ID, approval replay, source drift
+  and rejection of wildcard/expression/duplicate RETURNING items. The F#
+  compiler still owns SQLite source/target version gating, with no new MCP
+  tool, public API, provider support, driver or dependency. DML remains off
+  by default.
+
 ### G9 / M09 — SQLite dual-physical-table INSERT SELECT approval (develop only)
 
 - Extend the previously bounded SQLite `INSERT SELECT` source-row approval
