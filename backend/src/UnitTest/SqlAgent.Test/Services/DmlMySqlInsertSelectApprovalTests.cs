@@ -149,9 +149,76 @@ public sealed class DmlMySqlInsertSelectApprovalTests
         });
     }
 
+    [Fact]
+    public async Task ExcessSourceRows_AreDeniedBeforeInsert()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                $"INSERT INTO `{schema}`.`{source}` (id,name) VALUES (2,'Carol'),(3,'Carol')");
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{source}` WHERE name = 'Carol'");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
+    public async Task UserTriggerOnSource_FailsClosedEvenWhenTriggerIsNotPartOfTableDdl()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, _) =>
+        {
+            await ExecuteAsync(connectionString,
+                $"CREATE TRIGGER `tr_m09_{source}` BEFORE INSERT ON `{schema}`.`{source}` " +
+                "FOR EACH ROW SET NEW.name = NEW.name");
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAnyAsync<Exception>(() => CreatePlanAsync(
+                provider, native, connectionString, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{source}` WHERE id = 1"));
+        });
+    }
+
+    [Fact]
+    public async Task SourceForeignKey_FailsClosedBeforeApproval()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, _) =>
+        {
+            // The target already has unique primary-key rows 1 and 2.
+            await ExecuteAsync(connectionString,
+                $"ALTER TABLE `{schema}`.`{source}` ADD CONSTRAINT `fk_m09_{source}` " +
+                $"FOREIGN KEY (id) REFERENCES `{schema}`.`{target}` (id)");
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAnyAsync<Exception>(() => CreatePlanAsync(
+                provider, native, connectionString, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{source}` WHERE id = 1"));
+        });
+    }
+
+    [Fact]
+    public async Task MissingIndependentSourceGrant_FailsClosed()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, _) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => CreatePlanAsync(
+                provider, native, connectionString, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{source}` WHERE id = 1",
+                grantSource: false));
+        });
+    }
+
     private static async Task<ValidatedDmlPlan> CreatePlanAsync(
         MySqlProvider provider, NativeDmlSchemaSnapshotService native,
-        string connString, string schema, string target, string source, string sql)
+        string connString, string schema, string target, string source, string sql,
+        bool grantSource = true)
     {
         var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MySQL);
         await using var conn = provider.Connections.Create(connString);
@@ -159,8 +226,9 @@ public sealed class DmlMySqlInsertSelectApprovalTests
         var snapshot = await native.CaptureAsync(
             conn, SqlAgentToolType.MySQL, parsed, TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
-        var context = new SqlPlanValidationContext("mysql84-m09-v1",
-            new HashSet<string>(StringComparer.Ordinal) { schema + "." + target, schema + "." + source })
+        var allowed = new HashSet<string>(StringComparer.Ordinal) { schema + "." + target };
+        if (grantSource) allowed.Add(schema + "." + source);
+        var context = new SqlPlanValidationContext("mysql84-m09-v1", allowed)
             .WithSchemaSnapshot(snapshot);
         return await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
             conn, connString, parsed, SqlAgentToolType.MySQL, context,
