@@ -99,6 +99,20 @@ public sealed class TypedDmlRuntime(
                 || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)))
             throw new NotSupportedException(
                 "INSERT SELECT source-row approval requires native SQLite or PostgreSQL only.");
+        if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert)
+        {
+            // Source read permission is separate from target write permission.
+            // Deny before even fetching physical source metadata.
+            var sourceShape = NativeInsertSelectSafety.RequireShape(
+                sourceInsert, parsedMutation.SourceDialect, provider.Type, policy.DmlMaxAffectedRows);
+            if (allowedTables is not null
+                && !allowedTables.Any(table => string.Equals(table, sourceShape.PhysicalSource,
+                    provider.Type == SqlAgentToolType.Postgres
+                        ? StringComparison.Ordinal
+                        : StringComparison.OrdinalIgnoreCase)))
+                throw new UnauthorizedAccessException(
+                    "INSERT SELECT source table is not in the authorized table scope.");
+        }
         ValidateApprovalContextFields(approvalContext);
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
