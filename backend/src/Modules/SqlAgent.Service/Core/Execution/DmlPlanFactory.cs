@@ -352,6 +352,15 @@ public sealed class DmlPlanFactory(
             targetProfile);
         if (sourceSelection is { } selection)
         {
+            // Explicit source-table authorization is independent from the
+            // INSERT target grant. Null means caller chose unrestricted scope;
+            // a configured allow-list must admit BOTH physical tables.
+            if (validationContext.AllowedTables is { } grants
+                && !grants.Any(table => string.Equals(table, selection.PhysicalSource,
+                    StringComparison.OrdinalIgnoreCase)))
+                throw new UnauthorizedAccessException(
+                    "INSERT SELECT source table is not included in the authorized table scope.");
+
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null || snapshot.Provider != targetProvider
                 || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
