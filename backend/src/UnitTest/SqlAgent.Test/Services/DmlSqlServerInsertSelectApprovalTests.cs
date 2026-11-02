@@ -80,6 +80,88 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
     }
 
     [Fact]
+    public async Task SameDefinitionAndValuesButRecreatedSource_InvalidatesOldApproval()
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{source}] WHERE id = 1");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(cs, $"DROP TABLE dbo.[{source}]");
+            await ExecuteAsync(cs, $"CREATE TABLE dbo.[{source}] (id INT NOT NULL PRIMARY KEY, name NVARCHAR(64) NOT NULL)");
+            await ExecuteAsync(cs, $"INSERT INTO dbo.[{source}] (id,name) VALUES (1,'Carol'),(2,'Dave')");
+            await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT count(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Fact]
+    public async Task SerializableFreshnessProof_PreventsConcurrentPhysicalSourceWriter()
+    {
+        await WithTablesAsync(async (cs, target, source, _) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{source}] WHERE id = 1",
+                SqlAgentToolType.MsSqlServer);
+            await using var connection = provider.Connections.Create(cs);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            var snapshot = await native.CaptureAsync(
+                connection, SqlAgentToolType.MsSqlServer, parsed, TestContext.Current.CancellationToken);
+            Assert.NotNull(snapshot);
+            await using var tx = await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken);
+            try
+            {
+                Assert.Equal(snapshot.Sha256, await native.ReadCurrentSchemaDigestAsync(
+                    connection, tx, SqlAgentToolType.MsSqlServer, snapshot,
+                    TestContext.Current.CancellationToken));
+                await using var rival = new SqlConnection(cs);
+                await rival.OpenAsync(TestContext.Current.CancellationToken);
+                await using var write = new SqlCommand(
+                    $"UPDATE dbo.[{source}] SET name = 'hijack' WHERE id = 1", rival);
+                write.CommandTimeout = 1;
+                var denial = await Assert.ThrowsAsync<SqlException>(() =>
+                    write.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+                Assert.True(denial.Number is -2 or 1222, $"Expected lock timeout, got SQL Server {denial.Number}.");
+            }
+            finally
+            {
+                await tx.RollbackAsync(TestContext.Current.CancellationToken);
+            }
+            Assert.Equal(1, await ScalarAsync(cs,
+                $"SELECT count(*) FROM dbo.[{source}] WHERE id = 1 AND name = 'Carol'"));
+        });
+    }
+
+    [Fact]
+    public async Task PhysicalSourceTrigger_DeniesSnapshotBeforeApproval()
+    {
+        await WithTablesAsync(async (cs, target, source, _) =>
+        {
+            var trigger = "m09_tr_" + Guid.NewGuid().ToString("N")[..12];
+            await ExecuteAsync(cs,
+                $"CREATE TRIGGER dbo.[{trigger}] ON dbo.[{source}] AFTER UPDATE AS BEGIN SET NOCOUNT ON; END");
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var parsed = CoreSqlTextParser.ParseDml(
+                $"INSERT INTO dbo.[{target}] (name) SELECT name FROM dbo.[{source}] WHERE id = 1",
+                SqlAgentToolType.MsSqlServer);
+            await using var connection = provider.Connections.Create(cs);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            Assert.Null(await native.CaptureAsync(
+                connection, SqlAgentToolType.MsSqlServer, parsed, TestContext.Current.CancellationToken));
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT count(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Fact]
     public async Task MissingIndependentSourceGrant_DeniesBeforeExecutablePlan()
     {
         await WithTablesAsync(async (cs, target, source, _) =>
