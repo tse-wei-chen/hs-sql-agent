@@ -564,6 +564,8 @@ public sealed class DmlCoordinator(
                 return;
 
             case DmlApprovalMode.InsertSelect:
+                var physicalComparison = plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                    ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
                 if (plan.Operation != DmlOperation.Insert
                     || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                     || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
@@ -579,14 +581,16 @@ public sealed class DmlCoordinator(
                     || plan.NativeInsertSelectProof is not { } sourceProof
                     || !string.Equals(sourceProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
                     || !string.Equals(plan.SchemaSnapshot.Tables[0].Name, plan.TableName,
-                        StringComparison.OrdinalIgnoreCase)
+                        physicalComparison)
                     || (string.Equals(sourceProof.PhysicalSource, plan.TableName,
-                            StringComparison.OrdinalIgnoreCase)
-                        ? plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
-                          || plan.SchemaSnapshot.Tables.Count != 1
+                            physicalComparison)
+                        ? plan.SchemaSnapshot.Tables.Count != 1
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                         : plan.SchemaSnapshot.Tables.Count != 2
                           || !string.Equals(plan.SchemaSnapshot.Tables[1].Name,
-                              sourceProof.PhysicalSource, StringComparison.OrdinalIgnoreCase))
+                              sourceProof.PhysicalSource, physicalComparison))
                     || !string.Equals(sourceProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
                         StringComparison.Ordinal)
                     || !string.Equals(sourceProof.MutationFingerprint, plan.PlanFingerprint,

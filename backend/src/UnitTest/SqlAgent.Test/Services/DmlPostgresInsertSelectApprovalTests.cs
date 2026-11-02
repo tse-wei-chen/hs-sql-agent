@@ -202,6 +202,131 @@ public sealed class DmlPostgresInsertSelectApprovalTests
         });
     }
 
+    [Fact]
+    public async Task SamePhysicalTable_PreviewAndCommit_ApprovesSourceAndReturnsGeneratedTargetRow()
+    {
+        await WithTablesAsync(async (connectionString, schema, version) =>
+        {
+            var provider = new PostgresProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, schema,
+                $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.users WHERE id = 1 RETURNING id, name");
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            Assert.Single(plan.SchemaSnapshot!.Tables);
+            Assert.StartsWith("native-postgres-insert-source-v1:", plan.SchemaSnapshot.Version);
+
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Alice", Assert.Single(preview.Rows)["name"]);
+            Assert.DoesNotContain(preview.Rows[0].Keys,
+                column => string.Equals(column, "id", StringComparison.OrdinalIgnoreCase));
+
+            var committed = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            var inserted = Assert.Single(committed.ReturnedRows);
+            Assert.Equal(3, Convert.ToInt32(inserted["id"]));
+            Assert.Equal("Alice", inserted["name"]);
+            Assert.Equal(3, await ScalarAsync(connectionString, $"SELECT count(*) FROM {schema}.users"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SamePhysicalTable_ApprovedSourceOrIndexDrift_RejectsWithoutInsert(bool alterSchema)
+    {
+        await WithTablesAsync(async (connectionString, schema, version) =>
+        {
+            var provider = new PostgresProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, schema,
+                $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.users WHERE id = 1 RETURNING id, name");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+
+            if (alterSchema)
+            {
+                await ExecuteAsync(connectionString,
+                    $"CREATE INDEX idx_m09_self_name ON {schema}.users (name)");
+                await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                    connectionString, plan, preview.Challenge, Approval,
+                    TestContext.Current.CancellationToken, version));
+            }
+            else
+            {
+                await ExecuteAsync(connectionString,
+                    $"UPDATE {schema}.users SET name = 'Changed' WHERE id = 1");
+                var result = await coordinator.CommitAsync(
+                    connectionString, plan, preview.Challenge, Approval,
+                    TestContext.Current.CancellationToken, version);
+                Assert.False(result.Committed);
+                Assert.Equal(0, result.AffectedRows);
+                Assert.Empty(result.ReturnedRows);
+            }
+
+            Assert.Equal(2, await ScalarAsync(connectionString, $"SELECT count(*) FROM {schema}.users"));
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalTable_SerializableCatalogRecheck_AcquiresWriterLockBeforeFirstRead()
+    {
+        await WithTablesAsync(async (connectionString, schema, _) =>
+        {
+            var provider = new PostgresProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, schema,
+                $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.users WHERE id = 1");
+
+            await using var first = new NpgsqlConnection(connectionString);
+            await first.OpenAsync(TestContext.Current.CancellationToken);
+            await using var tx = await first.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken);
+            var current = await snapshot.ReadCurrentSchemaDigestAsync(
+                first, tx, SqlAgentToolType.Postgres, plan.SchemaSnapshot!,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(plan.SchemaSnapshot!.Sha256, current);
+
+            await using var rival = new NpgsqlConnection(connectionString);
+            await rival.OpenAsync(TestContext.Current.CancellationToken);
+            await using var write = rival.CreateCommand();
+            write.CommandText =
+                $"SET lock_timeout = '300ms'; UPDATE {schema}.users SET name = 'Hijacked' WHERE id = 1";
+            var denied = await Assert.ThrowsAsync<PostgresException>(() =>
+                write.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+            Assert.Equal("55P03", denied.SqlState);
+            await tx.RollbackAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(1, await ScalarAsync(connectionString,
+                $"SELECT count(*) FROM {schema}.users WHERE name = 'Alice'"));
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalTable_ExcessSourceRows_DeniesBeforeMutation()
+    {
+        await WithTablesAsync(async (connectionString, schema, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                $"INSERT INTO {schema}.users(id,name) VALUES(4,'Alice'),(5,'Alice')");
+            var provider = new PostgresProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, schema,
+                $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.users WHERE name = 'Alice'");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(4, await ScalarAsync(connectionString, $"SELECT count(*) FROM {schema}.users"));
+        });
+    }
+
     private static async Task<ValidatedDmlPlan> CreatePlanAsync(
         PostgresProvider provider, NativeDmlSchemaSnapshotService snapshot,
         string connectionString, string schema, string sql, bool allowSourceGrant = true)

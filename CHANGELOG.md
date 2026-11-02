@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — PostgreSQL self-source INSERT SELECT approval (develop only)
+
+- Extend strict PostgreSQL `INSERT ... SELECT` to the case where the
+  explicitly qualified permanent source is **the same physical table** as
+  the insert target, including bounded direct-target-column `RETURNING`.
+  Retain direct SELECT projections, one literal-equality WHERE predicate,
+  positive row cap, full source-value multiset and one-time approval.
+- A self-source plan binds **one** independently verified live catalog proof,
+  not a duplicate two-table proof. The PostgreSQL SERIALIZABLE transaction
+  acquires one `SHARE ROW EXCLUSIVE NOWAIT` lock on that actual table
+  **before the first SELECT**; commit verifies relation OID, columns,
+  defaults, indexes, constraints and every approved source value before
+  inserting once. Preview never invents generated target IDs.
+- Case-exact PostgreSQL physical table identity is preserved throughout
+  admission and live attestation (SQLite stays case-insensitive). Changed
+  source values/indexes, concurrent writes, excess rows and reused approvals
+  fail closed. Existing exclusions for JOIN, CTE, ON CONFLICT, RLS, triggers,
+  partitioning and unproven providers remain unchanged.
+- No additional MCP tools, public API, provider package, SQL compiler or
+  approval executor. Four read-only tools remain selected; DML remains off.
+
 ### G9 / M09 — PostgreSQL two-table INSERT SELECT approval (develop only)
 
 - Native PostgreSQL now admits a **single distinct physical source table** and
