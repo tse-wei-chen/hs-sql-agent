@@ -168,7 +168,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 : type;
             await Exec("CREATE TABLE dbo.[" + dst +
                 "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
-                + " NOT NULL, label VARCHAR(30), PRIMARY KEY (k1,k2))");
+                + " NOT NULL, label VARCHAR(30)"
+                + (joined == "DIAMOND_PAYLOAD" ? ", copied_payload INT NULL" : "")
+                + ", PRIMARY KEY (k1,k2))");
             await Exec("CREATE TABLE dbo.[" + src +
                 "] (k1 " + PhysicalType(k1Type) + " NOT NULL, k2 " + PhysicalType(k2Type)
                 + " NOT NULL, payload INT NOT NULL" +
@@ -342,7 +344,9 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 _ => throw new ArgumentOutOfRangeException(nameof(hops))
             };
             var sql = cte + (update
-                ? "UPDATE dbo.[" + dst + "] SET label = 'changed' FROM " + keyAlias
+                ? "UPDATE dbo.[" + dst + "] SET label = 'changed'" +
+                  (withPayload ? ", copied_payload = matched.projected" : "") +
+                  " FROM " + keyAlias
                 : "DELETE FROM dbo.[" + dst + "] FROM " + keyAlias)
                 + " WHERE dbo." + dst + ".k1 = " + keyAlias + ".a"
                 + " AND dbo." + dst + ".k2 = " + keyAlias + ".b";
@@ -606,13 +610,17 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 .ReturnsAsync(["dbo"]);
             metadata.Setup(x => x.GetTablesAsync("g7-metadata", "dbo", It.IsAny<CancellationToken>()))
                 .ReturnsAsync([dst]);
+            var targetMetadata = new List<DatabaseColumnMetadata>
+            {
+                new("dbo", dst, "k1", k1Type, true, 1),
+                new("dbo", dst, "k2", k2Type, true, 2),
+                new("dbo", dst, "label", "varchar", false)
+            };
+            if (withPayload)
+                targetMetadata.Add(new("dbo", dst, "copied_payload", "int", false));
             metadata.Setup(x => x.GetColumnsAsync("g7-metadata", "dbo", dst,
                     It.IsAny<CancellationToken>()))
-                .ReturnsAsync([
-                    new DatabaseColumnMetadata("dbo", dst, "k1", k1Type, true, 1),
-                    new DatabaseColumnMetadata("dbo", dst, "k2", k2Type, true, 2),
-                    new DatabaseColumnMetadata("dbo", dst, "label", "varchar", false)
-                ]);
+                .ReturnsAsync(targetMetadata);
             var plan = await new DmlPlanFactory(metadata.Object)
                 .CreateWithMetadataConnectionAsync(db, "g7-metadata", parsed,
                     SqlAgentToolType.MsSqlServer,
@@ -659,6 +667,17 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 await using var count = new SqlCommand(
                     "SELECT COUNT(*) FROM dbo.[" + dst + "]", db);
                 Assert.Equal(update ? 3 : 0, Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                if (update && withPayload)
+                {
+                    // Confirm payload is not merely an unused SELECT column:
+                    // actual approved DML transfers the source row value.
+                    await using var copied = new SqlCommand(
+                        "SELECT COUNT(*) FROM dbo.[" + dst + "] AS d " +
+                        "INNER JOIN dbo.[" + src + "] AS s ON " +
+                        "d.k1 = s.k1 AND d.k2 = s.k2 " +
+                        "WHERE d.copied_payload = s.payload", db);
+                    Assert.Equal(3, Convert.ToInt32(await copied.ExecuteScalarAsync(ct)));
+                }
             }
             if (primaryKey)
             {
