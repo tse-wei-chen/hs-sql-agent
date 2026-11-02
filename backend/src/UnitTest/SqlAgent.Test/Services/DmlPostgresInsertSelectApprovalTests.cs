@@ -13,6 +13,48 @@ public sealed class DmlPostgresInsertSelectApprovalTests
 {
     private const string Approval = "postgres-insert-select-source-row-approval-v1";
 
+    [Theory]
+    [InlineData("in")]
+    [InlineData("or")]
+    [InlineData("mixed")]
+    public async Task BoundedInOr_TwoActualPostgresSourceRows_ApprovedAndReturnNativeRows(string kind)
+    {
+        await WithTablesAsync(async (connectionString, schema, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                $"INSERT INTO {schema}.source_users(id,name) VALUES (2,'Dave')");
+            var predicate = kind switch
+            {
+                "in" => "id IN (1,2)",
+                "or" => "id = 1 OR id = 2",
+                _ => "(id = 1 OR id = 2) AND name IN ('Carol','Dave')"
+            };
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema,
+                $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.source_users " +
+                $"WHERE {predicate} RETURNING id, name");
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(connectionString, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.All(preview.Rows, row => Assert.False(row.ContainsKey("id")));
+            var result = await coordinator.CommitAsync(connectionString, plan,
+                preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(result.Committed);
+            Assert.Equal(2, result.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                result.ReturnedRows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.Equal(new[] { 3, 4 },
+                result.ReturnedRows.Select(x => Convert.ToInt32(x["id"])).OrderBy(x => x).ToArray());
+            Assert.Equal(4, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM {schema}.users"));
+        });
+    }
+
     [Fact]
     public async Task DistinctSource_TwoDirectEqualityTerms_ApprovesRowAndReturnsNativeInsertResult()
     {
