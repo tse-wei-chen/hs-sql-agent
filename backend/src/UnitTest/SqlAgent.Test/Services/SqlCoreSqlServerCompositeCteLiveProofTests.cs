@@ -1561,7 +1561,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     sql.Replace(cte + ".b = j.j2", cte + ".b + 0 = j.j2", StringComparison.Ordinal),
                     sql.Replace(cte + ".a = j.j1", cte + ".a = j.j2", StringComparison.Ordinal),
                     sql.Replace("dbo.[" + joined + "] AS j", "dbo.[" + target + "] AS j", StringComparison.Ordinal),
-                    sql.Replace("j.j2", "CAST(j.j2 AS BIGINT)", StringComparison.Ordinal)
+                    sql.Replace("j.j2", "CAST(j.j2 AS BIGINT)", StringComparison.Ordinal),
+                    sql.Replace(" AND j.extra = 5", " AND j.extra + 0 = 5", StringComparison.Ordinal),
+                    sql.Replace(" AND j.extra = 5",
+                        " AND EXISTS (SELECT 1 FROM dbo.[" + joined +
+                        "] AS q WHERE q.j1 = j.j1)", StringComparison.Ordinal),
+                    sql.Replace(" AND j.extra = 5",
+                        " AND dbo." + target + ".label = 'old'", StringComparison.Ordinal)
                 })
                 {
                     Assert.NotEqual(sql, invalid);
