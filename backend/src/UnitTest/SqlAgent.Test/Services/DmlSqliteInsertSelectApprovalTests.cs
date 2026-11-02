@@ -68,7 +68,7 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
         var shape = NativeInsertSelectSafety.RequireShape(insert, provider, provider, maxAffectedRows: 2);
         Assert.Equal(schema + ".source_users", shape.PhysicalSource);
-        Assert.Equal(["name"], shape.OutputColumns);
+        Assert.Equal("name", Assert.Single(shape.OutputColumns));
     }
 
     [Fact]
