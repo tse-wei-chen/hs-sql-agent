@@ -152,6 +152,48 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     }
 
     [Fact]
+    public async Task SamePhysicalInnoDbTable_WeakerTransactionIsolation_DeniesFreshnessProof()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, _) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            await using var connection = new MySqlConnection(connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.ReadCommitted, TestContext.Current.CancellationToken);
+            Assert.Null(await native.ReadCurrentSchemaDigestAsync(
+                connection, transaction, SqlAgentToolType.MySQL, plan.SchemaSnapshot!,
+                TestContext.Current.CancellationToken));
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalInnoDbTable_IndexDrift_InvalidatesApproval()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(connectionString,
+                $"CREATE INDEX `ix_m09_self_{target}` ON `{schema}`.`{target}` (name)");
+            await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
     public async Task SourceRowChange_AfterPreview_DeniesAndRollsBack()
     {
         await WithTablesAsync(async (connectionString, schema, target, source, version) =>
