@@ -104,12 +104,6 @@ internal static class NativeInsertSelectSafety
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one explicit physical main source table.");
 
-        if (targetProvider == SqlAgentToolType.MsSqlServer
-            && string.Equals(source.Name.Parts[1].Value, insert.Target.Name.Parts[1].Value,
-                StringComparison.OrdinalIgnoreCase))
-            throw new NotSupportedException(
-                "SQL Server M09 INSERT SELECT requires a distinct physical source and target.");
-
         if (!HasBoundedSourcePredicate(head.Where))
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one to four AND-only direct-column = non-null literal predicates.");
