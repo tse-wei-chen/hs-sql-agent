@@ -7,6 +7,23 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M07 — correlated semi/anti filters inside physical CTE diamond (develop only)
+
+- Extend the bounded SQL Server three-CTE, same-physical-source, two-column
+  UNIQUE-key diamond to allow a whole-branch `EXISTS` or `NOT EXISTS`
+  filter on either direct physical branch. The subquery must be over that
+  same physical source with both original keys correlated by ordinary
+  AND-connected equality; an additional direct inner field/literal equality
+  can reduce the matched row set. The final JOIN and target must still match
+  the complete ordered key.
+- Independent F# static nonmultiplying cardinality proof, sealed F# live
+  admission, Host physical-index discovery and held-transaction `IsCurrent`
+  remain required. Real SQL Server UPDATE/DELETE validates exact 1-/2-row
+  Preview→Approval→Commit and index revocation; negative cases reject
+  partial/OR/computed/wrong-source correlation and extra joins.
+- No general DAG, unrestricted subquery, new multi-source DML syntax, provider
+  scope increase, MCP tool or public API expansion.
+
 ### G9 / M06 — bounded CTE diamond direct payload lineage (develop only)
 
 - A three-CTE SQL Server diamond may carry additional direct, injective
