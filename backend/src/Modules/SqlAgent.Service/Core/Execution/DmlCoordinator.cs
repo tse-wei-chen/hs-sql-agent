@@ -572,13 +572,19 @@ public sealed class DmlCoordinator(
                         TargetProvider: SqlAgentToolType.Sqlite } match
                     || plan.SchemaSnapshot is null
                     || plan.SchemaSnapshot.Provider != SqlAgentToolType.Sqlite
-                    || plan.SchemaSnapshot.Tables.Count != 1
+                    || plan.SchemaSnapshot.Tables.Count is < 1 or > 2
                     || !plan.InsertRows.IsDefaultOrEmpty
                     || plan.RowIdentityColumns.IsDefaultOrEmpty
                     || plan.SqliteInsertSelectProof is not { } sourceProof
                     || !string.Equals(sourceProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
                     || !string.Equals(plan.SchemaSnapshot.Tables[0].Name, plan.TableName,
                         StringComparison.OrdinalIgnoreCase)
+                    || (string.Equals(sourceProof.PhysicalSource, plan.TableName,
+                            StringComparison.OrdinalIgnoreCase)
+                        ? plan.SchemaSnapshot.Tables.Count != 1
+                        : plan.SchemaSnapshot.Tables.Count != 2
+                          || !string.Equals(plan.SchemaSnapshot.Tables[1].Name,
+                              sourceProof.PhysicalSource, StringComparison.OrdinalIgnoreCase))
                     || !string.Equals(sourceProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
                         StringComparison.Ordinal)
                     || !string.Equals(sourceProof.MutationFingerprint, plan.PlanFingerprint,
@@ -589,7 +595,7 @@ public sealed class DmlCoordinator(
                     || !sourceProof.ProjectedColumns.SequenceEqual(
                         plan.RowIdentityColumns, StringComparer.OrdinalIgnoreCase))
                     throw new InvalidOperationException(
-                        "SQLite INSERT SELECT requires a sealed, bounded, same-table source-row proof.");
+                        "SQLite INSERT SELECT requires a sealed, bounded, separately attested physical source-row proof.");
                 return;
 
             case DmlApprovalMode.RowSetMutation:

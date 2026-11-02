@@ -49,6 +49,94 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         });
     }
 
+    private const string CrossTableSql =
+        "INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1";
+
+    [Fact]
+    public async Task CrossTableSource_PreviewsProjectedValuesAndCommitsExactlyOnce()
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO other_users (id, name) VALUES (1, 'Carol'), (2, 'Diane')");
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, CrossTableSql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            Assert.Equal(2, plan.SchemaSnapshot!.Tables.Count);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Carol", preview.Rows.Single()["name"]);
+            var committed = await coordinator.CommitAsync(connectionString, plan,
+                preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            Assert.Equal(3, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM users"));
+            Assert.Equal(1, await ScalarAsync(connectionString,
+                "SELECT COUNT(*) FROM users WHERE name = 'Carol'"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CrossTableSource_SourceValueOrSchemaDriftRejectsApprovedInsert(bool schemaDrift)
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO other_users (id, name) VALUES (1, 'Carol')");
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString, CrossTableSql);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            var preview = await coordinator.PreviewAsync(connectionString, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            if (schemaDrift)
+            {
+                await ExecuteAsync(connectionString,
+                    "CREATE INDEX idx_other_users_name ON other_users(name)");
+                await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                    connectionString, plan, preview.Challenge, Approval,
+                    TestContext.Current.CancellationToken, version));
+            }
+            else
+            {
+                await ExecuteAsync(connectionString,
+                    "UPDATE other_users SET name = 'Mallory' WHERE id = 1");
+                var rejected = await coordinator.CommitAsync(connectionString, plan,
+                    preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+                Assert.False(rejected.Committed);
+            }
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                "SELECT COUNT(*) FROM users"));
+        });
+    }
+
+    [Fact]
+    public async Task CrossTableSource_SecondTableRowCountOverflowDenied()
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO other_users (id, name) VALUES (1, 'Carol'), (2, 'Carol'), (3, 'Carol')");
+            var provider = new SqliteProvider();
+            var snapshot = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, snapshot, connectionString,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE name = 'Carol'");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: snapshot);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                "SELECT COUNT(*) FROM users"));
+        });
+    }
+
     [Fact]
     public async Task SourceRowsChangedAfterApproval_RevalidationRollsBackWithoutInserting()
     {
@@ -75,7 +163,10 @@ public sealed class DmlSqliteInsertSelectApprovalTests
     [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users")]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1 OR id = 2")]
     [InlineData("INSERT INTO main.users (name) SELECT upper(name) FROM main.users WHERE id = 1")]
-    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM other_users WHERE id = 1")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users AS s WHERE id = 1")]
+    [InlineData("INSERT INTO main.users (name) SELECT upper(name) FROM main.other_users WHERE id = 1")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 OR id = 2")]
     public async Task UnsupportedOrUnboundedSource_FailsClosedBeforePreview(string sql)
     {
         await WithDatabaseAsync(async (connectionString, _) =>
@@ -163,7 +254,8 @@ public sealed class DmlSqliteInsertSelectApprovalTests
             connection, SqlAgentToolType.Sqlite, parsed, TestContext.Current.CancellationToken);
         Assert.NotNull(schema);
         var context = new SqlPlanValidationContext(
-            Policy, new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "main.users" })
+            Policy, new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "main.users", "main.other_users" })
             .WithSchemaSnapshot(schema);
         return await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
             connection, connectionString, parsed, SqlAgentToolType.Sqlite, context,

@@ -8,9 +8,9 @@ using HsSqlAgent.SqlCore.SqlParsing;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// Provider-native, opt-in schema freshness implementation for a single resolved physical
-/// DML target. Uses each provider's existing planning metadata SQL on preview and re-reads
-/// the exact target inside the commit transaction. Unsupported multi-source shapes fail closed.
+/// Provider-native, opt-in schema freshness implementation for an exact physical
+/// DML target. SQLite's bounded INSERT SELECT also attests its one physical
+/// source separately. Unsupported general multi-source shapes fail closed.
 /// The native column type, PK identity and ordinal are bound into Snapshot.Version even
 /// though the portable compiler conservatively treats their expression type as Unknown.
 /// </summary>
@@ -48,11 +48,17 @@ public sealed class NativeDmlSchemaSnapshotService :
             throw new InvalidOperationException(
                 "Native DML schema proofs require identical source and target providers.");
 
+        var sqliteSource = parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert
+            && targetProvider == SqlAgentToolType.Sqlite
+            ? SqliteInsertSelectSafety.RequireShape(
+                sourceInsert, targetProvider, targetProvider, int.MaxValue - 1).PhysicalSource
+            : null;
+
         var target = parsedMutation.Statement switch
         {
             InsertStatement { Source: InsertValuesSource } insert => insert.Target,
-            // Self-source INSERT SELECT reuses exactly the same physical-table
-            // schema proof; never widen this to a second or unknown source.
+            // The bounded INSERT SELECT attests each physical main source
+            // independently; arbitrary sources never enter this path.
             InsertStatement { Source: InsertQuerySource } insert
                 when targetProvider == SqlAgentToolType.Sqlite =>
                 VerifySqliteSelfSource(insert, targetProvider),
@@ -78,8 +84,29 @@ public sealed class NativeDmlSchemaSnapshotService :
         if (snapshot is null)
             return null;
         if (targetProvider == SqlAgentToolType.Sqlite)
-            return await WithSqliteDdlProofAsync(
+        {
+            var targetProof = await WithSqliteDdlProofAsync(
                 connection, transaction: null, snapshot, matches[0].Table, cancellationToken);
+            if (targetProof is null || sqliteSource is null
+                || string.Equals(sqliteSource, targetProof.Tables[0].Name,
+                    StringComparison.OrdinalIgnoreCase))
+                return targetProof;
+
+            // Two independently catalog-attested actual main tables; the
+            // full source DDL/index/trigger digest cannot be borrowed from
+            // the insert target or a virtual Catalog.
+            var sourceName = sqliteSource["main.".Length..];
+            var sourceMatches = await readers.Preview.GetDmlPlanningMetadataAsync(
+                connection, "main", sourceName, includeColumns: true,
+                cancellationToken: cancellationToken);
+            var sourceBase = BuildSnapshot(targetProvider, sourceMatches);
+            if (sourceBase is null || sourceBase.Tables.Count != 1
+                || !string.Equals(sourceBase.Tables[0].Name, sqliteSource,
+                    StringComparison.OrdinalIgnoreCase)) return null;
+            var sourceProof = await WithSqliteDdlProofAsync(
+                connection, transaction: null, sourceBase, sourceName, cancellationToken);
+            return sourceProof is null ? null : CombineSqliteSourceTarget(targetProof, sourceProof);
+        }
         if (targetProvider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
             return await NativeDmlSchemaDefinitionProof.ExtendAsync(
                 connection, transaction: null, snapshot, matches[0].Schema,
@@ -112,8 +139,35 @@ public sealed class NativeDmlSchemaSnapshotService :
         if (!ReferenceEquals(transaction.Connection, connection))
             throw new InvalidOperationException(
                 "Schema freshness transaction does not belong to its database connection.");
-        if (expectedSnapshot.Provider != provider || expectedSnapshot.Tables.Count != 1)
-            return null;
+        if (expectedSnapshot.Provider != provider) return null;
+        if (provider == SqlAgentToolType.Sqlite && expectedSnapshot.Tables.Count == 2)
+        {
+            var verified = new List<SqlSchemaSnapshot>(2);
+            var current = ForProvider(provider);
+            foreach (var tableProof in expectedSnapshot.Tables)
+            {
+                var names = tableProof.Name.Split('.');
+                if (names.Length != 2 || !string.Equals(names[0], "main",
+                        StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(names[1])
+                    || names[1].StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase)
+                    || verified.Any(x => string.Equals(x.Tables[0].Name, tableProof.Name,
+                        StringComparison.OrdinalIgnoreCase))) return null;
+                var results = await current.Commit.GetDmlPlanningMetadataInTransactionAsync(
+                    connection, transaction, "main", names[1], includeColumns: true,
+                    cancellationToken: cancellationToken);
+                var baseProof = BuildSnapshot(provider, results);
+                if (baseProof is null || baseProof.Tables.Count != 1
+                    || !string.Equals(baseProof.Tables[0].Name, tableProof.Name,
+                        StringComparison.OrdinalIgnoreCase)) return null;
+                var currentProof = await WithSqliteDdlProofAsync(
+                    connection, transaction, baseProof, names[1], cancellationToken);
+                if (currentProof is null) return null;
+                verified.Add(currentProof);
+            }
+            return CombineSqliteSourceTarget(verified[0], verified[1])?.Sha256;
+        }
+        if (expectedSnapshot.Tables.Count != 1) return null;
 
         // Firebird's 'Default' is a catalog-only pseudo-schema, not part
         // of SQL identifier syntax. Other providers require schema.table.
@@ -373,6 +427,38 @@ public sealed class NativeDmlSchemaSnapshotService :
             Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
         return new SqlSchemaSnapshot(
             SqlAgentToolType.Sqlite, version, baseSnapshot.Tables);
+    }
+
+    /// <summary>
+    /// Bind the exact two native physical SQLite DDL attestations, including
+    /// source-only indexes/triggers, to a single immutable two-table scope.
+    /// The order is always target first, source second. The same helper is
+    /// used at preview capture and inside the held commit transaction.
+    /// </summary>
+    private static SqlSchemaSnapshot? CombineSqliteSourceTarget(
+        SqlSchemaSnapshot target, SqlSchemaSnapshot source)
+    {
+        if (target.Provider != SqlAgentToolType.Sqlite
+            || source.Provider != SqlAgentToolType.Sqlite
+            || target.Tables.Count != 1 || source.Tables.Count != 1
+            || string.Equals(target.Tables[0].Name, source.Tables[0].Name,
+                StringComparison.OrdinalIgnoreCase)) return null;
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        static void Append(IncrementalHash digest, string value)
+        {
+            var bytes = Encoding.UTF8.GetBytes(value);
+            digest.AppendData(BitConverter.GetBytes(bytes.Length));
+            digest.AppendData(bytes);
+        }
+        Append(hash, "native-sqlite-insert-select-dual-ddl-v1");
+        Append(hash, target.Tables[0].Name);
+        Append(hash, target.Sha256);
+        Append(hash, source.Tables[0].Name);
+        Append(hash, source.Sha256);
+        var version = "native-sqlite-dual-source-v1:" +
+            Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        return new SqlSchemaSnapshot(SqlAgentToolType.Sqlite,
+            version, [target.Tables[0], source.Tables[0]]);
     }
 
     private static Readers ForProvider(SqlAgentToolType provider) =>

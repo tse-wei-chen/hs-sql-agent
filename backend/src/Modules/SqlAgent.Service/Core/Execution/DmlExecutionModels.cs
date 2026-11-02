@@ -18,13 +18,14 @@ public enum DmlApprovalMode
 {
     RowSetMutation,
     InsertValues,
-    /// <summary>SQLite same-table source rows, bound by full projected-value fingerprint.</summary>
+    /// <summary>SQLite bounded physical source rows, bound by full projected-value fingerprint.</summary>
     InsertSelect
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
 internal sealed record SqliteInsertSelectProof(
     string PhysicalTarget,
+    string PhysicalSource,
     string MutationFingerprint,
     string SourceQueryFingerprint,
     string SchemaSha256,

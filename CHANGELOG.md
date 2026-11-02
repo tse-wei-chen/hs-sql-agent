@@ -4,11 +4,31 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — SQLite dual-physical-table INSERT SELECT approval (develop only)
+
+- Extend the previously bounded SQLite `INSERT SELECT` source-row approval
+  to **one second, distinct, physical `main` source table**, while retaining
+  existing same-table queries, INSERT VALUES and single-statement scope.
+  Only explicit, unique target columns, direct unaliased source projections
+  and one `column = non-NULL literal` source predicate are permitted.
+- Bind **separate real source and target** metadata, complete SQLite table
+  DDL, indexes and triggers into an ordered two-table schema digest.
+  Both table definitions are independently re-attested in the held SQLite
+  writer transaction before the full projected-value multiset and approved
+  row count are rechecked; the insert still executes exactly once.
+- Real SQLite regression tests cover approved cross-table insertion, source
+  data drift, source-only DDL/index drift, over-limit source rows, unsafe
+  aliases/expressions/OR and unchanged same-table approval.
+- No general INSERT SELECT JOIN/CTE/RETURNING/UPSERT, attached database,
+  multi-statement batch or cross-provider writes; no new MCP tool, driver
+  or public API. The default four read-only tools and DML disabled remain
+  unchanged.
+
 ### G9 / M09 — SQLite self-source INSERT SELECT approval (develop only)
 
 - Admit only explicitly bounded native SQLite `INSERT INTO main.table (columns) SELECT direct_columns FROM main.table WHERE column = literal`, with the source and target being the **same physical main table**. Preview hashes every projected source value, including duplicate rows; the approved row count and immutable compiler-generated SQL are bound into a one-time challenge.
 - A real SQLite IMMEDIATE write transaction revalidates the physical schema and complete projected source row multiset before executing the approved native insert once. Changed source values, row count, schema, runtime database version or authorization context fail closed or roll back; no new MCP tool.
-- Requires explicit `AddHsSqlAgentNativeDmlSchemaFreshness()`, a finite positive DML row limit and existing DML approval. No CTE, JOIN, aggregate, expression projection, RETURNING, UPSERT, second source table, attached database or atomic DML batch. Other five providers remain unchanged.
+- Requires explicit `AddHsSqlAgentNativeDmlSchemaFreshness()`, a finite positive DML row limit and existing DML approval. No CTE, JOIN, aggregate, expression projection, RETURNING, UPSERT, independently unattested second source, attached database or atomic DML batch. Other five providers remain unchanged.
 
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
