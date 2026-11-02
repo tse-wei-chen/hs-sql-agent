@@ -122,6 +122,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 3, false, false, "DIAMOND", "INT", "BIGINT")]
     [InlineData(false, false, 3, false, false, "DIAMOND", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
     [InlineData(true, false, 3, true, false, "DIAMOND", "NVARCHAR(32)", "INT")]
+    // M06: preserve direct payload next to the composite key through each
+    // independent branch AND the converged CTE; no new physical source.
+    [InlineData(true, false, 3, false, true, "DIAMOND_PAYLOAD", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, true, "DIAMOND_PAYLOAD", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 3, true, true, "DIAMOND_PAYLOAD", "NVARCHAR(32)", "INT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -293,10 +298,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     src + "] AS innerSrc) AS middle) AS d";
                 firstProjection = "d.x AS a, d.y AS b";
             }
-            if (joined == "DIAMOND")
+            if (joined is "DIAMOND" or "DIAMOND_PAYLOAD")
             {
                 physicalSource = "dbo.[" + src + "] AS s";
-                firstProjection = "s.k1 AS a, s.k2 AS b";
+                firstProjection = joined == "DIAMOND_PAYLOAD"
+                    ? "s.k1 AS a, s.payload AS extra, s.k2 AS b"
+                    : "s.k1 AS a, s.k2 AS b";
             }
             var singletonJoin = joined switch
             {
@@ -307,19 +314,25 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" or "DERIVED" or "DERIVED2" or "DIAMOND" => "",
+                "NONE" or "DERIVED" or "DERIVED2" or "DIAMOND" or "DIAMOND_PAYLOAD" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
-            var cte = joined == "DIAMOND"
+            var isDiamond = joined is "DIAMOND" or "DIAMOND_PAYLOAD";
+            var withPayload = joined == "DIAMOND_PAYLOAD";
+            var cte = isDiamond
                 ? "WITH seed AS (SELECT " + firstProjection + " FROM " + physicalSource + "), " +
-                  "twin AS (SELECT t.k1 AS x, t.k2 AS y FROM dbo.[" + src + "] AS t), " +
-                  "matched AS (SELECT l.a AS a, l.b AS b FROM seed AS l " +
+                  "twin AS (SELECT " + (withPayload
+                    ? "t.k1 AS x, t.payload AS side, t.k2 AS y"
+                    : "t.k1 AS x, t.k2 AS y") + " FROM dbo.[" + src + "] AS t), " +
+                  "matched AS (SELECT " + (withPayload
+                    ? "l.a AS a, l.extra AS projected, l.b AS b"
+                    : "l.a AS a, l.b AS b") + " FROM seed AS l " +
                   "INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y) "
                 : "WITH seed AS (SELECT " + firstProjection +
                   " FROM " + physicalSource + singletonJoin + ") ";
-            if (joined != "DIAMOND" && hops >= 2)
+            if (!isDiamond && hops >= 2)
                 cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
-            if (joined != "DIAMOND" && hops >= 3)
+            if (!isDiamond && hops >= 3)
                 cte += ", matched AS (SELECT " + nextProjection + " FROM picked) ";
             var keyAlias = hops switch
             {
@@ -428,7 +441,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 }
             }
 
-            if (joined == "DIAMOND")
+            if (isDiamond)
             {
                 // These queries are syntactically valid; the protected
                 // execution proof must reject them at the capability fence.
@@ -446,8 +459,37 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                         StringComparison.Ordinal),
                     sql.Replace("FROM dbo.[" + src + "] AS t",
                         "FROM dbo.[" + dst + "] AS t", StringComparison.Ordinal),
-                    sql.Replace("SELECT l.a AS a, l.b AS b",
+                    sql.Replace(withPayload
+                            ? "SELECT l.a AS a, l.extra AS projected, l.b AS b"
+                            : "SELECT l.a AS a, l.b AS b",
                         "SELECT l.a AS a, l.a AS b", StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, invalid);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (withPayload)
+            {
+                // A payload is direct and unique in each branch and output.
+                // Duplicate source columns, fake aliases and expressions
+                // cannot acquire the already attested physical key proof.
+                foreach (var invalid in new[]
+                {
+                    sql.Replace("s.payload AS extra", "s.payload + 0 AS extra", StringComparison.Ordinal),
+                    sql.Replace("s.payload AS extra", "s.k1 AS extra", StringComparison.Ordinal),
+                    sql.Replace("t.payload AS side", "t.payload + 0 AS side", StringComparison.Ordinal),
+                    sql.Replace("t.payload AS side", "t.k2 AS side", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "l.extra + 0 AS projected", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "l.a AS projected", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "l.extra AS a", StringComparison.Ordinal),
+                    sql.Replace("l.extra AS projected", "r.side AS projected", StringComparison.Ordinal)
                 })
                 {
                     Assert.NotEqual(sql, invalid);
@@ -474,21 +516,29 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 sql.Replace(keyAlias + ".b",
                     "CAST(" + keyAlias + ".b AS BIGINT)", StringComparison.Ordinal),
                 sql.Replace(firstProjection,
-                    joined == "DIAMOND" ? "s.k2 AS a, s.k1 AS b"
+                    isDiamond ? (withPayload
+                                ? "s.k2 AS a, s.payload AS extra, s.k1 AS b"
+                                : "s.k2 AS a, s.k1 AS b")
                             : payload ? "k2 AS a, payload AS extra, k1 AS b"
                                       : "k2 AS a, k1 AS b", StringComparison.Ordinal),
                 sql.Replace(firstProjection,
-                    joined == "DIAMOND" ? "s.k1 AS a, s.k1 AS b"
+                    isDiamond ? (withPayload
+                                ? "s.k1 AS a, s.payload AS extra, s.k1 AS b"
+                                : "s.k1 AS a, s.k1 AS b")
                             : payload ? "k1 AS a, payload AS extra, k1 AS b"
                                       : "k1 AS a, k1 AS b", StringComparison.Ordinal),
                 // Payload must not be allowed to mask or overwrite a key.
                 sql.Replace(firstProjection,
-                    joined == "DIAMOND" ? "s.k1 AS a, s.k2 + 0 AS b"
+                    isDiamond ? (withPayload
+                                ? "s.k1 AS a, s.payload AS extra, s.k2 + 0 AS b"
+                                : "s.k1 AS a, s.k2 + 0 AS b")
                             : payload ? "k1 AS a, payload AS extra, payload AS b"
                                       : "k1 AS a, k2 + 0 AS b", StringComparison.Ordinal),
                 // Extra projection aliases cannot introduce ambiguity.
                 sql.Replace(firstProjection,
-                    joined == "DIAMOND" ? "s.k1 AS a, s.k2 AS a"
+                    isDiamond ? (withPayload
+                                ? "s.k1 AS a, s.payload AS extra, s.k2 AS a"
+                                : "s.k1 AS a, s.k2 AS a")
                             : payload ? "k1 AS a, payload AS a, k2 AS b"
                                       : "k1 AS a, k2 AS a", StringComparison.Ordinal)
             })
