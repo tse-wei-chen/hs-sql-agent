@@ -117,6 +117,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, false, false, "DERIVED2", "INT", "BIGINT")]
     [InlineData(false, false, 3, false, false, "DERIVED2", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
     [InlineData(true, false, 2, true, false, "DERIVED2", "NVARCHAR(32)", "INT")]
+    // M06: two independent physical-key-preserving CTE branches reconverge
+    // only through a complete ordinary-equality key JOIN (a diamond DAG).
+    [InlineData(true, false, 3, false, false, "DIAMOND", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DIAMOND", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 3, true, false, "DIAMOND", "NVARCHAR(32)", "INT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -288,6 +293,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     src + "] AS innerSrc) AS middle) AS d";
                 firstProjection = "d.x AS a, d.y AS b";
             }
+            if (joined == "DIAMOND")
+            {
+                physicalSource = "dbo.[" + src + "] AS s";
+                firstProjection = "s.k1 AS a, s.k2 AS b";
+            }
             var singletonJoin = joined switch
             {
                 "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
@@ -297,14 +307,19 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" or "DERIVED" or "DERIVED2" => "",
+                "NONE" or "DERIVED" or "DERIVED2" or "DIAMOND" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
-            var cte = "WITH seed AS (SELECT " + firstProjection +
-                " FROM " + physicalSource + singletonJoin + ") ";
-            if (hops >= 2)
+            var cte = joined == "DIAMOND"
+                ? "WITH seed AS (SELECT " + firstProjection + " FROM " + physicalSource + "), " +
+                  "twin AS (SELECT t.k1 AS x, t.k2 AS y FROM dbo.[" + src + "] AS t), " +
+                  "matched AS (SELECT l.a AS a, l.b AS b FROM seed AS l " +
+                  "INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y) "
+                : "WITH seed AS (SELECT " + firstProjection +
+                  " FROM " + physicalSource + singletonJoin + ") ";
+            if (joined != "DIAMOND" && hops >= 2)
                 cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
-            if (hops >= 3)
+            if (joined != "DIAMOND" && hops >= 3)
                 cte += ", matched AS (SELECT " + nextProjection + " FROM picked) ";
             var keyAlias = hops switch
             {
@@ -407,6 +422,38 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     Assert.ThrowsAny<Exception>(() =>
                         SqlCoreFacade.CompileDml(
                             CoreSqlTextParser.ParseDml(rejected,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (joined == "DIAMOND")
+            {
+                // These queries are syntactically valid; the protected
+                // execution proof must reject them at the capability fence.
+                var joinPredicate = "l.a = r.x AND l.b = r.y";
+                foreach (var invalid in new[]
+                {
+                    sql.Replace(joinPredicate, "l.a = r.x OR l.b = r.y", StringComparison.Ordinal),
+                    sql.Replace(joinPredicate, "l.a = r.x", StringComparison.Ordinal),
+                    sql.Replace(joinPredicate, "l.a = r.x AND l.b = r.x", StringComparison.Ordinal),
+                    sql.Replace(joinPredicate, "l.a = r.x AND l.b + 0 = r.y", StringComparison.Ordinal),
+                    sql.Replace("INNER JOIN twin", "LEFT JOIN twin", StringComparison.Ordinal),
+                    sql.Replace("t.k2 AS y", "t.k1 AS y", StringComparison.Ordinal),
+                    sql.Replace("t.k2 AS y", "t.k2 + 0 AS y", StringComparison.Ordinal),
+                    sql.Replace("AS t), matched", "AS t WHERE t.k1 IS NOT NULL), matched",
+                        StringComparison.Ordinal),
+                    sql.Replace("FROM dbo.[" + src + "] AS t",
+                        "FROM dbo.[" + dst + "] AS t", StringComparison.Ordinal),
+                    sql.Replace("SELECT l.a AS a, l.b AS b",
+                        "SELECT l.a AS a, l.a AS b", StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, invalid);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(invalid,
                                 SqlAgentToolType.MsSqlServer, profile),
                             SqlAgentToolType.MsSqlServer, context,
                             new DmlCompilationPolicy(), profile, null));
