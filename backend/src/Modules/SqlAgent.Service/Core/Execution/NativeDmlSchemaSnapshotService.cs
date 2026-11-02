@@ -109,13 +109,13 @@ public sealed class NativeDmlSchemaSnapshotService :
         }
         if (targetProvider == SqlAgentToolType.MySQL && sourceTable is not null)
         {
-            // First MySQL slice is two different real InnoDB base tables.
-            // Both table DDLs are physical and captured independently.
-            if (string.Equals(sourceTable, snapshot.Tables[0].Name, StringComparison.Ordinal))
-                return null;
+            // One actual table needs one catalog identity, not a fabricated
+            // two-table snapshot. Distinct source and target remain separately attested.
             var targetProof = await MySqlInsertSelectCatalogProof.ExtendAsync(
                 connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
             if (targetProof is null) return null;
+            if (string.Equals(sourceTable, targetProof.Tables[0].Name, StringComparison.Ordinal))
+                return targetProof;
             var sourceNames = sourceTable.Split('.');
             if (sourceNames.Length != 2) return null;
             var sourceMatches = await readers.Preview.GetDmlPlanningMetadataAsync(
@@ -187,42 +187,48 @@ public sealed class NativeDmlSchemaSnapshotService :
             throw new InvalidOperationException(
                 "Schema freshness transaction does not belong to its database connection.");
         if (expectedSnapshot.Provider != provider) return null;
-        if (provider == SqlAgentToolType.MySQL && expectedSnapshot.Tables.Count == 2)
+        var mysqlSingleSource = provider == SqlAgentToolType.MySQL
+            && expectedSnapshot.Tables.Count == 1
+            && expectedSnapshot.Version.StartsWith(
+                "native-mysql84-innodb-source-v2:", StringComparison.Ordinal);
+        var mysqlDualSource = provider == SqlAgentToolType.MySQL
+            && expectedSnapshot.Tables.Count == 2
+            && expectedSnapshot.Version.StartsWith(
+                "native-mysql84-dual-source-v1:", StringComparison.Ordinal);
+        if (mysqlSingleSource || mysqlDualSource)
         {
-            // Strict SERIALIZABLE is essential: InnoDB turns plain SELECT into
-            // locking reads, including next-key locks on the selected range.
-            // NEVER use LOCK TABLES here; that would implicitly commit DML.
-            if (transaction.IsolationLevel != System.Data.IsolationLevel.Serializable
-                || !expectedSnapshot.Version.StartsWith(
-                    "native-mysql84-dual-source-v1:", StringComparison.Ordinal))
+            // The strict SERIALIZABLE source read pins InnoDB record/gap locks.
+            // Each ordinary table reference also holds transaction MDL;
+            // LOCK TABLES would implicitly commit and is never used here.
+            if (transaction.IsolationLevel != System.Data.IsolationLevel.Serializable)
                 return null;
-            var sourceName = expectedSnapshot.Tables[1].Name;
             var targetName = expectedSnapshot.Tables[0].Name;
+            var sourceName = mysqlSingleSource ? targetName : expectedSnapshot.Tables[1].Name;
             var sourceParts = sourceName.Split('.');
             var targetParts = targetName.Split('.');
             if (sourceParts.Length != 2 || targetParts.Length != 2
                 || !string.Equals(sourceParts[0], targetParts[0], StringComparison.Ordinal)
-                || string.Equals(sourceName, targetName, StringComparison.Ordinal)
+                || (mysqlDualSource && string.Equals(sourceName, targetName, StringComparison.Ordinal))
                 || sourceParts.Any(string.IsNullOrWhiteSpace)
                 || targetParts.Any(string.IsNullOrWhiteSpace))
                 return null;
 
-            // A table reference acquires MDL retained by this transaction.
-            // Order SOURCE before TARGET, before any metadata or row recheck;
-            // serializable SELECT also locks source records/gaps.
+            // Pin the source first and the target only when physically distinct.
+            // Neither metadata read nor preview-row revalidation may race DDL.
             await PinMySqlSchemaAsync(
                 connection, transaction, sourceParts[0], sourceParts[1], cancellationToken);
-            await PinMySqlSchemaAsync(
-                connection, transaction, targetParts[0], targetParts[1], cancellationToken);
+            if (mysqlDualSource)
+                await PinMySqlSchemaAsync(
+                    connection, transaction, targetParts[0], targetParts[1], cancellationToken);
 
-            var verified = new List<SqlSchemaSnapshot>(2);
+            var verified = new List<SqlSchemaSnapshot>(expectedSnapshot.Tables.Count);
             foreach (var current in expectedSnapshot.Tables)
             {
                 var names = current.Name.Split('.');
-                var mysqlSourceMetadata = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
+                var live = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
                     connection, transaction, names[0], names[1], includeColumns: true,
                     cancellationToken: cancellationToken);
-                var basic = BuildSnapshot(provider, mysqlSourceMetadata);
+                var basic = BuildSnapshot(provider, live);
                 if (basic is null || !string.Equals(basic.Tables[0].Name,
                         current.Name, StringComparison.Ordinal)) return null;
                 var definition = await MySqlInsertSelectCatalogProof.ExtendAsync(
@@ -230,7 +236,9 @@ public sealed class NativeDmlSchemaSnapshotService :
                 if (definition is null) return null;
                 verified.Add(definition);
             }
-            return CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
+            return mysqlSingleSource
+                ? verified[0].Sha256
+                : CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
         }
         if (provider == SqlAgentToolType.Postgres
             && expectedSnapshot.Tables.Count == 1

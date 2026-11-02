@@ -5,7 +5,7 @@ using HsSqlAgent.SqlCore.Core.Ast;
 namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
-/// One bounded M09 source shape for SQLite and PostgreSQL.
+/// One bounded M09 source shape for SQLite, PostgreSQL and MySQL.
 /// Host attests each distinct physical table; when PostgreSQL source and
 /// insert target coincide, a single real catalog proof is sufficient only
 /// with the same transaction-held source write-exclusion lock.
@@ -99,10 +99,7 @@ internal static class NativeInsertSelectSafety
             || string.IsNullOrWhiteSpace(source.Name.Parts[1].Value)
             || source.Name.Parts[1].Value.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase)
             || (targetProvider == SqlAgentToolType.Postgres
-                && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase))
-            || (targetProvider == SqlAgentToolType.MySQL
-                && string.Equals(source.Name.Parts[1].Value, insert.Target.Name.Parts[1].Value,
-                    StringComparison.Ordinal)))
+                && source.Name.Parts[1].Value.StartsWith("pg_", StringComparison.OrdinalIgnoreCase)))
             throw new NotSupportedException(
                 "Bounded native INSERT SELECT requires one explicit physical main source table.");
 

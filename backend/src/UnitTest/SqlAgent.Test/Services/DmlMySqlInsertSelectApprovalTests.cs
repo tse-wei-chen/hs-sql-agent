@@ -42,6 +42,158 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     }
 
     [Fact]
+    public async Task SamePhysicalInnoDbTable_ApprovedSourceRows_CommitOneNativeInsert()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            Assert.Single(plan.SchemaSnapshot!.Tables);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Alice", Assert.Single(preview.Rows)["name"]);
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+            var committed = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            Assert.Empty(committed.ReturnedRows);
+            Assert.Equal(3, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalInnoDbTable_SourceRowDrift_DeniesInsertion()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(connectionString,
+                $"UPDATE `{schema}`.`{target}` SET name = 'Mallory' WHERE id = 1");
+            var rejected = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.False(rejected.Committed);
+            Assert.Empty(rejected.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalInnoDbTable_IdenticalDdlReplacement_DeniesOldApproval()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(connectionString, $"DROP TABLE `{schema}`.`{target}`");
+            await ExecuteAsync(connectionString,
+                $"CREATE TABLE `{schema}`.`{target}` (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL) ENGINE=InnoDB");
+            await ExecuteAsync(connectionString,
+                $"INSERT INTO `{schema}`.`{target}` (name) VALUES ('Alice'), ('Bob')");
+            await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalInnoDbTable_SerializableSchemaProof_HoldsSourceWriteLock()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, _) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            await using var first = new MySqlConnection(connectionString);
+            await first.OpenAsync(TestContext.Current.CancellationToken);
+            await using var transaction = await first.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken);
+            Assert.Equal(plan.SchemaSnapshot!.Sha256, await native.ReadCurrentSchemaDigestAsync(
+                first, transaction, SqlAgentToolType.MySQL, plan.SchemaSnapshot,
+                TestContext.Current.CancellationToken));
+            await using var second = new MySqlConnection(connectionString);
+            await second.OpenAsync(TestContext.Current.CancellationToken);
+            await using var cmd = second.CreateCommand();
+            cmd.CommandText = "SET SESSION innodb_lock_wait_timeout = 1";
+            await cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            cmd.CommandText = $"UPDATE `{schema}`.`{target}` SET name = 'Hijacked' WHERE id = 1";
+            var error = await Assert.ThrowsAsync<MySqlException>(() =>
+                cmd.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(1205, error.Number);
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalInnoDbTable_WeakerTransactionIsolation_DeniesFreshnessProof()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, _) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            await using var connection = new MySqlConnection(connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(
+                System.Data.IsolationLevel.ReadCommitted, TestContext.Current.CancellationToken);
+            Assert.Null(await native.ReadCurrentSchemaDigestAsync(
+                connection, transaction, SqlAgentToolType.MySQL, plan.SchemaSnapshot!,
+                TestContext.Current.CancellationToken));
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+        });
+    }
+
+    [Fact]
+    public async Task SamePhysicalInnoDbTable_IndexDrift_InvalidatesApproval()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, _, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{target}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, target, sql);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(connectionString,
+                $"CREATE INDEX `ix_m09_self_{target}` ON `{schema}`.`{target}` (name)");
+            await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
     public async Task SourceRowChange_AfterPreview_DeniesAndRollsBack()
     {
         await WithTablesAsync(async (connectionString, schema, target, source, version) =>

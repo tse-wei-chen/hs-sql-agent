@@ -591,6 +591,9 @@ public sealed class DmlCoordinator(
                           || (plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
                               && !plan.SchemaSnapshot.Version.StartsWith(
                                   "native-postgres-insert-source-v1:", StringComparison.Ordinal))
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MySQL
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-mysql84-innodb-source-v2:", StringComparison.Ordinal))
                         : plan.SchemaSnapshot.Tables.Count != 2
                           || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MySQL
                               && !plan.SchemaSnapshot.Version.StartsWith(
