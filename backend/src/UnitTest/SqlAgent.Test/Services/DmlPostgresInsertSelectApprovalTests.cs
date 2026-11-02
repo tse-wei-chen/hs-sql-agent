@@ -116,6 +116,75 @@ public sealed class DmlPostgresInsertSelectApprovalTests
         });
     }
 
+    [Fact]
+    public async Task CommitSchemaRevalidation_SourceLockPreventsConcurrentPhysicalWrites()
+    {
+        await WithTablesAsync(async (connectionString, schema, _) =>
+        {
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema,
+                $"INSERT INTO {schema}.users(name) SELECT name FROM {schema}.source_users WHERE id = 1");
+            await using var first = new NpgsqlConnection(connectionString);
+            await first.OpenAsync(TestContext.Current.CancellationToken);
+            await using var transaction = await first.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, TestContext.Current.CancellationToken);
+            var current = await native.ReadCurrentSchemaDigestAsync(
+                first, transaction, SqlAgentToolType.Postgres, plan.SchemaSnapshot!,
+                TestContext.Current.CancellationToken);
+            Assert.Equal(plan.SchemaSnapshot!.Sha256, current);
+
+            await using var second = new NpgsqlConnection(connectionString);
+            await second.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = second.CreateCommand();
+            command.CommandText = $"SET lock_timeout = '300ms'; UPDATE {schema}.source_users SET name = 'Mallory' WHERE id = 1";
+            var blocked = await Assert.ThrowsAsync<PostgresException>(() =>
+                command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken));
+            Assert.Equal("55P03", blocked.SqlState);
+            await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(1, await ScalarAsync(connectionString,
+                $"SELECT count(*) FROM {schema}.source_users WHERE name = 'Carol'"));
+        });
+    }
+
+    [Fact]
+    public async Task UserTriggerOnSource_CannotMintExecutablePhysicalApprovalProof()
+    {
+        await WithTablesAsync(async (connectionString, schema, _) =>
+        {
+            await ExecuteAsync(connectionString, $"""
+                CREATE FUNCTION {schema}.m09_unsafe_trigger() RETURNS trigger AS $
+                BEGIN RETURN NEW; END
+                $ LANGUAGE plpgsql;
+                CREATE TRIGGER m09_source BEFORE INSERT ON {schema}.source_users
+                FOR EACH ROW EXECUTE FUNCTION {schema}.m09_unsafe_trigger();
+                """);
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAnyAsync<Exception>(() => CreatePlanAsync(
+                provider, native, connectionString, schema,
+                $"INSERT INTO {schema}.users(name) SELECT name FROM {schema}.source_users WHERE id = 1"));
+            Assert.Equal(2, await ScalarAsync(connectionString, $"SELECT COUNT(*) FROM {schema}.users"));
+        });
+    }
+
+    [Theory]
+    [InlineData("RETURNING *")]
+    [InlineData("RETURNING upper(name)")]
+    [InlineData("RETURNING id, id")]
+    public async Task UnsupportedPostgresReturning_FailsClosed(string returning)
+    {
+        await WithTablesAsync(async (connectionString, schema, _) =>
+        {
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAnyAsync<Exception>(() => CreatePlanAsync(
+                provider, native, connectionString, schema,
+                $"INSERT INTO {schema}.users(name) SELECT name FROM {schema}.source_users WHERE id = 1 " + returning));
+            Assert.Equal(2, await ScalarAsync(connectionString, $"SELECT COUNT(*) FROM {schema}.users"));
+        });
+    }
+
     private static async Task<ValidatedDmlPlan> CreatePlanAsync(
         PostgresProvider provider, NativeDmlSchemaSnapshotService snapshot,
         string connectionString, string schema, string sql)
