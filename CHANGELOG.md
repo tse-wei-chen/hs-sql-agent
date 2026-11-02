@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — bounded native BETWEEN for four physical INSERT SELECT sources (develop only)
+
+- Four already-attested native provider source predicates (SQLite, PostgreSQL,
+  MySQL 8.4 InnoDB, SQL Server 2022) additionally accept direct
+  `column BETWEEN lowerLiteral AND upperLiteral` in the same bounded
+  `AND`/`OR` boolean filter. This is a typed F# `BetweenExpr` admission,
+  not textual SQL rewriting or a new parsing/compilation path.
+- Both inclusive endpoints must be direct non-NULL literals; NOT BETWEEN,
+  computed/NULL/column endpoints, literal-only tautologies and subqueries
+  still fail closed. Each BETWEEN consumes **two** of the existing
+  **four-total-literal** budget (shared with `=` and `IN`), and the
+  **seven-boolean-node** limit remains unchanged.
+- Real database regression tests prove both inclusive endpoints, optional
+  `AND` and `OR` combinations, strict native source row Preview→Approval
+  →Commit, post-commit generated IDs, replay, source drift and row-cap denial.
+  Physical table Catalog, one-time approval, transaction-held locks and
+  actual affected-row parity remain mandatory.
+- No added MCP tool, provider driver, public API or changed frontend
+  defaults (four read-only tools selected; DML disabled).
+
 ### G9/M09 — four-provider bounded native INSERT SELECT IN/OR source predicates (develop only)
 
 - Existing physically attested **SQLite, PostgreSQL, MySQL 8.4 InnoDB
