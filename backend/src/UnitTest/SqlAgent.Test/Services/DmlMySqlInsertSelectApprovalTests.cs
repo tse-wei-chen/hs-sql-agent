@@ -65,6 +65,31 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     }
 
     [Fact]
+    public async Task SameDdlSameSourceValues_ButRecreatedPhysicalTable_RejectsOldApproval()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{source}` WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, source, sql);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(connectionString, $"DROP TABLE `{schema}`.`{source}`");
+            await ExecuteAsync(connectionString,
+                $"CREATE TABLE `{schema}`.`{source}` (id INT PRIMARY KEY, name VARCHAR(100) NOT NULL) ENGINE=InnoDB");
+            await ExecuteAsync(connectionString,
+                $"INSERT INTO `{schema}`.`{source}` (id, name) VALUES (1, 'Carol')");
+            await Assert.ThrowsAnyAsync<Exception>(() => coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
     public async Task SourceIndexDrift_AfterPreview_DeniesCommit()
     {
         await WithTablesAsync(async (connectionString, schema, target, source, version) =>
