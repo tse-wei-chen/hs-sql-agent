@@ -26,10 +26,30 @@ internal static class SqliteInsertSelectSafety
         if (maxAffectedRows <= 0 || maxAffectedRows == int.MaxValue)
             throw new NotSupportedException(
                 "SQLite INSERT SELECT requires a positive finite maximum affected-row policy.");
-        if (insert.Conflict is not null || !insert.Returning.IsDefaultOrEmpty
-            || insert.Target.Alias is not null)
+        if (insert.Conflict is not null || insert.Target.Alias is not null)
             throw new NotSupportedException(
-                "SQLite INSERT SELECT source-row approval rejects conflict, RETURNING and target aliases.");
+                "SQLite INSERT SELECT source-row approval rejects conflict and target aliases.");
+
+        // RETURNING produces rows only after the already approved mutation.
+        // F# owns native dialect/version/type validation; Host deliberately
+        // admits only a bounded list of distinct direct target columns.
+        // Generated target values are not pretended to be previewed source rows.
+        if (!insert.Returning.IsDefaultOrEmpty)
+        {
+            var seenReturning = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in insert.Returning)
+            {
+                if (item is not DmlReturningColumnItem column
+                    || column.Identifier.Parts.Length != 1
+                    || column.Identifier.Parts[0].Value is "*" or ""
+                    || !seenReturning.Add(column.Identifier.Parts[0].Value))
+                    throw new NotSupportedException(
+                        "SQLite INSERT SELECT RETURNING requires distinct unqualified direct target columns; wildcard, aliases and expressions remain fail-closed.");
+            }
+            if (seenReturning.Count > 32)
+                throw new NotSupportedException(
+                    "SQLite INSERT SELECT RETURNING is limited to 32 direct target columns.");
+        }
         if (insert.Target.Name.Parts.Length != 2
             || !IsMain(insert.Target.Name.Parts[0].Value))
             throw new NotSupportedException(
