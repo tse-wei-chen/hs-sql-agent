@@ -95,6 +95,19 @@ internal static class SqliteInsertSelectSafety
         return (query, columns.ToImmutable());
     }
 
+    internal static bool IsBoundedShape(InsertStatement insert)
+    {
+        try
+        {
+            RequireShape(insert, SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite, 1);
+            return true;
+        }
+        catch (NotSupportedException)
+        {
+            return false;
+        }
+    }
+
     internal static SqlStatement PreviewQuery(SqlStatement source, ImmutableArray<string> columns)
     {
         var head = source is SelectStatement simple
