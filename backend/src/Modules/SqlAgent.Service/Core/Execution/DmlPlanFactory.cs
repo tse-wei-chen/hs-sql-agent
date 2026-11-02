@@ -370,7 +370,7 @@ public sealed class DmlPlanFactory(
                 ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null || snapshot.Provider != targetProvider
-                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)
+                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
                 || snapshot.Tables.Count is < 1 or > 2
                 || !string.Equals(snapshot.Tables[0].Name,
                     targetResolution.QualifiedTableName, physicalComparison)
@@ -384,6 +384,9 @@ public sealed class DmlPlanFactory(
                           && !snapshot.Version.StartsWith(
                               "native-mysql84-innodb-source-v2:", StringComparison.Ordinal))
                     : snapshot.Tables.Count != 2
+                      || (targetProvider == SqlAgentToolType.MsSqlServer
+                          && !snapshot.Version.StartsWith(
+                              "native-sqlserver2022-dual-source-v1:", StringComparison.Ordinal))
                       || (targetProvider == SqlAgentToolType.MySQL
                           && !snapshot.Version.StartsWith(
                               "native-mysql84-dual-source-v1:", StringComparison.Ordinal))
