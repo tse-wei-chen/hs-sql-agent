@@ -3600,6 +3600,44 @@ physical filter source and any arbitrary multi-table anti-join need
 their own independent evidence. Five other providers and default MCP
 tool selection are unchanged.
 
+## G9 / M06 — direct payload through a key-proven CTE diamond (develop only)
+
+The same bounded SQL Server three-CTE diamond can preserve **direct
+payload** on each physical source branch and the merged left-branch
+projection. Payload can appear between source UNIQUE-key components and
+can be renamed, but every projection must be direct, unambiguous,
+input-injective and limited to 32 columns. The complete, ordered physical
+UNIQUE tuple and two mandatory INNER equalities are never optional.
+
+```sql
+WITH seed AS (
+  SELECT s.k1 AS a, s.payload AS extra, s.k2 AS b
+  FROM dbo.Source AS s
+), twin AS (
+  SELECT t.k1 AS x, t.payload AS side, t.k2 AS y
+  FROM dbo.Source AS t
+), matched AS (
+  SELECT l.a AS a, l.extra AS projected, l.b AS b
+  FROM seed AS l INNER JOIN twin AS r
+    ON l.a = r.x AND l.b = r.y
+)
+UPDATE dbo.Target SET label = 'changed'
+FROM matched
+WHERE dbo.Target.k1 = matched.a AND dbo.Target.k2 = matched.b;
+```
+
+Payload **never** constitutes evidence of physical uniqueness. The
+F# static cardinality and sealed execution-admission proofs and
+independent Host physical-key/real index discovery still agree on the
+full ordered source tuple. Preview/approval identity and the held
+same-transaction `IsCurrent` condition are unchanged.
+
+Computed or repeated payload references, shadowed or ambiguous output
+aliases, `CAST`, right-branch merged output, partial keys, `OR`,
+`LEFT JOIN`, other sources and general CTE DAGs remain fail-closed.
+Other five databases and the four default read-only tools (DML off)
+remain unchanged.
+
 ## G9 / M06 — a bounded three-CTE diamond (develop only)
 
 SQL Server UPDATE/DELETE now admits two **independent** CTE projections
