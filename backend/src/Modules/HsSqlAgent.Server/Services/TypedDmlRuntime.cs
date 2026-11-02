@@ -98,7 +98,7 @@ public sealed class TypedDmlRuntime(
             && (parsedMutation.SourceDialect != provider.Type
                 || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)))
             throw new NotSupportedException(
-                "INSERT SELECT source-row approval requires native SQLite or PostgreSQL only.");
+                "INSERT SELECT source-row approval requires native SQLite, PostgreSQL or MySQL only.");
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert)
         {
             // Source read permission is separate from target write permission.
