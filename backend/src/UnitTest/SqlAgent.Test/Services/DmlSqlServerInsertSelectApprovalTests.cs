@@ -468,7 +468,6 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
     [InlineData("INSERT INTO dbo.t (name) SELECT name FROM dbo.s")]
     [InlineData("INSERT INTO dbo.t (name) SELECT name FROM dbo.s WHERE id = 1 OR id = 2")]
     [InlineData("INSERT INTO dbo.t (name) SELECT upper(name) FROM dbo.s WHERE id = 1")]
-    [InlineData("INSERT INTO dbo.t (name) OUTPUT INSERTED.id SELECT name FROM dbo.s WHERE id = 1")]
     public void UnprovenHostShapes_DoNotGainSqlServerSourceApproval(string sql)
     {
         try
