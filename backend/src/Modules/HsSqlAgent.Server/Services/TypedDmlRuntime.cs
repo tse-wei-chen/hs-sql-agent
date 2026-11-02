@@ -479,7 +479,8 @@ public sealed class TypedDmlRuntime(
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
         || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
-            && NativeInsertSelectSafety.IsBoundedShape(insert);
+            && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
+                || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres));
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {
