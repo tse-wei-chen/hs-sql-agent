@@ -364,21 +364,25 @@ public sealed class DmlPlanFactory(
             targetProfile);
         if (sourceSelection is { } selection)
         {
+            // PostgreSQL quoted identifiers are case-sensitive; SQLite physical
+            // table identity is case-insensitive. Do not coalesce two PG tables.
+            var physicalComparison = targetProvider == SqlAgentToolType.Postgres
+                ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null || snapshot.Provider != targetProvider
                 || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                 || snapshot.Tables.Count is < 1 or > 2
                 || !string.Equals(snapshot.Tables[0].Name,
-                    targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
+                    targetResolution.QualifiedTableName, physicalComparison)
                 || (string.Equals(selection.PhysicalSource,
-                        targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
+                        targetResolution.QualifiedTableName, physicalComparison)
                     ? snapshot.Tables.Count != 1
                       || (targetProvider == SqlAgentToolType.Postgres
                           && !snapshot.Version.StartsWith(
                               "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                     : snapshot.Tables.Count != 2
                       || !string.Equals(snapshot.Tables[1].Name, selection.PhysicalSource,
-                          StringComparison.OrdinalIgnoreCase)))
+                          physicalComparison)))
                 throw new InvalidOperationException(
                     "Native INSERT SELECT requires independently attested physical source and target schema snapshots.");
 

@@ -125,7 +125,7 @@ public sealed class NativeDmlSchemaSnapshotService :
                 cancellationToken: cancellationToken);
             var secondBase = BuildSnapshot(targetProvider, secondMatches);
             if (secondBase is null || !string.Equals(secondBase.Tables[0].Name,
-                    sourceTable, StringComparison.OrdinalIgnoreCase)) return null;
+                    sourceTable, StringComparison.Ordinal)) return null;
             var physicalSource = await PostgresInsertSelectCatalogProof.ExtendAsync(
                 connection, null, secondBase, secondMatches[0].Schema,
                 secondMatches[0].Table, cancellationToken);
@@ -201,8 +201,8 @@ public sealed class NativeDmlSchemaSnapshotService :
             if (sourceParts.Length != 2 || targetParts.Length != 2
                 || sourceParts.Any(string.IsNullOrWhiteSpace)
                 || targetParts.Any(string.IsNullOrWhiteSpace)
-                || !string.Equals(sourceParts[0], targetParts[0], StringComparison.OrdinalIgnoreCase)
-                || string.Equals(tables[0].Name, tables[1].Name, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(sourceParts[0], targetParts[0], StringComparison.Ordinal)
+                || string.Equals(tables[0].Name, tables[1].Name, StringComparison.Ordinal)
                 || sourceParts[0].StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
                 || sourceParts[0] == "information_schema")
                 return null;
@@ -564,7 +564,8 @@ public sealed class NativeDmlSchemaSnapshotService :
             || target.Provider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
             || target.Tables.Count != 1 || source.Tables.Count != 1
             || string.Equals(target.Tables[0].Name, source.Tables[0].Name,
-                StringComparison.OrdinalIgnoreCase)) return null;
+                target.Provider == SqlAgentToolType.Postgres
+                    ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)) return null;
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         static void Append(IncrementalHash digest, string value)
         {
