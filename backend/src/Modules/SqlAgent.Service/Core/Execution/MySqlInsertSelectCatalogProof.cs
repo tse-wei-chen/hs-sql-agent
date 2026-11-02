@@ -45,6 +45,9 @@ internal static class MySqlInsertSelectCatalogProof
             SELECT COUNT(*)
             FROM information_schema.USER_PRIVILEGES
             WHERE PRIVILEGE_TYPE = 'TRIGGER'
+              AND GRANTEE = CONCAT(
+                  QUOTE(SUBSTRING_INDEX(CURRENT_USER(), '@', 1)), '@',
+                  QUOTE(SUBSTRING_INDEX(CURRENT_USER(), '@', -1)))
             """, schema, table))
         {
             if (Convert.ToInt64(await grants.ExecuteScalarAsync(token)) <= 0)
