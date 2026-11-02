@@ -565,13 +565,14 @@ public sealed class DmlCoordinator(
 
             case DmlApprovalMode.InsertSelect:
                 if (plan.Operation != DmlOperation.Insert
-                    || plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
+                    || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                     || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
                     || plan.MaxAffectedRows <= 0 || plan.MaxAffectedRows == int.MaxValue
                     || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                        TargetProvider: SqlAgentToolType.Sqlite } match
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres } match
+                    || match.TargetProvider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot is null
-                    || plan.SchemaSnapshot.Provider != SqlAgentToolType.Sqlite
+                    || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot.Tables.Count is < 1 or > 2
                     || !plan.InsertRows.IsDefaultOrEmpty
                     || plan.RowIdentityColumns.IsDefaultOrEmpty
@@ -581,7 +582,8 @@ public sealed class DmlCoordinator(
                         StringComparison.OrdinalIgnoreCase)
                     || (string.Equals(sourceProof.PhysicalSource, plan.TableName,
                             StringComparison.OrdinalIgnoreCase)
-                        ? plan.SchemaSnapshot.Tables.Count != 1
+                        ? plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
+                          || plan.SchemaSnapshot.Tables.Count != 1
                         : plan.SchemaSnapshot.Tables.Count != 2
                           || !string.Equals(plan.SchemaSnapshot.Tables[1].Name,
                               sourceProof.PhysicalSource, StringComparison.OrdinalIgnoreCase))
@@ -595,7 +597,7 @@ public sealed class DmlCoordinator(
                     || !sourceProof.ProjectedColumns.SequenceEqual(
                         plan.RowIdentityColumns, StringComparer.OrdinalIgnoreCase))
                     throw new InvalidOperationException(
-                        "SQLite INSERT SELECT requires a sealed, bounded, separately attested physical source-row proof.");
+                        "Native INSERT SELECT requires a sealed, bounded, separately attested physical source-row proof.");
                 return;
 
             case DmlApprovalMode.RowSetMutation:
