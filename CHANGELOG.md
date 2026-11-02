@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 / M09 — MySQL 8.4 InnoDB same-table INSERT SELECT approval (develop only)
+
+- Extend native bounded `INSERT INTO db.target (name) SELECT name FROM db.target
+  WHERE id = 1` to source and destination being **one actual physical InnoDB
+  base table**; retain the existing distinct two-table capability. The same
+  strict source projection, predicate, version and positive finite row cap apply;
+  CTE/JOIN/UPSERT/RETURNING and multi-statement writes remain rejected.
+- Capture **one actual MySQL native schema and InnoDB TABLE_ID proof**, not a
+  fabricated two-table snapshot. At preview and commit, an explicit
+  `SERIALIZABLE` transaction pins the source with a regular locking read and
+  transaction-held metadata lock *before* live schema revalidation. Require
+  the original immutable source row multiset, plan fingerprint and one-time
+  approval; mutate once and return success only after confirmed commit.
+- Real MySQL 8.4 native integration covers approved insertion, approval replay,
+  source row and index drift, identical-DDL physical replacement, concurrent
+  writer lock denial and insufficient isolation. Existing engine, trigger,
+  foreign-key and grant exclusions remain fail-closed. No new MCP tool,
+  public SqlCore API, dependency or alternative compiler pipeline.
+
 ### G9 / M09 — MySQL 8.4 InnoDB INSERT SELECT source-row approval (develop only)
 
 - Strict **single-statement, two different real InnoDB base tables** in the
