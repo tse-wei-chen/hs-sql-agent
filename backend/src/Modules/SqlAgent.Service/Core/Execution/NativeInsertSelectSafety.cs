@@ -174,6 +174,17 @@ internal static class NativeInsertSelectSafety
                     return false;
                 terms += membership.Items.Length;
             }
+            else if (current is BetweenExpr { IsNegated: false } range
+                && range.Value is ColumnExpr { Name.Parts.Length: 1 }
+                && range.Lower is LiteralExpr { Value: not null }
+                && range.Upper is LiteralExpr { Value: not null })
+            {
+                // Both inclusive bounds are comparison operands. Count both
+                // against the shared four-literal budget; do not expand into
+                // unchecked SQL text or admit NOT/computed/NULL endpoints.
+                if (maxTerms - terms < 2) return false;
+                terms += 2;
+            }
             else return false;
         }
         return terms > 0;

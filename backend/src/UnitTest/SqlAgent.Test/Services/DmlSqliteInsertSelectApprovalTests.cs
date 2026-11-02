@@ -17,6 +17,46 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         "INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1";
 
     [Theory]
+    [InlineData("between")]
+    [InlineData("and")]
+    [InlineData("or")]
+    public async Task BoundedBetween_SqliteNativeSource_ApprovesAndReturnsActualRows(string kind)
+    {
+        await WithDatabaseAsync(async (cs, version) =>
+        {
+            await ExecuteAsync(cs, "INSERT INTO main.other_users(id,name) VALUES (1,'Carol'),(2,'Dave')");
+            var predicate = kind switch
+            {
+                "between" => "id BETWEEN 1 AND 2",
+                "and" => "id BETWEEN 1 AND 2 AND name IN ('Carol','Dave')",
+                _ => "id BETWEEN 1 AND 1 OR id = 2"
+            };
+            var provider = new SqliteProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users " +
+                $"WHERE {predicate} RETURNING id, name", useVerifiedProfile: true);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            var commit = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(commit.Committed);
+            Assert.Equal(2, commit.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                commit.ReturnedRows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.Equal(new[] { 3, 4 },
+                commit.ReturnedRows.Select(x => Convert.ToInt32(x["id"])).OrderBy(x => x).ToArray());
+            Assert.Equal(4, await ScalarAsync(cs, "SELECT COUNT(*) FROM main.users"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Theory]
     [InlineData("in")]
     [InlineData("or")]
     [InlineData("mixed")]
@@ -68,6 +108,14 @@ public sealed class DmlSqliteInsertSelectApprovalTests
         {
             "id = 1 OR 1 = 1",
             "id IN (1, 2, 3, 4, 5)",
+            "id NOT BETWEEN 1 AND 2",
+            "id BETWEEN 1 AND NULL",
+            "id BETWEEN NULL AND 2",
+            "upper(id) BETWEEN 1 AND 2",
+            "1 BETWEEN 1 AND 2",
+            "id BETWEEN id AND 2",
+            "id BETWEEN 1 AND 2 AND name IN ('A','B','C')",
+            "id BETWEEN 1 AND 2 OR id IN (3,4,5)",
             "id NOT IN (1, 2)",
             "id IN (1, NULL)",
             "id = 1 OR id = 2 OR id = 3 OR id = 4 OR id = 5",
