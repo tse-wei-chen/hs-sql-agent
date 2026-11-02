@@ -13,6 +13,44 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     private const string Approval = "mysql84-innodb-m09-source-row-approval-v1";
 
     [Theory]
+    [InlineData("between")]
+    [InlineData("and")]
+    [InlineData("or")]
+    public async Task BoundedBetween_MySqlInnoDbNativeSource_ApprovesTwoRowsAndCommits(string kind)
+    {
+        await WithTablesAsync(async (cs, schema, target, source, version) =>
+        {
+            await ExecuteAsync(cs,
+                $"INSERT INTO `{schema}`.`{source}` (id,name) VALUES (2,'Dave')");
+            var predicate = kind switch
+            {
+                "between" => "id BETWEEN 1 AND 2",
+                "and" => "id BETWEEN 1 AND 2 AND name IN ('Carol','Dave')",
+                _ => "id BETWEEN 1 AND 1 OR id = 2"
+            };
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) " +
+                $"SELECT name FROM `{schema}`.`{source}` WHERE {predicate}");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            var commit = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(commit.Committed);
+            Assert.Equal(2, commit.AffectedRows);
+            Assert.Empty(commit.ReturnedRows);
+            Assert.Equal(4, await ScalarAsync(cs, $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Theory]
     [InlineData("in")]
     [InlineData("or")]
     [InlineData("mixed")]
