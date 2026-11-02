@@ -39,20 +39,46 @@ internal static class MySqlInsertSelectCatalogProof
         }
 
         // MySQL trigger catalog entries may be hidden from a caller without
-        // TRIGGER permission. Only a user granted global TRIGGER visibility can
+        // TRIGGER permission. Only a user granted global TRIGGER and PROCESS visibility can
         // assert absence; least-privilege users remain safely unsupported.
         await using (var grants = Command(connection, transaction, """
-            SELECT COUNT(*)
+            SELECT COUNT(DISTINCT PRIVILEGE_TYPE)
             FROM information_schema.USER_PRIVILEGES
-            WHERE PRIVILEGE_TYPE = 'TRIGGER'
+            WHERE PRIVILEGE_TYPE IN ('TRIGGER', 'PROCESS')
               AND GRANTEE = CONCAT(
                   QUOTE(SUBSTRING_INDEX(CURRENT_USER(), '@', 1)), '@',
                   QUOTE(SUBSTRING_INDEX(CURRENT_USER(), '@', -1)))
             """, schema, table))
         {
-            if (Convert.ToInt64(await grants.ExecuteScalarAsync(token)) <= 0)
+            if (Convert.ToInt64(await grants.ExecuteScalarAsync(token)) != 2)
                 return null;
         }
+
+        // SHOW CREATE alone cannot distinguish an identical-DDL DROP+CREATE
+        // from the table originally approved. Bind InnoDB's actual TABLE_ID
+        // (requires PROCESS) and the source instance UUID to the proof.
+        // Unavailable or ambiguous physical identities reject execution.
+        string innodbId;
+        await using (var identity = Command(connection, transaction, """
+            SELECT NAME, CAST(TABLE_ID AS CHAR)
+            FROM information_schema.INNODB_TABLES
+            WHERE NAME = CONCAT(@schema, '/', @table)
+            """, schema, table))
+        await using (var rows = await identity.ExecuteReaderAsync(token))
+        {
+            if (!await rows.ReadAsync(token)
+                || !string.Equals(rows.GetString(0), schema + "/" + table, StringComparison.Ordinal)
+                || rows.IsDBNull(1)) return null;
+            innodbId = rows.GetString(1);
+            if (string.IsNullOrWhiteSpace(innodbId) || await rows.ReadAsync(token))
+                return null;
+        }
+        await using var instanceCommand = connection.CreateCommand();
+        instanceCommand.Transaction = transaction;
+        instanceCommand.CommandText = "SELECT @@server_uuid";
+        var instanceUuid = Convert.ToString(await instanceCommand.ExecuteScalarAsync(token),
+            System.Globalization.CultureInfo.InvariantCulture);
+        if (string.IsNullOrWhiteSpace(instanceUuid)) return null;
 
         await using (var excluded = Command(connection, transaction, """
             SELECT
@@ -87,13 +113,15 @@ internal static class MySqlInsertSelectCatalogProof
             return null;
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        Append(hash, "m09-mysql84-innodb-catalog-v1");
+        Append(hash, "m09-mysql84-innodb-catalog-v2");
+        Append(hash, instanceUuid);
+        Append(hash, innodbId);
         Append(hash, basic.Version);
         Append(hash, schema);
         Append(hash, table);
         Append(hash, definition);
         return new SqlSchemaSnapshot(SqlAgentToolType.MySQL,
-            "native-mysql84-innodb-source-v1:"
+            "native-mysql84-innodb-source-v2:"
             + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(),
             basic.Tables);
     }
