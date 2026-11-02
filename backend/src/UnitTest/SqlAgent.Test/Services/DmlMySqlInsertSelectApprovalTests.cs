@@ -179,7 +179,10 @@ public sealed class DmlMySqlInsertSelectApprovalTests
         }
         await using var c = new MySqlConnection(connectionString);
         await c.OpenAsync(TestContext.Current.CancellationToken);
-        var schema = Convert.ToString(await ScalarAsync(connectionString!, "SELECT DATABASE()"))!;
+        await using var schemaCommand = new MySqlCommand("SELECT DATABASE()", c);
+        var schema = (string)(await schemaCommand.ExecuteScalarAsync(
+            TestContext.Current.CancellationToken)
+            ?? throw new InvalidOperationException("MySQL current database is not set."));
         Assert.False(string.IsNullOrWhiteSpace(schema));
         var tag = Guid.NewGuid().ToString("N")[..12];
         var target = "m09_target_" + tag;
