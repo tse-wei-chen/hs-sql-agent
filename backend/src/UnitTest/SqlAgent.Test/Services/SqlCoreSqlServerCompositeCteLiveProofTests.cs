@@ -466,7 +466,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 }
             }
 
-            if (isDiamond)
+            if (isDiamond && !semiAnti)
             {
                 // These queries are syntactically valid; the protected
                 // execution proof must reject them at the capability fence.
@@ -521,6 +521,38 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     Assert.ThrowsAny<Exception>(() =>
                         SqlCoreFacade.CompileDml(
                             CoreSqlTextParser.ParseDml(invalid,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (semiAnti)
+            {
+                // A filter can reduce the approved row set but cannot
+                // borrow any incomplete, computed, or foreign source key.
+                foreach (var rejected in new[]
+                {
+                    sql.Replace(" AND e.k2 = " + queryAlias + ".k2", "", StringComparison.Ordinal),
+                    sql.Replace(" AND e.k2 = " + queryAlias + ".k2",
+                        " OR e.k2 = " + queryAlias + ".k2", StringComparison.Ordinal),
+                    sql.Replace("e.k1 = " + queryAlias + ".k1", "e.k1 = e.k1", StringComparison.Ordinal),
+                    sql.Replace("e.k2 = " + queryAlias + ".k2",
+                        "e.k2 + 0 = " + queryAlias + ".k2", StringComparison.Ordinal),
+                    sql.Replace("FROM dbo.[" + src + "] AS e",
+                        "FROM dbo.[" + dst + "] AS e", StringComparison.Ordinal),
+                    sql.Replace(" AND e.payload = 11", " OR e.payload = 11", StringComparison.Ordinal),
+                    sql.Replace("e.payload = 11", "e.payload + 0 = 11", StringComparison.Ordinal),
+                    sql.Replace("SELECT 1 FROM dbo.[" + src + "] AS e",
+                        "SELECT 1 FROM dbo.[" + src + "] AS e " +
+                        "INNER JOIN dbo.[" + src + "] AS j ON e.k1 = j.k1",
+                        StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
                                 SqlAgentToolType.MsSqlServer, profile),
                             SqlAgentToolType.MsSqlServer, context,
                             new DmlCompilationPolicy(), profile, null));
