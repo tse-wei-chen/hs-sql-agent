@@ -112,6 +112,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 2, false, false, "DERIVED", "INT", "BIGINT")]
     [InlineData(false, false, 3, false, false, "DERIVED", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
     [InlineData(true, false, 1, true, false, "DERIVED", "NVARCHAR(32)", "INT")]
+    // M06 next boundary: two successive non-lateral projections must each
+    // preserve every physical UNIQUE component, with no extra row source.
+    [InlineData(true, false, 1, false, false, "DERIVED2", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DERIVED2", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 2, true, false, "DERIVED2", "NVARCHAR(32)", "INT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -276,6 +281,13 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "FROM dbo.[" + src + "] AS innerSrc) AS d";
                 firstProjection = "d.x AS a, d.y AS b";
             }
+            if (joined == "DERIVED2")
+            {
+                physicalSource = "(SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
             var singletonJoin = joined switch
             {
                 "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
@@ -285,7 +297,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" or "DERIVED" => "",
+                "NONE" or "DERIVED" or "DERIVED2" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
             var cte = "WITH seed AS (SELECT " + firstProjection +
@@ -334,7 +346,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 missingParsed, SqlAgentToolType.MsSqlServer, context,
                 new DmlCompilationPolicy(), profile, null));
 
-            if (joined == "DERIVED")
+            if (joined is "DERIVED" or "DERIVED2")
             {
                 // M06 negative grammar matrix: changing the nested source
                 // must never borrow a physical UNIQUE proof by alias alone.
@@ -363,6 +375,39 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                         SqlCoreFacade.CompileDml(
                             CoreSqlTextParser.ParseDml(
                                 rejected, SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (joined == "DERIVED2")
+            {
+                var intermediate = "SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle";
+                Assert.Contains(intermediate, sql, StringComparison.Ordinal);
+                foreach (var invalid in new[]
+                {
+                    intermediate.Replace("middle.x AS x", "middle.x + 0 AS x",
+                        StringComparison.Ordinal),
+                    intermediate.Replace("middle.y AS y", "middle.y AS x",
+                        StringComparison.Ordinal),
+                    intermediate + " WHERE middle.x IS NOT NULL",
+                    intermediate.Replace(") AS middle", ") AS middle " +
+                        "INNER JOIN dbo.[" + src + "] AS extra ON middle.x = extra.k1",
+                        StringComparison.Ordinal),
+                    // A third derived layer must not acquire a proof by recursion.
+                    "SELECT extra.x AS x, extra.y AS y FROM (" + intermediate +
+                        ") AS extra"
+                })
+                {
+                    var rejected = sql.Replace(intermediate, invalid,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
+                                SqlAgentToolType.MsSqlServer, profile),
                             SqlAgentToolType.MsSqlServer, context,
                             new DmlCompilationPolicy(), profile, null));
                 }
