@@ -588,6 +588,9 @@ public sealed class DmlCoordinator(
                     || (string.Equals(sourceProof.PhysicalSource, plan.TableName,
                             physicalComparison)
                         ? plan.SchemaSnapshot.Tables.Count != 1
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.MsSqlServer
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal))
                           || (plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
                               && !plan.SchemaSnapshot.Version.StartsWith(
                                   "native-postgres-insert-source-v1:", StringComparison.Ordinal))
