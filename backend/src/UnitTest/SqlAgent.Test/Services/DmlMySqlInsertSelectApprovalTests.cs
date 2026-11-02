@@ -13,6 +13,46 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     private const string Approval = "mysql84-innodb-m09-source-row-approval-v1";
 
     [Fact]
+    public async Task NativeInnoDb_TwoDirectEqualityTerms_ApprovesExactSourceAndCommitsOnce()
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, version) =>
+        {
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var sql = $"INSERT INTO `{schema}`.`{target}` (name) SELECT name FROM `{schema}`.`{source}` " +
+                "WHERE id = 1 AND name = 'Carol'";
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, source, sql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                connectionString, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal("Carol", Assert.Single(preview.Rows)["name"]);
+            var result = await coordinator.CommitAsync(
+                connectionString, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(result.Committed);
+            Assert.Equal(1, result.AffectedRows);
+            Assert.Equal(3, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
+    [Fact]
+    public void NativeInnoDb_FiveEqualityTerms_RejectsAtHostShapeGate()
+    {
+        var parsed = CoreSqlTextParser.ParseDml(
+            "INSERT INTO app.target (name) SELECT name FROM app.source " +
+            "WHERE id = 1 AND name = 'Carol' AND id = 1 AND name = 'Carol' AND id = 1",
+            SqlAgentToolType.MySQL);
+        var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+        var rejection = Assert.Throws<NotSupportedException>(
+            () => NativeInsertSelectSafety.RequireShape(
+                insert, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL, maxAffectedRows: 2));
+        Assert.Contains("four", rejection.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task TwoPhysicalInnoDbTables_ApprovedSourceRows_CommitExactInsertedRow()
     {
         await WithTablesAsync(async (connectionString, schema, target, source, version) =>
