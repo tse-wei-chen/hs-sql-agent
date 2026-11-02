@@ -271,19 +271,19 @@ public sealed class NativeDmlSchemaSnapshotService :
             var lockTables = new[] { targetName, sourceName };
             foreach (var name in lockTables)
             {
-                var parts = name.Split('.');
-                if (parts.Length != 2
-                    || !string.Equals(parts[0], "dbo", StringComparison.OrdinalIgnoreCase)
-                    || parts.Any(string.IsNullOrWhiteSpace)) return null;
+                var lockParts = name.Split('.');
+                if (lockParts.Length != 2
+                    || !string.Equals(lockParts[0], "dbo", StringComparison.OrdinalIgnoreCase)
+                    || lockParts.Any(string.IsNullOrWhiteSpace)) return null;
             }
             // Stable lock order prevents cross-request source/target inversions.
             // TABLOCKX+HOLDLOCK excludes source writers and DDL until commit.
             Array.Sort(lockTables, StringComparer.OrdinalIgnoreCase);
             foreach (var name in lockTables)
             {
-                var parts = name.Split('.');
+                var lockParts = name.Split('.');
                 await PinMsSqlServerSourceExclusiveAsync(
-                    connection, transaction, parts[0], parts[1], cancellationToken);
+                    connection, transaction, lockParts[0], lockParts[1], cancellationToken);
             }
             var verified = new List<SqlSchemaSnapshot>(2);
             foreach (var expected in expectedSnapshot.Tables)
