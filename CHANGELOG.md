@@ -30,6 +30,10 @@ All notable changes to this project will be documented in this file.
   single-statement batch and unverified source metadata are rejected before
   connecting to the database.
 - Four read-only tools remain selected by default; DML remains disabled.
+- CI: pin the real Firebird Testcontainers fixture to the same `5.0.4-bookworm`
+  engine used by the separate Firebird parity job; wait for the TCP port
+  (not just the startup log) and retry only transient transport disconnects
+  with a finite bound. Missing/unhealthy DB and SQL errors still fail CI.
 
 ### G9/M09 — bounded native BETWEEN for four physical INSERT SELECT sources (develop only)
 
