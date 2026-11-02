@@ -892,7 +892,8 @@ module internal RewriteStages =
                        || head.Where.IsSome || not head.GroupBy.IsEmpty
                        || head.Having.IsSome
                        || head.DistinctMode <> SelectDistinct.AllRows
-                       || head.Projection.Length <> sourceKeys.Length then None
+                       || head.Projection.Length < sourceKeys.Length
+                       || head.Projection.Length > 32 then None
                     else
                         match head.From with
                         | Some(NamedTable(physical, alias))
@@ -902,20 +903,11 @@ module internal RewriteStages =
                                 | Some value, _ -> value.Value
                                 | None, [_; table] -> table.Value
                                 | _ -> ""
-                            let names =
-                                head.Projection
-                                |> List.mapi (fun index item ->
-                                    if isColumn item.Expression owner sourceKeys.[index] then
-                                        Some(defaultArg
-                                            (item.Alias |> Option.map (fun a -> a.Value))
-                                            sourceKeys.[index])
-                                    else None)
-                            if names |> List.forall Option.isSome then
-                                let outputs = names |> List.choose id
-                                if outputs |> List.distinct |> List.length = outputs.Length then
-                                    Some outputs
-                                else None
-                            else None
+                            // Reuse the closed direct projection mapper:
+                            // all payload columns must also be direct,
+                            // unambiguous and input-injective. Only the
+                            // full ordered physical key becomes authority.
+                            projectDerivedKeys sourceKeys owner head.Projection
                         | _ -> None
                 let left = ctes.[0]
                 let right = ctes.[1]
@@ -935,7 +927,8 @@ module internal RewriteStages =
                          && head.Ctes.IsEmpty && head.Where.IsNone
                          && head.GroupBy.IsEmpty && head.Having.IsNone
                          && head.DistinctMode = SelectDistinct.AllRows
-                         && head.Projection.Length = 2 ->
+                         && head.Projection.Length >= sourceKeys.Length
+                         && head.Projection.Length <= 32 ->
                     match head.From, head.Joins with
                     | Some(CteTable(leftRef, Some leftAlias)),
                       [OnJoin(OnJoinKind.Inner,
@@ -960,19 +953,11 @@ module internal RewriteStages =
                                 (equal 0 first && equal 1 second)
                                 || (equal 1 first && equal 0 second)
                             | _ -> false
-                        let projected =
-                            head.Projection
-                            |> List.mapi (fun index item ->
-                                if isColumn item.Expression leftAlias.Value leftKeys.[index] then
-                                    Some(defaultArg
-                                        (item.Alias |> Option.map (fun a -> a.Value))
-                                        leftKeys.[index])
-                                else None)
-                        if completeJoin && (projected |> List.forall Option.isSome) then
-                            let outputs = projected |> List.choose id
-                            if outputs |> List.distinct |> List.length = outputs.Length then
-                                Some outputs
-                            else None
+                        // The merge can carry a payload from the left
+                        // branch but may not compute, duplicate or shadow
+                        // any original physical key.
+                        if completeJoin then
+                            projectDerivedKeys leftKeys leftAlias.Value head.Projection
                         else None
                     | _ -> None
                 | _ -> None

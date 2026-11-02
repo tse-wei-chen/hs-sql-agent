@@ -443,7 +443,13 @@ module internal RewriteMutationSourceMatchProof =
                                 && head.Ctes.IsEmpty && head.Where.IsNone
                                 && head.GroupBy.IsEmpty && head.Having.IsNone
                                 && head.DistinctMode = SelectDistinct.AllRows
-                                && head.Projection.Length = 2 ->
+                                // The merge may retain additional directly
+                                // projected non-key columns. The existing
+                                // projectRelation below rejects computed,
+                                // duplicate and ambiguous payload lineage,
+                                // and only full UNIQUE keys grant cardinality.
+                                && head.Projection.Length >= 2
+                                && head.Projection.Length <= 32 ->
                                 match first.Query.Head.From, second.Query.Head.From,
                                       head.From, head.Joins with
                                 | Some(NamedTable(physical1, _)), Some(NamedTable(physical2, _)),

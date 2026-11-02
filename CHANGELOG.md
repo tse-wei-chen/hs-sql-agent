@@ -7,6 +7,22 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M06 — bounded CTE diamond direct payload lineage (develop only)
+
+- A three-CTE SQL Server diamond may carry additional direct, injective
+  payload projections beside its complete, ordered two-column physical UNIQUE
+  key on **both source branches and the merged left-branch output**.
+  Payload can be renamed and interleaved; per-CTE projection is limited to 32.
+- Payload never grants uniqueness. The F# static cardinality proof and sealed
+  F# execution gate independently keep all complete ordinary INNER key
+  comparisons. The Host separately traces matched key outputs to the exact
+  original physical UNIQUE index and insists that the full JOIN tuple matches.
+- Real SQL Server UPDATE/DELETE, typed composite key, index drift, immutable
+  Preview/Approval and same-transaction IsCurrent coverage; computed/duplicated
+  columns, ambiguous aliases, CAST, right-branch merge output, missing keys
+  or extra physical sources remain rejected. No other database or MCP default
+  changes, and no new public API, driver, permissions or tools.
+
 ### G9 / M06 — bounded key-preserving CTE diamond (develop only)
 
 - Two independent SQL Server CTEs can project the same live UNIQUE source,

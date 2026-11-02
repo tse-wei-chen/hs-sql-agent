@@ -198,7 +198,7 @@ internal static class SqlServerCteLiveProofDiscovery
             || !TrySingleName(cteReference.Name, out var referencedName)
             || !TryBuildCteLineage(
                 ctes, out var cteName, out var outputs, out var sourceTable,
-                out var isDiamond)
+                out var diamondJoinKeys)
             || !Same(cteName, referencedName)
             || Same(targetTable, sourceTable))
             return false;
@@ -245,7 +245,11 @@ internal static class SqlServerCteLiveProofDiscovery
         var ordered = matched.OrderBy(m => m.Source.FirstOrdinal).ToArray();
         // A diamond must correlate both source key components to the
         // physical target. The live index proof establishes their identity.
-        if (isDiamond && ordered.Length != 2) return false;
+        if (!diamondJoinKeys.IsDefaultOrEmpty
+            && (ordered.Length != diamondJoinKeys.Length
+                || !ordered.Select(m => m.Source.PhysicalColumn)
+                    .SequenceEqual(diamondJoinKeys, StringComparer.Ordinal)))
+            return false;
         // The Host's initial shape check cannot choose the key tuple.
         // Once the actual outer target equality establishes its ordered
         // components, independently require the correlated EXISTS filter
@@ -379,23 +383,23 @@ internal static class SqlServerCteLiveProofDiscovery
     private static bool TryBuildCteLineage(
         ImmutableArray<CteDefinition> ctes,
         out string finalCte, out ImmutableArray<ProjectionLineage> outputs,
-        out string physicalTable, out bool isDiamond)
+        out string physicalTable, out ImmutableArray<string> diamondJoinKeys)
     {
-        isDiamond = false;
+        diamondJoinKeys = ImmutableArray<string>.Empty;
         if (TryBuildDirectProjectionChain(ctes, out finalCte, out outputs,
             out physicalTable)) return true;
-        isDiamond = TryBuildDiamond(ctes, out finalCte, out outputs,
-            out physicalTable);
-        return isDiamond;
+        return TryBuildDiamond(ctes, out finalCte, out outputs,
+            out physicalTable, out diamondJoinKeys);
     }
 
     private static bool TryBuildDiamond(
         ImmutableArray<CteDefinition> ctes,
         out string finalCte, out ImmutableArray<ProjectionLineage> outputs,
-        out string physicalTable)
+        out string physicalTable, out ImmutableArray<string> diamondJoinKeys)
     {
         finalCte = physicalTable = "";
         outputs = ImmutableArray<ProjectionLineage>.Empty;
+        diamondJoinKeys = ImmutableArray<string>.Empty;
         if (ctes.Length != 3 || !TrySingleName(ctes[2].Name, out finalCte)
             || !TrySingleName(ctes[0].Name, out var lhsCte)
             || !TrySingleName(ctes[1].Name, out var rhsCte)
@@ -416,12 +420,12 @@ internal static class SqlServerCteLiveProofDiscovery
                 || q.GroupBy.Length != 0 || q.Having is not null
                 || q.OrderBy.Length != 0 || q.Limit.HasValue
                 || q.Offset.HasValue || q.FetchPercent.HasValue
-                || q.FetchWithTies || q.Select.Length != 2
+                || q.FetchWithTies || q.Select.Length is < 2 or > 32
                 || !TryPhysicalTable(table.Name, out physical)) return false;
-            var builder = ImmutableArray.CreateBuilder<ProjectionLineage>(2);
+            var builder = ImmutableArray.CreateBuilder<ProjectionLineage>(q.Select.Length);
             var names = new HashSet<string>(StringComparer.Ordinal);
             var sourceFields = new HashSet<string>(StringComparer.Ordinal);
-            for (var i = 0; i < 2; i++)
+            for (var i = 0; i < q.Select.Length; i++)
             {
                 var item = q.Select[i];
                 if (item.Expression is not ColumnExpr column
@@ -439,10 +443,7 @@ internal static class SqlServerCteLiveProofDiscovery
         if (!Branch(ctes[0], out physicalTable, out var lhs)
             || !Branch(ctes[1], out var otherTable, out var rhs)
             || !Same(physicalTable, otherTable)
-            || lhs.Length != 2 || rhs.Length != 2
-            || !Same(lhs[0].PhysicalColumn, rhs[0].PhysicalColumn)
-            || !Same(lhs[1].PhysicalColumn, rhs[1].PhysicalColumn)
-            || ctes[2].Query is not SelectStatement merge
+             || ctes[2].Query is not SelectStatement merge
             || !ctes[2].ColumnAliases.IsDefaultOrEmpty
             || merge.Ctes.Length != 0
             || merge.From is not NamedTableSource left
@@ -462,17 +463,18 @@ internal static class SqlServerCteLiveProofDiscovery
             || merge.Having is not null || merge.OrderBy.Length != 0
             || merge.Limit.HasValue || merge.Offset.HasValue
             || merge.FetchPercent.HasValue || merge.FetchWithTies
-            || merge.Select.Length != 2)
+            || merge.Select.Length is < 2 or > 32)
             return false;
 
-        // Only exactly two ordinary equalities, one for each ORIGINAL
-        // physical key position, may make the right branch nonmultiplying.
+        // Join edges determine a candidate physical key tuple. The actual
+        // table UNIQUE index and target equality must prove EXACTLY that
+        // tuple later, so a payload-only join can never authorize a write.
         var comparisons = new Stack<SqlExpr>();
         comparisons.Push(join.Predicate);
-        var seen = new HashSet<int>();
+        var joinFields = new HashSet<string>(StringComparer.Ordinal);
         while (comparisons.Count > 0)
         {
-            if (seen.Count > 2 || comparisons.Count > 4) return false;
+            if (comparisons.Count > 4 || joinFields.Count > 2) return false;
             if (comparisons.Pop() is not BinaryExpr comparison) return false;
             if (SameOperator(comparison.Operator, "AND"))
             {
@@ -482,34 +484,51 @@ internal static class SqlServerCteLiveProofDiscovery
             }
             if (!SameOperator(comparison.Operator, "=")) return false;
             var matched = false;
-            for (var i = 0; i < 2; i++)
+            foreach (var l in lhs)
             {
-                if ((IsCteKey(comparison.Left, left.Alias.Value, lhs[i].OutputName)
-                     && IsCteKey(comparison.Right, right.Alias.Value, rhs[i].OutputName))
-                    || (IsCteKey(comparison.Right, left.Alias.Value, lhs[i].OutputName)
-                        && IsCteKey(comparison.Left, right.Alias.Value, rhs[i].OutputName)))
+                if (!IsCteKey(comparison.Left, left.Alias.Value, l.OutputName)
+                    && !IsCteKey(comparison.Right, left.Alias.Value, l.OutputName))
+                    continue;
+                foreach (var r in rhs)
                 {
-                    if (!seen.Add(i)) return false;
-                    matched = true;
-                    break;
+                    if (!Same(l.PhysicalColumn, r.PhysicalColumn)) continue;
+                    if ((IsCteKey(comparison.Left, left.Alias.Value, l.OutputName)
+                         && IsCteKey(comparison.Right, right.Alias.Value, r.OutputName))
+                        || (IsCteKey(comparison.Right, left.Alias.Value, l.OutputName)
+                            && IsCteKey(comparison.Left, right.Alias.Value, r.OutputName)))
+                    {
+                        if (!joinFields.Add(l.PhysicalColumn)) return false;
+                        matched = true;
+                        break;
+                    }
                 }
+                if (matched) break;
             }
             if (!matched) return false;
         }
-        if (seen.Count != 2) return false;
+        if (joinFields.Count != 2) return false;
 
-        var projected = ImmutableArray.CreateBuilder<ProjectionLineage>(2);
+        var projected = ImmutableArray.CreateBuilder<ProjectionLineage>(merge.Select.Length);
         var used = new HashSet<string>(StringComparer.Ordinal);
-        for (var i = 0; i < 2; i++)
+        var usedInputs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in merge.Select)
         {
-            var item = merge.Select[i];
-            if (item.Expression is not ColumnExpr col
-                || !TrySelectedKey(col.Name, lhs[i].OutputName, left.Alias.Value))
-                return false;
-            var alias = item.Alias?.Value ?? lhs[i].OutputName;
+            if (item.Expression is not ColumnExpr col) return false;
+            var input = lhs.FirstOrDefault(p =>
+                TrySelectedKey(col.Name, p.OutputName, left.Alias.Value));
+            if (string.IsNullOrEmpty(input.OutputName)
+                || !usedInputs.Add(input.OutputName)) return false;
+            var alias = item.Alias?.Value ?? input.OutputName;
             if (!SafeName(alias) || !used.Add(alias)) return false;
-            projected.Add(new ProjectionLineage(alias, lhs[i].PhysicalColumn, i));
+            projected.Add(new ProjectionLineage(
+                alias, input.PhysicalColumn, input.FirstOrdinal));
         }
+        var outputColumns = projected.ToImmutable();
+        if (!joinFields.All(k => outputColumns.Any(p => Same(p.PhysicalColumn, k))))
+            return false;
+        diamondJoinKeys = lhs.Where(p => joinFields.Contains(p.PhysicalColumn))
+            .OrderBy(p => p.FirstOrdinal).Select(p => p.PhysicalColumn)
+            .ToImmutableArray();
         outputs = projected.MoveToImmutable();
         return true;
     }
