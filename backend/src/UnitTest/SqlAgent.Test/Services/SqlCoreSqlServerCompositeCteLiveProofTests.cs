@@ -1543,6 +1543,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 + " AND dbo." + target + ".k2 = " + cte + ".b"
                 + (separateSources
                     ? " AND " + cte + ".a = j.j1 AND " + cte + ".b = j.j2"
+                      + " AND j.extra = 5"
                     : "");
             var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer, profile);
             var compiled = SqlCoreFacade.CompileDml(parsed, SqlAgentToolType.MsSqlServer,
@@ -1619,7 +1620,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var coordinator = new DmlCoordinator(new SqlServerConnectionFactory());
             var version = db.ServerVersion.Trim();
             var preview = await coordinator.PreviewAsync(cs, plan, "m07-approver", ct, version);
-            Assert.Equal(3, preview.AffectedRows);
+            // Only one of the three target keys survives the verified
+            // SECOND source's extra filter; this tests real deterministic
+            // matching rather than a redundant syntactic row source.
+            var expectedAffected = separateSources ? 1 : 3;
+            Assert.Equal(expectedAffected, preview.AffectedRows);
             if (revokeJoinedIndex)
             {
                 await Exec("DROP INDEX [" + index + "] ON dbo.[" + joined + "]");
@@ -1640,7 +1645,15 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 Assert.True(result.Committed);
                 await using var count = new SqlCommand(
                     "SELECT COUNT(*) FROM dbo.[" + target + "]", db);
-                Assert.Equal(update ? 3 : 0, Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                Assert.Equal(update ? 3 : 3 - expectedAffected,
+                    Convert.ToInt32(await count.ExecuteScalarAsync(ct)));
+                if (separateSources && update)
+                {
+                    await using var changed = new SqlCommand(
+                        "SELECT COUNT(*) FROM dbo.[" + target + "] " +
+                        "WHERE label = 'updated'", db);
+                    Assert.Equal(1, Convert.ToInt32(await changed.ExecuteScalarAsync(ct)));
+                }
             }
         }
         finally
