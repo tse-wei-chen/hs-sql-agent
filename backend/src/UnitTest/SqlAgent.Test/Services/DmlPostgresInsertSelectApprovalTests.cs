@@ -152,13 +152,14 @@ public sealed class DmlPostgresInsertSelectApprovalTests
     {
         await WithTablesAsync(async (connectionString, schema, _) =>
         {
-            await ExecuteAsync(connectionString, $"""
-                CREATE FUNCTION {schema}.m09_unsafe_trigger() RETURNS trigger AS $
-                BEGIN RETURN NEW; END
-                $ LANGUAGE plpgsql;
-                CREATE TRIGGER m09_source BEFORE INSERT ON {schema}.source_users
-                FOR EACH ROW EXECUTE FUNCTION {schema}.m09_unsafe_trigger();
-                """);
+            // Issue physical DDL as separate statements; no dollar-quoted
+            // procedure body can be split by the ADO.NET command batcher.
+            await ExecuteAsync(connectionString,
+                $"CREATE FUNCTION {schema}.m09_unsafe_trigger() RETURNS trigger " +
+                "LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END;'");
+            await ExecuteAsync(connectionString,
+                $"CREATE TRIGGER m09_source BEFORE INSERT ON {schema}.source_users " +
+                $"FOR EACH ROW EXECUTE FUNCTION {schema}.m09_unsafe_trigger()");
             var provider = new PostgresProvider();
             var native = new NativeDmlSchemaSnapshotService();
             await Assert.ThrowsAnyAsync<Exception>(() => CreatePlanAsync(
@@ -185,9 +186,25 @@ public sealed class DmlPostgresInsertSelectApprovalTests
         });
     }
 
+    [Fact]
+    public async Task MissingPhysicalSourceGrant_DeniesExecutableInsertPlan()
+    {
+        await WithTablesAsync(async (connectionString, schema, _) =>
+        {
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => CreatePlanAsync(
+                provider, native, connectionString, schema,
+                $"INSERT INTO {schema}.users(name) SELECT name FROM {schema}.source_users WHERE id = 1",
+                allowSourceGrant: false));
+            Assert.Equal(2, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM {schema}.users"));
+        });
+    }
+
     private static async Task<ValidatedDmlPlan> CreatePlanAsync(
         PostgresProvider provider, NativeDmlSchemaSnapshotService snapshot,
-        string connectionString, string schema, string sql)
+        string connectionString, string schema, string sql, bool allowSourceGrant = true)
     {
         var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
         await using var connection = provider.Connections.Create(connectionString);
@@ -195,8 +212,9 @@ public sealed class DmlPostgresInsertSelectApprovalTests
         var proof = await snapshot.CaptureAsync(
             connection, SqlAgentToolType.Postgres, parsed, TestContext.Current.CancellationToken);
         Assert.NotNull(proof);
-        var context = new SqlPlanValidationContext("postgres-m09-v1",
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { schema + ".users", schema + ".source_users" })
+        var grants = new HashSet<string>(StringComparer.Ordinal) { schema + ".users" };
+        if (allowSourceGrant) grants.Add(schema + ".source_users");
+        var context = new SqlPlanValidationContext("postgres-m09-v1", grants)
             .WithSchemaSnapshot(proof);
         return await new DmlPlanFactory(provider.Metadata).CreateWithMetadataConnectionAsync(
             connection, connectionString, parsed, SqlAgentToolType.Postgres, context,
