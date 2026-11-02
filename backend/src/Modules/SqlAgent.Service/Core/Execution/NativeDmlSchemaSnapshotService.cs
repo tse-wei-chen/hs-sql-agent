@@ -49,7 +49,7 @@ public sealed class NativeDmlSchemaSnapshotService :
                 "Native DML schema proofs require identical source and target providers.");
 
         var sourceTable = parsedMutation.Statement is InsertStatement { Source: InsertQuerySource } sourceInsert
-            && targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
+            && targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer
             ? NativeInsertSelectSafety.RequireShape(
                 sourceInsert, targetProvider, targetProvider, int.MaxValue - 1).PhysicalSource
             : null;
@@ -60,7 +60,7 @@ public sealed class NativeDmlSchemaSnapshotService :
             // The bounded INSERT SELECT attests each physical main source
             // independently; arbitrary sources never enter this path.
             InsertStatement { Source: InsertQuerySource } insert
-                when targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL =>
+                when targetProvider is SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer =>
                 VerifyBoundedInsertSource(insert, targetProvider),
             UpdateStatement update when update.From.IsDefaultOrEmpty
                 && update.FromSources.IsDefaultOrEmpty => update.Target,
@@ -154,6 +154,25 @@ public sealed class NativeDmlSchemaSnapshotService :
             return physicalSource is null ? null :
                 CombineNativeSourceTarget(physicalTarget, physicalSource);
         }
+        if (targetProvider == SqlAgentToolType.MsSqlServer && sourceTable is not null)
+        {
+            var targetProof = await SqlServerInsertSelectCatalogProof.ExtendAsync(
+                connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
+            if (targetProof is null || string.Equals(sourceTable, targetProof.Tables[0].Name,
+                    StringComparison.OrdinalIgnoreCase)) return null;
+            var sourceNames = sourceTable.Split('.');
+            if (sourceNames.Length != 2) return null;
+            var sources = await readers.Preview.GetDmlPlanningMetadataAsync(
+                connection, sourceNames[0], sourceNames[1], includeColumns: true,
+                cancellationToken: cancellationToken);
+            var sourceBasic = BuildSnapshot(targetProvider, sources);
+            if (sourceBasic is null || sourceBasic.Tables.Count != 1
+                || !string.Equals(sourceBasic.Tables[0].Name, sourceTable,
+                    StringComparison.OrdinalIgnoreCase)) return null;
+            var sourceProof = await SqlServerInsertSelectCatalogProof.ExtendAsync(
+                connection, null, sourceBasic, sourceNames[0], sourceNames[1], cancellationToken);
+            return sourceProof is null ? null : CombineNativeSourceTarget(targetProof, sourceProof);
+        }
         if (targetProvider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
             return await NativeDmlSchemaDefinitionProof.ExtendAsync(
                 connection, transaction: null, snapshot, matches[0].Schema,
@@ -239,6 +258,50 @@ public sealed class NativeDmlSchemaSnapshotService :
             return mysqlSingleSource
                 ? verified[0].Sha256
                 : CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
+        }
+        if (provider == SqlAgentToolType.MsSqlServer
+            && expectedSnapshot.Tables.Count == 2
+            && expectedSnapshot.Version.StartsWith(
+                "native-sqlserver2022-dual-source-v1:", StringComparison.Ordinal))
+        {
+            if (transaction.IsolationLevel != System.Data.IsolationLevel.Serializable) return null;
+            var targetName = expectedSnapshot.Tables[0].Name;
+            var sourceName = expectedSnapshot.Tables[1].Name;
+            if (string.Equals(targetName, sourceName, StringComparison.OrdinalIgnoreCase)) return null;
+            var lockTables = new[] { targetName, sourceName };
+            foreach (var name in lockTables)
+            {
+                var parts = name.Split('.');
+                if (parts.Length != 2
+                    || !string.Equals(parts[0], "dbo", StringComparison.OrdinalIgnoreCase)
+                    || parts.Any(string.IsNullOrWhiteSpace)) return null;
+            }
+            // Stable lock order prevents cross-request source/target inversions.
+            // TABLOCKX+HOLDLOCK excludes source writers and DDL until commit.
+            Array.Sort(lockTables, StringComparer.OrdinalIgnoreCase);
+            foreach (var name in lockTables)
+            {
+                var parts = name.Split('.');
+                await PinMsSqlServerSourceExclusiveAsync(
+                    connection, transaction, parts[0], parts[1], cancellationToken);
+            }
+            var verified = new List<SqlSchemaSnapshot>(2);
+            foreach (var expected in expectedSnapshot.Tables)
+            {
+                var names = expected.Name.Split('.');
+                var metadata = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
+                    connection, transaction, names[0], names[1], includeColumns: true,
+                    cancellationToken: cancellationToken);
+                var basic = BuildSnapshot(provider, metadata);
+                if (basic is null || basic.Tables.Count != 1
+                    || !string.Equals(basic.Tables[0].Name, expected.Name,
+                        StringComparison.OrdinalIgnoreCase)) return null;
+                var current = await SqlServerInsertSelectCatalogProof.ExtendAsync(
+                    connection, transaction, basic, names[0], names[1], cancellationToken);
+                if (current is null) return null;
+                verified.Add(current);
+            }
+            return CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
         }
         if (provider == SqlAgentToolType.Postgres
             && expectedSnapshot.Tables.Count == 1
@@ -526,6 +589,18 @@ public sealed class NativeDmlSchemaSnapshotService :
         await command.ExecuteScalarAsync(cancellationToken);
     }
 
+    private static async Task PinMsSqlServerSourceExclusiveAsync(
+        DbConnection connection, DbTransaction transaction, string schema, string table,
+        CancellationToken cancellationToken)
+    {
+        static string Quote(string name) => "[" + name.Replace("]", "]]", StringComparison.Ordinal) + "]";
+        await using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandTimeout = 10;
+        cmd.CommandText = $"SELECT TOP (1) 1 FROM {Quote(schema)}.{Quote(table)} WITH (TABLOCKX, HOLDLOCK)";
+        await cmd.ExecuteScalarAsync(cancellationToken);
+    }
+
     private static async Task PinMsSqlServerSchemaAsync(
         DbConnection connection,
         DbTransaction transaction,
@@ -636,7 +711,7 @@ public sealed class NativeDmlSchemaSnapshotService :
         SqlSchemaSnapshot target, SqlSchemaSnapshot source)
     {
         if (target.Provider != source.Provider
-            || target.Provider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)
+            || target.Provider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL or SqlAgentToolType.MsSqlServer)
             || target.Tables.Count != 1 || source.Tables.Count != 1
             || string.Equals(target.Tables[0].Name, source.Tables[0].Name,
                 target.Provider is SqlAgentToolType.Postgres or SqlAgentToolType.MySQL
@@ -652,6 +727,7 @@ public sealed class NativeDmlSchemaSnapshotService :
         {
             SqlAgentToolType.Sqlite => "native-sqlite-insert-select-dual-ddl-v1",
             SqlAgentToolType.Postgres => "native-postgres-insert-select-dual-catalog-v1",
+            SqlAgentToolType.MsSqlServer => "native-sqlserver2022-insert-select-dual-catalog-v1",
             _ => "native-mysql84-innodb-insert-select-dual-catalog-v1"
         });
         Append(hash, target.Tables[0].Name);
@@ -662,6 +738,7 @@ public sealed class NativeDmlSchemaSnapshotService :
         {
             SqlAgentToolType.Sqlite => "native-sqlite-dual-source-v1:",
             SqlAgentToolType.Postgres => "native-postgres-dual-source-v1:",
+            SqlAgentToolType.MsSqlServer => "native-sqlserver2022-dual-source-v1:",
             _ => "native-mysql84-dual-source-v1:"
         }) +
             Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
