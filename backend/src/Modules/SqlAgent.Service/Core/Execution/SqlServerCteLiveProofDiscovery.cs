@@ -294,43 +294,75 @@ internal static class SqlServerCteLiveProofDiscovery
     /// Physical column lineage is preserved even when payload is omitted
     /// by a later hop. All output names remain unambiguous.
     /// </summary>
-    // M06: a one-level non-lateral derived table is a row-preserving
-    // projection only when it reads exactly one physical table and forwards
-    // each unique-key field directly. No WHERE/JOIN/DISTINCT/LIMIT/
-    // aggregation, scalar expressions, duplicate output aliases or nested
-    // CTE/derived source may borrow the physical UNIQUE index.
+    // One or two direct derived projections may carry the original physical
+    // UNIQUE tuple. The bounded recursion never grants physical authority:
+    // sys.index_columns, the F# admission gate and transaction IsCurrent
+    // independently prove the actual index and all mandatory equalities.
     private static bool TryDescribeDirectDerived(
         DerivedTableSource derived, out string physicalTable,
+        out ImmutableArray<ProjectionLineage> outputs) =>
+        TryDescribeDirectDerived(derived, 1, out physicalTable, out outputs);
+
+    private static bool TryDescribeDirectDerived(
+        DerivedTableSource derived, int depth, out string physicalTable,
         out ImmutableArray<ProjectionLineage> outputs)
     {
         physicalTable = "";
         outputs = ImmutableArray<ProjectionLineage>.Empty;
-        if (derived.IsLateral || !SafeName(derived.Alias.Value)
+        if (depth > 2 || derived.IsLateral || !SafeName(derived.Alias.Value)
             || derived.Query is not SelectStatement inner
-            || inner.From is not NamedTableSource root
             || inner.Ctes.Length != 0 || inner.Joins.Length != 0
             || inner.Where is not null || inner.Distinct
             || inner.DistinctOn.Length != 0 || inner.GroupBy.Length != 0
             || inner.Having is not null || inner.OrderBy.Length != 0
             || inner.Limit.HasValue || inner.Offset.HasValue
             || inner.FetchPercent.HasValue || inner.FetchWithTies
-            || inner.Select.Length is < 1 or > 32
-            || !TryPhysicalTable(root.Name, out physicalTable))
+            || inner.Select.Length is < 1 or > 32)
             return false;
+
+        var root = inner.From as NamedTableSource;
+        var previous = ImmutableArray<ProjectionLineage>.Empty;
+        var qualifier = "";
+        if (root is not null)
+        {
+            if (!TryPhysicalTable(root.Name, out physicalTable)) return false;
+        }
+        else if (depth < 2 && inner.From is DerivedTableSource nested
+                 && TryDescribeDirectDerived(
+                     nested, depth + 1, out physicalTable, out previous))
+        {
+            qualifier = nested.Alias.Value;
+        }
+        else return false;
 
         var results = ImmutableArray.CreateBuilder<ProjectionLineage>(inner.Select.Length);
         var usedOutputs = new HashSet<string>(StringComparer.Ordinal);
         var usedInputs = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (item, ordinal) in inner.Select.Select((item, ordinal) => (item, ordinal)))
         {
-            if (item.Expression is not ColumnExpr field
-                || !TryPhysicalKey(field.Name, root, out var physicalColumn))
-                return false;
-            var alias = item.Alias?.Value ?? physicalColumn;
+            if (item.Expression is not ColumnExpr field) return false;
+            string input;
+            string physicalColumn;
+            int firstOrdinal;
+            if (root is not null)
+            {
+                if (!TryPhysicalKey(field.Name, root, out input)) return false;
+                physicalColumn = input;
+                firstOrdinal = ordinal;
+            }
+            else
+            {
+                var matched = previous.FirstOrDefault(p =>
+                    TrySelectedKey(field.Name, p.OutputName, qualifier));
+                if (string.IsNullOrEmpty(matched.OutputName)) return false;
+                input = matched.OutputName;
+                physicalColumn = matched.PhysicalColumn;
+                firstOrdinal = matched.FirstOrdinal;
+            }
+            var alias = item.Alias?.Value ?? input;
             if (!SafeName(alias) || !usedOutputs.Add(alias)
-                || !usedInputs.Add(physicalColumn))
-                return false;
-            results.Add(new ProjectionLineage(alias, physicalColumn, ordinal));
+                || !usedInputs.Add(input)) return false;
+            results.Add(new ProjectionLineage(alias, physicalColumn, firstOrdinal));
         }
         outputs = results.MoveToImmutable();
         return !outputs.IsDefaultOrEmpty;
