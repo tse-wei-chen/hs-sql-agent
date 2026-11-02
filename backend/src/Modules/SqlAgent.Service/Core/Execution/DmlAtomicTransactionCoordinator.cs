@@ -46,6 +46,12 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (plans.Count == 0 || plans.Count != approvedPreviews.Count)
             throw new InvalidOperationException("Atomic DML transaction requires matching non-empty plan and preview sets.");
 
+        // The first source-row INSERT SELECT proof covers a single statement only.
+        // Never silently inherit the multi-statement atomic approval contract.
+        if (plans.Any(plan => plan.ApprovalMode == DmlApprovalMode.InsertSelect))
+            throw new NotSupportedException(
+                "SQLite INSERT SELECT source-row approval is single-statement only.");
+
         // Shared plan rules, plus child approval binding, before touching the DB.
         for (var index = 0; index < plans.Count; index++)
         {
