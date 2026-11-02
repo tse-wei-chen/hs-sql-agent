@@ -6,14 +6,14 @@ namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
 /// One bounded M09 source shape. SQLite's write transaction serializes source
-/// changes between revalidation and mutation; the existing single-table schema
-/// attestation covers both the read source and physical insert target.
+/// changes between revalidation and mutation. The native Host separately
+/// attests both physical source and physical insert target when different.
 /// Neither caller-provided virtual metadata nor arbitrary INSERT SELECT joins
 /// can promote themselves to this proof.
 /// </summary>
 internal static class SqliteInsertSelectSafety
 {
-    internal static (SqlStatement Query, ImmutableArray<string> OutputColumns) RequireShape(
+    internal static (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource) RequireShape(
         InsertStatement insert,
         SqlAgentToolType sourceDialect,
         SqlAgentToolType targetProvider,
@@ -65,10 +65,10 @@ internal static class SqliteInsertSelectSafety
         if (head.From is not NamedTableSource source || source.Alias is not null
             || source.Name.Parts.Length != 2
             || !IsMain(source.Name.Parts[0].Value)
-            || !string.Equals(source.Name.Parts[1].Value,
-                insert.Target.Name.Parts[1].Value, StringComparison.OrdinalIgnoreCase))
+            || string.IsNullOrWhiteSpace(source.Name.Parts[1].Value)
+            || source.Name.Parts[1].Value.StartsWith("sqlite_", StringComparison.OrdinalIgnoreCase))
             throw new NotSupportedException(
-                "SQLite INSERT SELECT requires exactly the same main physical table as source and target.");
+                "SQLite INSERT SELECT requires one explicit physical main source table.");
 
         if (head.Where is not BinaryExpr { Operator: "=", Left: ColumnExpr whereColumn, Right: LiteralExpr predicateValue }
             || predicateValue.Value is null || whereColumn.Name.Parts.Length != 1)
@@ -92,7 +92,7 @@ internal static class SqliteInsertSelectSafety
                     "SQLite INSERT SELECT supports only unique target columns and direct unaliased column projections.");
             columns.Add(target.Parts[0].Value);
         }
-        return (query, columns.ToImmutable());
+        return (query, columns.ToImmutable(), "main." + source.Name.Parts[1].Value);
     }
 
     internal static bool IsBoundedShape(InsertStatement insert)

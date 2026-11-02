@@ -278,7 +278,7 @@ public sealed class DmlPlanFactory(
     {
         // A separate closed shape proof is required before any metadata access.
         // Other INSERT SELECT sources cannot fall through the INSERT VALUES path.
-        (SqlStatement Query, ImmutableArray<string> OutputColumns)? sourceSelection = null;
+        (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
             sourceSelection = SqliteInsertSelectSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
@@ -354,11 +354,17 @@ public sealed class DmlPlanFactory(
         {
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null || snapshot.Provider != SqlAgentToolType.Sqlite
-                || snapshot.Tables.Count != 1
+                || snapshot.Tables.Count is < 1 or > 2
                 || !string.Equals(snapshot.Tables[0].Name,
-                    targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase))
+                    targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
+                || (string.Equals(selection.PhysicalSource,
+                        targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
+                    ? snapshot.Tables.Count != 1
+                    : snapshot.Tables.Count != 2
+                      || !string.Equals(snapshot.Tables[1].Name, selection.PhysicalSource,
+                          StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException(
-                    "SQLite INSERT SELECT requires one native physical-table schema snapshot covering the source and target.");
+                    "SQLite INSERT SELECT requires independently attested physical source and target schema snapshots.");
 
             var select = SqliteInsertSelectSafety.PreviewQuery(
                 selection.Query, selection.OutputColumns);
@@ -384,6 +390,7 @@ public sealed class DmlPlanFactory(
             {
                 SqliteInsertSelectProof = new SqliteInsertSelectProof(
                     targetResolution.QualifiedTableName,
+                    selection.PhysicalSource,
                     sourcePlanFingerprint,
                     DmlFingerprintService.ComputePlanFingerprint(
                         match, validationContext.PolicyVersion),
