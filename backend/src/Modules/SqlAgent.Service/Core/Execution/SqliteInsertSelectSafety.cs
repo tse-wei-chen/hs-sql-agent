@@ -13,7 +13,7 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 internal static class SqliteInsertSelectSafety
 {
-    internal static (QueryStatement Query, ImmutableArray<string> OutputColumns) RequireShape(
+    internal static (SqlStatement Query, ImmutableArray<string> OutputColumns) RequireShape(
         InsertStatement insert,
         SqlAgentToolType sourceDialect,
         SqlAgentToolType targetProvider,
@@ -34,15 +34,27 @@ internal static class SqliteInsertSelectSafety
             || !IsMain(insert.Target.Name.Parts[0].Value))
             throw new NotSupportedException(
                 "SQLite INSERT SELECT requires a schema-qualified main table target.");
-        if (insert.Source is not InsertQuerySource { Query: QueryStatement query })
+        if (insert.Source is not InsertQuerySource sourceInput)
             throw new NotSupportedException(
                 "SQLite INSERT SELECT requires a direct bounded SELECT source.");
 
-        var head = query.Head;
-        if (query.SetOperations.IsDefaultOrEmpty is false
-            || !query.OrderBy.IsDefaultOrEmpty || query.Limit.HasValue
-            || query.Offset.HasValue || query.FetchPercent.HasValue || query.FetchWithTies
-            || !head.Ctes.IsDefaultOrEmpty || head.Distinct
+        // The compatibility adapter represents ordinary single-SELECT
+        // statements as SelectStatement, not QueryStatement.
+        var query = sourceInput.Query;
+        SelectStatement head;
+        if (query is SelectStatement simple)
+            head = simple;
+        else if (query is QueryStatement wrapped
+            && wrapped.SetOperations.IsDefaultOrEmpty
+            && wrapped.OrderBy.IsDefaultOrEmpty && !wrapped.Limit.HasValue
+            && !wrapped.Offset.HasValue && !wrapped.FetchPercent.HasValue
+            && !wrapped.FetchWithTies)
+            head = wrapped.Head;
+        else
+            throw new NotSupportedException(
+                "SQLite INSERT SELECT source approval rejects set operations and query-level modifiers.");
+
+        if (!head.Ctes.IsDefaultOrEmpty || head.Distinct
             || !head.DistinctOn.IsDefaultOrEmpty || head.FetchPercent.HasValue
             || head.FetchWithTies || head.Limit.HasValue || head.Offset.HasValue
             || !head.Joins.IsDefaultOrEmpty || !head.GroupBy.IsDefaultOrEmpty
@@ -83,9 +95,11 @@ internal static class SqliteInsertSelectSafety
         return (query, columns.ToImmutable());
     }
 
-    internal static QueryStatement PreviewQuery(QueryStatement source, ImmutableArray<string> columns)
+    internal static SqlStatement PreviewQuery(SqlStatement source, ImmutableArray<string> columns)
     {
-        var head = source.Head;
+        var head = source is SelectStatement simple
+            ? simple
+            : ((QueryStatement)source).Head;
         var select = ImmutableArray.CreateBuilder<SelectItem>(columns.Length);
         for (var index = 0; index < columns.Length; index++)
         {
@@ -109,13 +123,7 @@ internal static class SqliteInsertSelectSafety
             null,
             SourceSpan.Unknown);
 
-        return new QueryStatement(
-            preview,
-            ImmutableArray<SetOperation>.Empty,
-            ImmutableArray<OrderByItem>.Empty,
-            null,
-            null,
-            SourceSpan.Unknown);
+        return preview;
     }
 
     private static bool IsMain(string value) =>
