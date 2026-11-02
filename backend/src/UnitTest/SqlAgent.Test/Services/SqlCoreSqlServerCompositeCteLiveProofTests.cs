@@ -1392,30 +1392,36 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
         }
     }
     [Theory]
-    [InlineData(true, false, 1, false, "INT", "BIGINT")]
-    [InlineData(false, false, 1, false, "INT", "BIGINT")]
-    [InlineData(true, true, 2, false, "INT", "BIGINT")]
-    [InlineData(false, true, 3, false, "INT", "BIGINT")]
-    [InlineData(true, false, 2, true, "INT", "BIGINT")]
-    [InlineData(false, true, 1, true, "INT", "BIGINT")]
-    [InlineData(true, false, 1, false, "SMALLINT", "TINYINT")]
-    [InlineData(false, true, 2, false, "TINYINT", "SMALLINT")]
-    [InlineData(true, true, 3, true, "SMALLINT", "INT")]
-    [InlineData(true, false, 1, false, "DECIMAL(12,2)", "DECIMAL(18,4)")]
-    [InlineData(false, true, 2, false, "NUMERIC(12,2)", "DECIMAL(18,4)")]
-    [InlineData(true, true, 3, true, "DECIMAL(12,2)", "DECIMAL(20,0)")]
-    [InlineData(true, false, 1, false, "UNIQUEIDENTIFIER", "INT")]
-    [InlineData(false, true, 2, false, "SMALLINT", "UNIQUEIDENTIFIER")]
-    [InlineData(true, true, 3, true, "UNIQUEIDENTIFIER", "DECIMAL(12,2)")]
-    [InlineData(true, false, 1, false, "VARCHAR(24)", "INT")]
-    [InlineData(false, true, 2, false, "NVARCHAR(32)", "VARCHAR(24)")]
-    [InlineData(true, true, 3, true, "NVARCHAR(32)", "DECIMAL(12,2)")]
-    [InlineData(true, false, 1, false, "VARCHAR(24) COLLATE Latin1_General_100_CI_AS", "INT")]
-    [InlineData(false, true, 2, false, "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI")]
-    [InlineData(true, true, 3, true, "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "DECIMAL(12,2)")]
+    [InlineData(true, false, 1, false, "INT", "BIGINT", false)]
+    [InlineData(false, false, 1, false, "INT", "BIGINT", false)]
+    [InlineData(true, true, 2, false, "INT", "BIGINT", false)]
+    [InlineData(false, true, 3, false, "INT", "BIGINT", false)]
+    [InlineData(true, false, 2, true, "INT", "BIGINT", false)]
+    [InlineData(false, true, 1, true, "INT", "BIGINT", false)]
+    [InlineData(true, false, 1, false, "SMALLINT", "TINYINT", false)]
+    [InlineData(false, true, 2, false, "TINYINT", "SMALLINT", false)]
+    [InlineData(true, true, 3, true, "SMALLINT", "INT", false)]
+    [InlineData(true, false, 1, false, "DECIMAL(12,2)", "DECIMAL(18,4)", false)]
+    [InlineData(false, true, 2, false, "NUMERIC(12,2)", "DECIMAL(18,4)", false)]
+    [InlineData(true, true, 3, true, "DECIMAL(12,2)", "DECIMAL(20,0)", false)]
+    [InlineData(true, false, 1, false, "UNIQUEIDENTIFIER", "INT", false)]
+    [InlineData(false, true, 2, false, "SMALLINT", "UNIQUEIDENTIFIER", false)]
+    [InlineData(true, true, 3, true, "UNIQUEIDENTIFIER", "DECIMAL(12,2)", false)]
+    [InlineData(true, false, 1, false, "VARCHAR(24)", "INT", false)]
+    [InlineData(false, true, 2, false, "NVARCHAR(32)", "VARCHAR(24)", false)]
+    [InlineData(true, true, 3, true, "NVARCHAR(32)", "DECIMAL(12,2)", false)]
+    [InlineData(true, false, 1, false, "VARCHAR(24) COLLATE Latin1_General_100_CI_AS", "INT", false)]
+    [InlineData(false, true, 2, false, "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI", false)]
+    [InlineData(true, true, 3, true, "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "DECIMAL(12,2)", false)]
+    // M08: second independently UNIQUE physical source is a native
+    // UPDATE FROM / DELETE FROM input, not hidden inside seed's SELECT.
+    [InlineData(true, false, 1, false, "INT", "BIGINT", true)]
+    [InlineData(false, false, 3, false, "DECIMAL(12,2)", "UNIQUEIDENTIFIER", true)]
+    [InlineData(true, false, 2, true, "NVARCHAR(32)", "INT", true)]
+    [InlineData(false, false, 1, true, "SMALLINT", "TINYINT", true)]
     public async Task CrossPhysicalUniqueJoinRequiresBothLiveIndexesAndCommitFreshness(
         bool update, bool leftJoin, int hops, bool revokeJoinedIndex,
-        string k1Type, string k2Type)
+        string k1Type, string k2Type, bool separateSources)
     {
         var cs = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(cs))
@@ -1520,23 +1526,52 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var context = new SqlPlanValidationContext("m07-cross-live", allowed)
                 .WithSqlServerCteUniqueKeyAssurance(proof);
 
-            var prefix = "WITH seed AS (SELECT s.k1 AS a, s.k2 AS b FROM dbo.[" +
-                source + "] AS s " + (leftJoin ? "LEFT" : "INNER") +
-                " JOIN dbo.[" + joined + "] AS j ON s.k1 = j.j1 AND s.k2 = j.j2) ";
+            var prefix = separateSources
+                ? "WITH seed AS (SELECT s.k1 AS a, s.k2 AS b FROM dbo.[" +
+                  source + "] AS s) "
+                : "WITH seed AS (SELECT s.k1 AS a, s.k2 AS b FROM dbo.[" +
+                  source + "] AS s " + (leftJoin ? "LEFT" : "INNER") +
+                  " JOIN dbo.[" + joined + "] AS j ON s.k1 = j.j1 AND s.k2 = j.j2) ";
             if (hops >= 2) prefix += ", picked AS (SELECT a, b FROM seed) ";
             if (hops >= 3) prefix += ", final AS (SELECT a, b FROM picked) ";
             var cte = hops switch { 1 => "seed", 2 => "picked", 3 => "final", _ => "?" };
             var sql = prefix + (update
                 ? "UPDATE dbo.[" + target + "] SET label = 'updated' FROM " + cte
                 : "DELETE FROM dbo.[" + target + "] FROM " + cte)
+                + (separateSources ? ", dbo.[" + joined + "] AS j" : "")
                 + " WHERE dbo." + target + ".k1 = " + cte + ".a"
-                + " AND dbo." + target + ".k2 = " + cte + ".b";
+                + " AND dbo." + target + ".k2 = " + cte + ".b"
+                + (separateSources
+                    ? " AND " + cte + ".a = j.j1 AND " + cte + ".b = j.j2"
+                    : "");
             var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer, profile);
             var compiled = SqlCoreFacade.CompileDml(parsed, SqlAgentToolType.MsSqlServer,
                 context, new DmlCompilationPolicy(), profile, null);
             Assert.StartsWith("WITH ", compiled.Sql, StringComparison.OrdinalIgnoreCase);
 
+            if (separateSources)
+            {
+                var secondKey = " AND " + cte + ".a = j.j1 AND " + cte + ".b = j.j2";
+                foreach (var invalid in new[]
+                {
+                    sql.Replace(secondKey, "", StringComparison.Ordinal),
+                    sql.Replace(secondKey, " AND " + cte + ".a = j.j1", StringComparison.Ordinal),
+                    sql.Replace(secondKey, " AND " + cte + ".a = j.j1 OR " + cte + ".b = j.j2", StringComparison.Ordinal),
+                    sql.Replace(cte + ".b = j.j2", cte + ".b + 0 = j.j2", StringComparison.Ordinal),
+                    sql.Replace(cte + ".a = j.j1", cte + ".a = j.j2", StringComparison.Ordinal),
+                    sql.Replace("dbo.[" + joined + "] AS j", "dbo.[" + target + "] AS j", StringComparison.Ordinal),
+                    sql.Replace("j.j2", "CAST(j.j2 AS BIGINT)", StringComparison.Ordinal)
+                })
+                {
+                    Assert.NotEqual(sql, invalid);
+                    Assert.ThrowsAny<Exception>(() => SqlCoreFacade.CompileDml(
+                        CoreSqlTextParser.ParseDml(invalid, SqlAgentToolType.MsSqlServer, profile),
+                        SqlAgentToolType.MsSqlServer, context,
+                        new DmlCompilationPolicy(), profile, null));
+                }
+            }
             // Full ordinary key-to-key equality is mandatory in JOIN ON.
+            if (!separateSources)
             foreach (var invalid in new[]
             {
                 sql.Replace(" AND s.k2 = j.j2", "", StringComparison.Ordinal),
