@@ -372,7 +372,10 @@ public sealed class DmlPlanFactory(
                     targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
                 || (string.Equals(selection.PhysicalSource,
                         targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase)
-                    ? targetProvider != SqlAgentToolType.Sqlite || snapshot.Tables.Count != 1
+                    ? snapshot.Tables.Count != 1
+                      || (targetProvider == SqlAgentToolType.Postgres
+                          && !snapshot.Version.StartsWith(
+                              "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                     : snapshot.Tables.Count != 2
                       || !string.Equals(snapshot.Tables[1].Name, selection.PhysicalSource,
                           StringComparison.OrdinalIgnoreCase)))

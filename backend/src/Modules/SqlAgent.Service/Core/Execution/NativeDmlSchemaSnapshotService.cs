@@ -109,11 +109,15 @@ public sealed class NativeDmlSchemaSnapshotService :
         }
         if (targetProvider == SqlAgentToolType.Postgres && sourceTable is not null)
         {
-            if (string.Equals(sourceTable, snapshot.Tables[0].Name, StringComparison.OrdinalIgnoreCase))
-                return null; // First PostgreSQL proof admits distinct source and target only.
             var physicalTarget = await PostgresInsertSelectCatalogProof.ExtendAsync(
                 connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
             if (physicalTarget is null) return null;
+
+            // Reuse the exact same attested physical table when source and
+            // target coincide; never fabricate a duplicate two-table proof.
+            if (string.Equals(sourceTable, physicalTarget.Tables[0].Name, StringComparison.Ordinal))
+                return physicalTarget;
+
             var sourceNames = sourceTable.Split('.');
             if (sourceNames.Length != 2) return null;
             var secondMatches = await readers.Preview.GetDmlPlanningMetadataAsync(
@@ -161,6 +165,34 @@ public sealed class NativeDmlSchemaSnapshotService :
             throw new InvalidOperationException(
                 "Schema freshness transaction does not belong to its database connection.");
         if (expectedSnapshot.Provider != provider) return null;
+        if (provider == SqlAgentToolType.Postgres
+            && expectedSnapshot.Tables.Count == 1
+            && expectedSnapshot.Version.StartsWith(
+                "native-postgres-insert-source-v1:", StringComparison.Ordinal))
+        {
+            var expectedTable = expectedSnapshot.Tables[0].Name;
+            var names = expectedTable.Split('.');
+            if (names.Length != 2 || names.Any(string.IsNullOrWhiteSpace)
+                || names[0].StartsWith("pg_", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(names[0], "information_schema", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            // Self-source proof must block all concurrent source writers BEFORE
+            // the first catalog read / SERIALIZABLE snapshot is established.
+            await PinPostgresInsertSelectAsync(
+                connection, transaction, expectedTable, expectedTable, cancellationToken);
+            var matches = await ForProvider(provider).Commit.GetDmlPlanningMetadataInTransactionAsync(
+                connection, transaction, names[0], names[1], includeColumns: true,
+                cancellationToken: cancellationToken);
+            var basic = BuildSnapshot(provider, matches);
+            if (basic is null || basic.Tables.Count != 1
+                || !string.Equals(basic.Tables[0].Name, expectedTable, StringComparison.Ordinal))
+                return null;
+
+            var live = await PostgresInsertSelectCatalogProof.ExtendAsync(
+                connection, transaction, basic, names[0], names[1], cancellationToken);
+            return live?.Sha256;
+        }
         if (provider == SqlAgentToolType.Postgres && expectedSnapshot.Tables.Count == 2)
         {
             var tables = expectedSnapshot.Tables;
@@ -344,6 +376,12 @@ public sealed class NativeDmlSchemaSnapshotService :
         lockSource.CommandText =
             $"LOCK TABLE ONLY {QuoteQualified(source)} IN SHARE ROW EXCLUSIVE MODE NOWAIT";
         await lockSource.ExecuteNonQueryAsync(token);
+
+        // One physical table is one lock, not two round trips or two proof
+        // identities. The source lock already excludes DDL on that table.
+        if (string.Equals(source, target, StringComparison.Ordinal))
+            return;
+
         await using var lockTarget = connection.CreateCommand();
         lockTarget.Transaction = transaction;
         lockTarget.CommandText =

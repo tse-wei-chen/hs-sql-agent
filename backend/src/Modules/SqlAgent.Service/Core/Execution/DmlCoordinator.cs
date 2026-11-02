@@ -582,8 +582,10 @@ public sealed class DmlCoordinator(
                         StringComparison.OrdinalIgnoreCase)
                     || (string.Equals(sourceProof.PhysicalSource, plan.TableName,
                             StringComparison.OrdinalIgnoreCase)
-                        ? plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
-                          || plan.SchemaSnapshot.Tables.Count != 1
+                        ? plan.SchemaSnapshot.Tables.Count != 1
+                          || (plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                              && !plan.SchemaSnapshot.Version.StartsWith(
+                                  "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                         : plan.SchemaSnapshot.Tables.Count != 2
                           || !string.Equals(plan.SchemaSnapshot.Tables[1].Name,
                               sourceProof.PhysicalSource, StringComparison.OrdinalIgnoreCase))
