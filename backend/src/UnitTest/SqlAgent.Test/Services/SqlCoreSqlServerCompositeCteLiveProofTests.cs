@@ -106,6 +106,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, true, true, "NONE", "VARCHAR(24) COLLATE Latin1_General_100_CI_AI", "BIGINT")]
     [InlineData(false, false, 3, false, true, "INNER", "NVARCHAR(32) COLLATE Latin1_General_100_CS_AS", "VARCHAR(24) COLLATE Latin1_General_100_CI_AS")]
     [InlineData(true, true, 2, false, false, "CROSS", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI", "NVARCHAR(32) COLLATE Latin1_General_100_CI_AI")]
+    // M06: the first CTE reads a bounded, non-lateral derived-table
+    // direct projection, including two independent key renames.
+    // F# must prove cardinality independently of Host live discovery.
+    [InlineData(true, false, 2, false, false, "DERIVED", "INT", "BIGINT")]
+    [InlineData(false, false, 3, false, false, "DERIVED", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
+    [InlineData(true, false, 1, true, false, "DERIVED", "NVARCHAR(32)", "INT")]
     public async Task OrderedPhysicalKeyTupleRequiresAllEqualitiesAndFreshTransactionProof(
         bool update, bool primaryKey, int hops, bool revokeBeforeCommit, bool payload,
         string joined, string k1Type, string k2Type)
@@ -264,6 +270,12 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             var physicalSource = joined.StartsWith("SELF", StringComparison.Ordinal)
                 ? "dbo.[" + src + "] AS s"
                 : "dbo.[" + src + "]";
+            if (joined == "DERIVED")
+            {
+                physicalSource = "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                    "FROM dbo.[" + src + "] AS innerSrc) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
             var singletonJoin = joined switch
             {
                 "CROSS" => " CROSS JOIN (SELECT 1 AS marker) AS once",
@@ -273,7 +285,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" => "",
+                "NONE" or "DERIVED" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
             };
             var cte = "WITH seed AS (SELECT " + firstProjection +
@@ -321,6 +333,40 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
             Assert.Throws<SqlCompilationException>(() => SqlCoreFacade.CompileDml(
                 missingParsed, SqlAgentToolType.MsSqlServer, context,
                 new DmlCompilationPolicy(), profile, null));
+
+            if (joined == "DERIVED")
+            {
+                // M06 negative grammar matrix: changing the nested source
+                // must never borrow a physical UNIQUE proof by alias alone.
+                var direct = "SELECT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                    "FROM dbo.[" + src + "] AS innerSrc";
+                Assert.Contains(direct, sql, StringComparison.Ordinal);
+                foreach (var invalidDerived in new[]
+                {
+                    direct.Replace("innerSrc.k1 AS x", "innerSrc.k1 + 0 AS x",
+                        StringComparison.Ordinal), // computed key
+                    direct.Replace("innerSrc.k2 AS y", "innerSrc.k2 AS x",
+                        StringComparison.Ordinal), // ambiguous output
+                    direct.Replace("innerSrc.k2 AS y", "innerSrc.k2 AS z",
+                        StringComparison.Ordinal), // missing key lineage
+                    "SELECT DISTINCT innerSrc.k1 AS x, innerSrc.k2 AS y " +
+                        "FROM dbo.[" + src + "] AS innerSrc",
+                    direct + " WHERE innerSrc.k1 IS NOT NULL",
+                    direct + " INNER JOIN dbo.[" + src + "] AS second " +
+                        "ON innerSrc.k1 = second.k1"
+                })
+                {
+                    var rejected = sql.Replace(direct, invalidDerived,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(
+                                rejected, SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
 
             // A complete tuple never becomes a match through OR, duplicate
             // edges, implicit coercion or a shuffled physical-key projection.

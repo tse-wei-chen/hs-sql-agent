@@ -792,6 +792,75 @@ module internal RewriteStages =
                     not (RewriteAstTraversal.exists true (function
                         | Exists _ | InSubquery _ | ScalarSubquery _ -> true
                         | _ -> false) expression)
+        // M06: the live-proof gate needs its OWN exact physical-key
+        // reconstruction, independent of generic mutation cardinality
+        // and Host metadata discovery. A single non-lateral derived table
+        // may only rename direct columns of the attested physical source.
+        // The complete key tuple must retain the original index ordinal;
+        // never mint authority from display aliases or the Virtual Catalog.
+        let provenDirectDerivedKeys (derived: Query) =
+            let head = derived.Head
+            let sourceKeys = proof.SourceKeyColumns |> Seq.toList
+            if not derived.SetOperations.IsEmpty
+               || not derived.OrderBy.IsEmpty
+               || derived.Limit.IsSome || derived.Offset.IsSome
+               || derived.FetchPercent.IsSome || derived.FetchWithTies
+               || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+               || head.Where.IsSome || not head.GroupBy.IsEmpty
+               || head.Having.IsSome
+               || head.DistinctMode <> SelectDistinct.AllRows
+               || head.Projection.Length < sourceKeys.Length
+               || head.Projection.Length > 32 then None
+            else
+                match head.From with
+                | Some(NamedTable(source, sourceAlias))
+                    when qualified source proof.SourceTable ->
+                    let qualifier =
+                        match sourceAlias, Identifier.parts source with
+                        | Some value, _ -> value.Value
+                        | None, [_; table] -> table.Value
+                        | _ -> ""
+                    let columns =
+                        head.Projection
+                        |> List.map (fun item ->
+                            let name =
+                                match Expr.unspan item.Expression with
+                                | Column identifier
+                                | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                                    match Identifier.parts identifier with
+                                    | [column] -> Some column.Value
+                                    | [owner; column] when same owner.Value qualifier ->
+                                        Some column.Value
+                                    | _ -> None
+                                | _ -> None
+                            name |> Option.map (fun sourceName ->
+                                sourceName, defaultArg
+                                    (item.Alias |> Option.map (fun a -> a.Value))
+                                    sourceName))
+                    if columns |> List.exists Option.isNone then None
+                    else
+                        let mappings = columns |> List.choose id
+                        let inputs = mappings |> List.map fst
+                        let outputs = mappings |> List.map snd
+                        if (inputs |> List.distinct |> List.length) <> mappings.Length
+                           || (outputs |> List.distinct |> List.length) <> mappings.Length then None
+                        else
+                            let keys =
+                                sourceKeys
+                                |> List.map (fun key ->
+                                    mappings
+                                    |> List.mapi (fun pos (physical, alias) ->
+                                        if same physical key then Some(pos, alias) else None)
+                                    |> List.choose id)
+                            if keys |> List.exists (fun matches -> matches.Length <> 1) then None
+                            else
+                                let ordered = keys |> List.collect id
+                                if ordered |> List.pairwise
+                                   |> List.forall (fun ((before, _), (after, _)) -> before < after) then
+                                    Some(ordered |> List.map snd)
+                                else None
+                | _ -> None
+
         if isNull proof
            || proof.TargetKeyColumns.Count = 0
            || proof.TargetKeyColumns.Count <> proof.SourceKeyColumns.Count
@@ -828,6 +897,9 @@ module internal RewriteStages =
                                  | Some a, _ -> a.Value
                                  | None, [_; table] -> table.Value
                                  | _ -> "")
+                        | Some(DerivedTable(query, alias)), 0 ->
+                            provenDirectDerivedKeys query
+                            |> Option.map (fun keys -> keys, alias.Value)
                         | Some(CteTable(name, alias)), n when n > 0 ->
                             match Identifier.parts name with
                             | [namePart] when same namePart.Value lastName ->

@@ -279,6 +279,91 @@ module internal RewriteMutationSourceMatchProof =
             else
                 let seen = HashSet<string>(StringComparer.Ordinal)
                 let mutable proven: Map<string, Relation> = Map.empty
+                // A read-only derived projection preserves a proven key only
+                // when every output is a direct column reference, every output
+                // name is unambiguous, and all components of the original
+                // unique key survive under an injective name mapping.
+                // This helper is the single owner for BOTH CTE and derived
+                // projection lineage; neither name nor display SQL is proof.
+                let projectRelation (items: SelectItem list)
+                                    (aliases: IdentifierPart list)
+                                    (input: Relation) =
+                    if (not aliases.IsEmpty && aliases.Length <> items.Length)
+                       || input.UniqueKeys.IsEmpty then None
+                    else
+                        let projected =
+                            items
+                            |> List.mapi (fun index item ->
+                                RewriteResourceBudget.checkpoint ()
+                                let column =
+                                    match Expr.unspan item.Expression with
+                                    | Column identifier
+                                    | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
+                                        let parts = Identifier.parts identifier
+                                        let physical = parts |> List.last |> keyPart dialect
+                                        let validQualifier =
+                                            if parts.Length = 1 then true
+                                            else
+                                                let qualifier =
+                                                    parts
+                                                    |> List.take (parts.Length - 1)
+                                                    |> List.map (keyPart dialect >> escaped)
+                                                    |> String.concat "."
+                                                input.Qualifiers.Contains qualifier
+                                        if validQualifier && input.Columns.Contains physical then
+                                            Some physical
+                                        else None
+                                    | _ -> None
+                                let output =
+                                    if not aliases.IsEmpty then Some(keyPart dialect aliases.[index])
+                                    else
+                                        match item.Alias, column with
+                                        | Some alias, _ -> Some(keyPart dialect alias)
+                                        | None, Some field -> Some field
+                                        | _ -> None
+                                match column, output with
+                                | Some sourceName, Some outputName -> Some(sourceName, outputName)
+                                | _ -> None)
+                        if projected |> List.exists Option.isNone then None
+                        else
+                            let mapping = projected |> List.choose id
+                            let names = HashSet<string>(StringComparer.Ordinal)
+                            if not (mapping |> List.forall (fun (_, output) -> names.Add output)) then None
+                            else
+                                let rename values =
+                                    values
+                                    |> Seq.choose (fun original ->
+                                        mapping
+                                        |> List.tryFind (fun (inputName, _) -> inputName = original)
+                                        |> Option.map snd)
+                                    |> Set.ofSeq
+                                let keys =
+                                    input.UniqueKeys
+                                    |> List.choose (fun key ->
+                                        let translated =
+                                            key
+                                            |> List.map (fun component ->
+                                                mapping
+                                                |> List.tryFind (fun (sourceName, _) -> sourceName = component)
+                                                |> Option.map snd)
+                                        if translated |> List.forall Option.isSome then
+                                            let translated = translated |> List.choose id
+                                            if (translated |> List.distinct |> List.length) = key.Length then
+                                                Some translated
+                                            else None
+                                        else None)
+                                if keys.IsEmpty then None
+                                else
+                                    Some
+                                        { Position = 0
+                                          Qualifiers = Set.empty
+                                          Columns = mapping |> List.map snd |> Set.ofList
+                                          NonNullColumns = rename input.NonNullColumns
+                                          ExactIntColumns = rename input.ExactIntColumns
+                                          OracleNumberColumns = Set.empty
+                                          SqliteIntegerColumns = Set.empty
+                                          UniqueKeys = keys }
+
                 let cteSource = function
                     | NamedTable(name, alias) -> create 0 name alias
                     | CteTable(name, alias) ->
@@ -288,12 +373,33 @@ module internal RewriteMutationSourceMatchProof =
                             |> Option.map (fun relation ->
                                 { relation with Qualifiers = sourceQualifiers dialect name alias })
                         | _ -> None
-                    | DerivedTable _ | LateralDerivedTable _ -> None
+                    | DerivedTable(query, alias) ->
+                        // One finite, non-lateral, nonmultiplying read from one
+                        // physical table. No CTE inside, filter, JOIN, top,
+                        // set operations, ordering or computed projections.
+                        let head = query.Head
+                        if not query.SetOperations.IsEmpty || not query.OrderBy.IsEmpty
+                           || query.Limit.IsSome || query.Offset.IsSome
+                           || query.FetchPercent.IsSome || query.FetchWithTies
+                           || not head.Ctes.IsEmpty || not head.Joins.IsEmpty
+                           || head.Where.IsSome || not head.GroupBy.IsEmpty
+                           || head.Having.IsSome
+                           || head.DistinctMode <> SelectDistinct.AllRows
+                           || head.Projection.Length > 32 then None
+                        else
+                            match head.From with
+                            | Some(NamedTable(name, physicalAlias)) ->
+                                create 0 name physicalAlias
+                                |> Option.bind (projectRelation head.Projection [])
+                                |> Option.map (fun projected ->
+                                    { projected with
+                                        Qualifiers = Set.singleton (keyPart dialect alias |> escaped) })
+                            | _ -> None
+                    | LateralDerivedTable _ -> None
                 for cte in ctes do
                     RewriteResourceBudget.checkpoint ()
                     let name = keyPart dialect cte.Name
                     if not (seen.Add name) then
-                        // Duplicate CTE names must never revive old proof.
                         proven <- Map.remove name proven
                     else
                         let query = cte.Query
@@ -309,82 +415,11 @@ module internal RewriteMutationSourceMatchProof =
                                || query.FetchWithTies then None
                             else head.From |> Option.bind cteSource
                         match source with
-                        | None -> ()
                         | Some input ->
-                            let items = head.Projection
-                            let aliases = cte.ColumnAliases
-                            if (aliases.IsEmpty || aliases.Length = items.Length)
-                               && not input.UniqueKeys.IsEmpty then
-                                let projected =
-                                    items
-                                    |> List.mapi (fun index item ->
-                                        RewriteResourceBudget.checkpoint ()
-                                        let column =
-                                            match Expr.unspan item.Expression with
-                                            | Column identifier
-                                            | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
-                                                let parts = Identifier.parts identifier
-                                                let physical = parts |> List.last |> keyPart dialect
-                                                let qualifierMatches =
-                                                    if parts.Length = 1 then true
-                                                    else
-                                                        let qualifier =
-                                                            parts
-                                                            |> List.take (parts.Length - 1)
-                                                            |> List.map (keyPart dialect >> escaped)
-                                                            |> String.concat "."
-                                                        input.Qualifiers.Contains qualifier
-                                                if qualifierMatches && input.Columns.Contains physical then
-                                                    Some physical
-                                                else None
-                                            | _ -> None
-                                        let output =
-                                            if not aliases.IsEmpty then Some(keyPart dialect aliases.[index])
-                                            else
-                                                match item.Alias, column with
-                                                | Some alias, _ -> Some(keyPart dialect alias)
-                                                | None, Some field -> Some field
-                                                | _ -> None
-                                        match column, output with
-                                        | Some inputName, Some outputName -> Some(inputName, outputName)
-                                        | _ -> None)
-                                // Any unknown expression breaks lineage for
-                                // the entire query. No inference from display
-                                // name, CAST, arithmetic or SQL text.
-                                if projected |> List.forall Option.isSome then
-                                    let mapping = projected |> List.choose id
-                                    let seenOutput = HashSet<string>(StringComparer.Ordinal)
-                                    if mapping |> List.forall (fun (_, o) -> seenOutput.Add o) then
-                                        let rename values =
-                                            values
-                                            |> Seq.choose (fun original ->
-                                                mapping
-                                                |> List.tryFind (fun (i, _) -> i = original)
-                                                |> Option.map snd)
-                                            |> Set.ofSeq
-                                        let keys =
-                                            input.UniqueKeys
-                                            |> List.choose (fun key ->
-                                                let translated =
-                                                    key
-                                                    |> List.map (fun k ->
-                                                        mapping
-                                                        |> List.tryFind (fun (i, _) -> i = k)
-                                                        |> Option.map snd)
-                                                if translated |> List.forall Option.isSome then
-                                                    Some(translated |> List.choose id)
-                                                else None)
-                                        if not keys.IsEmpty then
-                                            let relation =
-                                                { Position = 0
-                                                  Qualifiers = Set.empty
-                                                  Columns = mapping |> List.map snd |> Set.ofList
-                                                  NonNullColumns = rename input.NonNullColumns
-                                                  ExactIntColumns = rename input.ExactIntColumns
-                                                  OracleNumberColumns = Set.empty
-                                                  SqliteIntegerColumns = Set.empty
-                                                  UniqueKeys = keys }
-                                            proven <- Map.add name relation proven
+                            match projectRelation head.Projection cte.ColumnAliases input with
+                            | Some relation -> proven <- Map.add name relation proven
+                            | None -> ()
+                        | None -> ()
                 proven
         let targetRelation = create 0 target targetAlias
         let readRelations =

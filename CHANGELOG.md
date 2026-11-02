@@ -7,6 +7,33 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
+### G9 / M06 — bounded Derived Table key-preserving physical lineage (develop only)
+
+- Allow one non-lateral, row-preserving derived SELECT immediately under
+  a SQL Server CTE root. Both derived and later 1–3 CTE projections may
+  directly rename **complete** ordered physical unique key fields,
+  including mixed numeric/decimal/UUID/attested-collation text kinds.
+- Keep **two independent proof owners**: the existing F# mutation
+  cardinality analyzer now shares one strict direct-column projection
+  proof for derived and CTE nodes; Host live proof discovery traces
+  aliases and column ordinals back to one physical source and still
+  mints execution evidence only from real unfiltered UNIQUE index
+  metadata, never from a virtual Catalog or a derived alias.
+- Exclude multi-branch CTE DAG merging, recursive/nested/lateral
+  sources, joins, filters, aggregates, DISTINCT, GROUP, set operations,
+  ORDER, LIMIT/OFFSET/TOP, computed keys, alias duplication, dropped
+  UNIQUE components and ambiguous lineage. Non-multiplying extra
+  physical joins remain governed by their existing separate M07 gate.
+- Retain sealed source+target physical proof, mandatory AND/equality,
+  Preview/Approval, current schema digest, rowset identity and held
+  transaction `IsCurrent` to block index revocation after preview;
+  no change in proof fingerprint structure or extra approval version.
+- Real SQL Server 2022 RED→GREEN matrix covers bounded derived
+  UPDATE/DELETE, 1–3 CTE hops, mixed key kinds, Host auto-proof,
+  approved commit and index invalidation, plus fail-closed negatives.
+  Other five database providers and existing DML defaults unchanged;
+  zero new public API, tool, dependency or driver.
+
 ### G9 / M05 — exact SQL Server linguistic-collation equality (develop only)
 
 - Extend the closed F# physical KeyTuple with private
