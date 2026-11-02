@@ -106,6 +106,61 @@ public sealed class TypedDmlSqliteAtomicInsertSelectLiveTests
         });
     }
 
+    [Fact]
+    public async Task NativeInsertSelect_EarlierBatchStatementWidensApprovedSource_RollsBackTheEntireTransaction()
+    {
+        await WithDatabaseAsync(async (cs, provider, runtime) =>
+        {
+            var session = await PreviewBatchAsync(runtime, provider, cs,
+                "INSERT INTO main.source_users(id,name) VALUES (3,'Eve');" +
+                "INSERT INTO main.users(name) SELECT name FROM main.source_users " +
+                "WHERE id IN (1,2,3) RETURNING id", 3);
+            Assert.Equal(1, session.Statements[0].Preview.AffectedRows);
+            Assert.Equal(2, session.Statements[1].Preview.AffectedRows);
+
+            // The first child grows the later source predicate inside the same
+            // physical transaction. The later approved preimage is now stale.
+            var rejected = await runtime.CommitTransactionAsync(provider, cs, session,
+                Policy(3), Grants, Context, TestContext.Current.CancellationToken);
+            Assert.False(rejected.Committed);
+            Assert.Equal(0, rejected.AffectedRows);
+            Assert.Empty(rejected.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(cs, "SELECT COUNT(*) FROM main.source_users"));
+            Assert.Equal(2, await ScalarAsync(cs, "SELECT COUNT(*) FROM main.users"));
+        });
+    }
+
+    [Theory]
+    [InlineData("non-sqlite")]
+    [InlineData("two-source-inserts")]
+    [InlineData("single-statement")]
+    [InlineData("unverified-catalog")]
+    public async Task NativeInsertSelect_UnprovenBatchShape_DeniedBeforeTouchingDatabase(string shape)
+    {
+        var sql = shape switch
+        {
+            "non-sqlite" =>
+                "INSERT INTO public.users(name) SELECT name FROM public.source_users WHERE id=1;" +
+                "INSERT INTO public.users(name) VALUES('Eve')",
+            "two-source-inserts" =>
+                "INSERT INTO main.users(name) SELECT name FROM main.source_users WHERE id=1;" +
+                "INSERT INTO main.users(name) SELECT name FROM main.source_users WHERE id=2",
+            "single-statement" =>
+                "INSERT INTO main.users(name) SELECT name FROM main.source_users WHERE id=1",
+            _ =>
+                "INSERT INTO main.users(name) SELECT name FROM main.source_users WHERE id=1;" +
+                "INSERT INTO main.users(name) VALUES('Eve')"
+        };
+        var dialect = shape == "non-sqlite" ? SqlAgentToolType.Postgres : SqlAgentToolType.Sqlite;
+        var batch = CoreDmlBatchTextParser.ParseDmlBatch(sql, dialect);
+        var provider = new SqliteProvider();
+        var runtime = new TypedDmlRuntime(); // Intentionally no native snapshot/verifier.
+        var denial = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            runtime.PreviewTransactionAsync(provider, "not-a-database", batch, Policy(3),
+                Grants, Context, TestContext.Current.CancellationToken));
+        Assert.Contains("SQLite", denial.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static readonly IReadOnlySet<string> Grants =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "main.users", "main.source_users" };
