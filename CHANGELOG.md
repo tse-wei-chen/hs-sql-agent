@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — SQL Server 2022 native INSERT SELECT OUTPUT INSERTED (develop only)
+
+- Reuse existing real physical single-/two-table source-row approval to admit
+  1–32 distinct direct SQL Server `OUTPUT INSERTED.<target column>` items
+  for bounded `INSERT SELECT`. F# already parses/compiles the native row image;
+  Host retains its direct-column whitelist, physical SQL Server catalog
+  trigger exclusions, live no-enabled-INSERT-trigger assurance, transaction-held
+  X locks, approved source multiset, one-time challenge and row-count parity.
+- A preview contains **source values only**, never generated target IDs.
+  Actual `OUTPUT INSERTED.id` / `OUTPUT INSERTED.id, INSERTED.name`
+  values become visible only after a confirmed successful commit.
+  Stale source rows roll back without exposing result rows. Replays fail.
+- Wildcard/aliases/expressions/duplicates, `OUTPUT INTO`, unproven triggers,
+  different row images, out-of-cap results and unsupported providers remain
+  denied; MySQL 8.4 `RETURNING` remains unavailable. No additional MCP tool,
+  SQL parser, driver, public SqlCore API or frontend-default change.
+
 ### G9/M09 — SQL Server 2022 single-physical-table INSERT SELECT (develop only)
 
 - Extend existing bounded SQL Server 2022 native `INSERT SELECT` source-row approval

@@ -13,6 +13,93 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
 {
     private const string Approval = "sqlserver2022-physical-source-m09-approval-v1";
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task NativeSqlServerOutput_ApprovedInsertSelect_ReturnsRealGeneratedTargetValues(
+        bool selfSource, bool multipleColumns)
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var from = selfSource ? target : source;
+            var expectedName = selfSource ? "Alice" : "Carol";
+            var selectedOutput = multipleColumns ? "INSERTED.id, INSERTED.name" : "INSERTED.id";
+            var sql = $"INSERT INTO dbo.[{target}] (name) OUTPUT {selectedOutput} " +
+                $"SELECT name FROM dbo.[{from}] WHERE id = 1";
+            var plan = await CreatePlanAsync(provider, native, cs, target, from, sql);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            Assert.Equal(selfSource ? 1 : 2, plan.SchemaSnapshot!.Tables.Count);
+            Assert.True(plan.MutationCommand.ReturnsRows);
+
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version);
+            Assert.Equal(1, preview.AffectedRows);
+            Assert.Equal(expectedName, Assert.Single(preview.Rows)["name"]);
+            Assert.False(preview.Rows[0].ContainsKey("id"),
+                "Preview approves actual source columns only; it cannot forge a generated target ID.");
+
+            var committed = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            var row = Assert.Single(committed.ReturnedRows);
+            Assert.Equal(3, Convert.ToInt32(row["id"]));
+            if (multipleColumns) Assert.Equal(expectedName, row["name"]);
+            else Assert.Single(row);
+            Assert.Equal(1, await ScalarAsync(cs,
+                $"SELECT COUNT(*) FROM dbo.[{target}] WHERE id = 3 AND name = '{expectedName}'"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Fact]
+    public async Task NativeSqlServerOutput_SourceDrift_DoesNotLeakOrCommitReturnedTargetRows()
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) OUTPUT INSERTED.id, INSERTED.name " +
+                $"SELECT name FROM dbo.[{source}] WHERE id = 1");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version);
+            await ExecuteAsync(cs, $"UPDATE dbo.[{source}] SET name = 'Eve' WHERE id = 1");
+            var denied = await coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.False(denied.Committed);
+            Assert.Empty(denied.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+        });
+    }
+
+    [Theory]
+    [InlineData("OUTPUT INSERTED.*")]
+    [InlineData("OUTPUT INSERTED.id AS created")]
+    [InlineData("OUTPUT INSERTED.id, INSERTED.id")]
+    public void NativeSqlServerOutput_NonDirectOrAmbiguousRowImage_IsRejectedByHost(string output)
+    {
+        var sql = $"INSERT INTO dbo.t (name) {output} SELECT name FROM dbo.s WHERE id = 1";
+        try
+        {
+            var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer);
+            var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+            Assert.ThrowsAny<Exception>(() => NativeInsertSelectSafety.RequireShape(
+                insert, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, 2));
+        }
+        catch (HsSqlAgent.SqlCore.Core.Compilation.SqlCompilationException)
+        {
+            // An F# source-grammar rejection is also a fail-closed outcome.
+        }
+    }
+
     [Fact]
     public async Task SelfSource_OnePhysicalTable_PreviewCommitsExactlyOnceWithGeneratedIdentity()
     {
@@ -381,7 +468,6 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
     [InlineData("INSERT INTO dbo.t (name) SELECT name FROM dbo.s")]
     [InlineData("INSERT INTO dbo.t (name) SELECT name FROM dbo.s WHERE id = 1 OR id = 2")]
     [InlineData("INSERT INTO dbo.t (name) SELECT upper(name) FROM dbo.s WHERE id = 1")]
-    [InlineData("INSERT INTO dbo.t (name) OUTPUT INSERTED.id SELECT name FROM dbo.s WHERE id = 1")]
     public void UnprovenHostShapes_DoNotGainSqlServerSourceApproval(string sql)
     {
         try
