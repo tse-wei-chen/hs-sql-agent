@@ -12,6 +12,44 @@ public sealed class DmlMySqlInsertSelectApprovalTests
 {
     private const string Approval = "mysql84-innodb-m09-source-row-approval-v1";
 
+    [Theory]
+    [InlineData("in")]
+    [InlineData("or")]
+    [InlineData("mixed")]
+    public async Task BoundedInOr_RealMySqlInnoDbSourceRows_ApproveExactlyTwoAndCommit(string kind)
+    {
+        await WithTablesAsync(async (connectionString, schema, target, source, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                $"INSERT INTO `{schema}`.`{source}` (id,name) VALUES (2,'Dave')");
+            var predicate = kind switch
+            {
+                "in" => "id IN (1,2)",
+                "or" => "id = 1 OR id = 2",
+                _ => "(id = 1 OR id = 2) AND name IN ('Carol','Dave')"
+            };
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, connectionString, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) SELECT name " +
+                $"FROM `{schema}`.`{source}` WHERE {predicate}");
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(connectionString, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            var result = await coordinator.CommitAsync(connectionString, plan,
+                preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(result.Committed);
+            Assert.Equal(2, result.AffectedRows);
+            Assert.Empty(result.ReturnedRows);
+            Assert.Equal(4, await ScalarAsync(connectionString,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+        });
+    }
+
     [Fact]
     public async Task NativeInnoDb_TwoDirectEqualityTerms_ApprovesExactSourceAndCommitsOnce()
     {
@@ -334,7 +372,7 @@ public sealed class DmlMySqlInsertSelectApprovalTests
     [Theory]
     [InlineData("RETURNING name")]
     [InlineData("SELECT upper(name) FROM {0} WHERE id = 1")]
-    [InlineData("SELECT name FROM {0} WHERE id = 1 OR id = 2")]
+    [InlineData("SELECT name FROM {0} WHERE id = 1 OR 1 = 1")]
     [InlineData("SELECT name FROM {0}")]
     public async Task UnprovenMutationShape_FailsClosed(string suffix)
     {

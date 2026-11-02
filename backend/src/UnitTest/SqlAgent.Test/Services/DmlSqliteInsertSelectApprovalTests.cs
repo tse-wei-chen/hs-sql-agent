@@ -16,6 +16,81 @@ public sealed class DmlSqliteInsertSelectApprovalTests
     private const string InsertSql =
         "INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1";
 
+    [Theory]
+    [InlineData("in")]
+    [InlineData("or")]
+    [InlineData("mixed")]
+    public async Task BoundedInOr_RealSqliteSourceRows_ApproveTwoAndReturnNativeRows(string kind)
+    {
+        await WithDatabaseAsync(async (connectionString, version) =>
+        {
+            await ExecuteAsync(connectionString,
+                "INSERT INTO main.other_users (id,name) VALUES (1,'Carol'),(2,'Dave')");
+            var predicate = kind switch
+            {
+                "in" => "id IN (1,2)",
+                "or" => "id = 1 OR id = 2",
+                _ => "(id = 1 OR id = 2) AND name IN ('Carol','Dave')"
+            };
+            var provider = new SqliteProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, connectionString,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users " +
+                $"WHERE {predicate} RETURNING id, name", useVerifiedProfile: true);
+            Assert.Equal(DmlApprovalMode.InsertSelect, plan.ApprovalMode);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(connectionString, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(2, preview.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                preview.Rows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            var result = await coordinator.CommitAsync(connectionString, plan,
+                preview.Challenge, Approval, TestContext.Current.CancellationToken, version);
+            Assert.True(result.Committed);
+            Assert.Equal(2, result.AffectedRows);
+            Assert.Equal(new[] { "Carol", "Dave" },
+                result.ReturnedRows.Select(x => (string)x["name"]!).OrderBy(x => x).ToArray());
+            Assert.Equal(new[] { 3, 4 },
+                result.ReturnedRows.Select(x => Convert.ToInt32(x["id"])).OrderBy(x => x).ToArray());
+            Assert.Equal(4, await ScalarAsync(connectionString, "SELECT COUNT(*) FROM main.users"));
+        });
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Sqlite, "main")]
+    [InlineData(SqlAgentToolType.Postgres, "public")]
+    [InlineData(SqlAgentToolType.MySQL, "app")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "dbo")]
+    public void BoundedInOr_UnsafeBooleanOrExcessiveLiteralShapes_StayFailClosed(
+        SqlAgentToolType dialect, string schema)
+    {
+        var badPredicates = new[]
+        {
+            "id = 1 OR 1 = 1",
+            "id IN (1, 2, 3, 4, 5)",
+            "id NOT IN (1, 2)",
+            "id IN (1, NULL)",
+            "id = 1 OR id = 2 OR id = 3 OR id = 4 OR id = 5",
+            "(id = 1 OR id = 2) AND id IN (1, 2, 3)"
+        };
+        foreach (var predicate in badPredicates)
+        {
+            var sql = $"INSERT INTO {schema}.users (name) SELECT name FROM " +
+                $"{schema}.source_users WHERE {predicate}";
+            try
+            {
+                var parsed = CoreSqlTextParser.ParseDml(sql, dialect);
+                var insert = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+                Assert.ThrowsAny<Exception>(() => NativeInsertSelectSafety.RequireShape(
+                    insert, dialect, dialect, maxAffectedRows: 2));
+            }
+            catch (HsSqlAgent.SqlCore.Core.Compilation.SqlCompilationException)
+            {
+                // Native F# parser rejection also denies access to executable Host approval.
+            }
+        }
+    }
+
     [Fact]
     public async Task SelfSource_TwoDirectEqualityTerms_ApprovesExactRowAndCommitsOnce()
     {
@@ -216,12 +291,12 @@ public sealed class DmlSqliteInsertSelectApprovalTests
 
     [Theory]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users")]
-    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1 OR id = 2")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1 OR 1 = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT upper(name) FROM main.users WHERE id = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM other_users WHERE id = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users AS s WHERE id = 1")]
     [InlineData("INSERT INTO main.users (name) SELECT upper(name) FROM main.other_users WHERE id = 1")]
-    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 OR id = 2")]
+    [InlineData("INSERT INTO main.users (name) SELECT name FROM main.other_users WHERE id = 1 OR 1 = 1")]
     public async Task UnsupportedOrUnboundedSource_FailsClosedBeforePreview(string sql)
     {
         await WithDatabaseAsync(async (connectionString, _) =>
