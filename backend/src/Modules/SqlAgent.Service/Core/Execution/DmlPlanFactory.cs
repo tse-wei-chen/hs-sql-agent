@@ -285,6 +285,18 @@ public sealed class DmlPlanFactory(
         else if (insert.Source is not InsertValuesSource)
             throw new NotSupportedException("Unsupported INSERT source: missing source-row approval proof.");
 
+        // Independent source READ grant: enforce BEFORE any physical metadata
+        // or F# compile step. The typed runtime repeats this at its outer
+        // boundary to avoid even unauthorized source-catalog inspection.
+        if (sourceSelection is { } admission
+            && validationContext.AllowedTables is { } grants
+            && !grants.Any(table => string.Equals(table, admission.PhysicalSource,
+                targetProvider == SqlAgentToolType.Postgres
+                    ? StringComparison.Ordinal
+                    : StringComparison.OrdinalIgnoreCase)))
+            throw new UnauthorizedAccessException(
+                "INSERT SELECT physical source table is not in the authorized table scope.");
+
         var requestedTarget = IdentifierText(insert.Target.Name);
         if (string.IsNullOrWhiteSpace(requestedTarget))
             throw new InvalidOperationException("DML target table must not be empty.");
@@ -352,15 +364,6 @@ public sealed class DmlPlanFactory(
             targetProfile);
         if (sourceSelection is { } selection)
         {
-            // Explicit source-table authorization is independent from the
-            // INSERT target grant. Null means caller chose unrestricted scope;
-            // a configured allow-list must admit BOTH physical tables.
-            if (validationContext.AllowedTables is { } grants
-                && !grants.Any(table => string.Equals(table, selection.PhysicalSource,
-                    StringComparison.OrdinalIgnoreCase)))
-                throw new UnauthorizedAccessException(
-                    "INSERT SELECT source table is not included in the authorized table scope.");
-
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null || snapshot.Provider != targetProvider
                 || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
