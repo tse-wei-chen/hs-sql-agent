@@ -313,14 +313,15 @@ internal static class SqlServerCteLiveProofDiscovery
             while (otherPredicate.Count != 0)
             {
                 if (--otherBudget < 0) return false;
-                if (otherPredicate.Pop() is not BinaryExpr comparison) continue;
+                if (otherPredicate.Pop() is not BinaryExpr comparison) return false;
                 if (SameOperator(comparison.Operator, "AND"))
                 {
                     otherPredicate.Push(comparison.Right);
                     otherPredicate.Push(comparison.Left);
                     continue;
                 }
-                if (!SameOperator(comparison.Operator, "=")) continue;
+                if (!SameOperator(comparison.Operator, "=")) return false;
+                var accepted = false;
                 for (var ordinal = 0; ordinal < ordered.Length; ordinal++)
                 {
                     var sourceName = ordered[ordinal].Source.OutputName;
@@ -331,8 +332,28 @@ internal static class SqlServerCteLiveProofDiscovery
                     {
                         if (otherKeyTuple[ordinal] is not null) return false;
                         otherKeyTuple[ordinal] = name;
+                        accepted = true;
                     }
+                    if ((TryTargetKey(comparison.Left, targetTable, out var targetKey)
+                         && Same(targetKey, ordered[ordinal].Target)
+                         && IsCteKey(comparison.Right, cteQualifier, sourceName))
+                        || (TryTargetKey(comparison.Right, targetTable, out targetKey)
+                            && Same(targetKey, ordered[ordinal].Target)
+                            && IsCteKey(comparison.Left, cteQualifier, sourceName)))
+                        accepted = true;
                 }
+                if (!accepted)
+                {
+                    // The only additional M08 condition is a direct second-
+                    // source column compared with a literal; never execute
+                    // hidden subqueries, expressions or unrelated reads
+                    // under the attested two-source cardinality token.
+                    accepted = (TryAliasKey(comparison.Left, second.Alias.Value, out _)
+                                && comparison.Right is LiteralExpr)
+                               || (TryAliasKey(comparison.Right, second.Alias.Value, out _)
+                                   && comparison.Left is LiteralExpr);
+                }
+                if (!accepted) return false;
             }
             if (otherKeyTuple.Any(x => x is null)
                 || otherKeyTuple.Distinct(StringComparer.Ordinal).Count() != ordered.Length)
