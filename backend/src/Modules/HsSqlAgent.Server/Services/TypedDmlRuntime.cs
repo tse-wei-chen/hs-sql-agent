@@ -94,6 +94,10 @@ public sealed class TypedDmlRuntime(
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         EnsureSupportedStatement(parsedMutation.Statement);
+        if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
+            && parsedMutation.SourceDialect != SqlAgentToolType.Sqlite)
+            throw new NotSupportedException(
+                "SQLite INSERT SELECT source-row approval does not authorize other source dialects.");
         ValidateApprovalContextFields(approvalContext);
         if (provider.Type != approvalContext.Provider)
             throw new InvalidOperationException("DML approval provider does not match the current execution context.");
@@ -474,7 +478,8 @@ public sealed class TypedDmlRuntime(
         statement is UpdateStatement
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
-            or InsertStatement { Source: InsertQuerySource, Conflict: null };
+        || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
+            && SqliteInsertSelectSafety.IsBoundedShape(insert);
 
     internal static void EnsureSupportedStatement(SqlStatement statement)
     {
