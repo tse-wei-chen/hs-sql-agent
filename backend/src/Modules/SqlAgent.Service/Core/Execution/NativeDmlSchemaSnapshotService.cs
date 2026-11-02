@@ -158,8 +158,11 @@ public sealed class NativeDmlSchemaSnapshotService :
         {
             var targetProof = await SqlServerInsertSelectCatalogProof.ExtendAsync(
                 connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
-            if (targetProof is null || string.Equals(sourceTable, targetProof.Tables[0].Name,
-                    StringComparison.OrdinalIgnoreCase)) return null;
+            if (targetProof is null) return null;
+            // A self-source must represent ONE physical object, not an invented
+            // pair of independently attestable table identities.
+            if (string.Equals(sourceTable, targetProof.Tables[0].Name,
+                    StringComparison.OrdinalIgnoreCase)) return targetProof;
             var sourceNames = sourceTable.Split('.');
             if (sourceNames.Length != 2) return null;
             var sources = await readers.Preview.GetDmlPlanningMetadataAsync(
@@ -260,15 +263,23 @@ public sealed class NativeDmlSchemaSnapshotService :
                 : CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
         }
         if (provider == SqlAgentToolType.MsSqlServer
-            && expectedSnapshot.Tables.Count == 2
-            && expectedSnapshot.Version.StartsWith(
-                "native-sqlserver2022-dual-source-v1:", StringComparison.Ordinal))
+            && ((expectedSnapshot.Tables.Count == 1
+                    && expectedSnapshot.Version.StartsWith(
+                        "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal))
+                || (expectedSnapshot.Tables.Count == 2
+                    && expectedSnapshot.Version.StartsWith(
+                        "native-sqlserver2022-dual-source-v1:", StringComparison.Ordinal))))
         {
             if (transaction.IsolationLevel != System.Data.IsolationLevel.Serializable) return null;
+            var onePhysicalTable = expectedSnapshot.Tables.Count == 1;
             var targetName = expectedSnapshot.Tables[0].Name;
-            var sourceName = expectedSnapshot.Tables[1].Name;
-            if (string.Equals(targetName, sourceName, StringComparison.OrdinalIgnoreCase)) return null;
-            var lockTables = new[] { targetName, sourceName };
+            var sourceName = onePhysicalTable ? targetName : expectedSnapshot.Tables[1].Name;
+            if (!onePhysicalTable
+                && string.Equals(targetName, sourceName, StringComparison.OrdinalIgnoreCase))
+                return null;
+            var lockTables = onePhysicalTable
+                ? new[] { targetName }
+                : new[] { targetName, sourceName };
             foreach (var name in lockTables)
             {
                 var lockParts = name.Split('.');
@@ -285,7 +296,9 @@ public sealed class NativeDmlSchemaSnapshotService :
                 await PinMsSqlServerSourceExclusiveAsync(
                     connection, transaction, lockParts[0], lockParts[1], cancellationToken);
             }
-            var verified = new List<SqlSchemaSnapshot>(2);
+            // With self-source, reattest one actual table and hold one X lock.
+            // Distinct source and target retain their ordered two-table proof.
+            var verified = new List<SqlSchemaSnapshot>(expectedSnapshot.Tables.Count);
             foreach (var expected in expectedSnapshot.Tables)
             {
                 var names = expected.Name.Split('.');
@@ -301,7 +314,9 @@ public sealed class NativeDmlSchemaSnapshotService :
                 if (current is null) return null;
                 verified.Add(current);
             }
-            return CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
+            return onePhysicalTable
+                ? verified[0].Sha256
+                : CombineNativeSourceTarget(verified[0], verified[1])?.Sha256;
         }
         if (provider == SqlAgentToolType.Postgres
             && expectedSnapshot.Tables.Count == 1
