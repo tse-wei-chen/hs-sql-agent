@@ -76,13 +76,13 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
     [Theory]
     [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL", "unique")]
     [InlineData("id BIGINT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE", "sole")]
-    [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL", "partial")]
-    [InlineData("id TEXT NOT NULL UNIQUE, name TEXT NOT NULL", "integer")]
+    [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL", "simple enforced")]
+    [InlineData("id TEXT NOT NULL UNIQUE, name TEXT NOT NULL", "INT2")]
     public async Task UnsupportedUniqueShape_RefusesApproval(string columns, string reason)
     {
         await WithTableAsync(columns, async (provider, cs, schema, runtime, token) =>
         {
-            if (reason == "partial")
+            if (reason == "simple enforced")
                 await ExecAsync(cs,
                     $"CREATE UNIQUE INDEX users_id_partial ON {schema}.users(id) WHERE id > 0", token);
             var error = await Assert.ThrowsAnyAsync<Exception>(() =>
