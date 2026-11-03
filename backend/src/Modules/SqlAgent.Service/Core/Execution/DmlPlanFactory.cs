@@ -491,12 +491,21 @@ public sealed class DmlPlanFactory(
                       AND NOT a.attisdropped AND a.attnotnull
                       AND a.atttypid IN (20, 21, 23)
                       AND c.relkind = 'r' AND c.relpersistence = 'p'
+                      AND EXISTS (
+                          SELECT 1 FROM pg_catalog.pg_index i
+                          JOIN pg_catalog.pg_class idx ON idx.oid = i.indexrelid
+                          WHERE i.indrelid = c.oid AND idx.relname = @indexName
+                            AND i.indisunique AND i.indimmediate
+                            AND i.indisvalid AND i.indisready AND i.indislive
+                            AND i.indpred IS NULL
+                      )
                     """;
                 foreach (var (name, value) in new[]
                 {
                     ("schema", targetResolution.Schema),
                     ("table", targetResolution.Table),
-                    ("key", skip.UniqueKeyColumn)
+                    ("key", skip.UniqueKeyColumn),
+                    ("indexName", live.MatchedKey.Name)
                 })
                 {
                     var parameter = typeCheck.CreateParameter();
@@ -506,7 +515,7 @@ public sealed class DmlPlanFactory(
                 }
                 if (Convert.ToInt64(await typeCheck.ExecuteScalarAsync(cancellationToken)) != 1)
                     throw new InvalidOperationException(
-                        "PostgreSQL conflict skip requires a real NOT NULL INT2/INT4/INT8 UNIQUE key without implicit casts.");
+                        "PostgreSQL conflict skip requires a real NOT NULL INT2/INT4/INT8 immediately enforced UNIQUE key without implicit casts.");
             }
             // SQLite reports only the top-level INSERT row count. A trigger
             // can mutate additional tables without being represented by that
