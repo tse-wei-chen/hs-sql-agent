@@ -280,7 +280,7 @@ public sealed class DmlPlanFactory(
         // DO NOTHING never inherits the insert-only optimistic payload approval.
         var conflictShape = insert.Conflict is null
             ? null
-            : NativeSqliteConflictDoNothingSafety.RequireShape(
+            : NativeSingleRowConflictDoNothingSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
@@ -441,31 +441,73 @@ public sealed class DmlPlanFactory(
         {
             var snapshot = validationContext.SchemaSnapshot;
             if (snapshot is null
-                || snapshot.Provider != SqlAgentToolType.Sqlite
+                || snapshot.Provider != targetProvider
+                || targetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                 || snapshot.Tables.Count != 1
-                || !snapshot.Version.StartsWith("native-dml-schema-v2:", StringComparison.Ordinal)
+                || !(targetProvider == SqlAgentToolType.Sqlite
+                    ? snapshot.Version.StartsWith("native-dml-schema-v2:", StringComparison.Ordinal)
+                    : snapshot.Version.StartsWith("native-postgres-insert-source-v1:", StringComparison.Ordinal))
                 || !string.Equals(snapshot.Tables[0].Name,
-                    targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase))
+                    targetResolution.QualifiedTableName,
+                    targetProvider == SqlAgentToolType.Postgres
+                        ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
-                    "SQLite conflict skip requires a live native target schema snapshot bound to the exact physical table.");
+                    "Native conflict skip requires a live full-definition target schema snapshot bound to the exact physical table.");
 
-            // Never accept a hand-authored conflict key. Verify the sole simple,
-            // physically enforced SQLite UNIQUE key through the built-in provider.
-            var live = await new DmlUniqueKeyResolver(
-                new HsSqlAgent.Provider.Sqlite.SqliteProvider()).ResolveAsync(
-                    connectionString, targetResolution.Schema, targetResolution.Table,
-                    [skip.UniqueKeyColumn], cancellationToken);
+            // The native provider, never a caller supplied virtual catalog, attests
+            // the sole simple enforced physical UNIQUE key. PostgreSQL further
+            // seals its complete index and trigger definitions in the snapshot.
+            IProviderMetadataReader nativeKeys = targetProvider == SqlAgentToolType.Sqlite
+                ? new HsSqlAgent.Provider.Sqlite.SqliteProvider()
+                : new HsSqlAgent.Provider.PostgreSql.PostgresProvider();
+            var live = await new DmlUniqueKeyResolver(nativeKeys).ResolveAsync(
+                connectionString, targetResolution.Schema, targetResolution.Table,
+                [skip.UniqueKeyColumn], cancellationToken);
             if (!live.IsSoleEnforcedUniqueKey || live.HasUnsupportedEnforcedUniqueKeys
                 || !live.MatchedKey.IsSimpleEnforcedColumnKey || live.MatchedKey.Columns.Count != 1)
                 throw new InvalidOperationException(
-                    "SQLite conflict skip requires the sole simple enforced UNIQUE key; multiple, partial and expression keys remain fail-closed.");
+                    "Native conflict skip requires the sole simple enforced UNIQUE key; multiple, partial and expression keys remain fail-closed.");
 
             if (metadataConnection is null)
                 throw new InvalidOperationException(
-                    "Native SQLite conflict skip requires the live Host metadata connection; detached key proof cannot authorize a plan.");
+                    "Native conflict skip requires the live Host metadata connection; detached proof cannot authorize a plan.");
+            if (targetProvider == SqlAgentToolType.Postgres)
+            {
+                // For PostgreSQL, restrict the exact literal to an actual
+                // NOT NULL integer-family column. Never silently authorize
+                // a text/UUID/collation/implicit-cast comparison.
+                await using var typeCheck = metadataConnection.CreateCommand();
+                typeCheck.CommandText = """
+                    SELECT count(*) FROM pg_catalog.pg_attribute a
+                    JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = @schema AND c.relname = @table
+                      AND a.attname = @key AND a.attnum > 0
+                      AND NOT a.attisdropped AND a.attnotnull
+                      AND a.atttypid IN (20, 21, 23)
+                      AND c.relkind = 'r' AND c.relpersistence = 'p'
+                    """;
+                foreach (var (name, value) in new[]
+                {
+                    ("schema", targetResolution.Schema),
+                    ("table", targetResolution.Table),
+                    ("key", skip.UniqueKeyColumn)
+                })
+                {
+                    var parameter = typeCheck.CreateParameter();
+                    parameter.ParameterName = name;
+                    parameter.Value = value;
+                    typeCheck.Parameters.Add(parameter);
+                }
+                if (Convert.ToInt64(await typeCheck.ExecuteScalarAsync(cancellationToken)) != 1)
+                    throw new InvalidOperationException(
+                        "PostgreSQL conflict skip requires a real NOT NULL INT2/INT4/INT8 UNIQUE key without implicit casts.");
+            }
             // SQLite reports only the top-level INSERT row count. A trigger
             // can mutate additional tables without being represented by that
-            // count, so the one-row impact approval must reject all triggers.
+            // count. PostgreSQL's full-definition catalog proof already rejects
+            // all user triggers, rules, partitioning and RLS.
+            if (targetProvider == SqlAgentToolType.Sqlite)
             await using (var triggers = metadataConnection.CreateCommand())
             {
                 triggers.CommandText =
@@ -509,7 +551,7 @@ public sealed class DmlPlanFactory(
                 maxAffectedRows, DmlApprovalMode.InsertConflictDoNothing,
                 InsertRows: previewRows, SchemaSnapshot: snapshot)
             {
-                NativeSqliteConflictDoNothingProof = new NativeSqliteConflictDoNothingProof(
+                NativeConflictDoNothingProof = new NativeConflictDoNothingProof(
                     targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
                     skipFingerprint,
                     DmlFingerprintService.ComputePlanFingerprint(
