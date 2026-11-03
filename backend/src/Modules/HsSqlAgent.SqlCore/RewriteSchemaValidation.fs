@@ -782,8 +782,7 @@ module internal RewriteSchemaValidation =
                                   Identifier.parts assignment.Target, assignment.Value with
                             | [ key ], [ updated ], ConflictProposedColumn proposed ->
                                 match Identifier.parts proposed with
-                                | [ excluded; source ]
-                                    when excluded.Value = "excluded" ->
+                                | [ source ] ->
                                     let keyName = keyPart catalog.Dialect key
                                     let updateName = keyPart catalog.Dialect updated
                                     if countColumn target keyName <> 1
