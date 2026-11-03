@@ -110,7 +110,7 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
             {
                 var error = await Assert.ThrowsAnyAsync<Exception>(() =>
                     PreviewAsync(provider, cs, schema, runtime, token));
-                Assert.Contains("exact", error.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("schema snapshot", error.Message, StringComparison.OrdinalIgnoreCase);
                 Assert.Equal("0", await ScalarAsync(cs,
                     $"SELECT count(*)::text FROM {schema}.users", token));
             });
@@ -122,12 +122,12 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
         await WithTableAsync("id BIGINT PRIMARY KEY, name TEXT NOT NULL",
             async (provider, cs, schema, runtime, token) =>
             {
-                await ExecAsync(cs, $"""
-                    CREATE FUNCTION {schema}.touch_row() RETURNS trigger
-                    LANGUAGE plpgsql AS $ BEGIN RETURN NEW; END; $;
-                    CREATE TRIGGER users_touch BEFORE INSERT ON {schema}.users
-                    FOR EACH ROW EXECUTE FUNCTION {schema}.touch_row();
-                    """, token);
+                await ExecAsync(cs,
+                    $"CREATE FUNCTION {schema}.touch_row() RETURNS trigger " +
+                    "LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END;'", token);
+                await ExecAsync(cs,
+                    $"CREATE TRIGGER users_touch BEFORE INSERT ON {schema}.users " +
+                    $"FOR EACH ROW EXECUTE FUNCTION {schema}.touch_row()", token);
                 var error = await Assert.ThrowsAnyAsync<Exception>(() =>
                     PreviewAsync(provider, cs, schema, runtime, token));
                 Assert.Contains("schema", error.Message, StringComparison.OrdinalIgnoreCase);
