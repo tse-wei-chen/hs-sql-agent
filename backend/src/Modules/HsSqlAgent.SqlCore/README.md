@@ -84,6 +84,10 @@ Console.WriteLine(preview.AuthorizesExecution); // False
 
 DDL preview is **static**. Even a successful compilation is not proof of physical object identity, a live schema snapshot, human approval, transactional behavior, or permission to execute. Some DDL operations and DDL batches are supported only for particular providers and shapes.
 
+### SQL Server single-row MERGE target locking
+
+The narrowly modeled native SQL Server `MERGE` (one explicit `USING (VALUES (...))` row, full metadata-assured UNIQUE/PRIMARY match key) compiles with `WITH (HOLDLOCK)` on the **target** to retain a serializable key-range fence, including absent keys. Real SQL Server tests verify key resolution, matched/unmatched actions and competing writes. SqlCore still does not open a transaction or grant execution authority. The Hosting/Server typed DML approval path still **rejects MERGE/Upsert** until existing-row impact and approval are independently proven.
+
 ## Package boundary and safety
 
 - **Inside SqlCore:** dialect-aware parsing, source spans, binding, typed semantics, source/target capability proofs, query/DML/DDL compilation, immutable plans, and static script/catalog analysis.

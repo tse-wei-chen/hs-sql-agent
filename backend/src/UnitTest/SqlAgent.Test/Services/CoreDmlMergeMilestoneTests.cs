@@ -68,6 +68,7 @@ public sealed class CoreDmlMergeMilestoneTests
 
         Assert.Equal(SqlStatementKind.Merge, command.Kind);
         Assert.Contains("MERGE INTO", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" WITH (HOLDLOCK) AS ", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("USING (VALUES (", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WHEN MATCHED THEN UPDATE SET", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("WHEN NOT MATCHED THEN INSERT", command.Sql, StringComparison.OrdinalIgnoreCase);
