@@ -534,6 +534,8 @@ public sealed class DmlPlanFactory(
                        AND count(*) FILTER (WHERE a.attname = @updated
                            AND a.atttypid = 25 AND a.attnotnull
                            AND a.attidentity = '' AND a.attgenerated = '') = 1
+                       AND (SELECT count(*) FROM pg_catalog.pg_index idx
+                            WHERE idx.indrelid = c.oid) = 1
                        AND NOT EXISTS (
                            SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid = c.oid)
                        AND NOT EXISTS (
