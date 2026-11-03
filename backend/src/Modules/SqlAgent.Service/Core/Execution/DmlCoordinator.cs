@@ -98,7 +98,7 @@ public sealed class DmlCoordinator(
 
         if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing && rows.Count > 1)
             throw new InvalidOperationException(
-                "SQLite conflict skip target UNIQUE conflict key resolved to multiple physical rows; preview denied.");
+                "Native conflict skip target UNIQUE key resolved to multiple physical rows; preview denied.");
 
         // A present target PK means a guaranteed DO NOTHING with zero affected
         // rows; an absent PK means exactly one proposed insert. The query result
@@ -273,7 +273,7 @@ public sealed class DmlCoordinator(
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return new DmlCommitResult(false, 0,
-                    "SQLite conflict skip cancelled: target key is no longer uniquely identifiable.");
+                    "Native conflict skip cancelled: target key is no longer uniquely identifiable.");
             }
             var currentAffectedRows = plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
                 ? 1 - currentRows.Count : currentRows.Count;
@@ -290,7 +290,7 @@ public sealed class DmlCoordinator(
                     plan.ApprovalMode == DmlApprovalMode.InsertSelect
                         ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
                         : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
-                            ? "SQLite DO NOTHING cancelled: the target UNIQUE key conflict changed after approval."
+                            ? "Native DO NOTHING cancelled: the target UNIQUE key conflict changed after approval."
                             : "DML execution cancelled: the matched row set changed after approval.");
             }
 
@@ -578,7 +578,7 @@ public sealed class DmlCoordinator(
         if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
 
-        if (plan.NativeSqliteConflictDoNothingProof is not null
+        if (plan.NativeConflictDoNothingProof is not null
             && plan.ApprovalMode != DmlApprovalMode.InsertConflictDoNothing)
             throw new InvalidOperationException(
                 "Native SQLite conflict skip proof cannot authorize a different DML approval mode.");
@@ -586,25 +586,31 @@ public sealed class DmlCoordinator(
         switch (plan.ApprovalMode)
         {
             case DmlApprovalMode.InsertConflictDoNothing:
-                var keyProof = plan.NativeSqliteConflictDoNothingProof;
+                var keyProof = plan.NativeConflictDoNothingProof;
                 if (plan.Operation != DmlOperation.Insert
-                    || plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
+                    || plan.MutationCommand.TargetProvider is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres)
                     || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
                     || plan.MaxAffectedRows != 1
                     || plan.InsertRows.Length != 1
                     || plan.RowIdentityColumns.Length != 1
                     || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
-                        TargetProvider: SqlAgentToolType.Sqlite } pkMatch
+                        TargetProvider: SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres } pkMatch
+                    || pkMatch.TargetProvider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot is null
-                    || plan.SchemaSnapshot.Provider != SqlAgentToolType.Sqlite
+                    || plan.SchemaSnapshot.Provider != plan.MutationCommand.TargetProvider
                     || plan.SchemaSnapshot.Tables.Count != 1
-                    || !plan.SchemaSnapshot.Version.StartsWith(
-                        "native-dml-schema-v2:", StringComparison.Ordinal)
+                    || !(plan.MutationCommand.TargetProvider == SqlAgentToolType.Sqlite
+                        ? plan.SchemaSnapshot.Version.StartsWith(
+                            "native-dml-schema-v2:", StringComparison.Ordinal)
+                        : plan.SchemaSnapshot.Version.StartsWith(
+                            "native-postgres-insert-source-v1:", StringComparison.Ordinal))
                     || keyProof is null
                     || !string.Equals(keyProof.PhysicalTarget, plan.TableName,
-                        StringComparison.OrdinalIgnoreCase)
+                        plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(plan.SchemaSnapshot.Tables[0].Name,
-                        plan.TableName, StringComparison.OrdinalIgnoreCase)
+                        plan.TableName, plan.MutationCommand.TargetProvider == SqlAgentToolType.Postgres
+                            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)
                     || !string.Equals(keyProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
                         StringComparison.Ordinal)
                     || !string.Equals(keyProof.UniqueKeyColumn,
@@ -615,7 +621,7 @@ public sealed class DmlCoordinator(
                         DmlFingerprintService.ComputePlanFingerprint(pkMatch, plan.PolicyVersion),
                         StringComparison.Ordinal))
                     throw new InvalidOperationException(
-                        "Native SQLite conflict skip requires a sealed sole enforced UNIQUE key proof, " +
+                        "Native conflict skip requires a sealed sole enforced UNIQUE key proof, " +
                         "exact match SELECT, immutable single payload and physical schema freshness.");
                 return;
 
