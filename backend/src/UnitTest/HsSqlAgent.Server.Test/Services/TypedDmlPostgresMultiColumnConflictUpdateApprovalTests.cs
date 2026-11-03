@@ -44,7 +44,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
                 // Reverse SET order to prove the Host never assumes the SQL
                 // assignment order equals the INSERT or physical table order.
                 var sql = Upsert(schema, columns, reverseAssignments: true);
-                var session = await PreviewAsync(provider, cs, runtime, token, sql);
+                var session = await PreviewAsync(provider, cs, schema, runtime, token, sql);
                 Assert.Equal(DmlApprovalMode.InsertConflictDoUpdate, session.Plan.ApprovalMode);
                 Assert.Equal(columns.Length + 1, session.Plan.RowIdentityColumns.Length);
                 Assert.Equal(1, session.Preview.AffectedRows);
@@ -85,7 +85,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
             {
                 if (existing)
                     await ExecAsync(cs, $"INSERT INTO {schema}.users VALUES (7,'old-name','old-city')", token);
-                var session = await PreviewAsync(provider, cs, runtime, token,
+                var session = await PreviewAsync(provider, cs, schema, runtime, token,
                     Upsert(schema, ["name", "city"]));
                 if (existing)
                     await ExecAsync(cs,
@@ -122,7 +122,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
                 var sql = $"INSERT INTO {schema}.users (id,name,city) VALUES (7,'new-name','new-city') " +
                     "ON CONFLICT (id) " + action;
                 await Assert.ThrowsAnyAsync<Exception>(() =>
-                    PreviewAsync(provider, cs, runtime, token, sql));
+                    PreviewAsync(provider, cs, schema, runtime, token, sql));
                 Assert.Equal("0", await ScalarAsync(cs,
                     $"SELECT count(*)::text FROM {schema}.users", token));
             });
@@ -140,10 +140,24 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
         await WithTableAsync(definition, async (provider, cs, schema, runtime, token) =>
         {
             await Assert.ThrowsAnyAsync<Exception>(() =>
-                PreviewAsync(provider, cs, runtime, token, Upsert(schema, ["name", "city"])));
+                PreviewAsync(provider, cs, schema, runtime, token, Upsert(schema, ["name", "city"])));
             Assert.Equal("0", await ScalarAsync(cs,
                 $"SELECT count(*)::text FROM {schema}.users", token));
         });
+    }
+
+    [Fact]
+    public async Task ExtraOrdinaryIndexOnAnotherValueColumn_IsDenied()
+    {
+        await WithTableAsync("id BIGINT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                await ExecAsync(cs, $"CREATE INDEX users_city_ix ON {schema}.users(city)", token);
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token, Upsert(schema, ["name", "city"])));
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
     }
 
     [Fact]
@@ -155,7 +169,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
             {
                 var sql = Upsert(schema, ["name", "city", "region", "code", "extra"]);
                 await Assert.ThrowsAnyAsync<Exception>(() =>
-                    PreviewAsync(provider, cs, runtime, token, sql));
+                    PreviewAsync(provider, cs, schema, runtime, token, sql));
                 Assert.Equal("0", await ScalarAsync(cs,
                     $"SELECT count(*)::text FROM {schema}.users", token));
             });
@@ -170,7 +184,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
                 await ExecAsync(cs, $"CREATE UNIQUE INDEX users_id_uq ON {schema}.users(id)", token);
                 await ExecAsync(cs,
                     $"INSERT INTO {schema}.users VALUES (7,'old-name','old-city')", token);
-                var session = await PreviewAsync(provider, cs, runtime, token,
+                var session = await PreviewAsync(provider, cs, schema, runtime, token,
                     Upsert(schema, ["name", "city"]));
                 await ExecAsync(cs, $"DROP INDEX {schema}.users_id_uq", token);
                 await Assert.ThrowsAnyAsync<Exception>(() =>
@@ -192,21 +206,14 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
             string.Join(", ", assignments.Select(c => c + "=EXCLUDED." + c));
     }
 
-    private static Task<TypedDmlApprovalSession> PreviewAsync(
-        PostgresProvider provider, string cs, TypedDmlRuntime runtime,
-        CancellationToken token, string sql) =>
-        PreviewParsedAsync(provider, cs, runtime, token, sql);
-
-    private static async Task<TypedDmlApprovalSession> PreviewParsedAsync(
-        PostgresProvider provider, string cs, TypedDmlRuntime runtime,
+    private static async Task<TypedDmlApprovalSession> PreviewAsync(
+        PostgresProvider provider, string cs, string schema, TypedDmlRuntime runtime,
         CancellationToken token, string sql)
     {
         var parsed = await runtime.ParseDmlWithVerifiedRuntimeProfileAsync(
             provider, cs, sql, SqlAgentToolType.Postgres, token);
-        var table = sql.Split(".users", StringSplitOptions.None)[0]
-            .Split(" INTO ", StringSplitOptions.None)[1].Trim() + ".users";
         return await runtime.PreviewAsync(provider, cs, parsed,
-            Policy, new HashSet<string>(StringComparer.Ordinal) { table }, Context, token);
+            Policy, Allowed(schema), Context, token);
     }
 
     private static IReadOnlySet<string> Allowed(string schema) =>
