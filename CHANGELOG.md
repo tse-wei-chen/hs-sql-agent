@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M10 — SQL Server native single-row MERGE target key-range locking (develop only)
+
+- Reuse the existing F# closed single-row SQL Server MERGE and
+  metadata-backed full PRIMARY/UNIQUE target match-key assurance. Its native
+  renderer now always emits `WITH (HOLDLOCK)` on the target before the alias,
+  so a transaction can hold a serializable key-range lock for **both**
+  matched and as-yet-absent source keys.
+- Real SQL Server 2022 CI verifies UPDATE, INSERT, DELETE, exact composite
+  UNIQUE-key tuple isolation, metadata rejection of a non-unique target and
+  competing INSERT lock-timeout against an absent target key while the
+  single-row MERGE transaction remains held. No mock provider or skipped
+  SQL Server test; the live cases run only in the existing SQL Server job.
+- SqlCore still only compiles. The Host's typed Upsert/MERGE admission and
+  existing-row Approval remain **fail-closed**. No new API, MCP tool, driver,
+  parser, coordinator, or provider-generic MERGE lowering. Frontend defaults
+  remain four read-only tools selected with DML disabled.
+
 ### G9/M09 — bounded direct-column NULL predicates for native INSERT SELECT (develop only)
 
 - Physically attested native SQLite, PostgreSQL, MySQL 8.4 InnoDB and SQL Server 2022

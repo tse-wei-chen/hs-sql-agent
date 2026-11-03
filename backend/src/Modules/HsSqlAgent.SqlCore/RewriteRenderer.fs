@@ -2944,8 +2944,12 @@ module internal RewriteRenderer =
         // INSERT expressions. One bounded buffer preserves that ordering
         // without large joined intermediate assignment/value strings.
         let sql = RenderBuffer(ctx, "MERGE INTO ")
+        // SQL Server native MERGE requires a serializable target key-range
+        // fence, including the not-yet-existing key for WHEN NOT MATCHED.
+        // The owning transaction, live key proof and approval remain outside
+        // SqlCore; this hint does not independently authorize execution.
         sql.Append(renderIdentifier ctx merge.Target)
-           .Append(" AS ")
+           .Append(" WITH (HOLDLOCK) AS ")
            .Append(renderAlias ctx merge.TargetAlias)
            .Append(" USING (VALUES (") |> ignore
         merge.Source.SourceValues
