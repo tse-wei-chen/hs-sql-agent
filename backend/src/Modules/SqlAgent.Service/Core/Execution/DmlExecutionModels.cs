@@ -19,7 +19,9 @@ public enum DmlApprovalMode
     RowSetMutation,
     InsertValues,
     /// <summary>Native bounded physical source rows, bound by full projected-value fingerprint.</summary>
-    InsertSelect
+    InsertSelect,
+    /// <summary>Single-row native SQLite DO NOTHING: target PK must be rechecked at commit.</summary>
+    InsertConflictDoNothing
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
@@ -30,6 +32,14 @@ internal sealed record NativeInsertSelectProof(
     string SourceQueryFingerprint,
     string SchemaSha256,
     ImmutableArray<string> ProjectedColumns);
+
+/// <summary>Internal proof scoped to the native SQLite sole-PK no-op conflict path.</summary>
+internal sealed record NativeSqliteConflictDoNothingProof(
+    string PhysicalTarget,
+    string PrimaryKeyColumn,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
 
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
@@ -58,6 +68,8 @@ public sealed record ValidatedDmlPlan(
     /// even though ValidatedDmlPlan remains a CLR-friendly public record.
     /// </summary>
     internal NativeInsertSelectProof? NativeInsertSelectProof { get; init; }
+
+    internal NativeSqliteConflictDoNothingProof? NativeSqliteConflictDoNothingProof { get; init; }
 }
 
 public sealed record DmlPreview(

@@ -46,6 +46,16 @@ internal static class DmlApprovalPlanBinding
             Append(hash, proof.ProofIdentity);
         }
 
+        if (plan.NativeSqliteConflictDoNothingProof is { } conflictProof)
+        {
+            Append(hash, "native-sqlite-conflict-skip-pk-v1");
+            Append(hash, conflictProof.PhysicalTarget);
+            Append(hash, conflictProof.PrimaryKeyColumn);
+            Append(hash, conflictProof.MutationFingerprint);
+            Append(hash, conflictProof.TargetQueryFingerprint);
+            Append(hash, conflictProof.SchemaSha256);
+        }
+
         if (plan.MatchQueryCommand is { } match)
         {
             Append(hash, "match-query");

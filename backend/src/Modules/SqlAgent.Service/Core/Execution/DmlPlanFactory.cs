@@ -276,8 +276,12 @@ public sealed class DmlPlanFactory(
         CancellationToken cancellationToken,
         SqlProviderCapabilityProfile? targetProfile)
     {
-        // A separate closed shape proof is required before any metadata access.
-        // Other INSERT SELECT sources cannot fall through the INSERT VALUES path.
+        // Closed structural admission comes before any metadata read or SQL compilation.
+        // DO NOTHING never inherits the insert-only optimistic payload approval.
+        var conflictShape = insert.Conflict is null
+            ? null
+            : NativeSqliteConflictDoNothingSafety.RequireShape(
+                insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
             sourceSelection = NativeInsertSelectSafety.RequireShape(
@@ -433,6 +437,86 @@ public sealed class DmlPlanFactory(
 
         var values = (InsertValuesSource)insert.Source;
         var previewRows = BuildInsertPreviewRows(resolvedInsert, values);
+        if (conflictShape is { } skip)
+        {
+            var snapshot = validationContext.SchemaSnapshot;
+            if (snapshot is null
+                || snapshot.Provider != SqlAgentToolType.Sqlite
+                || snapshot.Tables.Count != 1
+                || !snapshot.Version.StartsWith("native-dml-schema-v2:", StringComparison.Ordinal)
+                || !string.Equals(snapshot.Tables[0].Name,
+                    targetResolution.QualifiedTableName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    "SQLite conflict skip requires a live native target schema snapshot bound to the exact physical table.");
+
+            // Never accept a hand-authored conflict key. Verify the actual
+            // SQLite primary/unique inventory through the built-in provider.
+            var live = await new DmlUniqueKeyResolver(
+                new HsSqlAgent.Provider.Sqlite.SqliteProvider()).ResolveAsync(
+                    connectionString, targetResolution.Schema, targetResolution.Table,
+                    [skip.PrimaryKeyColumn], cancellationToken);
+            if (!live.MatchedKey.IsPrimaryKey || !live.IsSoleEnforcedUniqueKey
+                || live.MatchedKey.Columns.Count != 1)
+                throw new InvalidOperationException(
+                    "SQLite conflict skip requires the sole simple enforced PRIMARY KEY; secondary UNIQUE and non-PK keys remain fail-closed.");
+
+            if (metadataConnection is null)
+                throw new InvalidOperationException(
+                    "Native SQLite conflict skip requires the live Host metadata connection; detached key proof cannot authorize a plan.");
+            // SQLite reports only the top-level INSERT row count. A trigger
+            // can mutate additional tables without being represented by that
+            // count, so the one-row impact approval must reject all triggers.
+            await using (var triggers = metadataConnection.CreateCommand())
+            {
+                triggers.CommandText =
+                    "SELECT COUNT(*) FROM main.sqlite_master " +
+                    "WHERE type = 'trigger' AND tbl_name = @target COLLATE NOCASE";
+                var targetName = triggers.CreateParameter();
+                targetName.ParameterName = "@target";
+                targetName.Value = targetResolution.Table;
+                triggers.Parameters.Add(targetName);
+                var triggerCount = Convert.ToInt64(
+                    await triggers.ExecuteScalarAsync(cancellationToken));
+                if (triggerCount != 0)
+                    throw new InvalidOperationException(
+                        "SQLite conflict skip cannot approve a trigger-bearing physical target: " +
+                        "trigger side effects are outside the one-row affected-count proof.");
+            }
+
+            var column = SqlIdentifier.Unquoted(skip.PrimaryKeyColumn, SourceSpan.Unknown);
+            var keyExpr = new ColumnExpr(column, SourceSpan.Unknown);
+            var predicate = new BinaryExpr(
+                keyExpr, "=", new LiteralExpr(skip.PrimaryKeyValue, SourceSpan.Unknown),
+                SourceSpan.Unknown);
+            var select = new SelectStatement(
+                ImmutableArray<CteDefinition>.Empty, false,
+                [new SelectItem(keyExpr, null, SourceSpan.Unknown)],
+                resolvedTarget, ImmutableArray<JoinSource>.Empty, predicate,
+                ImmutableArray<SqlExpr>.Empty, null,
+                ImmutableArray<OrderByItem>.Empty,
+                1, null, SourceSpan.Unknown);
+            var match = CompileMatchQuery(
+                new ParsedStatement(select, parsedMutation.SourceDialect),
+                targetProvider, validationContext, targetProfile);
+            var skipFingerprint = DmlFingerprintService.ComputePlanFingerprint(
+                mutationCommand, validationContext.PolicyVersion);
+            return new ValidatedDmlPlan(
+                DmlOperation.Insert, targetResolution.QualifiedTableName,
+                mutationCommand, match, [skip.PrimaryKeyColumn],
+                DmlRowIdentityAssurance.Strict, skipFingerprint,
+                validationContext.PolicyVersion,
+                approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
+                maxAffectedRows, DmlApprovalMode.InsertConflictDoNothing,
+                InsertRows: previewRows, SchemaSnapshot: snapshot)
+            {
+                NativeSqliteConflictDoNothingProof = new NativeSqliteConflictDoNothingProof(
+                    targetResolution.QualifiedTableName, skip.PrimaryKeyColumn,
+                    skipFingerprint,
+                    DmlFingerprintService.ComputePlanFingerprint(
+                        match, validationContext.PolicyVersion),
+                    snapshot.Sha256)
+            };
+        }
 
         if (maxAffectedRows > 0 && previewRows.Length > maxAffectedRows)
         {

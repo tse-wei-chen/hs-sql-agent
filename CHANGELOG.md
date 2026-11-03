@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M10 — native SQLite PRIMARY KEY `ON CONFLICT DO NOTHING` Host approval (develop only)
+
+- Add the first **narrow native conflict Host approval** without promoting general Upsert/MERGE: one SQLite `INSERT VALUES` row with an explicit, non-NULL exact INT64 PRIMARY KEY literal; the PK must be the **sole physical enforced unique key**, policy `DmlMaxAffectedRows=1`, built-in native SQLite provider, native target schema capture and commit freshness. Any trigger-bearing target is rejected because trigger side effects are outside the approved one-row count. `DO UPDATE`, `RETURNING`, targetless conflict, multiple rows, alternate/composite/extra unique keys, non-SQLite dialects and atomic batches remain fail-closed.
+- Host Preview reads the actual PK match, binds an expected **1 INSERT vs 0 DO NOTHING** result and immutable payload in the one-time Approval challenge. Commit rechecks the exact PK set in SQLite's IMMEDIATE write transaction, pins schema freshness, checks actual affected row count, and rolls back any drift. Existing approval context, policy, nonce, transaction witness and target fence contracts are reused; no new public API, MCP tool, driver, or generic conflict execution path.
+- F# Strict Schema Snapshot now proves only the one-row explicit-target SQLite `DO NOTHING` column shape; `DO UPDATE` and other unproven UPSERT assignments remain rejected in strict mode. Physical uniqueness stays a separate Host-owned live proof.
+- Real SQLite file-database Host integration and SqlCore positive/negative regression tests cover insert, skip, replay, conflict presence/absence drift, schema/index revocation, ambiguous uniqueness, trigger effects, unproven expressions and batch rejection. Existing four selected read-only frontend tools and DML disabled default are unchanged.
+
 ### G9/M10 — SQL Server native single-row MERGE target key-range locking (develop only)
 
 - Reuse the existing F# closed single-row SQL Server MERGE and

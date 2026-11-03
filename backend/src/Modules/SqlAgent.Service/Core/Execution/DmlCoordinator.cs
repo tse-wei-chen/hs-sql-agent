@@ -59,10 +59,10 @@ public sealed class DmlCoordinator(
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             return await PreviewInsertValuesAsync(plan, approvalContextFingerprint, cancellationToken);
 
-        if (plan.ApprovalMode == DmlApprovalMode.InsertSelect
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing
             && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
             throw new InvalidOperationException(
-                "SQLite INSERT SELECT requires the native live schema verifier before reading the source.");
+                "Native source/target DML approval requires built-in live schema verification before preview.");
 
         var matchCommand = RequireMatchCommand(plan);
         await using var connection = _connectionFactory.Create(connectionString);
@@ -77,7 +77,7 @@ public sealed class DmlCoordinator(
                 : _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
             cancellationToken);
 
-        if (plan.ApprovalMode == DmlApprovalMode.InsertSelect)
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing)
             await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
                 connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
                 _schemaFreshnessVerifier, cancellationToken);
@@ -96,19 +96,32 @@ public sealed class DmlCoordinator(
                 $"Security policy denied DML: affectedRows={rows.Count} exceeds maximum {plan.MaxAffectedRows}.");
         }
 
+        if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing && rows.Count > 1)
+            throw new InvalidOperationException(
+                "SQLite conflict skip target PRIMARY KEY resolved to multiple physical rows; preview denied.");
+
+        // A present target PK means a guaranteed DO NOTHING with zero affected
+        // rows; an absent PK means exactly one proposed insert. The query result
+        // is still fingerprinted in both cases, including the empty set.
+        var affectedRows = plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+            ? 1 - rows.Count : rows.Count;
         var rowSetFingerprint = ComputeRowSetFingerprint(plan, rows);
         var challenge = CreateChallenge(
             plan,
             rowSetFingerprint,
-            rows.Count,
+            affectedRows,
             approvalContextFingerprint);
         await _challengeStore.RegisterAsync(challenge, cancellationToken);
 
         return new DmlPreview(
             plan.Operation,
             plan.TableName,
-            rows.Count,
-            rows.Take(PreviewRowLimit).ToImmutableArray(),
+            affectedRows,
+            (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                ? plan.InsertRows.Take(affectedRows)
+                    .Select(row => (IReadOnlyDictionary<string, object?>)row)
+                : rows.Take(PreviewRowLimit))
+                .ToImmutableArray(),
             challenge);
     }
 
@@ -147,10 +160,10 @@ public sealed class DmlCoordinator(
         if (witnessEvidence is not null && _targetCommitWitness is null)
             throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
-        if (plan.ApprovalMode == DmlApprovalMode.InsertSelect
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing
             && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
             throw new InvalidOperationException(
-                "SQLite INSERT SELECT cannot commit without native source/target schema freshness proof.");
+                "Native DML source/target approval cannot commit without built-in schema freshness proof.");
         ArgumentException.ThrowIfNullOrWhiteSpace(approvalContextFingerprint);
         ArgumentException.ThrowIfNullOrWhiteSpace(expectedServerVersionIdentity);
         ValidateChallenge(plan, approvedChallenge, approvalContextFingerprint);
@@ -255,7 +268,16 @@ public sealed class DmlCoordinator(
 
             var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
 
-            if (currentRows.Count != approvedChallenge.AffectedRows
+            if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                && currentRows.Count > 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return new DmlCommitResult(false, 0,
+                    "SQLite conflict skip cancelled: target key is no longer uniquely identifiable.");
+            }
+            var currentAffectedRows = plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                ? 1 - currentRows.Count : currentRows.Count;
+            if (currentAffectedRows != approvedChallenge.AffectedRows
                 || !string.Equals(
                     currentFingerprint,
                     approvedChallenge.RowSetFingerprint,
@@ -267,7 +289,9 @@ public sealed class DmlCoordinator(
                     0,
                     plan.ApprovalMode == DmlApprovalMode.InsertSelect
                         ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
-                        : "DML execution cancelled: the matched row set changed after approval.");
+                        : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                            ? "SQLite DO NOTHING cancelled: the target PRIMARY KEY conflict changed after approval."
+                            : "DML execution cancelled: the matched row set changed after approval.");
             }
 
             var execution = await ExecuteMutationAsync(
@@ -471,6 +495,11 @@ public sealed class DmlCoordinator(
         if (plan.MaxAffectedRows > 0 && challenge.AffectedRows > plan.MaxAffectedRows)
             throw new InvalidOperationException("DML approval exceeds the validated maximum affected row count.");
 
+        if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+            && challenge.AffectedRows is not (0 or 1))
+            throw new InvalidOperationException(
+                "SQLite conflict skip approval must predict exactly zero or one affected row.");
+
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
         {
             if (challenge.RowSetFingerprint is not null)
@@ -549,8 +578,47 @@ public sealed class DmlCoordinator(
         if (!string.Equals(expectedFingerprint, plan.PlanFingerprint, StringComparison.Ordinal))
             throw new InvalidOperationException("Validated DML plan fingerprint does not match its mutation command.");
 
+        if (plan.NativeSqliteConflictDoNothingProof is not null
+            && plan.ApprovalMode != DmlApprovalMode.InsertConflictDoNothing)
+            throw new InvalidOperationException(
+                "Native SQLite conflict skip proof cannot authorize a different DML approval mode.");
+
         switch (plan.ApprovalMode)
         {
+            case DmlApprovalMode.InsertConflictDoNothing:
+                var pkProof = plan.NativeSqliteConflictDoNothingProof;
+                if (plan.Operation != DmlOperation.Insert
+                    || plan.MutationCommand.TargetProvider != SqlAgentToolType.Sqlite
+                    || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                    || plan.MaxAffectedRows != 1
+                    || plan.InsertRows.Length != 1
+                    || plan.RowIdentityColumns.Length != 1
+                    || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Sqlite } pkMatch
+                    || plan.SchemaSnapshot is null
+                    || plan.SchemaSnapshot.Provider != SqlAgentToolType.Sqlite
+                    || plan.SchemaSnapshot.Tables.Count != 1
+                    || !plan.SchemaSnapshot.Version.StartsWith(
+                        "native-dml-schema-v2:", StringComparison.Ordinal)
+                    || pkProof is null
+                    || !string.Equals(pkProof.PhysicalTarget, plan.TableName,
+                        StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(plan.SchemaSnapshot.Tables[0].Name,
+                        plan.TableName, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(pkProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
+                        StringComparison.Ordinal)
+                    || !string.Equals(pkProof.PrimaryKeyColumn,
+                        plan.RowIdentityColumns[0], StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(pkProof.MutationFingerprint,
+                        plan.PlanFingerprint, StringComparison.Ordinal)
+                    || !string.Equals(pkProof.TargetQueryFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(pkMatch, plan.PolicyVersion),
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "Native SQLite conflict skip requires a sealed sole PRIMARY KEY proof, " +
+                        "exact match SELECT, immutable single payload and physical schema freshness.");
+                return;
+
             case DmlApprovalMode.InsertValues:
                 if (plan.Operation != HsSqlAgent.SqlCore.Enums.DmlOperation.Insert)
                     throw new InvalidOperationException("INSERT VALUES approval mode requires an INSERT operation.");
