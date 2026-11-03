@@ -5,12 +5,12 @@ namespace SqlAgent.Service.Core.Execution;
 
 /// <summary>
 /// Closed input-shape admission only. The plan factory must additionally
-/// attest the sole physical PRIMARY KEY and the native schema on a real DB.
+/// attest the sole enforced physical UNIQUE key and the native schema on a real DB.
 /// No raw SQL reconstruction, fake key metadata, update action or batch.
 /// </summary>
 internal static class NativeSqliteConflictDoNothingSafety
 {
-    internal sealed record Shape(string PrimaryKeyColumn, long PrimaryKeyValue);
+    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue);
 
     internal static bool IsBoundedShape(InsertStatement insert)
     {
@@ -36,10 +36,10 @@ internal static class NativeSqliteConflictDoNothingSafety
             || !insert.Returning.IsDefaultOrEmpty
             || insert.Target.Alias is not null)
             throw new NotSupportedException(
-                "Native SQLite conflict skip permits one explicit PRIMARY KEY target, one VALUES row and DO NOTHING without RETURNING.");
+                "Native SQLite conflict skip permits one explicit UNIQUE key target, one VALUES row and DO NOTHING without RETURNING.");
         var targetIdentifier = conflict.TargetColumns[0];
         if (targetIdentifier.Parts.Length != 1)
-            throw new NotSupportedException("Native SQLite conflict target must be an unqualified PRIMARY KEY column.");
+            throw new NotSupportedException("Native SQLite conflict target must be an unqualified UNIQUE key column.");
         var key = targetIdentifier.Parts[0].Value;
         var matches = insert.Columns.Select((col, index) => (col, index))
             .Where(item => item.col.Parts.Length == 1
@@ -48,7 +48,7 @@ internal static class NativeSqliteConflictDoNothingSafety
         if (matches.Length != 1 || insert.Columns.Any(col => col.Parts.Length != 1)
             || values.Rows[0].Length != insert.Columns.Length)
             throw new NotSupportedException(
-                "Native SQLite conflict target must occur exactly once in a complete explicit INSERT column list.");
+                "Native SQLite conflict key must occur exactly once in a complete explicit INSERT column list.");
         // The canonical F#→CLR compatibility adapter projects small integer
         // literals as Int32 and larger exact integers as Decimal. Do not
         // narrow via floating point, parse strings or admit SQL NULL.
@@ -64,7 +64,7 @@ internal static class NativeSqliteConflictDoNothingSafety
         };
         if (exactInteger is null)
             throw new NotSupportedException(
-                "Native SQLite conflict skip currently admits a non-null exact INT64 PRIMARY KEY literal only.");
+                "Native SQLite conflict skip currently admits a non-null exact INT64 UNIQUE key literal only.");
         return new Shape(key, exactInteger.Value);
     }
 }
