@@ -95,13 +95,15 @@ public sealed class TypedDmlRuntime(
 
         EnsureSupportedStatement(parsedMutation.Statement);
         if (parsedMutation.Statement is InsertStatement { Conflict: not null }
-            && (provider.Type != SqlAgentToolType.Sqlite
-                || provider.GetType() != typeof(HsSqlAgent.Provider.Sqlite.SqliteProvider)
-                || parsedMutation.SourceDialect != SqlAgentToolType.Sqlite
+            && (parsedMutation.SourceDialect != provider.Type
+                || !((provider.Type == SqlAgentToolType.Sqlite
+                      && provider.GetType() == typeof(HsSqlAgent.Provider.Sqlite.SqliteProvider))
+                  || (provider.Type == SqlAgentToolType.Postgres
+                      && provider.GetType() == typeof(HsSqlAgent.Provider.PostgreSql.PostgresProvider)))
                 || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
                 || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
             throw new NotSupportedException(
-                "Host native SQLite conflict skip requires built-in physical schema capture and commit-time freshness verification.");
+                "Native SQLite/PostgreSQL conflict skip requires the built-in exact provider, physical schema capture and commit-time freshness verification.");
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
             && (parsedMutation.SourceDialect != provider.Type
                 || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)))
@@ -216,7 +218,7 @@ public sealed class TypedDmlRuntime(
         // insertions, or a caller-supplied virtual schema/freshness attestation.
         if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Conflict: not null }))
             throw new NotSupportedException(
-                "Native SQLite conflict skip is single-statement only; atomic conflict batches require a separate cross-statement proof.");
+                "Native conflict skip is single-statement only; atomic conflict batches require a separate cross-statement proof.");
 
         var sourceInsertCount = parsedBatch.Statements.Count(item =>
             item.Statement is InsertStatement { Source: InsertQuerySource });
@@ -519,7 +521,7 @@ public sealed class TypedDmlRuntime(
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
         || statement is InsertStatement { Source: InsertValuesSource, Conflict: not null } conflictInsert
-            && NativeSqliteConflictDoNothingSafety.IsBoundedShape(conflictInsert)
+            && NativeSingleRowConflictDoNothingSafety.IsBoundedShape(conflictInsert)
         || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
             && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
                 || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres)
