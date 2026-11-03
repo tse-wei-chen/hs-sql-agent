@@ -129,7 +129,8 @@ public sealed class NativeDmlSchemaSnapshotService :
                 sourceMatches[0].Table, cancellationToken);
             return sourceProof is null ? null : CombineNativeSourceTarget(targetProof, sourceProof);
         }
-        if (targetProvider == SqlAgentToolType.Postgres && sourceTable is not null)
+        if (targetProvider == SqlAgentToolType.Postgres
+            && (sourceTable is not null || parsedMutation.Statement is InsertStatement { Conflict: not null }))
         {
             var physicalTarget = await PostgresInsertSelectCatalogProof.ExtendAsync(
                 connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
@@ -137,7 +138,8 @@ public sealed class NativeDmlSchemaSnapshotService :
 
             // Reuse the exact same attested physical table when source and
             // target coincide; never fabricate a duplicate two-table proof.
-            if (string.Equals(sourceTable, physicalTarget.Tables[0].Name, StringComparison.Ordinal))
+            if (sourceTable is null
+                || string.Equals(sourceTable, physicalTarget.Tables[0].Name, StringComparison.Ordinal))
                 return physicalTarget;
 
             var sourceNames = sourceTable.Split('.');
