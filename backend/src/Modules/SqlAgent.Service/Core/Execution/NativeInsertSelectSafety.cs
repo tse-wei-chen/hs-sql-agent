@@ -110,7 +110,7 @@ internal static class NativeInsertSelectSafety
 
         if (!HasBoundedSourcePredicate(head.Where))
             throw new NotSupportedException(
-                "Bounded native INSERT SELECT requires one to four direct-column =/IN non-null literal comparisons joined by bounded AND/OR.");
+                "Bounded native INSERT SELECT requires one to four units of direct-column =/IN/BETWEEN/IS NULL/IS NOT NULL conditions joined by bounded AND/OR.");
 
         if (insert.Columns.IsDefaultOrEmpty || insert.Columns.Length != head.Select.Length)
             throw new NotSupportedException(
@@ -135,9 +135,10 @@ internal static class NativeInsertSelectSafety
 
     // Only the already-attested single table may supply the source rows.
     // Admission is structural: no SQL text matching, functions, expressions,
-    // NOT, subqueries or implicit arbitrary tautologies. Count each IN item
-    // as one comparison value, including when mixed with AND/OR equalities.
-    // Iterative Boolean-node and literal budgets reject deep or broad trees.
+    // NOT, subqueries or implicit arbitrary tautologies. Each equality
+    // literal, IN member, and BETWEEN endpoint consumes one unit; a direct
+    // column IS [NOT] NULL consumes one unit too, without allowing an
+    // unlimited number of NULL checks. Iterative budgets reject broad trees.
     private static bool HasBoundedSourcePredicate(SqlExpr? predicate)
     {
         if (predicate is null) return false;
@@ -184,6 +185,14 @@ internal static class NativeInsertSelectSafety
                 // unchecked SQL text or admit NOT/computed/NULL endpoints.
                 if (maxTerms - terms < 2) return false;
                 terms += 2;
+            }
+            else if (current is IsNullExpr nullCheck
+                && nullCheck.Value is ColumnExpr { Name.Parts.Length: 1 })
+            {
+                // IS NULL and IS NOT NULL both have native two-valued
+                // NULL-test semantics and require an actual source column.
+                // Both spend one of the shared four comparison-budget units.
+                if (++terms > maxTerms) return false;
             }
             else return false;
         }

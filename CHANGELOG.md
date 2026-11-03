@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M09 — bounded direct-column NULL predicates for native INSERT SELECT (develop only)
+
+- Physically attested native SQLite, PostgreSQL, MySQL 8.4 InnoDB and SQL Server 2022
+  source-row approval additionally accepts `column IS NULL` and `column IS NOT NULL`,
+  including the existing bounded AND/OR Boolean tree. Typed F# `IsNullExpr`
+  is consumed by the existing Host structural gate; no SQL text matching,
+  new parser, provider driver, MCP tool, public API or approval bypass.
+- Each direct source-column NULL test consumes **one of the existing four
+  condition-budget units**. Non-NULL `=` literals and `IN` members each
+  consume one; direct `BETWEEN` consumes two. The seven AST-node cap and
+  positive finite affected-row policy are unchanged. `NULL IS NULL` and
+  other constant tests, functions/computed operands, `OR 1=1`, general NOT,
+  JOIN/CTE and unproven dialects still fail closed.
+- Four-provider actual database integration tests cover nullable source
+  columns with NULL and non-NULL values, mixed AND/OR, Preview-to-Commit
+  selected row parity, generated target row evidence and approval replay.
+  SQLite additionally verifies source row drift and row-cap rejection; the
+  four-dialect structural rejection matrix ensures unsafe expressions fail.
+- Reuse independent source and target permission, live schema identity,
+  transaction-held source locks and full projected-source multiset
+  revalidation at commit. Four read-only UI tools stay selected and
+  DML stays disabled by default.
+
 ### G9/M09 — SQLite bounded INSERT SELECT in ordered atomic DML approval (develop only)
 
 - Reuse the **existing** 2–16-statement typed atomic DML transaction

@@ -13,6 +13,48 @@ public sealed class DmlSqlServerInsertSelectApprovalTests
 {
     private const string Approval = "sqlserver2022-physical-source-m09-approval-v1";
 
+
+    [Theory]
+    [InlineData("null", "Dave", 1)]
+    [InlineData("not-null", "Carol", 1)]
+    [InlineData("mixed", "Carol,Dave", 2)]
+    public async Task NativeNullableColumnPredicate_SqlServerRealApprovalAndActualIdentity(
+        string kind, string names, int affected)
+    {
+        await WithTablesAsync(async (cs, target, source, version) =>
+        {
+            await ExecuteAsync(cs, $"ALTER TABLE dbo.[{source}] ADD note NVARCHAR(16) NULL");
+            await ExecuteAsync(cs, $"UPDATE dbo.[{source}] SET note = 'marked' WHERE id = 1");
+            var predicate = kind switch
+            {
+                "null" => "note IS NULL",
+                "not-null" => "note IS NOT NULL",
+                _ => "(note IS NULL OR id = 1) AND name IS NOT NULL"
+            };
+            var provider = new MsSqlServerProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, target, source,
+                $"INSERT INTO dbo.[{target}] (name) OUTPUT INSERTED.id, INSERTED.name " +
+                $"SELECT name FROM dbo.[{source}] WHERE {predicate}");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(affected, preview.AffectedRows);
+            Assert.Equal(names.Split(','),
+                preview.Rows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            var committed = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(affected, committed.AffectedRows);
+            Assert.Equal(names.Split(','),
+                committed.ReturnedRows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            Assert.All(committed.ReturnedRows, row => Assert.True(Convert.ToInt32(row["id"]) > 2));
+            Assert.Equal(2 + affected, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{target}]"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
     [Theory]
     [InlineData(false, "between")]
     [InlineData(false, "and")]
