@@ -151,6 +151,83 @@ public sealed class TypedDmlSqliteDoNothingApprovalTests
         });
     }
 
+    [Theory]
+    [InlineData(false, 1, "new-name")]
+    [InlineData(true, 0, "original")]
+    public async Task NativeSqlite_SolePhysicalUniqueIntegerColumn_PreviewsAndCommitsWithoutPrimaryKey(
+        bool existing, int affected, string expectedName)
+    {
+        await WithDatabaseAsync(async (provider, cs, runtime, token) =>
+        {
+            await ExecAsync(cs,
+                "DROP TABLE users; CREATE TABLE users (id INTEGER NOT NULL UNIQUE, name TEXT NOT NULL)", token);
+            if (existing)
+                await ExecAsync(cs, "INSERT INTO users (id, name) VALUES (7, 'original')", token);
+
+            // The only enforced unique key is real, simple and non-primary.
+            var physical = await new DmlUniqueKeyResolver(provider).ResolveAsync(
+                cs, "main", "users", ["id"], token);
+            Assert.False(physical.MatchedKey.IsPrimaryKey);
+            Assert.True(physical.IsSoleEnforcedUniqueKey);
+            Assert.False(physical.HasUnsupportedEnforcedUniqueKeys);
+
+            var preview = await PreviewAsync(provider, cs, runtime, InsertSql, token);
+            Assert.Equal(DmlApprovalMode.InsertConflictDoNothing, preview.Plan.ApprovalMode);
+            Assert.Equal(affected, preview.Preview.AffectedRows);
+            Assert.NotNull(preview.Preview.Challenge.RowSetFingerprint);
+            var committed = await runtime.CommitAsync(provider, cs, preview, Policy, Allowed,
+                Context, token);
+            Assert.True(committed.Committed);
+            Assert.Equal(affected, committed.AffectedRows);
+            Assert.Equal(expectedName, await ScalarStringAsync(cs,
+                "SELECT name FROM users WHERE id=7", token));
+        });
+    }
+
+    [Fact]
+    public async Task NativeSqlite_SolePhysicalUniqueIndex_DriftBetweenPreviewAndCommitDeniesWrite()
+    {
+        await WithDatabaseAsync(async (provider, cs, runtime, token) =>
+        {
+            await ExecAsync(cs,
+                "DROP TABLE users; CREATE TABLE users (id INTEGER NOT NULL, name TEXT NOT NULL); " +
+                "CREATE UNIQUE INDEX ux_users_id ON users(id)", token);
+            var preview = await PreviewAsync(provider, cs, runtime, InsertSql, token);
+            Assert.Equal(1, preview.Preview.AffectedRows);
+            await ExecAsync(cs, "DROP INDEX ux_users_id", token);
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                runtime.CommitAsync(provider, cs, preview, Policy, Allowed, Context, token));
+            Assert.Contains("stale", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, await ScalarIntAsync(cs, "SELECT COUNT(*) FROM users", token));
+        });
+    }
+
+    [Theory]
+    [InlineData(
+        "CREATE TABLE users (id INTEGER NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE)",
+        "sole")]
+    [InlineData(
+        "CREATE TABLE users (id INTEGER NOT NULL, name TEXT NOT NULL); " +
+        "CREATE UNIQUE INDEX ux_users_partial ON users(id) WHERE id > 0",
+        "simple")]
+    [InlineData(
+        "CREATE TABLE users (id INTEGER NOT NULL, name TEXT NOT NULL); " +
+        "CREATE INDEX ix_users_id ON users(id)",
+        "unique")]
+    public async Task NativeSqlite_UnprovenAlternateOrPartialUniqueKey_RejectsBeforeApproval(
+        string replacementDdl, string reason)
+    {
+        await WithDatabaseAsync(async (provider, cs, runtime, token) =>
+        {
+            await ExecAsync(cs, "DROP TABLE users; " + replacementDdl, token);
+            var error = await Assert.ThrowsAnyAsync<Exception>(() =>
+                PreviewAsync(provider, cs, runtime, InsertSql, token));
+            Assert.Contains(reason, error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, await ScalarIntAsync(cs, "SELECT COUNT(*) FROM users", token));
+        });
+    }
+
     [Fact]
     public async Task NativeSqlite_AtomicBatchConflictStillRejectsBeforeAnyChildApproval()
     {
