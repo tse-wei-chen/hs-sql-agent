@@ -94,10 +94,9 @@ internal static class NativeSingleRowConflictSafety
 
         var assignment = conflict.Assignments[0];
         if (assignment.Column.Parts.Length != 1
-            || assignment.ProposedColumn is not { Parts.Length: 2 } proposed
+            || assignment.ProposedColumn is not { Parts.Length: 1 } proposed
             || assignment.Value is not null
-            || !string.Equals(proposed.Parts[0].Value, "excluded", StringComparison.Ordinal)
-            || !string.Equals(assignment.Column.Parts[0].Value, proposed.Parts[1].Value,
+            || !string.Equals(assignment.Column.Parts[0].Value, proposed.Parts[0].Value,
                 StringComparison.Ordinal))
             throw new NotSupportedException(
                 "Native PostgreSQL conflict update requires a single SET column = EXCLUDED.column assignment.");
