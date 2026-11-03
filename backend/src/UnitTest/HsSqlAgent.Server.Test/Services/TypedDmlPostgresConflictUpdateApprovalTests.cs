@@ -32,7 +32,7 @@ public sealed class TypedDmlPostgresConflictUpdateApprovalTests(PostgresDdlLiveF
                     await ExecAsync(cs, $"INSERT INTO {schema}.users VALUES (7, 'old-name')", token);
 
                 var session = await PreviewAsync(provider, cs, schema, runtime, token);
-                Assert.Equal(DmlApprovalMode.InsertConflictDoUpdate, session.Plan.ApprovalMode);
+                Assert.Equal("InsertConflictDoUpdate", session.Plan.ApprovalMode.ToString());
                 Assert.Equal(1, session.Preview.AffectedRows);
                 var change = Assert.Single(session.Preview.Rows);
                 Assert.Equal(expectedAction, change["__action"]);
