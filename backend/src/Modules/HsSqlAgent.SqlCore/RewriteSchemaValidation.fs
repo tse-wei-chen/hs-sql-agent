@@ -748,13 +748,13 @@ module internal RewriteSchemaValidation =
                 | None -> ()
                 | Some conflict ->
                     // Strict snapshots only carry names/types, not UNIQUE index
-                    // contracts. A one-row SQLite DO NOTHING can prove that
+                    // contracts. A one-row native SQLite/PostgreSQL DO NOTHING can prove that
                     // its *referenced* key exists; only Host native physical
                     // key metadata can later authorize conflict execution.
                     // DO UPDATE never borrows this structural proof.
                     let closedSkip =
                         match catalog.Dialect, conflict.Action, conflict.TargetColumns, insert.Input with
-                        | SqlAgentToolType.Sqlite, DoNothing, Some targets, Values rows
+                        | (SqlAgentToolType.Sqlite | SqlAgentToolType.Postgres), DoNothing, Some targets, Values rows
                             when NonEmpty.length targets = 1
                                  && NonEmpty.length rows = 1
                                  && insert.Returning.IsEmpty ->
@@ -766,14 +766,14 @@ module internal RewriteSchemaValidation =
                                         keyPart catalog.Dialect column = keyName)
                                 if countColumn target keyName <> 1 then
                                     reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
-                                        "SQLite conflict target '" + key.Value
+                                        "Native conflict target '" + key.Value
                                         + "' is not a physical target-table column.")
                                 declared.Length = 1
                             | _ -> false
                         | _ -> false
                     if not closedSkip then
                         reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
-                            "Strict snapshot mode only proves single-row SQLite DO NOTHING " +
+                            "Strict snapshot mode only proves single-row native SQLite/PostgreSQL DO NOTHING " +
                             "with one explicit physical target column; conflict-update assignments " +
                             "and all other UPSERT shapes remain unproven.")
                 returning catalog target insert.Returning
