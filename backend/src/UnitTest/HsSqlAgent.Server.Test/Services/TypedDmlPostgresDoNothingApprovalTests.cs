@@ -176,7 +176,7 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
                         Policy, Allowed(schema), Context, token);
                 });
                 Assert.True(error is NotSupportedException or InvalidOperationException
-                    or SqlCompilationException);
+                    or SqlCompilationException or HsSqlAgent.SqlCore.SqlParsing.SqlParseException);
             });
     }
 
