@@ -116,6 +116,20 @@ public sealed class TypedDmlPostgresConflictUpdateApprovalTests(PostgresDdlLiveF
             });
     }
 
+    [Fact]
+    public async Task NativePg_AdditionalOrdinaryIndex_NeverAuthorizesHiddenUpdateWork()
+    {
+        await WithTableAsync("id BIGINT PRIMARY KEY, name TEXT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                await ExecAsync(cs, $"CREATE INDEX users_name_ix ON {schema}.users(name)", token);
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token));
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
     [Theory]
     [InlineData("id BIGINT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE")]
     [InlineData("id BIGINT PRIMARY KEY, name TEXT")]
