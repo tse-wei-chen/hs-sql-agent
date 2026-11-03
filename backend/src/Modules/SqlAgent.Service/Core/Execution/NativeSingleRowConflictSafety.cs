@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Core.Ast;
 
@@ -10,7 +11,7 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 internal static class NativeSingleRowConflictSafety
 {
-    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue, string? UpdatedColumn = null);
+    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue, ImmutableArray<string> UpdatedColumns = default);
 
     internal static bool IsBoundedShape(InsertStatement insert) =>
         IsBoundedShape(insert, SqlAgentToolType.Sqlite)
@@ -46,8 +47,8 @@ internal static class NativeSingleRowConflictSafety
             || (update
                 ? target != SqlAgentToolType.Postgres
                     || conflict.Action != InsertConflictActionKind.UpdateProposedValues
-                    || conflict.Assignments.Length != 1
-                    || insert.Columns.Length != 2
+                    || conflict.Assignments.Length is < 1 or > 4
+                    || insert.Columns.Length != conflict.Assignments.Length + 1
                 : conflict.Action != InsertConflictActionKind.DoNothing
                     || !conflict.Assignments.IsDefaultOrEmpty)
             || conflict.TargetColumns.Length != 1
@@ -92,23 +93,54 @@ internal static class NativeSingleRowConflictSafety
         if (!update)
             return new Shape(key, exactInteger.Value);
 
-        var assignment = conflict.Assignments[0];
-        if (assignment.Column.Parts.Length != 1
-            || assignment.ProposedColumn is not { Parts.Length: 1 } proposed
-            || assignment.Value is not null
-            || !string.Equals(assignment.Column.Parts[0].Value, proposed.Parts[0].Value,
-                StringComparison.Ordinal))
+        // The entire proposed row must be visible and every value column must
+        // receive its identically named EXCLUDED value. No partial updates,
+        // duplicate SET targets or implicit source values can be approved.
+        var seen = new HashSet<string>(StringComparer.Ordinal) { key };
+        var updated = ImmutableArray.CreateBuilder<string>(conflict.Assignments.Length);
+        foreach (var assignment in conflict.Assignments)
+        {
+            if (assignment.Column.Parts.Length != 1
+                || assignment.ProposedColumn is not { Parts.Length: 1 } proposed
+                || assignment.Value is not null)
+                throw new NotSupportedException(
+                    "Native PostgreSQL conflict update requires only SET column = EXCLUDED.column assignments.");
+            var name = assignment.Column.Parts[0].Value;
+            if (!string.Equals(name, proposed.Parts[0].Value, StringComparison.Ordinal)
+                || !seen.Add(name))
+                throw new NotSupportedException(
+                    "Native PostgreSQL conflict update requires distinct, exact-case matching EXCLUDED column assignments.");
+            var ordinal = -1;
+            for (var index = 0; index < insert.Columns.Length; index++)
+                if (insert.Columns[index].Parts.Length == 1
+                    && string.Equals(insert.Columns[index].Parts[0].Value, name, StringComparison.Ordinal))
+                {
+                    if (ordinal >= 0)
+                        throw new NotSupportedException("Duplicate PostgreSQL INSERT column cannot be approved.");
+                    ordinal = index;
+                }
+            if (ordinal < 0 || values.Rows[0][ordinal] is not LiteralExpr { Value: string })
+                throw new NotSupportedException(
+                    "Native PostgreSQL conflict update requires a literal non-NULL TEXT value for every updated column.");
+            updated.Add(name);
+        }
+        if (seen.Count != insert.Columns.Length
+            || insert.Columns.Any(col => !seen.Contains(col.Parts[0].Value)))
             throw new NotSupportedException(
-                "Native PostgreSQL conflict update requires a single SET column = EXCLUDED.column assignment.");
-        var updated = assignment.Column.Parts[0].Value;
-        if (string.Equals(updated, key, StringComparison.Ordinal)
-            || insert.Columns.Count(col => col.Parts.Length == 1
-                && string.Equals(col.Parts[0].Value, updated, StringComparison.Ordinal)) != 1
-            || values.Rows[0][Array.FindIndex(insert.Columns.ToArray(), col =>
-                col.Parts.Length == 1 && string.Equals(col.Parts[0].Value, updated,
-                    StringComparison.Ordinal))] is not LiteralExpr { Value: string })
+                "Native PostgreSQL conflict update must update all and only explicitly inserted non-key columns.");
+
+        // User-chosen physical identifiers must not override synthetic
+        // approval display labels (notably __action) or other before/after
+        // fields. An ambiguous preview must never mint an execution approval.
+        var displayFields = new HashSet<string>(StringComparer.Ordinal) { "__action" };
+        if (!displayFields.Add(key))
             throw new NotSupportedException(
-                "Native PostgreSQL conflict update requires a distinct physical TEXT column and one literal proposed value.");
-        return new Shape(key, exactInteger.Value, updated);
+                "PostgreSQL conflict key collides with an approval preview field.");
+        foreach (var name in updated)
+            if (!displayFields.Add("__before_" + name)
+                || !displayFields.Add("__after_" + name))
+                throw new NotSupportedException(
+                    "PostgreSQL physical identifiers collide with approval before/after preview fields.");
+        return new Shape(key, exactInteger.Value, updated.MoveToImmutable());
     }
 }

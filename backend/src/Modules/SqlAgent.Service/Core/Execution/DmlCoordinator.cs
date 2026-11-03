@@ -381,23 +381,28 @@ public sealed class DmlCoordinator(
         // values come exclusively from the transactionally schema-verified
         // physical SELECT, never an untrusted caller's preview DTO.
         var key = plan.RowIdentityColumns[0];
-        var updated = plan.RowIdentityColumns[1];
         if (before.Count > 1
-            || !plan.InsertRows[0].TryGetValue(key, out var keyValue)
-            || !plan.InsertRows[0].TryGetValue(updated, out var proposed))
+            || !plan.InsertRows[0].TryGetValue(key, out var keyValue))
             throw new InvalidOperationException(
                 "PostgreSQL conflict update preview has an invalid physical key/value binding.");
-        object? oldValue = null;
-        if (before.Count == 1 && !before[0].TryGetValue(updated, out oldValue))
-            throw new InvalidOperationException(
-                "PostgreSQL conflict update preview could not read the physical before-value.");
-        yield return new Dictionary<string, object?>(StringComparer.Ordinal)
+        var preview = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
             ["__action"] = before.Count == 1 ? "UPDATE" : "INSERT",
-            [key] = keyValue,
-            ["__before_" + updated] = oldValue,
-            ["__after_" + updated] = proposed
+            [key] = keyValue
         };
+        foreach (var column in plan.RowIdentityColumns.Skip(1))
+        {
+            if (!plan.InsertRows[0].TryGetValue(column, out var proposed))
+                throw new InvalidOperationException(
+                    "PostgreSQL conflict update preview is missing an approved proposed value.");
+            object? oldValue = null;
+            if (before.Count == 1 && !before[0].TryGetValue(column, out oldValue))
+                throw new InvalidOperationException(
+                    "PostgreSQL conflict update preview could not read every physical before-value.");
+            preview.Add("__before_" + column, oldValue);
+            preview.Add("__after_" + column, proposed);
+        }
+        yield return preview;
     }
 
     private async Task<DmlPreview> PreviewInsertValuesAsync(
@@ -676,7 +681,7 @@ public sealed class DmlCoordinator(
                     || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
                     || plan.MaxAffectedRows != 1
                     || plan.InsertRows.Length != 1
-                    || plan.RowIdentityColumns.Length != 2
+                    || plan.RowIdentityColumns.Length is < 2 or > 5
                     || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
                         TargetProvider: SqlAgentToolType.Postgres } updateMatch
                     || plan.SchemaSnapshot is null
@@ -692,10 +697,14 @@ public sealed class DmlCoordinator(
                         StringComparison.Ordinal)
                     || !string.Equals(updateProof.UniqueKeyColumn,
                         plan.RowIdentityColumns[0], StringComparison.Ordinal)
-                    || !string.Equals(updateProof.UpdatedColumn,
-                        plan.RowIdentityColumns[1], StringComparison.Ordinal)
-                    || !plan.InsertRows[0].ContainsKey(updateProof.UniqueKeyColumn)
-                    || !plan.InsertRows[0].ContainsKey(updateProof.UpdatedColumn)
+                    || updateProof.UpdatedColumns.IsDefaultOrEmpty
+                    || updateProof.UpdatedColumns.Length != plan.RowIdentityColumns.Length - 1
+                    || !updateProof.UpdatedColumns.SequenceEqual(
+                        plan.RowIdentityColumns.Skip(1), StringComparer.Ordinal)
+                    || updateProof.UpdatedColumns.Distinct(StringComparer.Ordinal).Count()
+                        != updateProof.UpdatedColumns.Length
+                    || plan.InsertRows[0].Count != plan.RowIdentityColumns.Length
+                    || plan.RowIdentityColumns.Any(column => !plan.InsertRows[0].ContainsKey(column))
                     || !string.Equals(updateProof.MutationFingerprint,
                         plan.PlanFingerprint, StringComparison.Ordinal)
                     || !string.Equals(updateProof.TargetQueryFingerprint,

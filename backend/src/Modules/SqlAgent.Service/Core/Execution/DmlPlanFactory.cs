@@ -527,13 +527,13 @@ public sealed class DmlPlanFactory(
                 // user triggers, partitioning, inheritance, rules and RLS.
                 await using var shapeCheck = metadataConnection.CreateCommand();
                 shapeCheck.CommandText = """
-                    SELECT count(*) = 2
+                    SELECT count(*) = @expectedCount
                        AND count(*) FILTER (WHERE a.attname = @key
                            AND a.atttypid = 20 AND a.attnotnull
                            AND a.attidentity = '' AND a.attgenerated = '') = 1
-                       AND count(*) FILTER (WHERE a.attname = @updated
+                       AND count(*) FILTER (WHERE a.attname::text = ANY(@updatedColumns)
                            AND a.atttypid = 25 AND a.attnotnull
-                           AND a.attidentity = '' AND a.attgenerated = '') = 1
+                           AND a.attidentity = '' AND a.attgenerated = '') = @updatedCount
                        AND (SELECT count(*) FROM pg_catalog.pg_index idx
                             WHERE idx.indrelid = c.oid) = 1
                        AND NOT EXISTS (
@@ -548,12 +548,14 @@ public sealed class DmlPlanFactory(
                       AND a.attnum > 0 AND NOT a.attisdropped
                     GROUP BY c.oid
                     """;
-                foreach (var (name, value) in new[]
+                foreach (var (name, value) in new (string, object)[]
                 {
                     ("schema", targetResolution.Schema),
                     ("table", targetResolution.Table),
                     ("key", skip.UniqueKeyColumn),
-                    ("updated", skip.UpdatedColumn!)
+                    ("expectedCount", skip.UpdatedColumns.Length + 1),
+                    ("updatedCount", skip.UpdatedColumns.Length),
+                    ("updatedColumns", skip.UpdatedColumns.ToArray())
                 })
                 {
                     var parameter = shapeCheck.CreateParameter();
@@ -563,7 +565,7 @@ public sealed class DmlPlanFactory(
                 }
                 if (await shapeCheck.ExecuteScalarAsync(cancellationToken) is not true)
                     throw new InvalidOperationException(
-                        "PostgreSQL conflict UPDATE requires an exact BIGINT UNIQUE key and TEXT NOT NULL value in a plain two-column table with no defaults, CHECK or foreign keys.");
+                        "PostgreSQL conflict UPDATE requires an exact BIGINT UNIQUE key and 1-4 TEXT NOT NULL values in a plain complete table with no defaults, extra indexes, CHECK or foreign keys.");
             }
 
             // SQLite reports only the top-level INSERT row count. A trigger
@@ -593,14 +595,17 @@ public sealed class DmlPlanFactory(
             var predicate = new BinaryExpr(
                 keyExpr, "=", new LiteralExpr(skip.UniqueKeyValue, SourceSpan.Unknown),
                 SourceSpan.Unknown);
+            var selections = ImmutableArray.CreateBuilder<SelectItem>(
+                1 + (conflictUpdate ? skip.UpdatedColumns.Length : 0));
+            selections.Add(new SelectItem(keyExpr, null, SourceSpan.Unknown));
+            if (conflictUpdate)
+                foreach (var updatedColumn in skip.UpdatedColumns)
+                    selections.Add(new SelectItem(new ColumnExpr(
+                        SqlIdentifier.Unquoted(updatedColumn, SourceSpan.Unknown),
+                        SourceSpan.Unknown), null, SourceSpan.Unknown));
             var select = new SelectStatement(
                 ImmutableArray<CteDefinition>.Empty, false,
-                conflictUpdate
-                    ? [new SelectItem(keyExpr, null, SourceSpan.Unknown),
-                       new SelectItem(new ColumnExpr(
-                           SqlIdentifier.Unquoted(skip.UpdatedColumn!, SourceSpan.Unknown),
-                           SourceSpan.Unknown), null, SourceSpan.Unknown)]
-                    : [new SelectItem(keyExpr, null, SourceSpan.Unknown)],
+                selections.MoveToImmutable(),
                 resolvedTarget, ImmutableArray<JoinSource>.Empty, predicate,
                 ImmutableArray<SqlExpr>.Empty, null,
                 ImmutableArray<OrderByItem>.Empty,
@@ -613,7 +618,7 @@ public sealed class DmlPlanFactory(
             return new ValidatedDmlPlan(
                 DmlOperation.Insert, targetResolution.QualifiedTableName,
                 mutationCommand, match, conflictUpdate
-                    ? [skip.UniqueKeyColumn, skip.UpdatedColumn!]
+                    ? ImmutableArray.Create(skip.UniqueKeyColumn).AddRange(skip.UpdatedColumns)
                     : [skip.UniqueKeyColumn],
                 DmlRowIdentityAssurance.Strict, skipFingerprint,
                 validationContext.PolicyVersion,
@@ -633,7 +638,7 @@ public sealed class DmlPlanFactory(
                 NativeConflictDoUpdateProof = conflictUpdate
                     ? new NativeConflictDoUpdateProof(
                         targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
-                        skip.UpdatedColumn!, skipFingerprint,
+                        skip.UpdatedColumns, skipFingerprint,
                         DmlFingerprintService.ComputePlanFingerprint(
                             match, validationContext.PolicyVersion),
                         snapshot.Sha256)
