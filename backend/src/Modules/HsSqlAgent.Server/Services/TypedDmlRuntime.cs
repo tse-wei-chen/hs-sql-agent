@@ -94,6 +94,13 @@ public sealed class TypedDmlRuntime(
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         EnsureSupportedStatement(parsedMutation.Statement);
+        if (parsedMutation.Statement is InsertStatement { Conflict: not null }
+            && (provider.Type != SqlAgentToolType.Sqlite
+                || parsedMutation.SourceDialect != SqlAgentToolType.Sqlite
+                || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
+            throw new NotSupportedException(
+                "Host native SQLite conflict skip requires built-in physical schema capture and commit-time freshness verification.");
         if (parsedMutation.Statement is InsertStatement { Source: InsertQuerySource }
             && (parsedMutation.SourceDialect != provider.Type
                 || provider.Type is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres or SqlAgentToolType.MySQL)))
@@ -206,6 +213,10 @@ public sealed class TypedDmlRuntime(
         // already-approved SQLite atomic batch. Do not promote the single-
         // statement source proof to a different provider, multiple source
         // insertions, or a caller-supplied virtual schema/freshness attestation.
+        if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Conflict: not null }))
+            throw new NotSupportedException(
+                "Native SQLite conflict skip is single-statement only; atomic conflict batches require a separate cross-statement proof.");
+
         var sourceInsertCount = parsedBatch.Statements.Count(item =>
             item.Statement is InsertStatement { Source: InsertQuerySource });
         if (sourceInsertCount > 0
@@ -506,6 +517,8 @@ public sealed class TypedDmlRuntime(
         statement is UpdateStatement
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
+        || statement is InsertStatement { Source: InsertValuesSource, Conflict: not null } conflictInsert
+            && NativeSqliteConflictDoNothingSafety.IsBoundedShape(conflictInsert)
         || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
             && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
                 || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres)

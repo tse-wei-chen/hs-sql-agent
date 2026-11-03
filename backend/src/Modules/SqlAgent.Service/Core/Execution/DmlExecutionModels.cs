@@ -33,6 +33,14 @@ internal sealed record NativeInsertSelectProof(
     string SchemaSha256,
     ImmutableArray<string> ProjectedColumns);
 
+/// <summary>Internal proof scoped to the native SQLite sole-PK no-op conflict path.</summary>
+internal sealed record NativeSqliteConflictDoNothingProof(
+    string PhysicalTarget,
+    string PrimaryKeyColumn,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
+
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
     string TableName,
@@ -60,6 +68,8 @@ public sealed record ValidatedDmlPlan(
     /// even though ValidatedDmlPlan remains a CLR-friendly public record.
     /// </summary>
     internal NativeInsertSelectProof? NativeInsertSelectProof { get; init; }
+
+    internal NativeSqliteConflictDoNothingProof? NativeSqliteConflictDoNothingProof { get; init; }
 }
 
 public sealed record DmlPreview(
