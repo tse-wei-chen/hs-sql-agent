@@ -159,7 +159,7 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
     }
 
     [Theory]
-    [InlineData("DO UPDATE SET name=excluded.name")]
+    [InlineData("DO UPDATE SET name=upper(excluded.name)")]
     [InlineData("DO NOTHING RETURNING id")]
     public async Task UnprovedConflictForms_NeverBecomeExecutable(string suffix)
     {
