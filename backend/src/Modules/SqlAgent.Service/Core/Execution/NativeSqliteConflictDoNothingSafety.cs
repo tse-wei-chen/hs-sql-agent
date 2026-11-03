@@ -49,9 +49,22 @@ internal static class NativeSqliteConflictDoNothingSafety
             || values.Rows[0].Length != insert.Columns.Length)
             throw new NotSupportedException(
                 "Native SQLite conflict target must occur exactly once in a complete explicit INSERT column list.");
-        if (values.Rows[0][matches[0].index] is not LiteralExpr { Value: long integer })
+        // The canonical F#→CLR compatibility adapter projects small integer
+        // literals as Int32 and larger exact integers as Decimal. Do not
+        // narrow via floating point, parse strings or admit SQL NULL.
+        var exactInteger = values.Rows[0][matches[0].index] switch
+        {
+            LiteralExpr { Value: int number } => (long?)number,
+            LiteralExpr { Value: long number } => number,
+            LiteralExpr { Value: decimal number }
+                when number == decimal.Truncate(number)
+                  && number >= long.MinValue && number <= long.MaxValue =>
+                (long)number,
+            _ => null
+        };
+        if (exactInteger is null)
             throw new NotSupportedException(
                 "Native SQLite conflict skip currently admits a non-null exact INT64 PRIMARY KEY literal only.");
-        return new Shape(key, integer);
+        return new Shape(key, exactInteger.Value);
     }
 }
