@@ -521,7 +521,7 @@ public sealed class TypedDmlRuntime(
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
         || statement is InsertStatement { Source: InsertValuesSource, Conflict: not null } conflictInsert
-            && NativeSingleRowConflictDoNothingSafety.IsBoundedShape(conflictInsert)
+            && NativeSingleRowConflictSafety.IsBoundedShape(conflictInsert)
         || statement is InsertStatement { Source: InsertQuerySource, Conflict: null } insert
             && (NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Sqlite)
                 || NativeInsertSelectSafety.IsBoundedShape(insert, SqlAgentToolType.Postgres)
