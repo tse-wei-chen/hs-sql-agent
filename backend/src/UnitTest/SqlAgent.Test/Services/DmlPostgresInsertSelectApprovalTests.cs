@@ -13,6 +13,49 @@ public sealed class DmlPostgresInsertSelectApprovalTests
 {
     private const string Approval = "postgres-insert-select-source-row-approval-v1";
 
+
+    [Theory]
+    [InlineData("null", "Dave", 1)]
+    [InlineData("not-null", "Carol", 1)]
+    [InlineData("mixed", "Carol,Dave", 2)]
+    public async Task NativeNullableColumnPredicate_PostgresRealApprovalAndReturnedRows(
+        string kind, string names, int affected)
+    {
+        await WithTablesAsync(async (cs, schema, version) =>
+        {
+            await ExecuteAsync(cs, $"INSERT INTO {schema}.source_users(id,name) VALUES (2,'Dave')");
+            await ExecuteAsync(cs, $"ALTER TABLE {schema}.source_users ADD COLUMN note TEXT NULL");
+            await ExecuteAsync(cs, $"UPDATE {schema}.source_users SET note = 'marked' WHERE id = 1");
+            var predicate = kind switch
+            {
+                "null" => "note IS NULL",
+                "not-null" => "note IS NOT NULL",
+                _ => "(note IS NULL OR id = 1) AND name IS NOT NULL"
+            };
+            var provider = new PostgresProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, schema,
+                $"INSERT INTO {schema}.users (name) SELECT name FROM {schema}.source_users " +
+                $"WHERE {predicate} RETURNING id, name");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(affected, preview.AffectedRows);
+            Assert.Equal(names.Split(','),
+                preview.Rows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            var committed = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(affected, committed.AffectedRows);
+            Assert.Equal(names.Split(','),
+                committed.ReturnedRows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            Assert.All(committed.ReturnedRows, row => Assert.True(Convert.ToInt32(row["id"]) > 2));
+            Assert.Equal(2 + affected, await ScalarAsync(cs, $"SELECT COUNT(*) FROM {schema}.users"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
     [Theory]
     [InlineData("between")]
     [InlineData("and")]

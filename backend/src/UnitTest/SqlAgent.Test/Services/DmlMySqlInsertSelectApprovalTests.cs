@@ -12,6 +12,48 @@ public sealed class DmlMySqlInsertSelectApprovalTests
 {
     private const string Approval = "mysql84-innodb-m09-source-row-approval-v1";
 
+
+    [Theory]
+    [InlineData("null", "Dave", 1)]
+    [InlineData("not-null", "Carol", 1)]
+    [InlineData("mixed", "Carol,Dave", 2)]
+    public async Task NativeNullableColumnPredicate_MySqlRealInnoDbApprovalAndCommit(
+        string kind, string names, int affected)
+    {
+        await WithTablesAsync(async (cs, schema, target, source, version) =>
+        {
+            await ExecuteAsync(cs, $"INSERT INTO `{schema}`.`{source}`(id,name) VALUES (2,'Dave')");
+            await ExecuteAsync(cs, $"ALTER TABLE `{schema}`.`{source}` ADD COLUMN note VARCHAR(16) NULL");
+            await ExecuteAsync(cs, $"UPDATE `{schema}`.`{source}` SET note = 'marked' WHERE id = 1");
+            var predicate = kind switch
+            {
+                "null" => "note IS NULL",
+                "not-null" => "note IS NOT NULL",
+                _ => "(note IS NULL OR id = 1) AND name IS NOT NULL"
+            };
+            var provider = new MySqlProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs, schema, target, source,
+                $"INSERT INTO `{schema}`.`{target}` (name) SELECT name " +
+                $"FROM `{schema}`.`{source}` WHERE {predicate}");
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(affected, preview.AffectedRows);
+            Assert.Equal(names.Split(','),
+                preview.Rows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            var committed = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(affected, committed.AffectedRows);
+            Assert.Empty(committed.ReturnedRows);
+            Assert.Equal(2 + affected, await ScalarAsync(cs,
+                $"SELECT COUNT(*) FROM `{schema}`.`{target}`"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
     [Theory]
     [InlineData("between")]
     [InlineData("and")]

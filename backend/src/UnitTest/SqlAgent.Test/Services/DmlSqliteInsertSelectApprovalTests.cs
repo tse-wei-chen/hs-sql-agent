@@ -16,6 +16,131 @@ public sealed class DmlSqliteInsertSelectApprovalTests
     private const string InsertSql =
         "INSERT INTO main.users (name) SELECT name FROM main.users WHERE id = 1";
 
+
+    [Theory]
+    [InlineData("null", "Dave", 1)]
+    [InlineData("not-null", "Carol", 1)]
+    [InlineData("mixed", "Carol,Dave", 2)]
+    public async Task NativeNullableColumnPredicate_SqliteApprovalAndActualReturnedRows(
+        string kind, string names, int affected)
+    {
+        await WithDatabaseAsync(async (cs, version) =>
+        {
+            await ExecuteAsync(cs,
+                "INSERT INTO main.other_users(id,name) VALUES (1,'Carol'),(2,'Dave')");
+            await ExecuteAsync(cs, "ALTER TABLE main.other_users ADD COLUMN note TEXT NULL");
+            await ExecuteAsync(cs, "UPDATE main.other_users SET note = 'marked' WHERE id = 1");
+            var predicate = kind switch
+            {
+                "null" => "note IS NULL",
+                "not-null" => "note IS NOT NULL",
+                _ => "(note IS NULL OR id = 1) AND name IS NOT NULL"
+            };
+            var provider = new SqliteProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users " +
+                $"WHERE {predicate} RETURNING id, name", useVerifiedProfile: true);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal(affected, preview.AffectedRows);
+            Assert.Equal(names.Split(','),
+                preview.Rows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            var committed = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.True(committed.Committed);
+            Assert.Equal(affected, committed.AffectedRows);
+            Assert.Equal(names.Split(','),
+                committed.ReturnedRows.Select(row => (string)row["name"]!).OrderBy(name => name).ToArray());
+            Assert.All(committed.ReturnedRows, row => Assert.True(Convert.ToInt32(row["id"]) > 2));
+            Assert.Equal(2 + affected, await ScalarAsync(cs, "SELECT COUNT(*) FROM main.users"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.CommitAsync(
+                cs, plan, preview.Challenge, Approval, TestContext.Current.CancellationToken, version));
+        });
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Sqlite, "main")]
+    [InlineData(SqlAgentToolType.Postgres, "public")]
+    [InlineData(SqlAgentToolType.MySQL, "app")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "dbo")]
+    public void NativeNullPredicate_RejectsNonColumnBooleanTautologiesAndExcessiveTerms(
+        SqlAgentToolType provider, string schema)
+    {
+        var rejected = new[]
+        {
+            "NULL IS NULL",
+            "upper(note) IS NULL",
+            "NOT (note IS NULL)",
+            "note IS NULL OR 1 = 1",
+            "note IS NOT NULL AND 1 = 1",
+            "note IS NULL OR note IS NOT NULL OR id = 1 OR id = 2 OR id = 3",
+            "note IS NULL OR id IN (1,2,3,4)"
+        };
+        foreach (var predicate in rejected)
+        {
+            var sql = $"INSERT INTO {schema}.users (name) SELECT name FROM " +
+                $"{schema}.source_users WHERE {predicate}";
+            try
+            {
+                var parsed = CoreSqlTextParser.ParseDml(sql, provider);
+                var statement = Assert.IsType<HsSqlAgent.SqlCore.Core.Ast.InsertStatement>(parsed.Statement);
+                Assert.ThrowsAny<Exception>(() => NativeInsertSelectSafety.RequireShape(
+                    statement, provider, provider, maxAffectedRows: 2));
+            }
+            catch (HsSqlAgent.SqlCore.Core.Compilation.SqlCompilationException)
+            {
+                // Source dialect rejection is also an acceptable fail-closed outcome.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task NativeNullPredicate_SourceRowChangedAfterPreview_RejectsWithoutInsertion()
+    {
+        await WithDatabaseAsync(async (cs, version) =>
+        {
+            await ExecuteAsync(cs, "INSERT INTO main.other_users(id,name) VALUES (1,'Carol'),(2,'Dave')");
+            await ExecuteAsync(cs, "ALTER TABLE main.other_users ADD COLUMN note TEXT NULL");
+            await ExecuteAsync(cs, "UPDATE main.other_users SET note = 'marked' WHERE id = 1");
+            var provider = new SqliteProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users " +
+                "WHERE note IS NULL RETURNING id, name", useVerifiedProfile: true);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            var preview = await coordinator.PreviewAsync(cs, plan, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.Equal("Dave", Assert.Single(preview.Rows)["name"]);
+            await ExecuteAsync(cs, "UPDATE main.other_users SET note = NULL WHERE id = 1");
+            var rejected = await coordinator.CommitAsync(cs, plan, preview.Challenge, Approval,
+                TestContext.Current.CancellationToken, version);
+            Assert.False(rejected.Committed);
+            Assert.Empty(rejected.ReturnedRows);
+            Assert.Equal(2, await ScalarAsync(cs, "SELECT COUNT(*) FROM main.users"));
+        });
+    }
+
+    [Fact]
+    public async Task NativeNullPredicate_ExcessMatchingRows_RejectsAtPreview()
+    {
+        await WithDatabaseAsync(async (cs, version) =>
+        {
+            await ExecuteAsync(cs, "INSERT INTO main.other_users(id,name) VALUES (1,'Carol'),(2,'Dave'),(3,'Eve')");
+            await ExecuteAsync(cs, "ALTER TABLE main.other_users ADD COLUMN note TEXT NULL");
+            var provider = new SqliteProvider();
+            var native = new NativeDmlSchemaSnapshotService();
+            var plan = await CreatePlanAsync(provider, native, cs,
+                "INSERT INTO main.users (name) SELECT name FROM main.other_users " +
+                "WHERE note IS NULL", useVerifiedProfile: true);
+            var coordinator = new DmlCoordinator(provider.Connections, schemaFreshnessVerifier: native);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => coordinator.PreviewAsync(
+                cs, plan, Approval, TestContext.Current.CancellationToken, version));
+            Assert.Equal(2, await ScalarAsync(cs, "SELECT COUNT(*) FROM main.users"));
+        });
+    }
+
     [Theory]
     [InlineData("between")]
     [InlineData("and")]
