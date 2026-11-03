@@ -3,7 +3,7 @@ using Xunit;
 
 namespace SqlAgent.Test.Services;
 
-public sealed class CoreSqliteStrictSnapshotConflictSkipTests
+public sealed class CoreNativeStrictSnapshotConflictSkipTests
 {
     private static readonly SqlProviderCapabilityProfile Profile =
         new(SqlAgentToolType.Sqlite, new Version(3, 46));
@@ -42,15 +42,41 @@ public sealed class CoreSqliteStrictSnapshotConflictSkipTests
     }
 
     [Fact]
-    public void PostgresStrictSnapshot_CannotBorrowSQLiteStructuralException()
+    public void PostgresStrictSnapshot_SingleRowExplicitDoNothing_ProvesColumnShapeOnly()
     {
         const string sql =
             "INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO NOTHING";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var command = CoreDmlCompiler.CreateDefault().Compile(parsed, SqlAgentToolType.Postgres,
+            Context(SqlAgentToolType.Postgres));
+        Assert.Contains("ON CONFLICT", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("DO NOTHING", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlStatementKind.Insert, command.Kind);
+        // A virtual snapshot proves columns, never a physical UNIQUE key or Host approval.
+    }
+
+    [Theory]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=excluded.name")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n'),(8,'y') ON CONFLICT (id) DO NOTHING")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO NOTHING RETURNING id")]
+    public void PostgresStrictSnapshot_UnprovedConflictShape_FailsAtSchemaValidation(string sql)
+    {
         var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
         var failure = Assert.Throws<SqlCompilationException>(() =>
             CoreDmlCompiler.CreateDefault().Compile(parsed, SqlAgentToolType.Postgres,
                 Context(SqlAgentToolType.Postgres)));
         Assert.Contains("Strict snapshot", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PostgresStrictSnapshot_UnknownConflictColumn_Rejects()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (missing) DO NOTHING";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(parsed, SqlAgentToolType.Postgres,
+                Context(SqlAgentToolType.Postgres)));
     }
 
     [Fact]

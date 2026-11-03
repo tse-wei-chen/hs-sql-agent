@@ -20,7 +20,7 @@ public enum DmlApprovalMode
     InsertValues,
     /// <summary>Native bounded physical source rows, bound by full projected-value fingerprint.</summary>
     InsertSelect,
-    /// <summary>Single-row native SQLite DO NOTHING: sole physical UNIQUE key must be rechecked at commit.</summary>
+    /// <summary>Native SQLite/PostgreSQL single-row DO NOTHING: sole physical UNIQUE key must be rechecked at commit.</summary>
     InsertConflictDoNothing
 }
 
@@ -33,8 +33,8 @@ internal sealed record NativeInsertSelectProof(
     string SchemaSha256,
     ImmutableArray<string> ProjectedColumns);
 
-/// <summary>Internal proof scoped to the native SQLite sole-UNIQUE-key no-op conflict path.</summary>
-internal sealed record NativeSqliteConflictDoNothingProof(
+/// <summary>Internal proof scoped to a native, one-row SQLite/PostgreSQL sole-UNIQUE-key no-op.</summary>
+internal sealed record NativeConflictDoNothingProof(
     string PhysicalTarget,
     string UniqueKeyColumn,
     string MutationFingerprint,
@@ -69,7 +69,7 @@ public sealed record ValidatedDmlPlan(
     /// </summary>
     internal NativeInsertSelectProof? NativeInsertSelectProof { get; init; }
 
-    internal NativeSqliteConflictDoNothingProof? NativeSqliteConflictDoNothingProof { get; init; }
+    internal NativeConflictDoNothingProof? NativeConflictDoNothingProof { get; init; }
 }
 
 public sealed record DmlPreview(

@@ -92,6 +92,10 @@ The narrowly modeled native SQL Server `MERGE` (one explicit `USING (VALUES (...
 
 The closed F# Strict Schema Snapshot validates the *physical target-column shape* of exactly one SQLite `INSERT ... VALUES (...) ON CONFLICT (id) DO NOTHING` row with a single explicit conflict target. This structural validation **does not prove that `id` has a physically enforced UNIQUE constraint**: only the Host can inspect a real SQLite PRIMARY KEY or simple UNIQUE key, ensure it is the sole enforced unique key, verify the native table/index/trigger definition, bind the preview conflict state and revalidate it in the write transaction. The typed Host currently permits this one-row DO NOTHING exception only with a built-in native schema verifier, one sole simple physical PRIMARY or UNIQUE key, a non-NULL exact INT64 key literal, no triggers and `DmlMaxAffectedRows=1`. Conflict UPDATE, general UPSERT/MERGE, batches and other providers remain excluded from this Host feature.
 
+### Native PostgreSQL single-row conflict skip
+
+The typed Hosting/Server DML approval path now also permits a **narrow PostgreSQL** `INSERT ... VALUES (one row) ON CONFLICT (one_column) DO NOTHING` case with a non-NULL exact 64-bit integer literal. The physical column must be a NOT NULL INT2/INT4/INT8 with the table's **sole simple immediately enforced (NOT DEFERRABLE) PRIMARY/UNIQUE index**. The built-in PostgreSQL provider captures a full table/index/constraint digest, rejecting partitioning, rules, user triggers and row-level security. Preview binds the actual key presence; Commit uses a PostgreSQL transaction-held `SHARE ROW EXCLUSIVE NOWAIT` lock to prevent competing writes during revalidation, checks the same digest, then executes the compiled mutation. Unproven keys, index changes, multi-row, UPDATE-on-conflict, RETURNING and batches remain rejected. The stronger table-level lock is intentional and may reduce concurrent write throughput.
+
 ## Package boundary and safety
 
 - **Inside SqlCore:** dialect-aware parsing, source spans, binding, typed semantics, source/target capability proofs, query/DML/DDL compilation, immutable plans, and static script/catalog analysis.
