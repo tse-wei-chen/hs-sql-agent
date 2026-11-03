@@ -20,7 +20,7 @@ public class FirebirdFixture : IDbFixture
             .WithPassword("TestPass123!")
             // The log banner is emitted before Firebird is guaranteed ready
             // to complete a database-creation protocol round trip.
-            .WithWaitStrategy(Wait.ForUnixContainer().UntilPortIsAvailable(3050))
+            .WithWaitStrategy(Wait.ForUnixContainer().UntilInternalTcpPortIsAvailable(3050))
             .Build();
     }
 
