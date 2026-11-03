@@ -159,7 +159,7 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
     }
 
     [Theory]
-    [InlineData("DO UPDATE SET name=excluded.name")]
+    [InlineData("DO UPDATE SET name=upper(excluded.name)")]
     [InlineData("DO NOTHING RETURNING id")]
     public async Task UnprovedConflictForms_NeverBecomeExecutable(string suffix)
     {
@@ -176,7 +176,7 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
                         Policy, Allowed(schema), Context, token);
                 });
                 Assert.True(error is NotSupportedException or InvalidOperationException
-                    or SqlCompilationException);
+                    or SqlCompilationException or HsSqlAgent.SqlCore.SqlParsing.SqlParseException);
             });
     }
 

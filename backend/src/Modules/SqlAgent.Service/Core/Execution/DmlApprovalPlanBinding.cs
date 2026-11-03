@@ -56,6 +56,17 @@ internal static class DmlApprovalPlanBinding
             Append(hash, conflictProof.SchemaSha256);
         }
 
+        if (plan.NativeConflictDoUpdateProof is { } updateProof)
+        {
+            Append(hash, "native-postgres-conflict-update-one-text-v1");
+            Append(hash, updateProof.PhysicalTarget);
+            Append(hash, updateProof.UniqueKeyColumn);
+            Append(hash, updateProof.UpdatedColumn);
+            Append(hash, updateProof.MutationFingerprint);
+            Append(hash, updateProof.TargetQueryFingerprint);
+            Append(hash, updateProof.SchemaSha256);
+        }
+
         if (plan.MatchQueryCommand is { } match)
         {
             Append(hash, "match-query");

@@ -8,13 +8,20 @@ namespace SqlAgent.Service.Core.Execution;
 /// A real provider-minted, transaction-revalidated physical UNIQUE key proof is
 /// still required. Never authorizes direct SQL execution or cross-provider reuse.
 /// </summary>
-internal static class NativeSingleRowConflictDoNothingSafety
+internal static class NativeSingleRowConflictSafety
 {
-    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue);
+    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue, string? UpdatedColumn = null);
 
     internal static bool IsBoundedShape(InsertStatement insert) =>
         IsBoundedShape(insert, SqlAgentToolType.Sqlite)
-        || IsBoundedShape(insert, SqlAgentToolType.Postgres);
+        || IsBoundedShape(insert, SqlAgentToolType.Postgres)
+        || IsBoundedUpdateShape(insert);
+
+    internal static bool IsBoundedUpdateShape(InsertStatement insert)
+    {
+        try { RequireShape(insert, SqlAgentToolType.Postgres, SqlAgentToolType.Postgres, 1, update: true); return true; }
+        catch (NotSupportedException) { return false; }
+    }
 
     private static bool IsBoundedShape(InsertStatement insert, SqlAgentToolType dialect)
     {
@@ -26,7 +33,8 @@ internal static class NativeSingleRowConflictDoNothingSafety
         InsertStatement insert,
         SqlAgentToolType source,
         SqlAgentToolType target,
-        int maxAffectedRows)
+        int maxAffectedRows,
+        bool update = false)
     {
         if (source != target || target is not (SqlAgentToolType.Sqlite or SqlAgentToolType.Postgres))
             throw new NotSupportedException(
@@ -34,9 +42,15 @@ internal static class NativeSingleRowConflictDoNothingSafety
         if (maxAffectedRows != 1)
             throw new NotSupportedException(
                 "Native conflict skip requires a strict one-row affected-row cap.");
-        if (insert.Conflict is not { Action: InsertConflictActionKind.DoNothing } conflict
+        if (insert.Conflict is not { } conflict
+            || (update
+                ? target != SqlAgentToolType.Postgres
+                    || conflict.Action != InsertConflictActionKind.UpdateProposedValues
+                    || conflict.Assignments.Length != 1
+                    || insert.Columns.Length != 2
+                : conflict.Action != InsertConflictActionKind.DoNothing
+                    || !conflict.Assignments.IsDefaultOrEmpty)
             || conflict.TargetColumns.Length != 1
-            || !conflict.Assignments.IsDefaultOrEmpty
             || insert.Source is not InsertValuesSource values
             || values.Rows.Length != 1
             || !insert.Returning.IsDefaultOrEmpty
@@ -75,6 +89,26 @@ internal static class NativeSingleRowConflictDoNothingSafety
         if (exactInteger is null)
             throw new NotSupportedException(
                 "Native conflict skip requires a non-null exact INT64 UNIQUE key literal.");
-        return new Shape(key, exactInteger.Value);
+        if (!update)
+            return new Shape(key, exactInteger.Value);
+
+        var assignment = conflict.Assignments[0];
+        if (assignment.Column.Parts.Length != 1
+            || assignment.ProposedColumn is not { Parts.Length: 1 } proposed
+            || assignment.Value is not null
+            || !string.Equals(assignment.Column.Parts[0].Value, proposed.Parts[0].Value,
+                StringComparison.Ordinal))
+            throw new NotSupportedException(
+                "Native PostgreSQL conflict update requires a single SET column = EXCLUDED.column assignment.");
+        var updated = assignment.Column.Parts[0].Value;
+        if (string.Equals(updated, key, StringComparison.Ordinal)
+            || insert.Columns.Count(col => col.Parts.Length == 1
+                && string.Equals(col.Parts[0].Value, updated, StringComparison.Ordinal)) != 1
+            || values.Rows[0][Array.FindIndex(insert.Columns.ToArray(), col =>
+                col.Parts.Length == 1 && string.Equals(col.Parts[0].Value, updated,
+                    StringComparison.Ordinal))] is not LiteralExpr { Value: string })
+            throw new NotSupportedException(
+                "Native PostgreSQL conflict update requires a distinct physical TEXT column and one literal proposed value.");
+        return new Shape(key, exactInteger.Value, updated);
     }
 }

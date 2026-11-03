@@ -21,7 +21,9 @@ public enum DmlApprovalMode
     /// <summary>Native bounded physical source rows, bound by full projected-value fingerprint.</summary>
     InsertSelect,
     /// <summary>Native SQLite/PostgreSQL single-row DO NOTHING: sole physical UNIQUE key must be rechecked at commit.</summary>
-    InsertConflictDoNothing
+    InsertConflictDoNothing,
+    /// <summary>PostgreSQL one-row conflict UPDATE: bind full old row and proposed TEXT value.</summary>
+    InsertConflictDoUpdate
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
@@ -37,6 +39,14 @@ internal sealed record NativeInsertSelectProof(
 internal sealed record NativeConflictDoNothingProof(
     string PhysicalTarget,
     string UniqueKeyColumn,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
+
+internal sealed record NativeConflictDoUpdateProof(
+    string PhysicalTarget,
+    string UniqueKeyColumn,
+    string UpdatedColumn,
     string MutationFingerprint,
     string TargetQueryFingerprint,
     string SchemaSha256);
@@ -70,6 +80,8 @@ public sealed record ValidatedDmlPlan(
     internal NativeInsertSelectProof? NativeInsertSelectProof { get; init; }
 
     internal NativeConflictDoNothingProof? NativeConflictDoNothingProof { get; init; }
+
+    internal NativeConflictDoUpdateProof? NativeConflictDoUpdateProof { get; init; }
 }
 
 public sealed record DmlPreview(

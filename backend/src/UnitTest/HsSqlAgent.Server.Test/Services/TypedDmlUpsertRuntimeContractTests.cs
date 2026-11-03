@@ -6,19 +6,42 @@ namespace HsSqlAgent.Server.Test.Services;
 public sealed class TypedDmlUpsertRuntimeContractTests
 {
     [Fact]
-    public void UpsertConflictStatement_RemainsOutsideImmutableInsertApprovalMode()
+    public void BoundedPostgresUpsert_IsOnlyStructurallyAdmitted_NotInsertValuesApproval()
     {
         var statement = CoreSqlTextParser.ParseDml(
             "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
             "ON CONFLICT (id) DO UPDATE SET name = excluded.name",
             SqlAgentToolType.Postgres).Statement;
 
-        Assert.False(TypedDmlRuntime.SupportsStatement(statement));
-        var error = Assert.Throws<NotSupportedException>(() =>
-            TypedDmlRuntime.EnsureSupportedStatement(statement));
+        // This guard checks only the closed AST shape. The factory and
+        // coordinator must still require the physically attested
+        // InsertConflictDoUpdate mode, full before/after row evidence and
+        // transaction-held schema lock, never plain InsertValues.
+        Assert.True(TypedDmlRuntime.SupportsStatement(statement));
+        TypedDmlRuntime.EnsureSupportedStatement(statement);
+    }
 
-        Assert.Contains("upsert", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("existing-row", error.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("previewed", error.Message, StringComparison.OrdinalIgnoreCase);
+    [Fact]
+    public void ConflictUpdate_FunctionExpression_IsRejectedBeforeHostAtParser()
+    {
+        Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseDml(
+                "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+                "ON CONFLICT (id) DO UPDATE SET name=upper(excluded.name)",
+                SqlAgentToolType.Postgres));
+    }
+
+    [Theory]
+    [InlineData("ON CONFLICT (id) DO UPDATE SET id = excluded.id")]
+    [InlineData("ON CONFLICT (id) DO UPDATE SET name = 'forged'")]
+    public void UnprovenUpsert_RemainsOutsideHostStructuralAdmission(string conflict)
+    {
+        var statement = CoreSqlTextParser.ParseDml(
+            "INSERT INTO users (id, name) VALUES (1, 'Alice') " + conflict,
+            SqlAgentToolType.Postgres).Statement;
+
+        Assert.False(TypedDmlRuntime.SupportsStatement(statement));
+        Assert.Throws<NotSupportedException>(() =>
+            TypedDmlRuntime.EnsureSupportedStatement(statement));
     }
 }

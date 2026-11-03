@@ -770,12 +770,43 @@ module internal RewriteSchemaValidation =
                                         + "' is not a physical target-table column.")
                                 declared.Length = 1
                             | _ -> false
+                        | SqlAgentToolType.Postgres, UpdateProposedValues assignments, Some targets, Values rows
+                            when NonEmpty.length targets = 1
+                                 && NonEmpty.length assignments = 1
+                                 && NonEmpty.length rows = 1
+                                 && insert.Columns.Length = 2
+                                 && insert.Returning.IsEmpty ->
+                            let singleTarget = NonEmpty.toList targets |> List.head
+                            let assignment = NonEmpty.toList assignments |> List.head
+                            match Identifier.parts singleTarget,
+                                  Identifier.parts assignment.Target, assignment.Value with
+                            | [ key ], [ updated ], ConflictProposedColumn proposed ->
+                                match Identifier.parts proposed with
+                                | [ source ] ->
+                                    let keyName = keyPart catalog.Dialect key
+                                    let updateName = keyPart catalog.Dialect updated
+                                    if countColumn target keyName <> 1
+                                        || countColumn target updateName <> 1 then
+                                        reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
+                                            "Native conflict-update key or SET target is not a physical table column.")
+                                    let declaredKey =
+                                        insert.Columns |> List.filter (fun column ->
+                                            keyPart catalog.Dialect column = keyName)
+                                    let declaredUpdate =
+                                        insert.Columns |> List.filter (fun column ->
+                                            keyPart catalog.Dialect column = updateName)
+                                    keyName <> updateName
+                                    && updateName = keyPart catalog.Dialect source
+                                    && declaredKey.Length = 1
+                                    && declaredUpdate.Length = 1
+                                | _ -> false
+                            | _ -> false
                         | _ -> false
                     if not closedSkip then
                         reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
-                            "Strict snapshot mode only proves single-row native SQLite/PostgreSQL DO NOTHING " +
-                            "with one explicit physical target column; conflict-update assignments " +
-                            "and all other UPSERT shapes remain unproven.")
+                            "Strict snapshot mode proves only single-row native SQLite/PostgreSQL DO NOTHING " +
+                            "or one PostgreSQL SET column = EXCLUDED.column on an explicit physical key; " +
+                            "all unproven UPSERT shapes are rejected.")
                 returning catalog target insert.Returning
             | UpdateStatement update ->
                 let visibleCtes = proveMutationCtes update.Ctes

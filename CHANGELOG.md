@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M11 — PostgreSQL one-row conflict UPDATE with immutable Before/After Host approval (develop only)
+
+- Extend typed Host DML from `ON CONFLICT DO NOTHING` to the narrowly proven PostgreSQL `ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name` one-row path. The physical table must contain exactly a NOT NULL BIGINT sole simple immediate PRIMARY/UNIQUE key and one TEXT NOT NULL value column, without any defaults, CHECK/foreign keys, extra indices, triggers, rewrite rules, partition/inheritance or RLS.
+- Preview binds either INSERT (before value absent) or UPDATE (old actual value shown) plus proposed new value and full old-row fingerprint to one-time approval. Commit takes a `SHARE ROW EXCLUSIVE NOWAIT` transaction-held table lock, rechecks the complete catalog digest and old row, and executes the F# compiled command only once. New/conflicting rows, old-value changes, index drift and changed policy cause refusal.
+- Generic UPSERT, arbitrary SET expressions, updating the key, UPDATE WHERE, multiple assignments/rows, RETURNING and DML batch remain denied. Existing SQLite/PostgreSQL DO NOTHING and four default read-only tools with DML unchecked are unchanged. Strong lock contention is an intentional safety-first tradeoff; no throughput improvement is claimed.
+
+
 ### G9/M10 — PostgreSQL native single-row DO NOTHING approval (develop only)
 
 - Extend the existing SQLite bounded `ON CONFLICT (id) DO NOTHING` Host approval to native PostgreSQL, preserving the F# strict single-row/column shape and one-time row-set approval.
