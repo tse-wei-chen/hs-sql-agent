@@ -467,6 +467,11 @@ public sealed class DmlPlanFactory(
                 || !live.MatchedKey.IsSimpleEnforcedColumnKey || live.MatchedKey.Columns.Count != 1)
                 throw new InvalidOperationException(
                     "Native conflict skip requires the sole simple enforced UNIQUE key; multiple, partial and expression keys remain fail-closed.");
+            if (targetProvider == SqlAgentToolType.Postgres
+                && !string.Equals(live.MatchedKey.Columns[0], skip.UniqueKeyColumn,
+                    StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "PostgreSQL conflict target requires exact case-sensitive physical UNIQUE column identity.");
 
             if (metadataConnection is null)
                 throw new InvalidOperationException(
