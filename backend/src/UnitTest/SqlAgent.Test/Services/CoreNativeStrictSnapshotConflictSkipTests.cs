@@ -55,10 +55,26 @@ public sealed class CoreNativeStrictSnapshotConflictSkipTests
         // A virtual snapshot proves columns, never a physical UNIQUE key or Host approval.
     }
 
+    [Fact]
+    public void PostgresStrictSnapshot_OneProposedColumnConflictUpdate_ProvesShapeNotPhysicalKey()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (7,'n') " +
+            "ON CONFLICT (id) DO UPDATE SET name=excluded.name";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var command = CoreDmlCompiler.CreateDefault().Compile(parsed,
+            SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres));
+        Assert.Contains("DO UPDATE", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EXCLUDED", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(SqlStatementKind.Insert, command.Kind);
+    }
+
     [Theory]
-    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=excluded.name")]
-    [InlineData("INSERT INTO users (id, name) VALUES (7,'n'),(8,'y') ON CONFLICT (id) DO NOTHING")]
-    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO NOTHING RETURNING id")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET id=excluded.id")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name='literal'")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=upper(excluded.name)")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n'),(8,'y') ON CONFLICT (id) DO UPDATE SET name=excluded.name")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=excluded.name RETURNING id")]
     public void PostgresStrictSnapshot_UnprovedConflictShape_FailsAtSchemaValidation(string sql)
     {
         var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
