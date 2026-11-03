@@ -19,7 +19,9 @@ public enum DmlApprovalMode
     RowSetMutation,
     InsertValues,
     /// <summary>Native bounded physical source rows, bound by full projected-value fingerprint.</summary>
-    InsertSelect
+    InsertSelect,
+    /// <summary>Single-row native SQLite DO NOTHING: target PK must be rechecked at commit.</summary>
+    InsertConflictDoNothing
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
