@@ -48,9 +48,9 @@ internal static class DmlApprovalPlanBinding
 
         if (plan.NativeSqliteConflictDoNothingProof is { } conflictProof)
         {
-            Append(hash, "native-sqlite-conflict-skip-pk-v1");
+            Append(hash, "native-sqlite-conflict-skip-sole-key-v2");
             Append(hash, conflictProof.PhysicalTarget);
-            Append(hash, conflictProof.PrimaryKeyColumn);
+            Append(hash, conflictProof.UniqueKeyColumn);
             Append(hash, conflictProof.MutationFingerprint);
             Append(hash, conflictProof.TargetQueryFingerprint);
             Append(hash, conflictProof.SchemaSha256);

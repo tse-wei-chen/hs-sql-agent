@@ -449,16 +449,16 @@ public sealed class DmlPlanFactory(
                 throw new InvalidOperationException(
                     "SQLite conflict skip requires a live native target schema snapshot bound to the exact physical table.");
 
-            // Never accept a hand-authored conflict key. Verify the actual
-            // SQLite primary/unique inventory through the built-in provider.
+            // Never accept a hand-authored conflict key. Verify the sole simple,
+            // physically enforced SQLite UNIQUE key through the built-in provider.
             var live = await new DmlUniqueKeyResolver(
                 new HsSqlAgent.Provider.Sqlite.SqliteProvider()).ResolveAsync(
                     connectionString, targetResolution.Schema, targetResolution.Table,
-                    [skip.PrimaryKeyColumn], cancellationToken);
-            if (!live.MatchedKey.IsPrimaryKey || !live.IsSoleEnforcedUniqueKey
-                || live.MatchedKey.Columns.Count != 1)
+                    [skip.UniqueKeyColumn], cancellationToken);
+            if (!live.IsSoleEnforcedUniqueKey || live.HasUnsupportedEnforcedUniqueKeys
+                || !live.MatchedKey.IsSimpleEnforcedColumnKey || live.MatchedKey.Columns.Count != 1)
                 throw new InvalidOperationException(
-                    "SQLite conflict skip requires the sole simple enforced PRIMARY KEY; secondary UNIQUE and non-PK keys remain fail-closed.");
+                    "SQLite conflict skip requires the sole simple enforced UNIQUE key; multiple, partial and expression keys remain fail-closed.");
 
             if (metadataConnection is null)
                 throw new InvalidOperationException(
@@ -483,10 +483,10 @@ public sealed class DmlPlanFactory(
                         "trigger side effects are outside the one-row affected-count proof.");
             }
 
-            var column = SqlIdentifier.Unquoted(skip.PrimaryKeyColumn, SourceSpan.Unknown);
+            var column = SqlIdentifier.Unquoted(skip.UniqueKeyColumn, SourceSpan.Unknown);
             var keyExpr = new ColumnExpr(column, SourceSpan.Unknown);
             var predicate = new BinaryExpr(
-                keyExpr, "=", new LiteralExpr(skip.PrimaryKeyValue, SourceSpan.Unknown),
+                keyExpr, "=", new LiteralExpr(skip.UniqueKeyValue, SourceSpan.Unknown),
                 SourceSpan.Unknown);
             var select = new SelectStatement(
                 ImmutableArray<CteDefinition>.Empty, false,
@@ -502,7 +502,7 @@ public sealed class DmlPlanFactory(
                 mutationCommand, validationContext.PolicyVersion);
             return new ValidatedDmlPlan(
                 DmlOperation.Insert, targetResolution.QualifiedTableName,
-                mutationCommand, match, [skip.PrimaryKeyColumn],
+                mutationCommand, match, [skip.UniqueKeyColumn],
                 DmlRowIdentityAssurance.Strict, skipFingerprint,
                 validationContext.PolicyVersion,
                 approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
@@ -510,7 +510,7 @@ public sealed class DmlPlanFactory(
                 InsertRows: previewRows, SchemaSnapshot: snapshot)
             {
                 NativeSqliteConflictDoNothingProof = new NativeSqliteConflictDoNothingProof(
-                    targetResolution.QualifiedTableName, skip.PrimaryKeyColumn,
+                    targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
                     skipFingerprint,
                     DmlFingerprintService.ComputePlanFingerprint(
                         match, validationContext.PolicyVersion),
