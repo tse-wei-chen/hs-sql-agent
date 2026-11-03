@@ -22,7 +22,7 @@ public enum DmlApprovalMode
     InsertSelect,
     /// <summary>Native SQLite/PostgreSQL single-row DO NOTHING: sole physical UNIQUE key must be rechecked at commit.</summary>
     InsertConflictDoNothing,
-    /// <summary>PostgreSQL one-row conflict UPDATE: bind full old row and proposed TEXT value.</summary>
+    /// <summary>PostgreSQL one-row conflict UPDATE: bind every old and proposed TEXT column.</summary>
     InsertConflictDoUpdate
 }
 
@@ -46,7 +46,7 @@ internal sealed record NativeConflictDoNothingProof(
 internal sealed record NativeConflictDoUpdateProof(
     string PhysicalTarget,
     string UniqueKeyColumn,
-    string UpdatedColumn,
+    ImmutableArray<string> UpdatedColumns,
     string MutationFingerprint,
     string TargetQueryFingerprint,
     string SchemaSha256);
