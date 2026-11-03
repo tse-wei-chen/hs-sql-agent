@@ -72,7 +72,6 @@ public sealed class CoreNativeStrictSnapshotConflictSkipTests
     [Theory]
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET id=excluded.id")]
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name='literal'")]
-    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=upper(excluded.name)")]
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n'),(8,'y') ON CONFLICT (id) DO UPDATE SET name=excluded.name")]
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=excluded.name RETURNING id")]
     public void PostgresStrictSnapshot_UnprovedConflictShape_FailsAtSchemaValidation(string sql)
@@ -82,6 +81,17 @@ public sealed class CoreNativeStrictSnapshotConflictSkipTests
             CoreDmlCompiler.CreateDefault().Compile(parsed, SqlAgentToolType.Postgres,
                 Context(SqlAgentToolType.Postgres)));
         Assert.Contains("Strict snapshot", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PostgresConflictUpdate_FunctionExpression_RejectsAtParserBeforeSnapshot()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (7,'n') " +
+            "ON CONFLICT (id) DO UPDATE SET name=upper(excluded.name)";
+        var failure = Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres));
+        Assert.Contains("ON CONFLICT", failure.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
