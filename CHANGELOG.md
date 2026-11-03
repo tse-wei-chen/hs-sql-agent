@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M12 — Bounded PostgreSQL multi-column conflict UPDATE approval (develop only)
+
+- Reuse M11's native PostgreSQL typed Host `ON CONFLICT DO UPDATE` plan, Preview, one-time approval and commit-time `SHARE ROW EXCLUSIVE NOWAIT` physical table lock; support **1–4 exactly matching `TEXT NOT NULL` proposed columns**, including new 2–4 value-column cases. The source is one VALUES row with an exact non-NULL BIGINT sole simple immediate PRIMARY/UNIQUE key; assignments must cover every inserted non-key column through `SET column = EXCLUDED.column`, without duplicates, other expressions, NULL or partial updates.
+- A permanent ordinary target must consist of exactly the key plus those value columns; no extra columns, indexes, defaults, CHECK/FK constraints, user triggers, rules, inheritance, partitions or RLS. Preview exposes an `INSERT`/`UPDATE` action with **before and after values for every column**; their complete old-row fingerprint, exact proposal, physical catalog SHA and compiled SQL are sealed in the challenge. Commit revalidates all values and cancels the whole operation on any drift, without new MCP tools, APIs, drivers or changes to the default four read-only tools / DML unchecked.
+- Updated-column proof and challenge-binding version are intentionally bumped. In-flight M11 previews must be requested again when rolling to M12; pre-existing ordinary DML and `DO NOTHING` flows are preserved. Table-lock writer contention remains the explicit cost. No compiler performance improvement is claimed.
+
+
 ### G9/M11 — PostgreSQL one-row conflict UPDATE with immutable Before/After Host approval (develop only)
 
 - Extend typed Host DML from `ON CONFLICT DO NOTHING` to the narrowly proven PostgreSQL `ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name` one-row path. The physical table must contain exactly a NOT NULL BIGINT sole simple immediate PRIMARY/UNIQUE key and one TEXT NOT NULL value column, without any defaults, CHECK/foreign keys, extra indices, triggers, rewrite rules, partition/inheritance or RLS.
