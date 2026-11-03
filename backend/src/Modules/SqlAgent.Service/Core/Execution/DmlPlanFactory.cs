@@ -278,10 +278,12 @@ public sealed class DmlPlanFactory(
     {
         // Closed structural admission comes before any metadata read or SQL compilation.
         // DO NOTHING never inherits the insert-only optimistic payload approval.
+        var conflictUpdate = insert.Conflict?.Action == InsertConflictActionKind.UpdateProposedValues;
         var conflictShape = insert.Conflict is null
             ? null
             : NativeSingleRowConflictSafety.RequireShape(
-                insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
+                insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows,
+                update: conflictUpdate);
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
             sourceSelection = NativeInsertSelectSafety.RequireShape(
@@ -517,6 +519,51 @@ public sealed class DmlPlanFactory(
                     throw new InvalidOperationException(
                         "PostgreSQL conflict skip requires a real NOT NULL INT2/INT4/INT8 immediately enforced UNIQUE key without implicit casts.");
             }
+            if (conflictUpdate)
+            {
+                // Do not let arbitrary table defaults, CHECK/FK policies or
+                // additional columns participate in the one-row before/after
+                // claim. PostgreSQL's full catalog proof separately denies
+                // user triggers, partitioning, inheritance, rules and RLS.
+                await using var shapeCheck = metadataConnection.CreateCommand();
+                shapeCheck.CommandText = """
+                    SELECT count(*) = 2
+                       AND count(*) FILTER (WHERE a.attname = @key
+                           AND a.atttypid = 20 AND a.attnotnull
+                           AND a.attidentity = '' AND a.attgenerated = '') = 1
+                       AND count(*) FILTER (WHERE a.attname = @updated
+                           AND a.atttypid = 25 AND a.attnotnull
+                           AND a.attidentity = '' AND a.attgenerated = '') = 1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_attrdef d WHERE d.adrelid = c.oid)
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pg_catalog.pg_constraint con
+                           WHERE con.conrelid = c.oid AND con.contype NOT IN ('p','u'))
+                    FROM pg_catalog.pg_class c
+                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+                    JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid
+                    WHERE n.nspname = @schema AND c.relname = @table
+                      AND a.attnum > 0 AND NOT a.attisdropped
+                    GROUP BY c.oid
+                    """;
+                foreach (var (name, value) in new[]
+                {
+                    ("schema", targetResolution.Schema),
+                    ("table", targetResolution.Table),
+                    ("key", skip.UniqueKeyColumn),
+                    ("updated", skip.UpdatedColumn!)
+                })
+                {
+                    var parameter = shapeCheck.CreateParameter();
+                    parameter.ParameterName = name;
+                    parameter.Value = value;
+                    shapeCheck.Parameters.Add(parameter);
+                }
+                if (await shapeCheck.ExecuteScalarAsync(cancellationToken) is not true)
+                    throw new InvalidOperationException(
+                        "PostgreSQL conflict UPDATE requires an exact BIGINT UNIQUE key and TEXT NOT NULL value in a plain two-column table with no defaults, CHECK or foreign keys.");
+            }
+
             // SQLite reports only the top-level INSERT row count. A trigger
             // can mutate additional tables without being represented by that
             // count. PostgreSQL's full-definition catalog proof already rejects
@@ -546,7 +593,12 @@ public sealed class DmlPlanFactory(
                 SourceSpan.Unknown);
             var select = new SelectStatement(
                 ImmutableArray<CteDefinition>.Empty, false,
-                [new SelectItem(keyExpr, null, SourceSpan.Unknown)],
+                conflictUpdate
+                    ? [new SelectItem(keyExpr, null, SourceSpan.Unknown),
+                       new SelectItem(new ColumnExpr(
+                           SqlIdentifier.Unquoted(skip.UpdatedColumn!, SourceSpan.Unknown),
+                           SourceSpan.Unknown), null, SourceSpan.Unknown)]
+                    : [new SelectItem(keyExpr, null, SourceSpan.Unknown)],
                 resolvedTarget, ImmutableArray<JoinSource>.Empty, predicate,
                 ImmutableArray<SqlExpr>.Empty, null,
                 ImmutableArray<OrderByItem>.Empty,
@@ -558,19 +610,32 @@ public sealed class DmlPlanFactory(
                 mutationCommand, validationContext.PolicyVersion);
             return new ValidatedDmlPlan(
                 DmlOperation.Insert, targetResolution.QualifiedTableName,
-                mutationCommand, match, [skip.UniqueKeyColumn],
+                mutationCommand, match, conflictUpdate
+                    ? [skip.UniqueKeyColumn, skip.UpdatedColumn!]
+                    : [skip.UniqueKeyColumn],
                 DmlRowIdentityAssurance.Strict, skipFingerprint,
                 validationContext.PolicyVersion,
                 approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
-                maxAffectedRows, DmlApprovalMode.InsertConflictDoNothing,
+                maxAffectedRows, conflictUpdate
+                    ? DmlApprovalMode.InsertConflictDoUpdate
+                    : DmlApprovalMode.InsertConflictDoNothing,
                 InsertRows: previewRows, SchemaSnapshot: snapshot)
             {
-                NativeConflictDoNothingProof = new NativeConflictDoNothingProof(
-                    targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
-                    skipFingerprint,
-                    DmlFingerprintService.ComputePlanFingerprint(
-                        match, validationContext.PolicyVersion),
-                    snapshot.Sha256)
+                NativeConflictDoNothingProof = conflictUpdate ? null :
+                    new NativeConflictDoNothingProof(
+                        targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
+                        skipFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(
+                            match, validationContext.PolicyVersion),
+                        snapshot.Sha256),
+                NativeConflictDoUpdateProof = conflictUpdate
+                    ? new NativeConflictDoUpdateProof(
+                        targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
+                        skip.UpdatedColumn!, skipFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(
+                            match, validationContext.PolicyVersion),
+                        snapshot.Sha256)
+                    : null
             };
         }
 
