@@ -59,7 +59,7 @@ public sealed class DmlCoordinator(
         if (plan.ApprovalMode == DmlApprovalMode.InsertValues)
             return await PreviewInsertValuesAsync(plan, approvalContextFingerprint, cancellationToken);
 
-        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate
             && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
             throw new InvalidOperationException(
                 "Native source/target DML approval requires built-in live schema verification before preview.");
@@ -77,7 +77,7 @@ public sealed class DmlCoordinator(
                 : _transactionIsolationPolicy.PreviewIsolation(matchCommand.TargetProvider),
             cancellationToken);
 
-        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing)
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate)
             await DmlSchemaSnapshotFreshness.EnsureFreshAsync(
                 connection, transaction, plan.MutationCommand, plan.SchemaSnapshot,
                 _schemaFreshnessVerifier, cancellationToken);
@@ -96,15 +96,19 @@ public sealed class DmlCoordinator(
                 $"Security policy denied DML: affectedRows={rows.Count} exceeds maximum {plan.MaxAffectedRows}.");
         }
 
-        if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing && rows.Count > 1)
+        if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate && rows.Count > 1)
             throw new InvalidOperationException(
                 "Native conflict skip target UNIQUE key resolved to multiple physical rows; preview denied.");
 
         // A present target PK means a guaranteed DO NOTHING with zero affected
         // rows; an absent PK means exactly one proposed insert. The query result
         // is still fingerprinted in both cases, including the empty set.
-        var affectedRows = plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
-            ? 1 - rows.Count : rows.Count;
+        var affectedRows = plan.ApprovalMode switch
+        {
+            DmlApprovalMode.InsertConflictDoNothing => 1 - rows.Count,
+            DmlApprovalMode.InsertConflictDoUpdate => 1,
+            _ => rows.Count
+        };
         var rowSetFingerprint = ComputeRowSetFingerprint(plan, rows);
         var challenge = CreateChallenge(
             plan,
@@ -117,10 +121,12 @@ public sealed class DmlCoordinator(
             plan.Operation,
             plan.TableName,
             affectedRows,
-            (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
-                ? plan.InsertRows.Take(affectedRows)
-                    .Select(row => (IReadOnlyDictionary<string, object?>)row)
-                : rows.Take(PreviewRowLimit))
+            (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoUpdate
+                ? ConflictUpdatePreviewRows(plan, rows)
+                : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+                    ? plan.InsertRows.Take(affectedRows)
+                        .Select(row => (IReadOnlyDictionary<string, object?>)row)
+                    : rows.Take(PreviewRowLimit))
                 .ToImmutableArray(),
             challenge);
     }
@@ -160,7 +166,7 @@ public sealed class DmlCoordinator(
         if (witnessEvidence is not null && _targetCommitWitness is null)
             throw new InvalidOperationException("Target-enlisted DML witness was requested but is not configured.");
         ValidatePlan(plan);
-        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing
+        if (plan.ApprovalMode is DmlApprovalMode.InsertSelect or DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate
             && _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService)
             throw new InvalidOperationException(
                 "Native DML source/target approval cannot commit without built-in schema freshness proof.");
@@ -268,15 +274,19 @@ public sealed class DmlCoordinator(
 
             var currentFingerprint = ComputeRowSetFingerprint(plan, currentRows);
 
-            if (plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
+            if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate
                 && currentRows.Count > 1)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return new DmlCommitResult(false, 0,
                     "Native conflict skip cancelled: target key is no longer uniquely identifiable.");
             }
-            var currentAffectedRows = plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
-                ? 1 - currentRows.Count : currentRows.Count;
+            var currentAffectedRows = plan.ApprovalMode switch
+            {
+                DmlApprovalMode.InsertConflictDoNothing => 1 - currentRows.Count,
+                DmlApprovalMode.InsertConflictDoUpdate => 1,
+                _ => currentRows.Count
+            };
             if (currentAffectedRows != approvedChallenge.AffectedRows
                 || !string.Equals(
                     currentFingerprint,
@@ -291,7 +301,9 @@ public sealed class DmlCoordinator(
                         ? "INSERT SELECT execution cancelled: the source row values or count changed after approval."
                         : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing
                             ? "Native DO NOTHING cancelled: the target UNIQUE key conflict changed after approval."
-                            : "DML execution cancelled: the matched row set changed after approval.");
+                            : plan.ApprovalMode == DmlApprovalMode.InsertConflictDoUpdate
+                                ? "PostgreSQL conflict UPDATE cancelled: the target row or conflict state changed after approval."
+                                : "DML execution cancelled: the matched row set changed after approval.");
             }
 
             var execution = await ExecuteMutationAsync(
@@ -359,6 +371,33 @@ public sealed class DmlCoordinator(
             primaryFailure.Throw();
             throw;
         }
+    }
+
+    private static IEnumerable<IReadOnlyDictionary<string, object?>> ConflictUpdatePreviewRows(
+        ValidatedDmlPlan plan,
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> before)
+    {
+        // The approved payload is the only source of proposed values. Old
+        // values come exclusively from the transactionally schema-verified
+        // physical SELECT, never an untrusted caller's preview DTO.
+        var key = plan.RowIdentityColumns[0];
+        var updated = plan.RowIdentityColumns[1];
+        if (before.Count > 1
+            || !plan.InsertRows[0].TryGetValue(key, out var keyValue)
+            || !plan.InsertRows[0].TryGetValue(updated, out var proposed))
+            throw new InvalidOperationException(
+                "PostgreSQL conflict update preview has an invalid physical key/value binding.");
+        object? oldValue = null;
+        if (before.Count == 1 && !before[0].TryGetValue(updated, out oldValue))
+            throw new InvalidOperationException(
+                "PostgreSQL conflict update preview could not read the physical before-value.");
+        yield return new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["__action"] = before.Count == 1 ? "UPDATE" : "INSERT",
+            [key] = keyValue,
+            ["__before_" + updated] = oldValue,
+            ["__after_" + updated] = proposed
+        };
     }
 
     private async Task<DmlPreview> PreviewInsertValuesAsync(
@@ -581,7 +620,12 @@ public sealed class DmlCoordinator(
         if (plan.NativeConflictDoNothingProof is not null
             && plan.ApprovalMode != DmlApprovalMode.InsertConflictDoNothing)
             throw new InvalidOperationException(
-                "Native SQLite conflict skip proof cannot authorize a different DML approval mode.");
+                "Native conflict skip proof cannot authorize a different DML approval mode.");
+        if (plan.NativeConflictDoUpdateProof is not null
+            && (plan.ApprovalMode != DmlApprovalMode.InsertConflictDoUpdate
+                || plan.NativeConflictDoNothingProof is not null))
+            throw new InvalidOperationException(
+                "PostgreSQL conflict UPDATE proof cannot authorize another mode or carry a DO NOTHING proof.");
 
         switch (plan.ApprovalMode)
         {
@@ -623,6 +667,42 @@ public sealed class DmlCoordinator(
                     throw new InvalidOperationException(
                         "Native conflict skip requires a sealed sole enforced UNIQUE key proof, " +
                         "exact match SELECT, immutable single payload and physical schema freshness.");
+                return;
+
+            case DmlApprovalMode.InsertConflictDoUpdate:
+                var updateProof = plan.NativeConflictDoUpdateProof;
+                if (plan.Operation != DmlOperation.Insert
+                    || plan.MutationCommand.TargetProvider != SqlAgentToolType.Postgres
+                    || plan.RowIdentityAssurance != DmlRowIdentityAssurance.Strict
+                    || plan.MaxAffectedRows != 1
+                    || plan.InsertRows.Length != 1
+                    || plan.RowIdentityColumns.Length != 2
+                    || plan.MatchQueryCommand is not { Kind: SqlStatementKind.Select,
+                        TargetProvider: SqlAgentToolType.Postgres } updateMatch
+                    || plan.SchemaSnapshot is null
+                    || plan.SchemaSnapshot.Provider != SqlAgentToolType.Postgres
+                    || plan.SchemaSnapshot.Tables.Count != 1
+                    || !plan.SchemaSnapshot.Version.StartsWith(
+                        "native-postgres-insert-source-v1:", StringComparison.Ordinal)
+                    || updateProof is null
+                    || !string.Equals(updateProof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
+                    || !string.Equals(plan.SchemaSnapshot.Tables[0].Name,
+                        plan.TableName, StringComparison.Ordinal)
+                    || !string.Equals(updateProof.SchemaSha256, plan.SchemaSnapshot.Sha256,
+                        StringComparison.Ordinal)
+                    || !string.Equals(updateProof.UniqueKeyColumn,
+                        plan.RowIdentityColumns[0], StringComparison.Ordinal)
+                    || !string.Equals(updateProof.UpdatedColumn,
+                        plan.RowIdentityColumns[1], StringComparison.Ordinal)
+                    || !plan.InsertRows[0].ContainsKey(updateProof.UniqueKeyColumn)
+                    || !plan.InsertRows[0].ContainsKey(updateProof.UpdatedColumn)
+                    || !string.Equals(updateProof.MutationFingerprint,
+                        plan.PlanFingerprint, StringComparison.Ordinal)
+                    || !string.Equals(updateProof.TargetQueryFingerprint,
+                        DmlFingerprintService.ComputePlanFingerprint(updateMatch, plan.PolicyVersion),
+                        StringComparison.Ordinal))
+                    throw new InvalidOperationException(
+                        "PostgreSQL conflict UPDATE requires a sealed one-row before/after proof with exact physical key, columns and schema.");
                 return;
 
             case DmlApprovalMode.InsertValues:
