@@ -475,12 +475,12 @@ public sealed class DmlPlanFactory(
             var match = CompileMatchQuery(
                 new ParsedStatement(select, parsedMutation.SourceDialect),
                 targetProvider, validationContext, targetProfile);
-            var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
+            var skipFingerprint = DmlFingerprintService.ComputePlanFingerprint(
                 mutationCommand, validationContext.PolicyVersion);
             return new ValidatedDmlPlan(
                 DmlOperation.Insert, targetResolution.QualifiedTableName,
                 mutationCommand, match, [skip.PrimaryKeyColumn],
-                DmlRowIdentityAssurance.Strict, fingerprint,
+                DmlRowIdentityAssurance.Strict, skipFingerprint,
                 validationContext.PolicyVersion,
                 approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
                 maxAffectedRows, DmlApprovalMode.InsertConflictDoNothing,
@@ -488,7 +488,7 @@ public sealed class DmlPlanFactory(
             {
                 NativeSqliteConflictDoNothingProof = new NativeSqliteConflictDoNothingProof(
                     targetResolution.QualifiedTableName, skip.PrimaryKeyColumn,
-                    fingerprint,
+                    skipFingerprint,
                     DmlFingerprintService.ComputePlanFingerprint(
                         match, validationContext.PolicyVersion),
                     snapshot.Sha256)
