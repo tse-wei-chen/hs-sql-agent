@@ -141,6 +141,8 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
     [InlineData("id BIGINT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE", "sole")]
     [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL", "simple enforced")]
     [InlineData("id TEXT NOT NULL UNIQUE, name TEXT NOT NULL", "INT2")]
+    [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL, " +
+        "CONSTRAINT uq_id UNIQUE(id) DEFERRABLE INITIALLY DEFERRED", "immediate")]
     public async Task UnsupportedUniqueShape_RefusesApproval(string columns, string reason)
     {
         await WithTableAsync(columns, async (provider, cs, schema, runtime, token) =>
