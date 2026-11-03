@@ -160,6 +160,27 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
             });
     }
 
+    [Theory]
+    [InlineData("__action")]
+    [InlineData("__before_city")]
+    [InlineData("__after_name")]
+    public async Task PhysicalKeyCannotShadowSyntheticPreviewFields(string key)
+    {
+        await WithTableAsync(
+            $"\"{key}\" BIGINT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                var sql = $"INSERT INTO {schema}.users (\"{key}\",name,city) " +
+                    "VALUES (7,'new-name','new-city') " +
+                    $"ON CONFLICT (\"{key}\") DO UPDATE SET " +
+                    "name=EXCLUDED.name, city=EXCLUDED.city";
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token, sql));
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
     [Fact]
     public async Task FiveUpdatedColumns_ExceedsBoundedCapability()
     {
