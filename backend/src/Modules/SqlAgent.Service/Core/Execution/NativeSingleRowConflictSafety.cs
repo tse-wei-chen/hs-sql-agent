@@ -128,6 +128,19 @@ internal static class NativeSingleRowConflictSafety
             || insert.Columns.Any(col => !seen.Contains(col.Parts[0].Value)))
             throw new NotSupportedException(
                 "Native PostgreSQL conflict update must update all and only explicitly inserted non-key columns.");
+
+        // User-chosen physical identifiers must not override synthetic
+        // approval display labels (notably __action) or other before/after
+        // fields. An ambiguous preview must never mint an execution approval.
+        var displayFields = new HashSet<string>(StringComparer.Ordinal) { "__action" };
+        if (!displayFields.Add(key))
+            throw new NotSupportedException(
+                "PostgreSQL conflict key collides with an approval preview field.");
+        foreach (var name in updated)
+            if (!displayFields.Add("__before_" + name)
+                || !displayFields.Add("__after_" + name))
+                throw new NotSupportedException(
+                    "PostgreSQL physical identifiers collide with approval before/after preview fields.");
         return new Shape(key, exactInteger.Value, updated.MoveToImmutable());
     }
 }
