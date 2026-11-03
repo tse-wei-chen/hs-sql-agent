@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M10 — PostgreSQL native single-row DO NOTHING approval (develop only)
+
+- Extend the existing SQLite bounded `ON CONFLICT (id) DO NOTHING` Host approval to native PostgreSQL, preserving the F# strict single-row/column shape and one-time row-set approval.
+- The built-in PostgreSQL 16 provider must prove the **sole simple enforced PRIMARY or UNIQUE key**, exact non-NULL INT2/INT4/INT8 physical type, real permanent plain relation, no trigger/rule/partition/RLS, and full index/constraint/catalog fingerprint. Preview binds 1 insert or 0 conflict skip; commit takes a PostgreSQL `SHARE ROW EXCLUSIVE NOWAIT` table lock before comparing full schema and actual conflict state, then executes only the F# compiled parameterized INSERT once. Index drift, a changed conflict outcome or changed approval fails closed.
+- The strong table lock deliberately blocks concurrent writers during commit-time proof; this is a narrow safe first slice, not a low-contention general upsert. Partial/expression/composite/multiple unique keys, NULL/text/UUID conflict keys, DO UPDATE, RETURNING, multi-row and atomic batches remain denied. No new MCP tool, public API, dependency or frontend default change.
+
+
 ### G9/M10 — SQLite sole physical UNIQUE conflict approval (develop only)
 
 - Extend the existing single-row SQLite `ON CONFLICT (id) DO NOTHING` Host Approval from a sole PRIMARY KEY to a **sole simple physically enforced UNIQUE column or ordinary nonpartial UNIQUE index**. Reuse the same F# structural validator, native metadata, one-row payload, preview conflict-state fingerprint, one-time challenge, SQLite IMMEDIATE transaction and live freshness recheck. The key remains an explicit non-NULL exact INT64 literal; no generic UPSERT is enabled.
