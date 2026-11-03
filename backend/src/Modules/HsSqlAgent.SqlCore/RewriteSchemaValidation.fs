@@ -789,12 +789,16 @@ module internal RewriteSchemaValidation =
                                         || countColumn target updateName <> 1 then
                                         reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
                                             "Native conflict-update key or SET target is not a physical table column.")
+                                    let declaredKey =
+                                        insert.Columns |> List.filter (fun column ->
+                                            keyPart catalog.Dialect column = keyName)
+                                    let declaredUpdate =
+                                        insert.Columns |> List.filter (fun column ->
+                                            keyPart catalog.Dialect column = updateName)
                                     keyName <> updateName
                                     && updateName = keyPart catalog.Dialect source
-                                    && (insert.Columns |> List.filter
-                                        (fun column -> keyPart catalog.Dialect column = keyName)).Length = 1
-                                    && (insert.Columns |> List.filter
-                                        (fun column -> keyPart catalog.Dialect column = updateName)).Length = 1
+                                    && declaredKey.Length = 1
+                                    && declaredUpdate.Length = 1
                                 | _ -> false
                             | _ -> false
                         | _ -> false
