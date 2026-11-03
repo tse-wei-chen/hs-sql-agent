@@ -51,6 +51,10 @@ internal sealed class DmlAtomicTransactionCoordinator(
         // Other providers require separate cross-statement lock-order proofs.
         // ValidatePlan below verifies the child sealed source plan and exact
         // compiled source-query fingerprint before opening the connection.
+        if (plans.Any(plan => plan.ApprovalMode == DmlApprovalMode.InsertConflictDoNothing))
+            throw new NotSupportedException(
+                "Native SQLite conflict skip is single-statement only; atomic batches require separate row-impact revalidation.");
+
         var sourceInsertCount = plans.Count(plan => plan.ApprovalMode == DmlApprovalMode.InsertSelect);
         if (sourceInsertCount > 0
             && (plans.Count < 2

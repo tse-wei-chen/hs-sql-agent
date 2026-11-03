@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Core.Ast;
 
 namespace SqlAgent.Service.Core.Execution;
