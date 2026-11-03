@@ -74,6 +74,69 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConflictPresenceChangesAfterPreview_CancelsWithoutMutation(bool existsAtPreview)
+    {
+        await WithTableAsync("id BIGINT PRIMARY KEY, name TEXT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                if (existsAtPreview)
+                    await ExecAsync(cs, $"INSERT INTO {schema}.users VALUES (7,'original')", token);
+                var preview = await PreviewAsync(provider, cs, schema, runtime, token);
+                Assert.Equal(existsAtPreview ? 0 : 1, preview.Preview.AffectedRows);
+                if (existsAtPreview)
+                    await ExecAsync(cs, $"DELETE FROM {schema}.users WHERE id = 7", token);
+                else
+                    await ExecAsync(cs, $"INSERT INTO {schema}.users VALUES (7,'racer')", token);
+
+                var result = await runtime.CommitAsync(provider, cs, preview, Policy,
+                    Allowed(schema), Context, token);
+                Assert.False(result.Committed);
+                Assert.Equal(0, result.AffectedRows);
+                Assert.Equal(existsAtPreview ? "0" : "1", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
+    [Fact]
+    public async Task QuotedCaseDistinctUniqueColumn_CannotAuthorizeDifferentUnquotedTarget()
+    {
+        // PostgreSQL column identity is case sensitive. The generic uniqueness
+        // resolver may case-fold for other providers: this Host proof must not.
+        await WithTableAsync(
+            "id BIGINT NOT NULL, \"ID\" BIGINT NOT NULL UNIQUE, name TEXT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                var error = await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token));
+                Assert.Contains("exact", error.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
+    [Fact]
+    public async Task UserTriggerCannotHideAdditionalWritesBehindOneRowApproval()
+    {
+        await WithTableAsync("id BIGINT PRIMARY KEY, name TEXT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                await ExecAsync(cs, $"""
+                    CREATE FUNCTION {schema}.touch_row() RETURNS trigger
+                    LANGUAGE plpgsql AS $ BEGIN RETURN NEW; END; $;
+                    CREATE TRIGGER users_touch BEFORE INSERT ON {schema}.users
+                    FOR EACH ROW EXECUTE FUNCTION {schema}.touch_row();
+                    """, token);
+                var error = await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token));
+                Assert.Contains("schema", error.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
+    [Theory]
     [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL", "unique")]
     [InlineData("id BIGINT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE", "sole")]
     [InlineData("id BIGINT NOT NULL, name TEXT NOT NULL", "simple enforced")]
