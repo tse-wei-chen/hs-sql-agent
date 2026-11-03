@@ -280,7 +280,7 @@ public sealed class DmlPlanFactory(
         // DO NOTHING never inherits the insert-only optimistic payload approval.
         var conflictShape = insert.Conflict is null
             ? null
-            : NativeSingleRowConflictDoNothingSafety.RequireShape(
+            : NativeSingleRowConflictSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
