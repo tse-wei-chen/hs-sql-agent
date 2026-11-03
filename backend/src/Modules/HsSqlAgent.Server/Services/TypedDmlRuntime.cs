@@ -96,6 +96,7 @@ public sealed class TypedDmlRuntime(
         EnsureSupportedStatement(parsedMutation.Statement);
         if (parsedMutation.Statement is InsertStatement { Conflict: not null }
             && (provider.Type != SqlAgentToolType.Sqlite
+                || provider.GetType() != typeof(HsSqlAgent.Provider.Sqlite.SqliteProvider)
                 || parsedMutation.SourceDialect != SqlAgentToolType.Sqlite
                 || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
                 || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))

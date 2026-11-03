@@ -460,6 +460,29 @@ public sealed class DmlPlanFactory(
                 throw new InvalidOperationException(
                     "SQLite conflict skip requires the sole simple enforced PRIMARY KEY; secondary UNIQUE and non-PK keys remain fail-closed.");
 
+            if (metadataConnection is null)
+                throw new InvalidOperationException(
+                    "Native SQLite conflict skip requires the live Host metadata connection; detached key proof cannot authorize a plan.");
+            // SQLite reports only the top-level INSERT row count. A trigger
+            // can mutate additional tables without being represented by that
+            // count, so the one-row impact approval must reject all triggers.
+            await using (var triggers = metadataConnection.CreateCommand())
+            {
+                triggers.CommandText =
+                    "SELECT COUNT(*) FROM main.sqlite_master " +
+                    "WHERE type = 'trigger' AND tbl_name = @target COLLATE NOCASE";
+                var targetName = triggers.CreateParameter();
+                targetName.ParameterName = "@target";
+                targetName.Value = targetResolution.Table;
+                triggers.Parameters.Add(targetName);
+                var triggerCount = Convert.ToInt64(
+                    await triggers.ExecuteScalarAsync(cancellationToken));
+                if (triggerCount != 0)
+                    throw new InvalidOperationException(
+                        "SQLite conflict skip cannot approve a trigger-bearing physical target: " +
+                        "trigger side effects are outside the one-row affected-count proof.");
+            }
+
             var column = SqlIdentifier.Unquoted(skip.PrimaryKeyColumn, SourceSpan.Unknown);
             var keyExpr = new ColumnExpr(column, SourceSpan.Unknown);
             var predicate = new BinaryExpr(

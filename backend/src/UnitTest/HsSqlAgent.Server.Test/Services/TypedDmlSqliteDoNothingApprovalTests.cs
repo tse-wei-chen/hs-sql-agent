@@ -101,6 +101,23 @@ public sealed class TypedDmlSqliteDoNothingApprovalTests
         });
     }
 
+    [Fact]
+    public async Task NativeSqlite_ExistingInsertTriggerCannotHideAdditionalWriteImpact()
+    {
+        await WithDatabaseAsync(async (provider, cs, runtime, token) =>
+        {
+            await ExecAsync(cs,
+                "CREATE TABLE audit (id INTEGER PRIMARY KEY); " +
+                "CREATE TRIGGER users_audit AFTER INSERT ON users " +
+                "BEGIN INSERT INTO audit(id) VALUES(new.id); END;", token);
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => PreviewAsync(provider, cs, runtime, InsertSql, token));
+            Assert.Contains("trigger", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(0, await ScalarIntAsync(cs, "SELECT COUNT(*) FROM users", token));
+            Assert.Equal(0, await ScalarIntAsync(cs, "SELECT COUNT(*) FROM audit", token));
+        });
+    }
+
     [Theory]
     [InlineData("CREATE TABLE users (id INTEGER, name TEXT NOT NULL)", "unique")]
     [InlineData("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT UNIQUE)", "sole")]
