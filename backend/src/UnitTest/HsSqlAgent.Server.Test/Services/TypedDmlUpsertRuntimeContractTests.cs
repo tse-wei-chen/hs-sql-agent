@@ -21,9 +21,18 @@ public sealed class TypedDmlUpsertRuntimeContractTests
         TypedDmlRuntime.EnsureSupportedStatement(statement);
     }
 
+    [Fact]
+    public void ConflictUpdate_FunctionExpression_IsRejectedBeforeHostAtParser()
+    {
+        Assert.ThrowsAny<Exception>(() =>
+            CoreSqlTextParser.ParseDml(
+                "INSERT INTO users (id, name) VALUES (1, 'Alice') " +
+                "ON CONFLICT (id) DO UPDATE SET name=upper(excluded.name)",
+                SqlAgentToolType.Postgres));
+    }
+
     [Theory]
     [InlineData("ON CONFLICT (id) DO UPDATE SET id = excluded.id")]
-    [InlineData("ON CONFLICT (id) DO UPDATE SET name = upper(excluded.name)")]
     [InlineData("ON CONFLICT (id) DO UPDATE SET name = 'forged'")]
     public void UnprovenUpsert_RemainsOutsideHostStructuralAdmission(string conflict)
     {
