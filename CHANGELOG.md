@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M10 — SQLite sole physical UNIQUE conflict approval (develop only)
+
+- Extend the existing single-row SQLite `ON CONFLICT (id) DO NOTHING` Host Approval from a sole PRIMARY KEY to a **sole simple physically enforced UNIQUE column or ordinary nonpartial UNIQUE index**. Reuse the same F# structural validator, native metadata, one-row payload, preview conflict-state fingerprint, one-time challenge, SQLite IMMEDIATE transaction and live freshness recheck. The key remains an explicit non-NULL exact INT64 literal; no generic UPSERT is enabled.
+- Reject multiple/partial/expression/composite unique keys, non-unique indexes, triggers, DO UPDATE, RETURNING, multirow and batch forms. An index revoked between Preview and Commit invalidates the approval before any write. Existing PK behavior is unchanged.
+- Real SQLite positive and negative live tests cover insert/skip and schema-index revocation. The internal versioned approval binding distinguishes the new sole-UNIQUE-key proof; stale approvals require a fresh Preview. No new NuGet/public API, MCP tool or driver and no frontend default change.
+
 ### G9/M10 — native SQLite PRIMARY KEY `ON CONFLICT DO NOTHING` Host approval (develop only)
 
 - Add the first **narrow native conflict Host approval** without promoting general Upsert/MERGE: one SQLite `INSERT VALUES` row with an explicit, non-NULL exact INT64 PRIMARY KEY literal; the PK must be the **sole physical enforced unique key**, policy `DmlMaxAffectedRows=1`, built-in native SQLite provider, native target schema capture and commit freshness. Any trigger-bearing target is rejected because trigger side effects are outside the approved one-row count. `DO UPDATE`, `RETURNING`, targetless conflict, multiple rows, alternate/composite/extra unique keys, non-SQLite dialects and atomic batches remain fail-closed.
