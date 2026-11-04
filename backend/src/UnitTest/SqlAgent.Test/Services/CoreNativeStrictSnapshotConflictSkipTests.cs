@@ -73,7 +73,7 @@ public sealed class CoreNativeStrictSnapshotConflictSkipTests
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET id=excluded.id")]
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name='literal'")]
     [InlineData("INSERT INTO users (id, name) VALUES (7,'n'),(8,'y') ON CONFLICT (id) DO UPDATE SET name=excluded.name")]
-    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=excluded.name RETURNING id")]
+    [InlineData("INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO UPDATE SET name=excluded.name RETURNING id, id")]
     public void PostgresStrictSnapshot_UnprovedConflictShape_FailsAtSchemaValidation(string sql)
     {
         var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
