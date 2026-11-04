@@ -109,6 +109,41 @@ public sealed class TypedDmlPostgresTypedValueConflictUpdateApprovalTests(
     }
 
     [Theory]
+    [InlineData(false, "42")]
+    [InlineData(true, "42")]
+    [InlineData(false, "2147483648")]
+    [InlineData(true, "2147483648")]
+    [InlineData(false, "9223372036854775807")]
+    [InlineData(true, "9223372036854775807")]
+    public async Task BigintOnly_BoundedExactInt64Literal_PreservesBeforeAfter(
+        bool existing, string literal)
+    {
+        await WithTableAsync("id BIGINT PRIMARY KEY, quantity BIGINT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                if (existing)
+                    await ExecAsync(cs,
+                        $"INSERT INTO {schema}.users VALUES (7,3)", token);
+                var session = await PreviewAsync(provider, cs, schema, runtime, token,
+                    MakeSql(schema, ["quantity"], [literal]));
+                Assert.Equal(DmlApprovalMode.InsertConflictDoUpdate, session.Plan.ApprovalMode);
+                Assert.Equal(1, session.Preview.AffectedRows);
+                var row = Assert.Single(session.Preview.Rows);
+                Assert.Equal(existing ? "UPDATE" : "INSERT", row["__action"]);
+                if (existing)
+                    Assert.Equal(3L, Convert.ToInt64(row["__before_quantity"]));
+                else
+                    Assert.Null(row["__before_quantity"]);
+                Assert.Equal(long.Parse(literal), Convert.ToInt64(row["__after_quantity"]));
+                var commit = await runtime.CommitAsync(provider, cs, session, Policy,
+                    Allowed(schema), Context, token);
+                Assert.True(commit.Committed);
+                Assert.Equal(literal, await ScalarAsync(cs,
+                    $"SELECT quantity::text FROM {schema}.users WHERE id=7", token));
+            });
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task OldBigintOrNewConflictChanges_RejectWholeMutation(bool existing)
@@ -182,6 +217,7 @@ public sealed class TypedDmlPostgresTypedValueConflictUpdateApprovalTests(
 
     [Theory]
     [InlineData("'42'")]
+    [InlineData("42.0")]
     [InlineData("42.5")]
     [InlineData("NULL")]
     [InlineData("9223372036854775808")]
