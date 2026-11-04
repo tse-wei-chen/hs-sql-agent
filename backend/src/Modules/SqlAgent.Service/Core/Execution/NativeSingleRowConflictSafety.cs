@@ -164,7 +164,7 @@ internal static class NativeSingleRowConflictSafety
                 throw new NotSupportedException(
                     "PostgreSQL physical identifiers collide with approval before/after preview fields.");
         return new Shape(key, exactInteger.Value,
-            updated.MoveToImmutable(), bigint.MoveToImmutable());
+            updated.MoveToImmutable(), bigint.ToImmutable());
     }
 
     private static bool IsExactInt64Literal(SqlExpr expression) =>
