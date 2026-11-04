@@ -193,9 +193,35 @@ public sealed class TypedDmlPostgresTypedValueConflictUpdateApprovalTests(
             });
     }
 
+    [Fact]
+    public async Task BigintPhysicalTypeChangedAfterPreview_DeniesCommit()
+    {
+        await WithTableAsync(
+            "id BIGINT PRIMARY KEY, name TEXT NOT NULL, quantity BIGINT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                await ExecAsync(cs,
+                    $"INSERT INTO {schema}.users VALUES (7,'old-name',5)", token);
+                var session = await PreviewAsync(provider, cs, schema, runtime, token,
+                    MakeSql(schema, ["name", "quantity"], ["'new-name'", "42"]));
+                await ExecAsync(cs,
+                    $"ALTER TABLE {schema}.users ALTER COLUMN quantity TYPE TEXT USING quantity::text",
+                    token);
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    runtime.CommitAsync(provider, cs, session,
+                        Policy, Allowed(schema), Context, token));
+                Assert.Equal("old-name", await ScalarAsync(cs,
+                    $"SELECT name FROM {schema}.users WHERE id=7", token));
+                Assert.Equal("5", await ScalarAsync(cs,
+                    $"SELECT quantity FROM {schema}.users WHERE id=7", token));
+            });
+    }
+
     [Theory]
     [InlineData("quantity INTEGER NOT NULL")]
     [InlineData("quantity SMALLINT NOT NULL")]
+    [InlineData("quantity DATE NOT NULL")]
+    [InlineData("quantity TIMESTAMPTZ NOT NULL")]
     [InlineData("quantity NUMERIC(20,0) NOT NULL")]
     [InlineData("quantity DOUBLE PRECISION NOT NULL")]
     [InlineData("quantity BIGINT")]
