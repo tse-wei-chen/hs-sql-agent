@@ -92,7 +92,7 @@ internal static class NativeSingleRowConflictSafety
             || (!update && !insert.Returning.IsDefaultOrEmpty)
             || insert.Target.Alias is not null)
             throw new NotSupportedException(
-                "Native conflict skip permits one explicit UNIQUE key target, one VALUES row and DO NOTHING without RETURNING.");
+                "Native conflict approval requires one explicit UNIQUE key and one VALUES row; DO NOTHING forbids RETURNING, while PostgreSQL DO UPDATE allows only bounded direct-column RETURNING.");
 
         var targetIdentifier = conflict.TargetColumns[0];
         if (targetIdentifier.Parts.Length != 1)
