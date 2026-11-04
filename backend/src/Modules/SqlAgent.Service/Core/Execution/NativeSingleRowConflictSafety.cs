@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Core.Ast;
 
@@ -165,6 +166,59 @@ internal static class NativeSingleRowConflictSafety
                     "PostgreSQL physical identifiers collide with approval before/after preview fields.");
         return new Shape(key, exactInteger.Value,
             updated.MoveToImmutable(), bigint.ToImmutable());
+    }
+
+    /// <summary>
+    /// PostgreSQL's exact numeric lexer may normalize 1e10 to an integral
+    /// decimal. Structural CLR literals alone cannot attest that the source
+    /// used a plain integer token. Check the bounded original lexer span,
+    /// never a regex over rendered SQL, and match the parsed numeric value.
+    /// </summary>
+    internal static void RequireExactIntegerSourceTokens(
+        InsertStatement insert, Shape shape, string? rawSql)
+    {
+        if (shape.BigintColumns.IsDefaultOrEmpty)
+            return;
+        if (string.IsNullOrEmpty(rawSql)
+            || insert.Source is not InsertValuesSource values
+            || values.Rows.Length != 1)
+            throw new NotSupportedException(
+                "Native PostgreSQL typed conflict UPDATE requires original source evidence for BIGINT literals.");
+
+        foreach (var name in shape.BigintColumns)
+        {
+            var ordinal = -1;
+            for (var index = 0; index < insert.Columns.Length; index++)
+                if (insert.Columns[index].Parts.Length == 1
+                    && string.Equals(insert.Columns[index].Parts[0].Value, name, StringComparison.Ordinal))
+                    ordinal = index;
+            if (ordinal < 0)
+                throw new NotSupportedException(
+                    "Native PostgreSQL BIGINT literal lacks a verified column ordinal.");
+
+            var expression = values.Rows[0][ordinal];
+            var span = expression.Span;
+            if (span.Start < 0 || span.End <= span.Start || span.End > rawSql.Length)
+                throw new NotSupportedException(
+                    "Native PostgreSQL BIGINT literal requires a valid original SQL source span.");
+
+            var token = rawSql.AsSpan(span.Start, span.End - span.Start).Trim();
+            if (!long.TryParse(token, NumberStyles.AllowLeadingSign,
+                    CultureInfo.InvariantCulture, out var parsedInteger))
+                throw new NotSupportedException(
+                    "Native PostgreSQL BIGINT values require plain decimal integer tokens, not scientific notation, fractional numbers or implicit casts.");
+
+            var sameValue = expression switch
+            {
+                LiteralExpr { Value: int number } => number == parsedInteger,
+                LiteralExpr { Value: long number } => number == parsedInteger,
+                LiteralExpr { Value: decimal number } => number == (decimal)parsedInteger,
+                _ => false
+            };
+            if (!sameValue)
+                throw new NotSupportedException(
+                    "Native PostgreSQL BIGINT source spelling and closed AST value disagree.");
+        }
     }
 
     private static bool IsExactInt64Literal(SqlExpr expression) =>
