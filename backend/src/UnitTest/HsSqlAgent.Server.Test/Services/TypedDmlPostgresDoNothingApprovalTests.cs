@@ -160,7 +160,7 @@ public sealed class TypedDmlPostgresDoNothingApprovalTests(PostgresDdlLiveFixtur
 
     [Theory]
     [InlineData("DO UPDATE SET name=upper(excluded.name)")]
-    [InlineData("DO NOTHING RETURNING id")]
+    [InlineData("DO NOTHING RETURNING name")]
     public async Task UnprovedConflictForms_NeverBecomeExecutable(string suffix)
     {
         await WithTableAsync("id BIGINT PRIMARY KEY, name TEXT NOT NULL",
