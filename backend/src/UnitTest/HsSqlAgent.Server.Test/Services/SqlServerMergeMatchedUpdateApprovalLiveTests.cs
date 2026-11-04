@@ -53,6 +53,50 @@ public sealed class SqlServerMergeMatchedUpdateApprovalLiveTests
     }
 
     [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task OneOrThreeDistinctPhysicalPayloadColumns_StayBoundToTheirBeforeValues(int payloadCount)
+    {
+        await WithTableAsync(async (provider, cs, table, runtime, ct) =>
+        {
+            if (payloadCount == 3)
+                await ExecuteAsync(cs, $"ALTER TABLE dbo.[{table}] ADD revision INT NOT NULL", ct);
+            await ExecuteAsync(cs, payloadCount == 3
+                ? $"INSERT INTO dbo.[{table}](id,quantity,status,revision) VALUES(7,10,3,5)"
+                : $"INSERT INTO dbo.[{table}](id,quantity,status) VALUES(7,10,3)", ct);
+            var sql = payloadCount == 3
+                ? $"MERGE INTO dbo.[{table}] AS t USING (VALUES(7,4,25,8)) AS s(id,status,quantity,revision) " +
+                  "ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.quantity,status=s.status,revision=s.revision;"
+                : $"MERGE INTO dbo.[{table}] AS t USING (VALUES(7,25)) AS s(id,quantity) " +
+                  "ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.quantity;";
+            var parsed = await runtime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                provider, cs, sql, SqlAgentToolType.MsSqlServer, ct);
+            var preview = await runtime.PreviewAsync(provider, cs, parsed,
+                Policy, Allowed(table), Actor, ct);
+            Assert.Equal(1, preview.Preview.AffectedRows);
+            var evidence = Assert.Single(preview.Preview.Rows);
+            Assert.Equal(10, Convert.ToInt32(evidence["__before_quantity"]));
+            Assert.Equal(25, Convert.ToInt32(evidence["__after_quantity"]));
+            if (payloadCount == 3)
+            {
+                Assert.Equal(3, Convert.ToInt32(evidence["__before_status"]));
+                Assert.Equal(4, Convert.ToInt32(evidence["__after_status"]));
+                Assert.Equal(5, Convert.ToInt32(evidence["__before_revision"]));
+                Assert.Equal(8, Convert.ToInt32(evidence["__after_revision"]));
+            }
+            var committed = await runtime.CommitAsync(provider, cs, preview,
+                Policy, Allowed(table), Actor, ct);
+            Assert.True(committed.Committed);
+            Assert.Equal(1, committed.AffectedRows);
+            Assert.Equal(25, await ScalarAsync(cs,
+                $"SELECT quantity FROM dbo.[{table}] WHERE id=7", ct));
+            if (payloadCount == 3)
+                Assert.Equal(8, await ScalarAsync(cs,
+                    $"SELECT revision FROM dbo.[{table}] WHERE id=7", ct));
+        });
+    }
+
+    [Theory]
     [InlineData("quantity", 18)]
     [InlineData("status", 9)]
     public async Task NonKeyBeforeValueChangedAfterPreview_CancelsWithoutOverwriting(string column, int value)
