@@ -881,9 +881,61 @@ module internal RewriteSchemaValidation =
                 let current = makeScope None (target :: others)
                 delete.Where |> Option.iter (expression catalog visibleCtes current Span.unknown)
                 returning catalog target delete.Returning
-            | MergeStatement _ ->
-                reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (
-                    "Strict snapshot mode does not yet prove MERGE source and target key semantics.")
+            | MergeStatement merge ->
+                // The strict snapshot proves the named physical key column only.
+                // Host must independently prove the sole enforced INT PRIMARY
+                // key, full catalog digest and transaction-held serializable lock.
+                // Every other MERGE effect remains unprovable in this mode.
+                let target = namedSource catalog.Dialect merge.Target
+                                     (Some merge.TargetAlias) (physicalTable catalog merge.Target)
+                let targetNames = Identifier.parts merge.Target
+                let sourceKeyParts = NonEmpty.toList merge.Source.SourceColumns
+                let key =
+                    match sourceKeyParts with
+                    | [ part ] -> keyPart catalog.Dialect part
+                    | _ -> ""
+                let rec unwrap = function
+                    | Spanned(_, inner) -> unwrap inner
+                    | other -> other
+                let exactColumn alias expression =
+                    match unwrap expression with
+                    | Column identifier | BoundColumn(identifier, _) ->
+                        match Identifier.parts identifier with
+                        | [ qualifier; field ] ->
+                            qualifier.Value = alias
+                            && keyPart catalog.Dialect field = key
+                        | _ -> false
+                    | _ -> false
+                let provenMatch =
+                    match unwrap merge.MatchPredicate with
+                    | Binary(Equal, left, right) ->
+                        (exactColumn "t" left && exactColumn "s" right)
+                        || (exactColumn "t" right && exactColumn "s" left)
+                    | _ -> false
+                let proven =
+                    catalog.Dialect = SqlAgentToolType.MsSqlServer
+                    && targetNames.Length = 2
+                    && keyPart catalog.Dialect targetNames[0] = "DBO"
+                    && merge.TargetAlias.Value = "t"
+                    && merge.Source.Alias.Value = "s"
+                    && key <> ""
+                    && countColumn target key = 1
+                    && sourceKeyParts.Length = 1
+                    && NonEmpty.length merge.Source.SourceValues = 1
+                    && (match NonEmpty.toList merge.Source.SourceValues with
+                        | [ value ] ->
+                            match unwrap value with
+                            | Literal _ -> true
+                            | _ -> false
+                        | _ -> false)
+                    && merge.Matched = Some MergeDelete
+                    && merge.NotMatched.IsNone
+                    && provenMatch
+                if not proven then
+                    reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (
+                        "Strict snapshot mode proves only a single literal source key and " +
+                        "SQL Server WHEN MATCHED THEN DELETE with one exact t.key=s.key; " +
+                        "live physical UNIQUE and transaction approval remain Host-only.")
 
 
         document
