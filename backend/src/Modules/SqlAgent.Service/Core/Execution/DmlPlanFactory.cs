@@ -284,6 +284,9 @@ public sealed class DmlPlanFactory(
             : NativeSingleRowConflictSafety.RequireShape(
                 insert, parsedMutation.SourceDialect, targetProvider, maxAffectedRows,
                 update: conflictUpdate);
+        if (conflictUpdate)
+            NativeSingleRowConflictSafety.RequireExactIntegerSourceTokens(
+                insert, conflictShape!, parsedMutation.RawSql);
         (SqlStatement Query, ImmutableArray<string> OutputColumns, string PhysicalSource)? sourceSelection = null;
         if (insert.Source is InsertQuerySource)
             sourceSelection = NativeInsertSelectSafety.RequireShape(
