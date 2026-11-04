@@ -25,7 +25,9 @@ public enum DmlApprovalMode
     /// <summary>PostgreSQL one-row conflict UPDATE: bind every old and proposed TEXT column.</summary>
     InsertConflictDoUpdate,
     /// <summary>Native SQL Server single-source INT primary-key MATCHED DELETE; no INSERT/UPDATE branches.</summary>
-    SqlServerMergeMatchedDelete
+    SqlServerMergeMatchedDelete,
+    /// <summary>Native SQL Server matched direct INT UPDATE with sealed old/new row evidence.</summary>
+    SqlServerMergeMatchedUpdate
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
@@ -62,6 +64,11 @@ internal sealed record SqlServerMergeMatchedDeleteProof(
     string TargetQueryFingerprint,
     string SchemaSha256);
 
+internal sealed record SqlServerMergeMatchedUpdateProof(
+    string PhysicalTarget, string UniqueKeyColumn, int KeyValue,
+    ImmutableArray<string> UpdatedColumns, ImmutableArray<int> ProposedValues,
+    string MutationFingerprint, string TargetQueryFingerprint, string SchemaSha256);
+
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
     string TableName,
@@ -95,6 +102,8 @@ public sealed record ValidatedDmlPlan(
     internal NativeConflictDoUpdateProof? NativeConflictDoUpdateProof { get; init; }
 
     internal SqlServerMergeMatchedDeleteProof? SqlServerMergeMatchedDeleteProof { get; init; }
+
+    internal SqlServerMergeMatchedUpdateProof? SqlServerMergeMatchedUpdateProof { get; init; }
 }
 
 public sealed record DmlPreview(

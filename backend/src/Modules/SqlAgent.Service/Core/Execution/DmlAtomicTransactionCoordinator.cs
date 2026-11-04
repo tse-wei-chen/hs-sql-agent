@@ -54,7 +54,8 @@ internal sealed class DmlAtomicTransactionCoordinator(
         if (plans.Any(plan => plan.ApprovalMode is
                 DmlApprovalMode.InsertConflictDoNothing
                 or DmlApprovalMode.InsertConflictDoUpdate
-                or DmlApprovalMode.SqlServerMergeMatchedDelete))
+                or DmlApprovalMode.SqlServerMergeMatchedDelete
+                or DmlApprovalMode.SqlServerMergeMatchedUpdate))
             throw new NotSupportedException(
                 "Native conflict or SQL Server MERGE approval is single-statement only; atomic batches require separate cross-statement row-impact and lock-order proofs.");
 
