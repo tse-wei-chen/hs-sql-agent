@@ -756,8 +756,7 @@ module internal RewriteSchemaValidation =
                         match catalog.Dialect, conflict.Action, conflict.TargetColumns, insert.Input with
                         | (SqlAgentToolType.Sqlite | SqlAgentToolType.Postgres), DoNothing, Some targets, Values rows
                             when NonEmpty.length targets = 1
-                                 && NonEmpty.length rows = 1
-                                 && insert.Returning.IsEmpty ->
+                                 && NonEmpty.length rows = 1 ->
                             match Identifier.parts (NonEmpty.toList targets |> List.head) with
                             | [ key ] ->
                                 let keyName = keyPart catalog.Dialect key
@@ -768,7 +767,18 @@ module internal RewriteSchemaValidation =
                                     reject "SQL_SCHEMA_COLUMN_NOT_FOUND" doc.Span (
                                         "Native conflict target '" + key.Value
                                         + "' is not a physical target-table column.")
-                                declared.Length = 1
+                                // Static snapshots prove only the referenced key column;
+                                // only PostgreSQL may return that exact single key.
+                                // Live UNIQUE enforcement remains Host-owned.
+                                let returningKeyProven =
+                                    match catalog.Dialect, insert.Returning with
+                                    | _, [] -> true
+                                    | SqlAgentToolType.Postgres, [ ReturningColumn(identifier, None) ] ->
+                                        match Identifier.parts identifier with
+                                        | [ part ] -> keyPart catalog.Dialect part = keyName
+                                        | _ -> false
+                                    | _ -> false
+                                declared.Length = 1 && returningKeyProven
                             | _ -> false
                         | SqlAgentToolType.Postgres, UpdateProposedValues assignments, Some targets, Values rows
                             when NonEmpty.length targets = 1
