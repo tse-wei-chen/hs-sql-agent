@@ -828,8 +828,6 @@ module internal RewriteSchemaValidation =
                                 && returningProven
                             | _ -> false
                         | _ -> false
-                            | _ -> false
-                        | _ -> false
                     if not closedSkip then
                         reject "SQL_SCHEMA_CONFLICT_UNPROVABLE" doc.Span (
                             "Strict snapshot mode proves only single-row native SQLite/PostgreSQL DO NOTHING " +
