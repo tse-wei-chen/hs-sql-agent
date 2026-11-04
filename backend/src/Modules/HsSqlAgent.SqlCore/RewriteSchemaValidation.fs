@@ -775,8 +775,7 @@ module internal RewriteSchemaValidation =
                                  && NonEmpty.length assignments >= 1
                                  && NonEmpty.length assignments <= 4
                                  && NonEmpty.length rows = 1
-                                 && insert.Columns.Length = NonEmpty.length assignments + 1
-                                 && insert.Returning.IsEmpty ->
+                                 && insert.Columns.Length = NonEmpty.length assignments + 1 ->
                             let singleTarget = NonEmpty.toList targets |> List.head
                             match Identifier.parts singleTarget with
                             | [ key ] ->
@@ -811,6 +810,21 @@ module internal RewriteSchemaValidation =
                                 && (declared |> List.filter ((=) keyName)).Length = 1
                                 && (updates |> List.forall (fun name ->
                                     (declared |> List.filter ((=) name)).Length = 1))
+                                && (insert.Returning.IsEmpty
+                                    || (insert.Returning.Length <= 5
+                                        && insert.Returning.Length <= declared.Length
+                                        && (let returnColumns =
+                                                insert.Returning |> List.choose (function
+                                                    | ReturningColumn(identifier, None) ->
+                                                        match Identifier.parts identifier with
+                                                        | [ part ] -> Some(keyPart catalog.Dialect part)
+                                                        | _ -> None
+                                                    | _ -> None)
+                                            returnColumns.Length = insert.Returning.Length
+                                            && (returnColumns |> List.distinct).Length = returnColumns.Length
+                                            && (returnColumns |> List.forall (fun name ->
+                                                List.contains name declared
+                                                && countColumn target name = 1))))
                             | _ -> false
                         | _ -> false
                             | _ -> false
