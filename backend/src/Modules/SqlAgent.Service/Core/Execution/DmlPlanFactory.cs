@@ -98,6 +98,12 @@ public sealed class DmlPlanFactory(
         if (maxAffectedRows < 0)
             throw new ArgumentOutOfRangeException(nameof(maxAffectedRows));
 
+        if (parsedMutation.Statement is MergeStatement merge)
+            return await CreateSqlServerMergeMatchedDeletePlanAsync(
+                metadataConnection, connectionString, parsedMutation, merge,
+                targetProvider, validationContext, compilationPolicy, assurance,
+                maxAffectedRows, approvalTtl, cancellationToken, targetProfile);
+
         if (parsedMutation.Statement is InsertStatement insert)
         {
             return await CreateInsertValuesPlanAsync(
@@ -260,6 +266,156 @@ public sealed class DmlPlanFactory(
             SchemaSnapshot: validationContext.SchemaSnapshot)
         {
             SqlServerCteUniqueKeyAssurance = boundProof
+        };
+    }
+
+    private async Task<ValidatedDmlPlan> CreateSqlServerMergeMatchedDeletePlanAsync(
+        DbConnection? metadataConnection,
+        string connectionString,
+        ParsedStatement parsedMutation,
+        MergeStatement merge,
+        SqlAgentToolType targetProvider,
+        SqlPlanValidationContext validationContext,
+        DmlCompilationPolicy? compilationPolicy,
+        DmlRowIdentityAssurance assurance,
+        int maxAffectedRows,
+        TimeSpan? approvalTtl,
+        CancellationToken cancellationToken,
+        SqlProviderCapabilityProfile? targetProfile)
+    {
+        // SQL Server MERGE is not a normal INSERT or UPDATE: its existing-row
+        // effect must be approved through an immutable match query. No custom
+        // driver, synthetic catalog or legacy compatibility compiler can mint
+        // this one exceptionally narrow authority.
+        var shape = SqlServerMergeMatchedDeleteSafety.RequireShape(
+            merge, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
+        if (assurance != DmlRowIdentityAssurance.Strict
+            || metadataConnection is null
+            || metadataConnection.State != System.Data.ConnectionState.Open
+            || _dmlCompiler is not null || _queryCompiler is not null
+            || _dmlPlanningMetadataReader is not HsSqlAgent.Provider.SqlServer.MsSqlServerProvider)
+            throw new NotSupportedException(
+                "SQL Server MERGE Host approval requires the built-in live provider, strict row identity and verified metadata connection.");
+
+        var snapshot = validationContext.SchemaSnapshot;
+        if (snapshot is null
+            || snapshot.Provider != SqlAgentToolType.MsSqlServer
+            || snapshot.Tables.Count != 1
+            || !snapshot.Version.StartsWith(
+                "native-sqlserver2022-insert-source-v1:", StringComparison.Ordinal)
+            || !string.Equals(snapshot.Tables[0].Name,
+                shape.PhysicalTable, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "SQL Server MERGE approval requires the complete actual SQL Server 2022 table/index/trigger schema digest.");
+        if (validationContext.AllowedTables is { } grants
+            && !grants.Any(table => string.Equals(
+                table, shape.PhysicalTable, StringComparison.OrdinalIgnoreCase)))
+            throw new UnauthorizedAccessException(
+                "SQL Server MERGE target is not in the authorized physical table scope.");
+
+        // A physical INT column and the sole enforced simple PRIMARY key are
+        // proved independently. A plain UNIQUE, composite, implicit cast,
+        // identity key or user-defined alias type cannot authorize deletion.
+        var live = await new DmlUniqueKeyResolver(
+            new HsSqlAgent.Provider.SqlServer.MsSqlServerProvider()).ResolveAsync(
+                connectionString, shape.Schema, shape.Table,
+                [shape.KeyColumn], cancellationToken);
+        if (!live.IsSoleEnforcedUniqueKey || live.HasUnsupportedEnforcedUniqueKeys
+            || !live.MatchedKey.IsSimpleEnforcedColumnKey
+            || !live.MatchedKey.IsPrimaryKey
+            || live.MatchedKey.Columns.Count != 1
+            || !string.Equals(live.MatchedKey.Columns[0], shape.KeyColumn,
+                StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "SQL Server MERGE requires the sole exact physical, non-filtered INT PRIMARY key.");
+
+        await using (var typeCheck = metadataConnection.CreateCommand())
+        {
+            typeCheck.CommandText = """
+                SELECT COUNT_BIG(*) FROM sys.tables t
+                JOIN sys.schemas s ON s.schema_id = t.schema_id
+                JOIN sys.columns c ON c.object_id = t.object_id
+                WHERE s.name = @schema AND t.name = @table AND c.name = @key
+                  AND c.system_type_id = 56 AND c.user_type_id = 56
+                  AND c.is_nullable = 0 AND c.is_identity = 0 AND c.is_computed = 0
+                  AND c.is_hidden = 0 AND c.generated_always_type = 0
+                """;
+            foreach (var (name, value) in new[]
+            {
+                ("@schema", shape.Schema),
+                ("@table", shape.Table),
+                ("@key", shape.KeyColumn)
+            })
+            {
+                var parameter = typeCheck.CreateParameter();
+                parameter.ParameterName = name;
+                parameter.Value = value;
+                typeCheck.Parameters.Add(parameter);
+            }
+            if (Convert.ToInt64(await typeCheck.ExecuteScalarAsync(cancellationToken)) != 1)
+                throw new InvalidOperationException(
+                    "SQL Server MERGE key must be a physically exact non-null native INT, not an identity or alias type.");
+        }
+
+        var targetName = ExecutionTargetIdentifier(
+            SqlAgentToolType.MsSqlServer, shape.Schema, shape.Table);
+        var resolvedMerge = new MergeStatement(
+            new NamedTableSource(targetName, merge.Target.Alias, merge.Target.Span),
+            merge.SourceAlias, merge.SourceColumns, merge.SourceValues,
+            merge.MatchPredicate, merge.Matched, merge.NotMatched, merge.Span);
+        var command = SqlCoreFacade.CompileDml(
+            CloneParsedWithStatement(parsedMutation, resolvedMerge),
+            SqlAgentToolType.MsSqlServer, validationContext,
+            compilationPolicy, targetProfile,
+            conflictTargetAssurance: live.ToConflictTargetAssurance());
+        if (command.Kind != SqlStatementKind.Merge
+            || !command.Sql.Contains("WITH (HOLDLOCK)", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "SQL Server MERGE compiler did not preserve the native HOLDLOCK key-range contract.");
+
+        // This match SELECT exposes only the exact physical PK identity. Its
+        // SQL, key value, type, table, schema digest and mutation are all
+        // sealed into the same one-use approval before any write can occur.
+        var key = MetadataIdentifier(shape.KeyColumn);
+        var predicate = new BinaryExpr(
+            new ColumnExpr(key, SourceSpan.Unknown), "=",
+            new LiteralExpr(shape.KeyValue, SourceSpan.Unknown),
+            SourceSpan.Unknown);
+        var matchSelect = new SelectStatement(
+            ImmutableArray<CteDefinition>.Empty, false,
+            [new SelectItem(new ColumnExpr(key, SourceSpan.Unknown),
+                null, SourceSpan.Unknown)],
+            new NamedTableSource(targetName, null, SourceSpan.Unknown),
+            ImmutableArray<JoinSource>.Empty, predicate,
+            ImmutableArray<SqlExpr>.Empty, null,
+            ImmutableArray<OrderByItem>.Empty,
+            2, null, SourceSpan.Unknown);
+        var match = CompileMatchQuery(
+            CloneParsedWithStatement(parsedMutation, matchSelect),
+            SqlAgentToolType.MsSqlServer, validationContext, targetProfile);
+        var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
+            command, validationContext.PolicyVersion);
+
+        return new ValidatedDmlPlan(
+            DmlOperation.Delete,
+            shape.PhysicalTable,
+            command,
+            match,
+            [shape.KeyColumn],
+            DmlRowIdentityAssurance.Strict,
+            fingerprint,
+            validationContext.PolicyVersion,
+            approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
+            maxAffectedRows,
+            DmlApprovalMode.SqlServerMergeMatchedDelete,
+            SchemaSnapshot: snapshot)
+        {
+            SqlServerMergeMatchedDeleteProof = new SqlServerMergeMatchedDeleteProof(
+                shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
+                fingerprint,
+                DmlFingerprintService.ComputePlanFingerprint(
+                    match, validationContext.PolicyVersion),
+                snapshot.Sha256)
         };
     }
 
