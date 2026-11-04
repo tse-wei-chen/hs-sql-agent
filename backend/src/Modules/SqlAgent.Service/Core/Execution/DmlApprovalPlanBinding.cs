@@ -80,21 +80,21 @@ internal static class DmlApprovalPlanBinding
             Append(hash, mergeProof.SchemaSha256);
         }
 
-        if (plan.SqlServerMergeMatchedUpdateProof is { } updateProof)
+        if (plan.SqlServerMergeMatchedUpdateProof is { } mergeUpdateProof)
         {
             Append(hash, "native-sqlserver-merge-matched-update-v1");
-            Append(hash, updateProof.PhysicalTarget);
-            Append(hash, updateProof.UniqueKeyColumn);
-            Append(hash, updateProof.KeyValue.ToString(CultureInfo.InvariantCulture));
-            Append(hash, updateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
-            for (var i = 0; i < updateProof.UpdatedColumns.Length; i++)
+            Append(hash, mergeUpdateProof.PhysicalTarget);
+            Append(hash, mergeUpdateProof.UniqueKeyColumn);
+            Append(hash, mergeUpdateProof.KeyValue.ToString(CultureInfo.InvariantCulture));
+            Append(hash, mergeUpdateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
+            for (var i = 0; i < mergeUpdateProof.UpdatedColumns.Length; i++)
             {
-                Append(hash, updateProof.UpdatedColumns[i]);
-                Append(hash, updateProof.ProposedValues[i].ToString(CultureInfo.InvariantCulture));
+                Append(hash, mergeUpdateProof.UpdatedColumns[i]);
+                Append(hash, mergeUpdateProof.ProposedValues[i].ToString(CultureInfo.InvariantCulture));
             }
-            Append(hash, updateProof.MutationFingerprint);
-            Append(hash, updateProof.TargetQueryFingerprint);
-            Append(hash, updateProof.SchemaSha256);
+            Append(hash, mergeUpdateProof.MutationFingerprint);
+            Append(hash, mergeUpdateProof.TargetQueryFingerprint);
+            Append(hash, mergeUpdateProof.SchemaSha256);
         }
 
         if (plan.MatchQueryCommand is { } match)
