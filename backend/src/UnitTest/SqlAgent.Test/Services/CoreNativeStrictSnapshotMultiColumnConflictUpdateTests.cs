@@ -52,6 +52,40 @@ public sealed class CoreNativeStrictSnapshotMultiColumnConflictUpdateTests
     }
 
     [Theory]
+    [InlineData("RETURNING id")]
+    [InlineData("RETURNING city, id")]
+    [InlineData("RETURNING id, name, city")]
+    public void PostgresStrictSnapshot_ReturnsOnlyDirectApprovedColumns(string returning)
+    {
+        var sql = BuildSql(["name", "city"]) + " " + returning;
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var compiled = CoreDmlCompiler.CreateDefault().Compile(parsed,
+            SqlAgentToolType.Postgres, Context(["name", "city"]));
+        Assert.Equal(SqlStatementKind.Insert, compiled.Kind);
+        Assert.True(compiled.ReturnsRows);
+        Assert.Contains("RETURNING", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("RETURNING *")]
+    [InlineData("RETURNING id,id")]
+    [InlineData("RETURNING id, upper(name)")]
+    [InlineData("RETURNING id AS alias_id")]
+    [InlineData("RETURNING xmax")]
+    [InlineData("RETURNING id, ctid")]
+    [InlineData("RETURNING id, users.name")]
+    public void PostgresStrictSnapshot_UnprovedReturnProjectionRemainsDenied(string returning)
+    {
+        var sql = BuildSql(["name", "city"]) + " " + returning;
+        Assert.ThrowsAny<Exception>(() =>
+        {
+            var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+            CoreDmlCompiler.CreateDefault().Compile(parsed,
+                SqlAgentToolType.Postgres, Context(["name", "city"]));
+        });
+    }
+
+    [Theory]
     [InlineData(5)]
     public void PostgresStrictSnapshot_ExcessiveUpdateColumnCount_RemainsFailClosed(int count)
     {
