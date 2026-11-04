@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 — SQL Server 2022 native MERGE MATCHED UPDATE with sealed old/new value approval (develop only)
+
+- Extend the existing one-row MERGE MATCHED DELETE Host proof to a bounded **MATCHED UPDATE** of **1–3 direct, distinct, non-key INT columns** from one exact `VALUES` row. The single exact native INT PRIMARY key is still the sole enforced physical UNIQUE key, with complete Schema/index/trigger/side-effect attestation; no casts, expressions, nullable/identity columns, extra predicates, UPDATE key assignment, mixed INSERT/DELETE or atomic MERGE batches.
+- Preview reads all affected physical **before-values**, displays immutable **after-values** and fingerprints the whole old-value row alongside the compiled mutation, match SQL, schema digest, policy and actor in the existing one-use approval. Commit holds SQL Server `SERIALIZABLE` `TABLOCKX/HOLDLOCK`, rechecks full schema and every approved old-value, and enforces exact affected-row count before confirming a write. Changed payload without a changed key fails closed, not overwritten. Missing source match affects zero rows. Strong table-level locks limit parallel writer throughput.
+- Uses the same F# MERGE compiler, typed Host DML coordinator and existing `execute_dml_sql` entrypoint. A new approval-mode enum member is required internally; **no new MCP tool**, SQL driver or DB migration. All six-provider safety fences and the four default read-only selections with DML off are preserved.
+
+
 ### G9 — SQL Server MERGE matched DELETE, actual Host row-set approval (develop only)
 
 - Promote **only** a single native SQL Server 2022 `MERGE INTO dbo.<table> AS t USING (VALUES(<exact INT>)) AS s (<key>) ON t.<key>=s.<key> WHEN MATCHED THEN DELETE` from Compiler-only HOLDLOCK support to a complete `execute_dml_sql` Host Preview → one-use Approval → Commit. Reject UPDATE, NOT MATCHED INSERT, combined actions, multirow/composite-key matches, arbitrary ON predicates, unverified providers and atomic MERGE batches.
