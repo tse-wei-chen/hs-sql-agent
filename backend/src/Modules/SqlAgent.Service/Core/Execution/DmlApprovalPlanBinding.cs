@@ -58,7 +58,7 @@ internal static class DmlApprovalPlanBinding
 
         if (plan.NativeConflictDoUpdateProof is { } updateProof)
         {
-            Append(hash, "native-postgres-conflict-update-bounded-text-v2");
+            Append(hash, "native-postgres-conflict-update-typed-null-v3");
             Append(hash, updateProof.PhysicalTarget);
             Append(hash, updateProof.UniqueKeyColumn);
             Append(hash, updateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
