@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 — PostgreSQL one-row DO NOTHING direct key RETURNING (develop only)
+
+- Extend the proven single-row native PostgreSQL `ON CONFLICT (id) DO NOTHING` Host approval with **`RETURNING id` only** when the direct projected column exactly matches the sole physically enforced, non-null INT2/INT4/INT8 UNIQUE key. The closed F# strict schema model and native Host structural admission reject non-key, wildcard, duplicate, aliased, qualified, computed and system RETURNING items; SQLite conflict skip remains unchanged and still forbids RETURNING.
+- Preview keeps the same key-presence check, one-time approval, schema fingerprint and transaction-held `SHARE ROW EXCLUSIVE NOWAIT` key/index freshness verification. Only the actual PostgreSQL row from a **confirmed inserted and committed** mutation is published; an approved DO NOTHING skip produces an empty result set. Changed conflict state, revoked index and replay fail closed, without result-row leakage.
+- Reuse the existing `execute_dml_sql` structured `ReturnedRows`, native compiler and metadata reads. No new public API, MCP tool, driver, migration or atomic conflict batch capability. Default four selected read-only tools and DML-off remain unchanged; strong table-lock write contention remains a deliberate tradeoff.
+
+
 ### G9 — PostgreSQL bounded native conflict UPDATE direct RETURNING (develop only)
 
 - Allow 1–5 distinct unqualified physical direct columns in `RETURNING` on the already proven single-row PostgreSQL `ON CONFLICT (id) DO UPDATE SET field=EXCLUDED.field` Host approval. Columns must be a subset of the exact physical key + 1–4 values, and the existing F# strict snapshot and Host structural gate both reject wildcards, expressions, aliases, qualified/duplicate or system fields. No broader UPSERT or source dialect capability is implied.
