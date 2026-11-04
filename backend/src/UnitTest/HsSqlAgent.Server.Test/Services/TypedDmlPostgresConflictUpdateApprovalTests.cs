@@ -100,7 +100,7 @@ public sealed class TypedDmlPostgresConflictUpdateApprovalTests(PostgresDdlLiveF
     [InlineData("DO UPDATE SET name='forced'")]
     [InlineData("DO UPDATE SET name=upper(EXCLUDED.name)")]
     [InlineData("DO UPDATE SET name=EXCLUDED.name WHERE users.name <> EXCLUDED.name")]
-    [InlineData("DO UPDATE SET name=EXCLUDED.name RETURNING id")]
+    [InlineData("DO UPDATE SET name=EXCLUDED.name RETURNING *")]
     [InlineData("DO UPDATE SET name=EXCLUDED.name, id=EXCLUDED.id")]
     public async Task NativePg_UnprovenUpdateFormsNeverAuthorize(string action)
     {

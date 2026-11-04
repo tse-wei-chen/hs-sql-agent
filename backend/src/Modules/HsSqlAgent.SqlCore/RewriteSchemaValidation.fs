@@ -775,8 +775,7 @@ module internal RewriteSchemaValidation =
                                  && NonEmpty.length assignments >= 1
                                  && NonEmpty.length assignments <= 4
                                  && NonEmpty.length rows = 1
-                                 && insert.Columns.Length = NonEmpty.length assignments + 1
-                                 && insert.Returning.IsEmpty ->
+                                 && insert.Columns.Length = NonEmpty.length assignments + 1 ->
                             let singleTarget = NonEmpty.toList targets |> List.head
                             match Identifier.parts singleTarget with
                             | [ key ] ->
@@ -804,6 +803,21 @@ module internal RewriteSchemaValidation =
                                     insert.Columns |> List.map (keyPart catalog.Dialect)
                                 let distinctUpdates = updates |> List.distinct
                                 let distinctDeclared = declared |> List.distinct
+                                let returningColumns =
+                                    insert.Returning |> List.choose (function
+                                        | ReturningColumn(identifier, None) ->
+                                            match Identifier.parts identifier with
+                                            | [ part ] -> Some(keyPart catalog.Dialect part)
+                                            | _ -> None
+                                        | _ -> None)
+                                let returningProven =
+                                    insert.Returning.Length <= 5
+                                    && insert.Returning.Length <= declared.Length
+                                    && returningColumns.Length = insert.Returning.Length
+                                    && (returningColumns |> List.distinct).Length = returningColumns.Length
+                                    && (returningColumns |> List.forall (fun name ->
+                                        List.contains name declared
+                                        && countColumn target name = 1))
                                 updates.Length = allAssignments.Length
                                 && distinctUpdates.Length = updates.Length
                                 && distinctDeclared.Length = declared.Length
@@ -811,8 +825,7 @@ module internal RewriteSchemaValidation =
                                 && (declared |> List.filter ((=) keyName)).Length = 1
                                 && (updates |> List.forall (fun name ->
                                     (declared |> List.filter ((=) name)).Length = 1))
-                            | _ -> false
-                        | _ -> false
+                                && returningProven
                             | _ -> false
                         | _ -> false
                     if not closedSkip then

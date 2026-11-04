@@ -89,10 +89,10 @@ internal static class NativeSingleRowConflictSafety
             || conflict.TargetColumns.Length != 1
             || insert.Source is not InsertValuesSource values
             || values.Rows.Length != 1
-            || !insert.Returning.IsDefaultOrEmpty
+            || (!update && !insert.Returning.IsDefaultOrEmpty)
             || insert.Target.Alias is not null)
             throw new NotSupportedException(
-                "Native conflict skip permits one explicit UNIQUE key target, one VALUES row and DO NOTHING without RETURNING.");
+                "Native conflict approval requires one explicit UNIQUE key and one VALUES row; DO NOTHING forbids RETURNING, while PostgreSQL DO UPDATE allows only bounded direct-column RETURNING.");
 
         var targetIdentifier = conflict.TargetColumns[0];
         if (targetIdentifier.Parts.Length != 1)
@@ -178,6 +178,27 @@ internal static class NativeSingleRowConflictSafety
             || insert.Columns.Any(col => !seen.Contains(col.Parts[0].Value)))
             throw new NotSupportedException(
                 "Native PostgreSQL conflict update must update all and only explicitly inserted non-key columns.");
+
+        // RETURNING is only the post-commit projection of columns already
+        // covered by the sealed physical before/after plan. Never permit an
+        // expression, wildcard, system field, alias or ambiguous identifier
+        // to expand the native approval's row or effect scope.
+        if (!insert.Returning.IsDefaultOrEmpty)
+        {
+            if (insert.Returning.Length > insert.Columns.Length
+                || insert.Returning.Length > 5)
+                throw new NotSupportedException(
+                    "Native PostgreSQL conflict UPDATE RETURNING is bounded to at most five approved physical fields.");
+            var returningNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in insert.Returning)
+            {
+                if (item is not DmlReturningColumnItem { Identifier.Parts.Length: 1 } direct
+                    || !seen.Contains(direct.Identifier.Parts[0].Value)
+                    || !returningNames.Add(direct.Identifier.Parts[0].Value))
+                    throw new NotSupportedException(
+                        "Native PostgreSQL conflict UPDATE RETURNING requires distinct unqualified direct approved columns.");
+            }
+        }
 
         // User-chosen physical identifiers must not override synthetic
         // approval display labels (notably __action) or other before/after

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 — PostgreSQL bounded native conflict UPDATE direct RETURNING (develop only)
+
+- Allow 1–5 distinct unqualified physical direct columns in `RETURNING` on the already proven single-row PostgreSQL `ON CONFLICT (id) DO UPDATE SET field=EXCLUDED.field` Host approval. Columns must be a subset of the exact physical key + 1–4 values, and the existing F# strict snapshot and Host structural gate both reject wildcards, expressions, aliases, qualified/duplicate or system fields. No broader UPSERT or source dialect capability is implied.
+- Preview and one-use approval still bind the entire before/after row, immutable proposed payload, exact compiled SQL and complete physical schema digest. Commit rechecks all values and index/catalog drift under `SHARE ROW EXCLUSIVE NOWAIT` and returns only the actual PostgreSQL output row after a successful atomic commit, including SQL NULL. Stale approvals return no result rows; replay fails closed.
+- Reuse existing `execute_dml_sql` structured `ReturnedRows` plumbing. No new MCP tool, public API, driver or metadata round trip. DML batches containing native conflict updates still fail closed. Default four read-only MCP selections and DML off remain unchanged. The table-level writer concurrency cost is unchanged; SqlCore benchmark measures compiler regression, not Host throughput.
+
+
 ### G9/M13 safety fence — Original integer token and quoted-column row identity (develop only)
 
 - The PostgreSQL Host's typed `ON CONFLICT DO UPDATE` approval now attests each proposed SMALLINT/INTEGER/BIGINT value against the **original F#-parsed source span**. Lexical values such as `1e10`, `4.2e1`, `42.0` are rejected for Host execution approval even if F# accurately normalizes them to integral values. Real plain decimal integers including signed values remain eligible after existing physical range/type, uniqueness and transaction rechecks. The general F# SQL parser is unaffected.
