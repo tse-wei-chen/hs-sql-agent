@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M13 safety fence — Original integer token and quoted-column row identity (develop only)
+
+- The PostgreSQL Host's typed `ON CONFLICT DO UPDATE` approval now attests each proposed SMALLINT/INTEGER/BIGINT value against the **original F#-parsed source span**. Lexical values such as `1e10`, `4.2e1`, `42.0` are rejected for Host execution approval even if F# accurately normalizes them to integral values. Real plain decimal integers including signed values remain eligible after existing physical range/type, uniqueness and transaction rechecks. The general F# SQL parser is unaffected.
+- PostgreSQL quoted case-sensitive key/value columns that alias under the shared row-fingerprint's case-insensitive field lookup are denied (e.g. `id` and `"ID"`); case-folded synthetic before/after label collisions such as `"__ACTION"` are also denied. This is deliberately Host-local, without broadening globally shared six-provider name semantics.
+- Keep the already merged M13 TEXT/SMALLINT/INTEGER/BIGINT/SQL NULL scope, physical Catalog proof, one-use approval, `SHARE ROW EXCLUSIVE NOWAIT` commit lock, and default four read-only MCP tools with DML disabled. No new parser, extra DB round trip, public API, driver or MCP tool. See real PostgreSQL RED→GREEN tests and independent SqlCore baseline in the PR.
+
+
 ### G9/M13 — Native PostgreSQL exact signed integer and SQL NULL-aware conflict UPDATE approval (develop only)
 
 - Extend the existing bounded 1–4-field PostgreSQL `ON CONFLICT (id) DO UPDATE SET field=EXCLUDED.field` typed Host path from TEXT NOT NULL only to **exact TEXT, SMALLINT, INTEGER, BIGINT**, where each physical value column may be nullable or NOT NULL. A proposed string must match physical TEXT, a signed integral literal must fit the exact physical INT2/4/8 range, and SQL NULL is admitted only when the real column permits NULL; reject implicit text→number coercion, float/fractional values, date/time/NUMERIC/UUID and expressions. The single sole immediate BIGINT unique/primary key remains NOT NULL.
