@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M13 — Native PostgreSQL exact signed integer and SQL NULL-aware conflict UPDATE approval (develop only)
+
+- Extend the existing bounded 1–4-field PostgreSQL `ON CONFLICT (id) DO UPDATE SET field=EXCLUDED.field` typed Host path from TEXT NOT NULL only to **exact TEXT, SMALLINT, INTEGER, BIGINT**, where each physical value column may be nullable or NOT NULL. A proposed string must match physical TEXT, a signed integral literal must fit the exact physical INT2/4/8 range, and SQL NULL is admitted only when the real column permits NULL; reject implicit text→number coercion, float/fractional values, date/time/NUMERIC/UUID and expressions. The single sole immediate BIGINT unique/primary key remains NOT NULL.
+- Reuse the closed F# strict DML AST/grammar, the physical full-index/trigger schema digest, sole-key proof, full old-row fingerprint, one-time challenge and `SHARE ROW EXCLUSIVE NOWAIT` transaction-held lock. Preview shows real SQL NULL before/after alongside all other values, including NULL→value, value→NULL and NULL→NULL; commit re-attests type/nullability and every old value before executing the F#-compiled parameterized statement. No new database round trip, MCP tool, public API, dependency or changes to default four read-only tools / DML unchecked.
+- Bump the internal conflict-update approval-binding discriminator to `v3`. In-flight M12 approvals must be previewed anew after upgrade. Host write concurrency is still limited by the deliberately strong table lock; SqlCore compilation baseline measures a different path and is not evidence of better Host throughput.
+
+
 ### G9/M12 — Bounded PostgreSQL multi-column conflict UPDATE approval (develop only)
 
 - Reuse M11's native PostgreSQL typed Host `ON CONFLICT DO UPDATE` plan, Preview, one-time approval and commit-time `SHARE ROW EXCLUSIVE NOWAIT` physical table lock; support **1–4 exactly matching `TEXT NOT NULL` proposed columns**, including new 2–4 value-column cases. The source is one VALUES row with an exact non-NULL BIGINT sole simple immediate PRIMARY/UNIQUE key; assignments must cover every inserted non-key column through `SET column = EXCLUDED.column`, without duplicates, other expressions, NULL or partial updates.
