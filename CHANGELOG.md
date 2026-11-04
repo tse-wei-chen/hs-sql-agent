@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9/M13 — PostgreSQL native typed conflict UPDATE values (develop only)
+
+- Expand the proven single-row `ON CONFLICT (id) DO UPDATE SET col = EXCLUDED.col` Host approval from 1–4 `TEXT NOT NULL` columns to **1–4 mixed `TEXT NOT NULL` and exact `BIGINT NOT NULL` value columns**. The sole physical key remains NOT NULL BIGINT and must have the table's only simple, immediately enforced UNIQUE/PRIMARY index. An exact integer literal is required for BIGINT; string casts, fractional/exponent numbers, NULL, overflow and mismatched physical types fail closed.
+- Reuse the existing F# closed DML AST, compiled mutation, per-field before/after preview, one-time approval, whole-row fingerprint and PostgreSQL transaction-held `SHARE ROW EXCLUSIVE NOWAIT` lock. The Host's full physical Catalog proof now compares each declared value column's actual TEXT/BIGINT type, NOT NULL and absence of defaults, extra columns/indexes, CHECK/foreign keys, user triggers, rewrite rules, partitioning, inheritance and RLS. Every old value and proposal is still bound to the same approval; no new MCP tool or public DML API.
+- Version native typed approval bindings to v3 and seal the BIGINT column list: **in-flight M12 previews require a fresh Preview** after deployment. Existing TEXT-only UPSERT and SQLite/PostgreSQL DO NOTHING remain valid. Table-lock write contention is intentional, not a measured speedup; dates, floating point, smaller integers, NUMERIC and nullable values remain unsupported.
+
+
 ### G9/M12 — Bounded PostgreSQL multi-column conflict UPDATE approval (develop only)
 
 - Reuse M11's native PostgreSQL typed Host `ON CONFLICT DO UPDATE` plan, Preview, one-time approval and commit-time `SHARE ROW EXCLUSIVE NOWAIT` physical table lock; support **1–4 exactly matching `TEXT NOT NULL` proposed columns**, including new 2–4 value-column cases. The source is one VALUES row with an exact non-NULL BIGINT sole simple immediate PRIMARY/UNIQUE key; assignments must cover every inserted non-key column through `SET column = EXCLUDED.column`, without duplicates, other expressions, NULL or partial updates.
