@@ -56,6 +56,36 @@ public sealed class CoreNativeStrictSnapshotConflictSkipTests
     }
 
     [Fact]
+    public void PostgresStrictSnapshot_DoNothingReturningOnlyExactConflictKey()
+    {
+        const string sql =
+            "INSERT INTO users (id, name) VALUES (7,'n') ON CONFLICT (id) DO NOTHING RETURNING id";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var command = CoreDmlCompiler.CreateDefault().Compile(parsed,
+            SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres));
+        Assert.True(command.ReturnsRows);
+        Assert.Contains("RETURNING", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("RETURNING name")]
+    [InlineData("RETURNING id,name")]
+    [InlineData("RETURNING id,id")]
+    [InlineData("RETURNING *")]
+    [InlineData("RETURNING id AS renamed")]
+    [InlineData("RETURNING users.id")]
+    public void PostgresStrictSnapshot_DoNothingOtherReturningFormsFailClosed(string returning)
+    {
+        var sql = "INSERT INTO users (id,name) VALUES (7,'n') " +
+            "ON CONFLICT(id) DO NOTHING " + returning;
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var failure = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(parsed,
+                SqlAgentToolType.Postgres, Context(SqlAgentToolType.Postgres)));
+        Assert.Contains("Strict snapshot", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void PostgresStrictSnapshot_OneProposedColumnConflictUpdate_ProvesShapeNotPhysicalKey()
     {
         const string sql =
