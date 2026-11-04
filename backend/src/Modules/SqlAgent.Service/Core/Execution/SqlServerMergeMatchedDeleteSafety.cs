@@ -103,7 +103,7 @@ internal static class SqlServerMergeMatchedDeleteSafety
                     "MERGE matched approval permits DELETE or bounded direct-column UPDATE only, never INSERT or mixed actions.");
         }
         return new Shape("dbo", merge.Target.Name.Parts[1].Value, key,
-            sourceValues[0], updated.MoveToImmutable());
+            sourceValues[0], updated.ToImmutable());
     }
 
     internal static void RequireExactSourceLiterals(
