@@ -11,6 +11,43 @@ public sealed class CoreDmlMergeMilestoneTests
         "WHEN MATCHED THEN UPDATE SET quantity = s.quantity " +
         "WHEN NOT MATCHED THEN INSERT (id, quantity) VALUES (s.id, s.quantity);";
 
+    private static SqlPlanValidationContext StrictNativeMergeContext() =>
+        new SqlPlanValidationContext("sqlserver-mergedelete-strict-v1").WithSchemaSnapshot(
+            new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer, "physical-catalog-fixture-v1",
+                [new SqlSchemaTable("dbo.inventory", ["id", "quantity"])]));
+
+    [Fact]
+    public void StrictSnapshot_SingleExactKeyMatchedDelete_ProvesOnlySourceAndTargetNames()
+    {
+        const string sql =
+            "MERGE INTO dbo.inventory AS t USING (VALUES (7)) AS s (id) " +
+            "ON t.id = s.id WHEN MATCHED THEN DELETE;";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer);
+        var compiled = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, SqlAgentToolType.MsSqlServer, StrictNativeMergeContext(),
+            conflictTargetAssurance: DmlConflictTargetAssurance.FromPrimaryKey(["id"]));
+        Assert.Equal(SqlStatementKind.Merge, compiled.Kind);
+        Assert.Contains("WITH (HOLDLOCK)", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        // The virtual fixture proves the key name, not physical UNIQUE or Host execution.
+    }
+
+    [Theory]
+    [InlineData("ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.quantity", "(VALUES (7,9)) AS s (id,quantity)")]
+    [InlineData("ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id) VALUES(s.id)", "(VALUES (7)) AS s (id)")]
+    [InlineData("ON t.id=s.id AND t.quantity=10 WHEN MATCHED THEN DELETE", "(VALUES (7)) AS s (id)")]
+    public void StrictSnapshot_UnprovenMergeEffect_IsRejected(
+        string matchAndAction, string source)
+    {
+        var sql = "MERGE INTO dbo.inventory AS t USING " + source + " " +
+            matchAndAction + ";";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer);
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                parsed, SqlAgentToolType.MsSqlServer, StrictNativeMergeContext(),
+                conflictTargetAssurance: DmlConflictTargetAssurance.FromPrimaryKey(["id"])));
+        Assert.Contains("Strict snapshot", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static TheoryData<string> PositiveGrammarCases => new()
     {
         "MERGE INTO inventory AS t USING (VALUES (1, 3)) AS s (id, quantity) ON t.id = s.id WHEN MATCHED THEN UPDATE SET quantity = s.quantity;",
