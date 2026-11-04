@@ -1,3 +1,4 @@
+using System.Globalization;
 using HsSqlAgent.SqlCore.Core.Ast;
 
 namespace SqlAgent.Service.Core.Execution;
@@ -63,6 +64,26 @@ internal static class SqlServerMergeMatchedDeleteSafety
                 "SQL Server MERGE approval requires exactly one direct t.<key> = s.<key> equality, no extra predicates or coercions.");
 
         return new Shape("dbo", merge.Target.Name.Parts[1].Value, key, value.Value);
+    }
+
+    internal static void RequireExactSourceKeyToken(
+        MergeStatement merge, int provenValue, string? rawSql)
+    {
+        // F# may normalize a scientific/fractional source spelling to a
+        // mathematically integral value. Do not let such a token acquire the
+        // stricter physical INT-match approval by canonicalization.
+        var source = merge.SourceValues[0].Span;
+        if (string.IsNullOrEmpty(rawSql)
+            || source.Start < 0 || source.End <= source.Start
+            || source.End > rawSql.Length)
+            throw new NotSupportedException(
+                "SQL Server MERGE approval requires the original F# source-key token span.");
+        var token = rawSql.AsSpan(source.Start, source.End - source.Start).Trim();
+        if (!int.TryParse(token, NumberStyles.AllowLeadingSign,
+                CultureInfo.InvariantCulture, out var actual)
+            || actual != provenValue)
+            throw new NotSupportedException(
+                "SQL Server MERGE key must use a plain exact INT literal, not fractional, scientific or implicit-cast syntax.");
     }
 
     private static bool IsExactKey(SqlExpr expression, string alias, string key) =>
