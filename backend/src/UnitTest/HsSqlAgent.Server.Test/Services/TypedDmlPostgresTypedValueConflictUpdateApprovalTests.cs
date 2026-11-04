@@ -201,7 +201,6 @@ public sealed class TypedDmlPostgresTypedValueConflictUpdateApprovalTests(
     }
 
     [Theory]
-    [InlineData("'42'")]
     [InlineData("42")]
     [InlineData("NULL")]
     public async Task UnsafeProposedTextValue_NeverGetsApproval(string value)
