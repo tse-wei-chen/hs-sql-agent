@@ -66,7 +66,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -1056,6 +1056,13 @@ jobs:
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
           --filter 'FullyQualifiedName~SqlCoreSqlServerMergeHoldLockLiveTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify SQL Server MERGE MATCHED DELETE Host Preview, Approval and Commit on live key
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~SqlServerMergeMatchedDeleteApprovalLiveTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 

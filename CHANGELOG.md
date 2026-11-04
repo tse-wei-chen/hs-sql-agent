@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 — SQL Server MERGE matched DELETE, actual Host row-set approval (develop only)
+
+- Promote **only** a single native SQL Server 2022 `MERGE INTO dbo.<table> AS t USING (VALUES(<exact INT>)) AS s (<key>) ON t.<key>=s.<key> WHEN MATCHED THEN DELETE` from Compiler-only HOLDLOCK support to a complete `execute_dml_sql` Host Preview → one-use Approval → Commit. Reject UPDATE, NOT MATCHED INSERT, combined actions, multirow/composite-key matches, arbitrary ON predicates, unverified providers and atomic MERGE batches.
+- Reuse the F# closed MERGE AST, Strict Snapshot name/shape proof, native SQL Server actual sole enforced non-identity INT PRIMARY key, built-in full column/index/trigger/schema digest, and compiled `MERGE WITH (HOLDLOCK)`. Preview exposes 0 or 1 physical primary-key identity, sealing the actual key, compiled match/mutation SQL, schema SHA, actor and policy in a single-use challenge. The compiled DML may **only** execute after a transaction-held `SERIALIZABLE` `TABLOCKX/HOLDLOCK` target pin, fresh catalog digest and complete approved key-rowset recheck. Changed row presence or revoked key/index/schema cancels without side effects.
+- Existing `DmlCoordinator` verifies exact affected-row count and confirmed transaction commit; no new MCP tool, public API, SQL driver, approval coordinator or metadata bypass. Strong target table lock intentionally reduces write concurrency. Default four read-only MCP tools stay selected and DML unchecked; no generic MERGE support implied.
+
+
 ### G9 — PostgreSQL one-row DO NOTHING direct key RETURNING (develop only)
 
 - Extend the proven single-row native PostgreSQL `ON CONFLICT (id) DO NOTHING` Host approval with **`RETURNING id` only** when the direct projected column exactly matches the sole physically enforced, non-null INT2/INT4/INT8 UNIQUE key. The closed F# strict schema model and native Host structural admission reject non-key, wildcard, duplicate, aliased, qualified, computed and system RETURNING items; SQLite conflict skip remains unchanged and still forbids RETURNING.

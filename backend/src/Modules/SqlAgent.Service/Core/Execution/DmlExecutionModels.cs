@@ -23,7 +23,9 @@ public enum DmlApprovalMode
     /// <summary>Native SQLite/PostgreSQL single-row DO NOTHING: sole physical UNIQUE key must be rechecked at commit.</summary>
     InsertConflictDoNothing,
     /// <summary>PostgreSQL one-row conflict UPDATE: bind every old and proposed TEXT column.</summary>
-    InsertConflictDoUpdate
+    InsertConflictDoUpdate,
+    /// <summary>Native SQL Server single-source INT primary-key MATCHED DELETE; no INSERT/UPDATE branches.</summary>
+    SqlServerMergeMatchedDelete
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
@@ -47,6 +49,15 @@ internal sealed record NativeConflictDoUpdateProof(
     string PhysicalTarget,
     string UniqueKeyColumn,
     ImmutableArray<string> UpdatedColumns,
+    string MutationFingerprint,
+    string TargetQueryFingerprint,
+    string SchemaSha256);
+
+/// <summary>Live SQL Server one-row MERGE delete authority; only the trusted factory may mint it.</summary>
+internal sealed record SqlServerMergeMatchedDeleteProof(
+    string PhysicalTarget,
+    string UniqueKeyColumn,
+    int KeyValue,
     string MutationFingerprint,
     string TargetQueryFingerprint,
     string SchemaSha256);
@@ -82,6 +93,8 @@ public sealed record ValidatedDmlPlan(
     internal NativeConflictDoNothingProof? NativeConflictDoNothingProof { get; init; }
 
     internal NativeConflictDoUpdateProof? NativeConflictDoUpdateProof { get; init; }
+
+    internal SqlServerMergeMatchedDeleteProof? SqlServerMergeMatchedDeleteProof { get; init; }
 }
 
 public sealed record DmlPreview(

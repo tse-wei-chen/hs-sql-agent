@@ -69,6 +69,17 @@ internal static class DmlApprovalPlanBinding
             Append(hash, updateProof.SchemaSha256);
         }
 
+        if (plan.SqlServerMergeMatchedDeleteProof is { } mergeProof)
+        {
+            Append(hash, "native-sqlserver-merge-matched-delete-v1");
+            Append(hash, mergeProof.PhysicalTarget);
+            Append(hash, mergeProof.UniqueKeyColumn);
+            Append(hash, mergeProof.KeyValue.ToString(CultureInfo.InvariantCulture));
+            Append(hash, mergeProof.MutationFingerprint);
+            Append(hash, mergeProof.TargetQueryFingerprint);
+            Append(hash, mergeProof.SchemaSha256);
+        }
+
         if (plan.MatchQueryCommand is { } match)
         {
             Append(hash, "match-query");

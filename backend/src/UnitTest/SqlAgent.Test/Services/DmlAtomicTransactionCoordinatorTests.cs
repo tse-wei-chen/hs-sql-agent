@@ -151,6 +151,26 @@ public sealed class DmlAtomicTransactionCoordinatorTests
                 TestContext.Current.CancellationToken, serverVersion));
     }
 
+    [Theory]
+    [InlineData(DmlApprovalMode.SqlServerMergeMatchedDelete)]
+    [InlineData(DmlApprovalMode.InsertConflictDoUpdate)]
+    public async Task AtomicCoordinator_RejectsNativeMergeAndConflictUpdateBeforeConnection(
+        DmlApprovalMode unsafeMode)
+    {
+        var factory = new SqliteConnectionFactory();
+        var original = CreateInsertPlan(7, "Alice", "policy-atomic-fail-closed");
+        const string version = "3.46.0";
+        var preview = await new DmlCoordinator(factory).PreviewAsync(
+            "Data Source=:memory:", original, ApprovalContextFingerprint,
+            TestContext.Current.CancellationToken, version);
+        var forged = original with { ApprovalMode = unsafeMode };
+        var coordinator = new DmlAtomicTransactionCoordinator(factory);
+        var error = await Assert.ThrowsAsync<NotSupportedException>(() =>
+            coordinator.CommitAsync("Data Source=:memory:", [forged], [preview],
+                TestContext.Current.CancellationToken, version));
+        Assert.Contains("single-statement", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task SingleDmlMutationFailure_PreservesPrimarySqlErrorWhenConnectionDisposeFails()
     {
