@@ -58,11 +58,14 @@ internal static class DmlApprovalPlanBinding
 
         if (plan.NativeConflictDoUpdateProof is { } updateProof)
         {
-            Append(hash, "native-postgres-conflict-update-bounded-text-v2");
+            Append(hash, "native-postgres-conflict-update-bounded-typed-v3");
             Append(hash, updateProof.PhysicalTarget);
             Append(hash, updateProof.UniqueKeyColumn);
             Append(hash, updateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
             foreach (var column in updateProof.UpdatedColumns)
+                Append(hash, column);
+            Append(hash, updateProof.BigintColumns.Length.ToString(CultureInfo.InvariantCulture));
+            foreach (var column in updateProof.BigintColumns)
                 Append(hash, column);
             Append(hash, updateProof.MutationFingerprint);
             Append(hash, updateProof.TargetQueryFingerprint);
