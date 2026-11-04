@@ -453,7 +453,7 @@ public sealed class DmlPlanFactory(
             InsertRows: insertedValues,
             SchemaSnapshot: snapshot)
         {
-            SqlServerMergeMatchedDeleteProof = shape.IsUpdate ? null :
+            SqlServerMergeMatchedDeleteProof = shape.IsInsert || shape.IsUpdate ? null :
                 new SqlServerMergeMatchedDeleteProof(
                     shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
                     fingerprint, matchFingerprint, snapshot.Sha256),

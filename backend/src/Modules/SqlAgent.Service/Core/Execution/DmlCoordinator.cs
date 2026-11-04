@@ -903,6 +903,7 @@ public sealed class DmlCoordinator(
             || proof.InsertColumns.IsDefaultOrEmpty
             || proof.InsertColumns.Length is < 2 or > 4
             || proof.InsertValues.Length != proof.InsertColumns.Length
+            || plan.InsertRows.IsDefaultOrEmpty
             || plan.InsertRows.Length != 1
             || plan.InsertRows[0].Count != proof.InsertColumns.Length
             || !string.Equals(proof.PhysicalTarget, plan.TableName, StringComparison.Ordinal)
