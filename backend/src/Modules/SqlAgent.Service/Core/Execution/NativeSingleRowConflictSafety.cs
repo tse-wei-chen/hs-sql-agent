@@ -101,6 +101,10 @@ internal static class NativeSingleRowConflictSafety
         // receive its identically named EXCLUDED value. No partial updates,
         // duplicate SET targets or implicit source values can be approved.
         var seen = new HashSet<string>(StringComparer.Ordinal) { key };
+        // The shared row-set fingerprint reader currently resolves column
+        // keys without case sensitivity. Reject distinct PostgreSQL quoted
+        // columns which it could otherwise confuse during revalidation.
+        var fingerprintNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { key };
         var updated = ImmutableArray.CreateBuilder<string>(conflict.Assignments.Length);
         var bigint = ImmutableArray.CreateBuilder<string>();
         foreach (var assignment in conflict.Assignments)
@@ -112,9 +116,10 @@ internal static class NativeSingleRowConflictSafety
                     "Native PostgreSQL conflict update requires only SET column = EXCLUDED.column assignments.");
             var name = assignment.Column.Parts[0].Value;
             if (!string.Equals(name, proposed.Parts[0].Value, StringComparison.Ordinal)
-                || !seen.Add(name))
+                || !seen.Add(name)
+                || !fingerprintNames.Add(name))
                 throw new NotSupportedException(
-                    "Native PostgreSQL conflict update requires distinct, exact-case matching EXCLUDED column assignments.");
+                    "Native PostgreSQL conflict update requires distinct, exact-case matching EXCLUDED columns without case-folded row-fingerprint ambiguity.");
             var ordinal = -1;
             for (var index = 0; index < insert.Columns.Length; index++)
                 if (insert.Columns[index].Parts.Length == 1
@@ -149,7 +154,7 @@ internal static class NativeSingleRowConflictSafety
         // User-chosen physical identifiers must not override synthetic
         // approval display labels (notably __action) or other before/after
         // fields. An ambiguous preview must never mint an execution approval.
-        var displayFields = new HashSet<string>(StringComparer.Ordinal) { "__action" };
+        var displayFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "__action" };
         if (!displayFields.Add(key))
             throw new NotSupportedException(
                 "PostgreSQL conflict key collides with an approval preview field.");
