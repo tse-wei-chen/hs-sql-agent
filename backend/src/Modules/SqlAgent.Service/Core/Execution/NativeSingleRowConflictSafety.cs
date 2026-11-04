@@ -11,7 +11,41 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 internal static class NativeSingleRowConflictSafety
 {
-    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue, ImmutableArray<string> UpdatedColumns = default);
+    internal enum ProposedKind { Text, ExactInteger, SqlNull }
+
+    internal sealed record ProposedValue(string Column, ProposedKind Kind, long Integer = 0);
+
+    internal sealed record Shape(
+        string UniqueKeyColumn,
+        long UniqueKeyValue,
+        ImmutableArray<string> UpdatedColumns = default,
+        ImmutableArray<ProposedValue> ProposedValues = default);
+
+    // The F# -> CLR AST sometimes expresses a signed integer as UnaryExpr.
+    // Admit unary +/- ONLY around a single exact integral literal. Never
+    // evaluate arithmetic, floating point, implicit conversions or functions.
+    internal static long? ExactIntegerLiteral(SqlExpr expression)
+    {
+        static decimal? DecimalLiteral(SqlExpr value) => value switch
+        {
+            LiteralExpr { Value: int n } => n,
+            LiteralExpr { Value: long n } => n,
+            LiteralExpr { Value: decimal n } => n,
+            _ => null
+        };
+        decimal? candidate = expression switch
+        {
+            UnaryExpr { Operator: "-", Operand: var operand }
+                when DecimalLiteral(operand) is decimal magnitude => -magnitude,
+            UnaryExpr { Operator: "+", Operand: var operand }
+                when DecimalLiteral(operand) is decimal magnitude => magnitude,
+            _ => DecimalLiteral(expression)
+        };
+        return candidate is decimal n
+            && n == decimal.Truncate(n)
+            && n >= long.MinValue && n <= long.MaxValue
+            ? (long)n : null;
+    }
 
     internal static bool IsBoundedShape(InsertStatement insert) =>
         IsBoundedShape(insert, SqlAgentToolType.Sqlite)
@@ -98,6 +132,7 @@ internal static class NativeSingleRowConflictSafety
         // duplicate SET targets or implicit source values can be approved.
         var seen = new HashSet<string>(StringComparer.Ordinal) { key };
         var updated = ImmutableArray.CreateBuilder<string>(conflict.Assignments.Length);
+        var proposedValues = ImmutableArray.CreateBuilder<ProposedValue>(conflict.Assignments.Length);
         foreach (var assignment in conflict.Assignments)
         {
             if (assignment.Column.Parts.Length != 1
@@ -119,10 +154,21 @@ internal static class NativeSingleRowConflictSafety
                         throw new NotSupportedException("Duplicate PostgreSQL INSERT column cannot be approved.");
                     ordinal = index;
                 }
-            if (ordinal < 0 || values.Rows[0][ordinal] is not LiteralExpr { Value: string })
+            if (ordinal < 0)
                 throw new NotSupportedException(
-                    "Native PostgreSQL conflict update requires a literal non-NULL TEXT value for every updated column.");
+                    "Native PostgreSQL conflict update requires an explicit literal value for each updated column.");
+            var expression = values.Rows[0][ordinal];
+            var kind = expression switch
+            {
+                LiteralExpr { Value: string } => ProposedKind.Text,
+                LiteralExpr { Value: null } => ProposedKind.SqlNull,
+                _ when ExactIntegerLiteral(expression) is not null => ProposedKind.ExactInteger,
+                _ => throw new NotSupportedException(
+                    "Native PostgreSQL conflict update requires exact TEXT, signed INT64 or SQL NULL literals; no casts or expressions.")
+            };
             updated.Add(name);
+            proposedValues.Add(new ProposedValue(name, kind,
+                kind == ProposedKind.ExactInteger ? ExactIntegerLiteral(expression)!.Value : 0));
         }
         if (seen.Count != insert.Columns.Length
             || insert.Columns.Any(col => !seen.Contains(col.Parts[0].Value)))
@@ -141,6 +187,7 @@ internal static class NativeSingleRowConflictSafety
                 || !displayFields.Add("__after_" + name))
                 throw new NotSupportedException(
                     "PostgreSQL physical identifiers collide with approval before/after preview fields.");
-        return new Shape(key, exactInteger.Value, updated.MoveToImmutable());
+        return new Shape(key, exactInteger.Value,
+            updated.MoveToImmutable(), proposedValues.MoveToImmutable());
     }
 }
