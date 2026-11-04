@@ -109,10 +109,52 @@ public sealed class TypedDmlPostgresTypedValueConflictUpdateApprovalTests(
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FourBigintColumns_WithoutText_AllBeforeAfterRemainBound(bool existing)
+    {
+        await WithTableAsync(
+            "id BIGINT PRIMARY KEY, quantity BIGINT NOT NULL, " +
+            "revision BIGINT NOT NULL, score BIGINT NOT NULL, seq BIGINT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                if (existing)
+                    await ExecAsync(cs,
+                        $"INSERT INTO {schema}.users VALUES (7,1,2,3,4)", token);
+                var names = new[] { "quantity", "revision", "score", "seq" };
+                var proposed = new[] { "42", "2147483648", "99", "100" };
+                var session = await PreviewAsync(provider, cs, schema, runtime, token,
+                    MakeSql(schema, names, proposed, reverseAssignments: true));
+                Assert.Equal(1, session.Preview.AffectedRows);
+                var preview = Assert.Single(session.Preview.Rows);
+                Assert.Equal(existing ? "UPDATE" : "INSERT", preview["__action"]);
+                for (var i = 0; i < names.Length; i++)
+                {
+                    if (existing)
+                        Assert.Equal((long)i + 1,
+                            Convert.ToInt64(preview["__before_" + names[i]]));
+                    else
+                        Assert.Null(preview["__before_" + names[i]]);
+                    Assert.Equal(long.Parse(proposed[i]),
+                        Convert.ToInt64(preview["__after_" + names[i]]));
+                }
+                var result = await runtime.CommitAsync(provider, cs, session,
+                    Policy, Allowed(schema), Context, token);
+                Assert.True(result.Committed);
+                Assert.Equal(1, result.AffectedRows);
+                for (var i = 0; i < names.Length; i++)
+                    Assert.Equal(proposed[i], await ScalarAsync(cs,
+                        $"SELECT {names[i]}::text FROM {schema}.users WHERE id=7", token));
+            });
+    }
+
+    [Theory]
     [InlineData(false, "42")]
     [InlineData(true, "42")]
     [InlineData(false, "2147483648")]
     [InlineData(true, "2147483648")]
+    [InlineData(false, "-12")]
+    [InlineData(true, "-12")]
     [InlineData(false, "9223372036854775807")]
     [InlineData(true, "9223372036854775807")]
     public async Task BigintOnly_BoundedExactInt64Literal_PreservesBeforeAfter(
