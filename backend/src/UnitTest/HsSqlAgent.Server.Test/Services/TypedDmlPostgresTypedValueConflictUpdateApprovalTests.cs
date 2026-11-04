@@ -260,6 +260,41 @@ public sealed class TypedDmlPostgresTypedValueConflictUpdateApprovalTests(
     }
 
     [Theory]
+    [InlineData("ID")]
+    [InlineData("Id")]
+    public async Task QuotedCaseDistinctValueColumn_CannotConfuseOldRowFingerprint(string quoted)
+    {
+        await WithTableAsync(
+            $"id BIGINT PRIMARY KEY, \"{quoted}\" BIGINT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                var sql = $"INSERT INTO {schema}.users (id,\"{quoted}\") VALUES (7,42) " +
+                    $"ON CONFLICT (id) DO UPDATE SET \"{quoted}\"=EXCLUDED.\"{quoted}\"";
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token, sql));
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
+    [Fact]
+    public async Task CaseFoldedSyntheticActionKey_IsDeniedBeforeApproval()
+    {
+        await WithTableAsync(
+            "\"__ACTION\" BIGINT PRIMARY KEY, quantity BIGINT NOT NULL",
+            async (provider, cs, schema, runtime, token) =>
+            {
+                var sql = $"INSERT INTO {schema}.users (\"__ACTION\",quantity) " +
+                    "VALUES (7,42) ON CONFLICT (\"__ACTION\") " +
+                    "DO UPDATE SET quantity=EXCLUDED.quantity";
+                await Assert.ThrowsAnyAsync<Exception>(() =>
+                    PreviewAsync(provider, cs, schema, runtime, token, sql));
+                Assert.Equal("0", await ScalarAsync(cs,
+                    $"SELECT count(*)::text FROM {schema}.users", token));
+            });
+    }
+
+    [Theory]
     [InlineData("quantity INTEGER NOT NULL")]
     [InlineData("quantity SMALLINT NOT NULL")]
     [InlineData("quantity DATE NOT NULL")]
