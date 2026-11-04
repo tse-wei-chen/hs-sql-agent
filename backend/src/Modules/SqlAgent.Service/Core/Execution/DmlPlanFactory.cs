@@ -531,9 +531,12 @@ public sealed class DmlPlanFactory(
                        AND count(*) FILTER (WHERE a.attname = @key
                            AND a.atttypid = 20 AND a.attnotnull
                            AND a.attidentity = '' AND a.attgenerated = '') = 1
-                       AND count(*) FILTER (WHERE a.attname::text = ANY(@updatedColumns)
+                       AND count(*) FILTER (WHERE a.attname::text = ANY(@textColumns)
                            AND a.atttypid = 25 AND a.attnotnull
-                           AND a.attidentity = '' AND a.attgenerated = '') = @updatedCount
+                           AND a.attidentity = '' AND a.attgenerated = '') = @textCount
+                       AND count(*) FILTER (WHERE a.attname::text = ANY(@bigintColumns)
+                           AND a.atttypid = 20 AND a.attnotnull
+                           AND a.attidentity = '' AND a.attgenerated = '') = @bigintCount
                        AND (SELECT count(*) FROM pg_catalog.pg_index idx
                             WHERE idx.indrelid = c.oid) = 1
                        AND NOT EXISTS (
@@ -548,14 +551,18 @@ public sealed class DmlPlanFactory(
                       AND a.attnum > 0 AND NOT a.attisdropped
                     GROUP BY c.oid
                     """;
+                var textColumns = skip.UpdatedColumns
+                    .Where(name => !skip.BigintColumns.Contains(name)).ToArray();
                 foreach (var (name, value) in new (string, object)[]
                 {
                     ("schema", targetResolution.Schema),
                     ("table", targetResolution.Table),
                     ("key", skip.UniqueKeyColumn),
                     ("expectedCount", skip.UpdatedColumns.Length + 1),
-                    ("updatedCount", skip.UpdatedColumns.Length),
-                    ("updatedColumns", skip.UpdatedColumns.ToArray())
+                    ("textCount", textColumns.Length),
+                    ("bigintCount", skip.BigintColumns.Length),
+                    ("textColumns", textColumns),
+                    ("bigintColumns", skip.BigintColumns.ToArray())
                 })
                 {
                     var parameter = shapeCheck.CreateParameter();
@@ -565,7 +572,7 @@ public sealed class DmlPlanFactory(
                 }
                 if (await shapeCheck.ExecuteScalarAsync(cancellationToken) is not true)
                     throw new InvalidOperationException(
-                        "PostgreSQL conflict UPDATE requires an exact BIGINT UNIQUE key and 1-4 TEXT NOT NULL values in a plain complete table with no defaults, extra indexes, CHECK or foreign keys.");
+                        "PostgreSQL conflict UPDATE requires an exact BIGINT UNIQUE key and 1-4 exactly typed TEXT/BIGINT NOT NULL values in a plain complete table with no defaults, extra indexes, CHECK or foreign keys.");
             }
 
             // SQLite reports only the top-level INSERT row count. A trigger
@@ -638,7 +645,7 @@ public sealed class DmlPlanFactory(
                 NativeConflictDoUpdateProof = conflictUpdate
                     ? new NativeConflictDoUpdateProof(
                         targetResolution.QualifiedTableName, skip.UniqueKeyColumn,
-                        skip.UpdatedColumns, skipFingerprint,
+                        skip.UpdatedColumns, skip.BigintColumns, skipFingerprint,
                         DmlFingerprintService.ComputePlanFingerprint(
                             match, validationContext.PolicyVersion),
                         snapshot.Sha256)
