@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Globalization;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Core.Ast;
 
@@ -131,6 +132,8 @@ internal static class NativeSingleRowConflictSafety
         // receive its identically named EXCLUDED value. No partial updates,
         // duplicate SET targets or implicit source values can be approved.
         var seen = new HashSet<string>(StringComparer.Ordinal) { key };
+        // Fingerprint field lookup folds case, unlike PostgreSQL quoted names.
+        var fingerprintNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { key };
         var updated = ImmutableArray.CreateBuilder<string>(conflict.Assignments.Length);
         var proposedValues = ImmutableArray.CreateBuilder<ProposedValue>(conflict.Assignments.Length);
         foreach (var assignment in conflict.Assignments)
@@ -142,9 +145,10 @@ internal static class NativeSingleRowConflictSafety
                     "Native PostgreSQL conflict update requires only SET column = EXCLUDED.column assignments.");
             var name = assignment.Column.Parts[0].Value;
             if (!string.Equals(name, proposed.Parts[0].Value, StringComparison.Ordinal)
-                || !seen.Add(name))
+                || !seen.Add(name)
+                || !fingerprintNames.Add(name))
                 throw new NotSupportedException(
-                    "Native PostgreSQL conflict update requires distinct, exact-case matching EXCLUDED column assignments.");
+                    "PostgreSQL conflict UPDATE rejects case-folded row-fingerprint column ambiguity.");
             var ordinal = -1;
             for (var index = 0; index < insert.Columns.Length; index++)
                 if (insert.Columns[index].Parts.Length == 1
@@ -178,7 +182,7 @@ internal static class NativeSingleRowConflictSafety
         // User-chosen physical identifiers must not override synthetic
         // approval display labels (notably __action) or other before/after
         // fields. An ambiguous preview must never mint an execution approval.
-        var displayFields = new HashSet<string>(StringComparer.Ordinal) { "__action" };
+        var displayFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "__action" };
         if (!displayFields.Add(key))
             throw new NotSupportedException(
                 "PostgreSQL conflict key collides with an approval preview field.");
@@ -189,5 +193,53 @@ internal static class NativeSingleRowConflictSafety
                     "PostgreSQL physical identifiers collide with approval before/after preview fields.");
         return new Shape(key, exactInteger.Value,
             updated.MoveToImmutable(), proposedValues.MoveToImmutable());
+    }
+
+    /// <summary>
+    /// F# can normalize exponent/decimal tokens such as 1e10 and 42.0 into
+    /// integral numeric values. The Host requires their original source token
+    /// to be a plain decimal integer, verified against the closed AST value.
+    /// </summary>
+    internal static void RequireExactIntegerSourceTokens(
+        InsertStatement insert, Shape shape, string? rawSql)
+    {
+        if (shape.ProposedValues.IsDefaultOrEmpty
+            || !shape.ProposedValues.Any(value => value.Kind == ProposedKind.ExactInteger))
+            return;
+        if (string.IsNullOrEmpty(rawSql)
+            || insert.Source is not InsertValuesSource { Rows.Length: 1 } values)
+            throw new NotSupportedException(
+                "PostgreSQL typed UPDATE requires original SQL for integer-source proof.");
+
+        foreach (var proof in shape.ProposedValues)
+        {
+            if (proof.Kind != ProposedKind.ExactInteger)
+                continue;
+            var ordinal = -1;
+            for (var i = 0; i < insert.Columns.Length; i++)
+                if (insert.Columns[i].Parts.Length == 1
+                    && string.Equals(insert.Columns[i].Parts[0].Value,
+                        proof.Column, StringComparison.Ordinal))
+                {
+                    if (ordinal >= 0)
+                        throw new NotSupportedException("Duplicate integer-source column.");
+                    ordinal = i;
+                }
+            if (ordinal < 0)
+                throw new NotSupportedException("Missing integer-source column.");
+            var expression = values.Rows[0][ordinal];
+            var span = expression.Span;
+            if (span.Start < 0 || span.End <= span.Start || span.End > rawSql.Length)
+                throw new NotSupportedException(
+                    "PostgreSQL typed UPDATE needs valid F# integer source spans.");
+            var source = rawSql.AsSpan(span.Start, span.End - span.Start).Trim();
+            if (!long.TryParse(source, NumberStyles.AllowLeadingSign,
+                    CultureInfo.InvariantCulture, out var sourceValue)
+                || sourceValue != proof.Integer
+                || ExactIntegerLiteral(expression) != sourceValue)
+                throw new NotSupportedException(
+                    "PostgreSQL typed UPDATE requires a plain decimal integer token " +
+                    "equal to its F# AST value; exponents and fractional spellings are denied.");
+        }
     }
 }
