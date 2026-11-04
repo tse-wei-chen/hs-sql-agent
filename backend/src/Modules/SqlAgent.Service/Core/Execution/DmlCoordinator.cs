@@ -703,6 +703,11 @@ public sealed class DmlCoordinator(
                         plan.RowIdentityColumns.Skip(1), StringComparer.Ordinal)
                     || updateProof.UpdatedColumns.Distinct(StringComparer.Ordinal).Count()
                         != updateProof.UpdatedColumns.Length
+                    || updateProof.BigintColumns.IsDefault
+                    || updateProof.BigintColumns.Distinct(StringComparer.Ordinal).Count()
+                        != updateProof.BigintColumns.Length
+                    || updateProof.BigintColumns.Any(column =>
+                        !updateProof.UpdatedColumns.Contains(column))
                     || plan.InsertRows[0].Count != plan.RowIdentityColumns.Length
                     || plan.RowIdentityColumns.Any(column => !plan.InsertRows[0].ContainsKey(column))
                     || !string.Equals(updateProof.MutationFingerprint,
