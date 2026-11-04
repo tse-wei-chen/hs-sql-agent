@@ -110,7 +110,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
     [InlineData("DO UPDATE SET name=EXCLUDED.name, name=EXCLUDED.name")]
     [InlineData("DO UPDATE SET name=EXCLUDED.name, city='constant'")]
     [InlineData("DO UPDATE SET name=EXCLUDED.name, city=city")]
-    [InlineData("DO UPDATE SET name=EXCLUDED.name, city=EXCLUDED.city RETURNING id")]
+    [InlineData("DO UPDATE SET name=EXCLUDED.name, city=EXCLUDED.city RETURNING *")]
     [InlineData("DO UPDATE SET name=EXCLUDED.name, city=EXCLUDED.city WHERE users.id=7")]
     [InlineData("DO UPDATE SET id=EXCLUDED.id, city=EXCLUDED.city")]
     public async Task UnprovedPartialOrMismatchedAssignments_AreRejected(string action)
