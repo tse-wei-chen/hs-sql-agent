@@ -132,7 +132,7 @@ public sealed class TypedDmlPostgresConflictUpdateApprovalTests(PostgresDdlLiveF
 
     [Theory]
     [InlineData("id BIGINT NOT NULL UNIQUE, name TEXT NOT NULL UNIQUE")]
-    [InlineData("id BIGINT PRIMARY KEY, name TEXT")]
+    [InlineData("id BIGINT PRIMARY KEY, name VARCHAR(40)")]
     [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL, side_effect TEXT")]
     [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL CHECK (name <> '')")]
     [InlineData("id TEXT PRIMARY KEY, name TEXT NOT NULL")]
