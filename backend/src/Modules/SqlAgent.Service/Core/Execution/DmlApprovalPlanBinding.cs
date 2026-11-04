@@ -80,6 +80,23 @@ internal static class DmlApprovalPlanBinding
             Append(hash, mergeProof.SchemaSha256);
         }
 
+        if (plan.SqlServerMergeMatchedUpdateProof is { } mergeUpdateProof)
+        {
+            Append(hash, "native-sqlserver-merge-matched-update-v1");
+            Append(hash, mergeUpdateProof.PhysicalTarget);
+            Append(hash, mergeUpdateProof.UniqueKeyColumn);
+            Append(hash, mergeUpdateProof.KeyValue.ToString(CultureInfo.InvariantCulture));
+            Append(hash, mergeUpdateProof.UpdatedColumns.Length.ToString(CultureInfo.InvariantCulture));
+            for (var i = 0; i < mergeUpdateProof.UpdatedColumns.Length; i++)
+            {
+                Append(hash, mergeUpdateProof.UpdatedColumns[i]);
+                Append(hash, mergeUpdateProof.ProposedValues[i].ToString(CultureInfo.InvariantCulture));
+            }
+            Append(hash, mergeUpdateProof.MutationFingerprint);
+            Append(hash, mergeUpdateProof.TargetQueryFingerprint);
+            Append(hash, mergeUpdateProof.SchemaSha256);
+        }
+
         if (plan.MatchQueryCommand is { } match)
         {
             Append(hash, "match-query");
