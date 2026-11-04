@@ -89,10 +89,10 @@ internal static class NativeSingleRowConflictSafety
             || conflict.TargetColumns.Length != 1
             || insert.Source is not InsertValuesSource values
             || values.Rows.Length != 1
-            || (!update && !insert.Returning.IsDefaultOrEmpty)
+            || (target == SqlAgentToolType.Sqlite && !insert.Returning.IsDefaultOrEmpty)
             || insert.Target.Alias is not null)
             throw new NotSupportedException(
-                "Native conflict approval requires one explicit UNIQUE key and one VALUES row; DO NOTHING forbids RETURNING, while PostgreSQL DO UPDATE allows only bounded direct-column RETURNING.");
+                "Native conflict approval requires one explicit UNIQUE key and one VALUES row; SQLite DO NOTHING forbids RETURNING, while PostgreSQL permits only independently proven direct-column result projections.");
 
         var targetIdentifier = conflict.TargetColumns[0];
         if (targetIdentifier.Parts.Length != 1)
@@ -126,7 +126,21 @@ internal static class NativeSingleRowConflictSafety
             throw new NotSupportedException(
                 "Native conflict skip requires a non-null exact INT64 UNIQUE key literal.");
         if (!update)
+        {
+            // Conflict-skip attests one physical key, not other INSERT fields,
+            // so the only safe returned projection is that exact key. A skip
+            // returns zero actual rows; no preview data is disclosed instead.
+            if (!insert.Returning.IsDefaultOrEmpty
+                && (target != SqlAgentToolType.Postgres
+                    || insert.Returning.Length != 1
+                    || insert.Returning[0] is not DmlReturningColumnItem
+                        { Identifier.Parts.Length: 1 } returnedKey
+                    || !string.Equals(returnedKey.Identifier.Parts[0].Value,
+                        key, StringComparison.Ordinal)))
+                throw new NotSupportedException(
+                    "Native PostgreSQL DO NOTHING RETURNING permits only its single, exact, unqualified physical UNIQUE key.");
             return new Shape(key, exactInteger.Value);
+        }
 
         // The entire proposed row must be visible and every value column must
         // receive its identically named EXCLUDED value. No partial updates,
