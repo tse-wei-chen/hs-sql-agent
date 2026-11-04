@@ -94,6 +94,14 @@ public sealed class TypedDmlRuntime(
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         EnsureSupportedStatement(parsedMutation.Statement);
+        if (parsedMutation.Statement is MergeStatement
+            && (parsedMutation.SourceDialect != SqlAgentToolType.MsSqlServer
+                || provider.Type != SqlAgentToolType.MsSqlServer
+                || provider.GetType() != typeof(HsSqlAgent.Provider.SqlServer.MsSqlServerProvider)
+                || _schemaSnapshotSource is not NativeDmlSchemaSnapshotService
+                || _schemaFreshnessVerifier is not NativeDmlSchemaSnapshotService))
+            throw new NotSupportedException(
+                "SQL Server MERGE Host approval requires the exact built-in SQL Server provider, physical schema capture and commit-time freshness verification.");
         if (parsedMutation.Statement is InsertStatement { Conflict: not null }
             && (parsedMutation.SourceDialect != provider.Type
                 || !((provider.Type == SqlAgentToolType.Sqlite
@@ -216,6 +224,9 @@ public sealed class TypedDmlRuntime(
         // already-approved SQLite atomic batch. Do not promote the single-
         // statement source proof to a different provider, multiple source
         // insertions, or a caller-supplied virtual schema/freshness attestation.
+        if (parsedBatch.Statements.Any(item => item.Statement is MergeStatement))
+            throw new NotSupportedException(
+                "SQL Server MERGE approval is single-statement only; atomic MERGE batches require independent cross-statement evidence.");
         if (parsedBatch.Statements.Any(item => item.Statement is InsertStatement { Conflict: not null }))
             throw new NotSupportedException(
                 "Native conflict skip is single-statement only; atomic conflict batches require a separate cross-statement proof.");
@@ -517,7 +528,9 @@ public sealed class TypedDmlRuntime(
         ?? DriverNeutralPreviewTransactions;
 
     internal static bool SupportsStatement(SqlStatement statement) =>
-        statement is UpdateStatement
+        statement is MergeStatement merge
+            ? SqlServerMergeMatchedDeleteSafety.IsBoundedShape(merge)
+            : statement is UpdateStatement
             or DeleteStatement
             or InsertStatement { Source: InsertValuesSource, Conflict: null }
         || statement is InsertStatement { Source: InsertValuesSource, Conflict: not null } conflictInsert
