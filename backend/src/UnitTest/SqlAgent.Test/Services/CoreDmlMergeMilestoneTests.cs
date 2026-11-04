@@ -31,8 +31,32 @@ public sealed class CoreDmlMergeMilestoneTests
         // The virtual fixture proves the key name, not physical UNIQUE or Host execution.
     }
 
+    [Fact]
+    public void StrictSnapshot_OneSourceRow_DirectMatchedUpdateWithTwoPayloadColumns()
+    {
+        const string sql =
+            "MERGE INTO dbo.inventory AS t USING (VALUES (7,25,4)) AS s (id,quantity,status) " +
+            "ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.quantity, status=s.status;";
+        var context = new SqlPlanValidationContext("g9-native-merge-update-strict").WithSchemaSnapshot(
+            new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "physical-catalog-fixture-update-v1",
+                [new SqlSchemaTable("dbo.inventory", ["id", "quantity", "status"])]));
+        var compiled = CoreDmlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer),
+            SqlAgentToolType.MsSqlServer,
+            context,
+            conflictTargetAssurance: DmlConflictTargetAssurance.FromPrimaryKey(["id"]));
+        Assert.Equal(SqlStatementKind.Merge, compiled.Kind);
+        Assert.Contains("WITH (HOLDLOCK)", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHEN MATCHED THEN UPDATE SET", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(new long[] { 7, 25, 4 },
+            compiled.Parameters.Select(p => Convert.ToInt64(p.Value)));
+    }
+
     [Theory]
-    [InlineData("ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.quantity", "(VALUES (7,9)) AS s (id,quantity)")]
+    [InlineData("ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=9", "(VALUES (7,9)) AS s (id,quantity)")]
+    [InlineData("ON t.id=s.id WHEN MATCHED THEN UPDATE SET id=s.id", "(VALUES (7,9)) AS s (id,quantity)")]
+    [InlineData("ON t.id=s.id WHEN MATCHED THEN UPDATE SET quantity=s.id", "(VALUES (7,9)) AS s (id,quantity)")]
     [InlineData("ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id) VALUES(s.id)", "(VALUES (7)) AS s (id)")]
     [InlineData("ON t.id=s.id AND t.quantity=10 WHEN MATCHED THEN DELETE", "(VALUES (7)) AS s (id)")]
     public void StrictSnapshot_UnprovenMergeEffect_IsRejected(
