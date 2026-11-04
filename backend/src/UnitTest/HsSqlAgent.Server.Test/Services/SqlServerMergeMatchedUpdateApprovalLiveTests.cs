@@ -25,7 +25,7 @@ public sealed class SqlServerMergeMatchedUpdateApprovalLiveTests
             if (exists)
                 await ExecuteAsync(cs, $"INSERT INTO dbo.[{table}](id,quantity,status) VALUES(7,10,3)", ct);
             var session = await PreviewAsync(provider, cs, table, runtime, ct);
-            Assert.Equal(DmlApprovalMode.SqlServerMergeMatchedUpdate, session.Plan.ApprovalMode);
+            Assert.Equal("SqlServerMergeMatchedUpdate", session.Plan.ApprovalMode.ToString());
             Assert.Equal(affected, session.Preview.AffectedRows);
             Assert.Contains("WITH (HOLDLOCK)", session.Plan.MutationCommand.Sql, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(affected, session.Preview.Rows.Length);
