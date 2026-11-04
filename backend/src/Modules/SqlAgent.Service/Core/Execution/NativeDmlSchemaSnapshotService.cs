@@ -57,6 +57,8 @@ public sealed class NativeDmlSchemaSnapshotService :
         var target = parsedMutation.Statement switch
         {
             InsertStatement { Source: InsertValuesSource } insert => insert.Target,
+            MergeStatement merge when targetProvider == SqlAgentToolType.MsSqlServer
+                && SqlServerMergeMatchedDeleteSafety.IsBoundedShape(merge) => merge.Target,
             // The bounded INSERT SELECT attests each physical main source
             // independently; arbitrary sources never enter this path.
             InsertStatement { Source: InsertQuerySource } insert
@@ -178,6 +180,10 @@ public sealed class NativeDmlSchemaSnapshotService :
                 connection, null, sourceBasic, sourceNames[0], sourceNames[1], cancellationToken);
             return sourceProof is null ? null : CombineNativeSourceTarget(targetProof, sourceProof);
         }
+        if (targetProvider == SqlAgentToolType.MsSqlServer
+            && parsedMutation.Statement is MergeStatement)
+            return await SqlServerInsertSelectCatalogProof.ExtendAsync(
+                connection, null, snapshot, matches[0].Schema, matches[0].Table, cancellationToken);
         if (targetProvider is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
             return await NativeDmlSchemaDefinitionProof.ExtendAsync(
                 connection, transaction: null, snapshot, matches[0].Schema,
