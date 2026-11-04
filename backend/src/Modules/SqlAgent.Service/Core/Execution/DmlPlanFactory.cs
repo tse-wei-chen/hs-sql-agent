@@ -438,7 +438,8 @@ public sealed class DmlPlanFactory(
         }
 
         var values = (InsertValuesSource)insert.Source;
-        var previewRows = BuildInsertPreviewRows(resolvedInsert, values);
+        var previewRows = BuildInsertPreviewRows(
+            resolvedInsert, values, allowExactSignedIntegers: conflictUpdate);
         if (conflictShape is { } skip)
         {
             var snapshot = validationContext.SchemaSnapshot;
@@ -532,8 +533,20 @@ public sealed class DmlPlanFactory(
                            AND a.atttypid = 20 AND a.attnotnull
                            AND a.attidentity = '' AND a.attgenerated = '') = 1
                        AND count(*) FILTER (WHERE a.attname::text = ANY(@updatedColumns)
-                           AND a.atttypid = 25 AND a.attnotnull
-                           AND a.attidentity = '' AND a.attgenerated = '') = @updatedCount
+                           AND a.attidentity = '' AND a.attgenerated = ''
+                           AND (
+                               (a.atttypid = 25
+                                   AND a.attname::text = ANY(@textColumns))
+                               OR (a.atttypid = 21
+                                   AND a.attname::text = ANY(@smallintColumns))
+                               OR (a.atttypid = 23
+                                   AND a.attname::text = ANY(@integerColumns))
+                               OR (a.atttypid = 20
+                                   AND a.attname::text = ANY(@bigintColumns))
+                               OR (a.atttypid IN (20,21,23,25)
+                                   AND a.attname::text = ANY(@nullColumns)
+                                   AND NOT a.attnotnull)
+                           )) = @updatedCount
                        AND (SELECT count(*) FROM pg_catalog.pg_index idx
                             WHERE idx.indrelid = c.oid) = 1
                        AND NOT EXISTS (
@@ -548,6 +561,26 @@ public sealed class DmlPlanFactory(
                       AND a.attnum > 0 AND NOT a.attisdropped
                     GROUP BY c.oid
                     """;
+                var proofs = skip.ProposedValues;
+                if (proofs.IsDefaultOrEmpty
+                    || proofs.Length != skip.UpdatedColumns.Length)
+                    throw new InvalidOperationException(
+                        "PostgreSQL typed conflict UPDATE is missing exact proposed-value proof.");
+                var integerProofs = proofs.Where(value =>
+                    value.Kind == NativeSingleRowConflictSafety.ProposedKind.ExactInteger).ToArray();
+                var textColumns = proofs.Where(value =>
+                    value.Kind == NativeSingleRowConflictSafety.ProposedKind.Text)
+                    .Select(value => value.Column).ToArray();
+                var nullColumns = proofs.Where(value =>
+                    value.Kind == NativeSingleRowConflictSafety.ProposedKind.SqlNull)
+                    .Select(value => value.Column).ToArray();
+                var smallintColumns = integerProofs.Where(value =>
+                    value.Integer >= short.MinValue && value.Integer <= short.MaxValue)
+                    .Select(value => value.Column).ToArray();
+                var integerColumns = integerProofs.Where(value =>
+                    value.Integer >= int.MinValue && value.Integer <= int.MaxValue)
+                    .Select(value => value.Column).ToArray();
+                var bigintColumns = integerProofs.Select(value => value.Column).ToArray();
                 foreach (var (name, value) in new (string, object)[]
                 {
                     ("schema", targetResolution.Schema),
@@ -555,7 +588,12 @@ public sealed class DmlPlanFactory(
                     ("key", skip.UniqueKeyColumn),
                     ("expectedCount", skip.UpdatedColumns.Length + 1),
                     ("updatedCount", skip.UpdatedColumns.Length),
-                    ("updatedColumns", skip.UpdatedColumns.ToArray())
+                    ("updatedColumns", skip.UpdatedColumns.ToArray()),
+                    ("textColumns", textColumns),
+                    ("nullColumns", nullColumns),
+                    ("smallintColumns", smallintColumns),
+                    ("integerColumns", integerColumns),
+                    ("bigintColumns", bigintColumns)
                 })
                 {
                     var parameter = shapeCheck.CreateParameter();
@@ -565,7 +603,7 @@ public sealed class DmlPlanFactory(
                 }
                 if (await shapeCheck.ExecuteScalarAsync(cancellationToken) is not true)
                     throw new InvalidOperationException(
-                        "PostgreSQL conflict UPDATE requires an exact BIGINT UNIQUE key and 1-4 TEXT NOT NULL values in a plain complete table with no defaults, extra indexes, CHECK or foreign keys.");
+                        "PostgreSQL conflict UPDATE requires a BIGINT UNIQUE key and 1-4 exactly typed TEXT/SMALLINT/INTEGER/BIGINT value columns, with NULL only on nullable physical fields, and no extra indexes, defaults, CHECK or foreign keys.");
             }
 
             // SQLite reports only the top-level INSERT row count. A trigger
@@ -884,7 +922,8 @@ public sealed class DmlPlanFactory(
 
     private static ImmutableArray<ImmutableDictionary<string, object?>> BuildInsertPreviewRows(
         InsertStatement insert,
-        InsertValuesSource values)
+        InsertValuesSource values,
+        bool allowExactSignedIntegers = false)
     {
         if (insert.Columns.IsDefaultOrEmpty)
             throw new InvalidOperationException("INSERT requires at least one target column.");
@@ -904,15 +943,18 @@ public sealed class DmlPlanFactory(
             var builder = ImmutableDictionary.CreateBuilder<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (var columnIndex = 0; columnIndex < insert.Columns.Length; columnIndex++)
             {
-                if (row[columnIndex] is not LiteralExpr literal)
-                {
+                object? literalValue;
+                if (row[columnIndex] is LiteralExpr literal)
+                    literalValue = NormalizeInsertPreviewValue(literal.Value);
+                else if (allowExactSignedIntegers
+                    && NativeSingleRowConflictSafety.ExactIntegerLiteral(row[columnIndex])
+                        is long exactSignedInteger)
+                    literalValue = exactSignedInteger;
+                else
                     throw new InvalidOperationException(
-                        $"INSERT VALUES preview requires literal canonical values, not {row[columnIndex].GetType().Name}.");
-                }
+                        $"INSERT VALUES preview requires canonical scalar literals, not {row[columnIndex].GetType().Name}.");
 
-                builder.Add(
-                    IdentifierText(insert.Columns[columnIndex]),
-                    NormalizeInsertPreviewValue(literal.Value));
+                builder.Add(IdentifierText(insert.Columns[columnIndex]), literalValue);
             }
             rows.Add(builder.ToImmutable());
         }

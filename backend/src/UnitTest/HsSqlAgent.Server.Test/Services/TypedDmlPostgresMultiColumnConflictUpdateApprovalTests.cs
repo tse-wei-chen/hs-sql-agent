@@ -129,7 +129,7 @@ public sealed class TypedDmlPostgresMultiColumnConflictUpdateApprovalTests(
     }
 
     [Theory]
-    [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL, city TEXT")]
+    [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL, city BOOLEAN")]
     [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL, city VARCHAR(50) NOT NULL")]
     [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL, hidden TEXT")]
     [InlineData("id BIGINT PRIMARY KEY, name TEXT NOT NULL, city TEXT NOT NULL CHECK (city <> '')")]

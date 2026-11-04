@@ -31,6 +31,27 @@ public sealed class CoreNativeStrictSnapshotMultiColumnConflictUpdateTests
     }
 
     [Theory]
+    [InlineData("NULL", "NULL")]
+    [InlineData("'new-name'", "42")]
+    [InlineData("NULL", "-32768")]
+    [InlineData("'new-name'", "9223372036854775807")]
+    public void PostgresStrictSnapshot_TypedAndNullableProposals_RetainClosedShape(
+        string nameValue, string integerValue)
+    {
+        // The virtual F# catalog establishes declared columns and grammar
+        // only. The Host must separately attest PostgreSQL physical data types,
+        // nullability and exact signed integer width before approval.
+        var sql = "INSERT INTO users (id,name,amount) VALUES (7," +
+            nameValue + "," + integerValue + ") ON CONFLICT (id) " +
+            "DO UPDATE SET amount=excluded.amount, name=excluded.name";
+        var parsed = CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.Postgres);
+        var compiled = CoreDmlCompiler.CreateDefault().Compile(
+            parsed, SqlAgentToolType.Postgres, Context(["name", "amount"]));
+        Assert.Equal(SqlStatementKind.Insert, compiled.Kind);
+        Assert.Contains("DO UPDATE SET", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData(5)]
     public void PostgresStrictSnapshot_ExcessiveUpdateColumnCount_RemainsFailClosed(int count)
     {
