@@ -99,7 +99,7 @@ public sealed class DmlPlanFactory(
             throw new ArgumentOutOfRangeException(nameof(maxAffectedRows));
 
         if (parsedMutation.Statement is MergeStatement merge)
-            return await CreateSqlServerMergeMatchedDeletePlanAsync(
+            return await CreateSqlServerMergeMatchedPlanAsync(
                 metadataConnection, connectionString, parsedMutation, merge,
                 targetProvider, validationContext, compilationPolicy, assurance,
                 maxAffectedRows, approvalTtl, cancellationToken, targetProfile);
@@ -269,7 +269,7 @@ public sealed class DmlPlanFactory(
         };
     }
 
-    private async Task<ValidatedDmlPlan> CreateSqlServerMergeMatchedDeletePlanAsync(
+    private async Task<ValidatedDmlPlan> CreateSqlServerMergeMatchedPlanAsync(
         DbConnection? metadataConnection,
         string connectionString,
         ParsedStatement parsedMutation,
@@ -289,8 +289,8 @@ public sealed class DmlPlanFactory(
         // this one exceptionally narrow authority.
         var shape = SqlServerMergeMatchedDeleteSafety.RequireShape(
             merge, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
-        SqlServerMergeMatchedDeleteSafety.RequireExactSourceKeyToken(
-            merge, shape.KeyValue, parsedMutation.RawSql);
+        SqlServerMergeMatchedDeleteSafety.RequireExactSourceLiterals(
+            merge, shape, parsedMutation.RawSql);
         if (assurance != DmlRowIdentityAssurance.Strict
             || metadataConnection is null
             || metadataConnection.State != System.Data.ConnectionState.Open
@@ -331,32 +331,44 @@ public sealed class DmlPlanFactory(
             throw new InvalidOperationException(
                 "SQL Server MERGE requires the sole exact physical, non-filtered INT PRIMARY key.");
 
+        // Reuse the existing one-round-trip live physical INT check for
+        // both the primary key and every direct UPDATE payload field.
+        var checkedColumns = new[] { shape.KeyColumn }
+            .Concat(shape.UpdatedColumns.Select(cell => cell.Column)).ToArray();
         await using (var typeCheck = metadataConnection.CreateCommand())
         {
             typeCheck.CommandText = """
-                SELECT COUNT_BIG(*) FROM sys.tables t
+                SELECT c.name FROM sys.tables t
                 JOIN sys.schemas s ON s.schema_id = t.schema_id
                 JOIN sys.columns c ON c.object_id = t.object_id
-                WHERE s.name = @schema AND t.name = @table AND c.name = @key
+                WHERE s.name = @schema AND t.name = @table
+                  AND c.name IN (@name0,@name1,@name2,@name3)
                   AND c.system_type_id = 56 AND c.user_type_id = 56
                   AND c.is_nullable = 0 AND c.is_identity = 0 AND c.is_computed = 0
                   AND c.is_hidden = 0 AND c.generated_always_type = 0
                 """;
-            foreach (var (name, value) in new[]
-            {
-                ("@schema", shape.Schema),
-                ("@table", shape.Table),
-                ("@key", shape.KeyColumn)
-            })
+            void Bind(string name, object value)
             {
                 var parameter = typeCheck.CreateParameter();
                 parameter.ParameterName = name;
                 parameter.Value = value;
                 typeCheck.Parameters.Add(parameter);
             }
-            if (Convert.ToInt64(await typeCheck.ExecuteScalarAsync(cancellationToken)) != 1)
+            Bind("@schema", shape.Schema);
+            Bind("@table", shape.Table);
+            for (var i = 0; i < 4; i++)
+                Bind("@name" + i, checkedColumns[Math.Min(i, checkedColumns.Length - 1)]);
+            var proved = new HashSet<string>(StringComparer.Ordinal);
+            await using var found = await typeCheck.ExecuteReaderAsync(cancellationToken);
+            while (await found.ReadAsync(cancellationToken))
+                if (!proved.Add(found.GetString(0)))
+                    throw new InvalidOperationException(
+                        "SQL Server MERGE physical INT column proof is ambiguous.");
+            if (proved.Count != checkedColumns.Length
+                || checkedColumns.Any(column => !proved.Contains(column)))
                 throw new InvalidOperationException(
-                    "SQL Server MERGE key must be a physically exact non-null native INT, not an identity or alias type.");
+                    "SQL Server MERGE requires physically exact non-null native INT primary key " +
+                    "and update payload columns, without aliases, identity or implicit conversions.");
         }
 
         var targetName = ExecutionTargetIdentifier(
@@ -375,18 +387,24 @@ public sealed class DmlPlanFactory(
             throw new InvalidOperationException(
                 "SQL Server MERGE compiler did not preserve the native HOLDLOCK key-range contract.");
 
-        // This match SELECT exposes only the exact physical PK identity. Its
-        // SQL, key value, type, table, schema digest and mutation are all
-        // sealed into the same one-use approval before any write can occur.
+        // Preview fingerprints the physical primary key AND every before-value
+        // that may be replaced, not merely row presence. The compiled MERGE
+        // can execute only if the approved full value set remains unchanged.
+        var matchColumns = new[] { shape.KeyColumn }
+            .Concat(shape.UpdatedColumns.Select(cell => cell.Column))
+            .ToImmutableArray();
         var key = MetadataIdentifier(shape.KeyColumn);
         var predicate = new BinaryExpr(
             new ColumnExpr(key, SourceSpan.Unknown), "=",
             new LiteralExpr(shape.KeyValue, SourceSpan.Unknown),
             SourceSpan.Unknown);
+        var selectItems = matchColumns.Select(column =>
+            new SelectItem(
+                new ColumnExpr(MetadataIdentifier(column), SourceSpan.Unknown),
+                null, SourceSpan.Unknown)).ToImmutableArray();
         var matchSelect = new SelectStatement(
             ImmutableArray<CteDefinition>.Empty, false,
-            [new SelectItem(new ColumnExpr(key, SourceSpan.Unknown),
-                null, SourceSpan.Unknown)],
+            selectItems,
             new NamedTableSource(targetName, null, SourceSpan.Unknown),
             ImmutableArray<JoinSource>.Empty, predicate,
             ImmutableArray<SqlExpr>.Empty, null,
@@ -397,27 +415,35 @@ public sealed class DmlPlanFactory(
             SqlAgentToolType.MsSqlServer, validationContext, targetProfile);
         var fingerprint = DmlFingerprintService.ComputePlanFingerprint(
             command, validationContext.PolicyVersion);
+        var matchFingerprint = DmlFingerprintService.ComputePlanFingerprint(
+            match, validationContext.PolicyVersion);
 
         return new ValidatedDmlPlan(
-            DmlOperation.Delete,
+            shape.IsUpdate ? DmlOperation.Update : DmlOperation.Delete,
             shape.PhysicalTable,
             command,
             match,
-            [shape.KeyColumn],
+            matchColumns,
             DmlRowIdentityAssurance.Strict,
             fingerprint,
             validationContext.PolicyVersion,
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             maxAffectedRows,
-            DmlApprovalMode.SqlServerMergeMatchedDelete,
+            shape.IsUpdate
+                ? DmlApprovalMode.SqlServerMergeMatchedUpdate
+                : DmlApprovalMode.SqlServerMergeMatchedDelete,
             SchemaSnapshot: snapshot)
         {
-            SqlServerMergeMatchedDeleteProof = new SqlServerMergeMatchedDeleteProof(
-                shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
-                fingerprint,
-                DmlFingerprintService.ComputePlanFingerprint(
-                    match, validationContext.PolicyVersion),
-                snapshot.Sha256)
+            SqlServerMergeMatchedDeleteProof = shape.IsUpdate ? null :
+                new SqlServerMergeMatchedDeleteProof(
+                    shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
+                    fingerprint, matchFingerprint, snapshot.Sha256),
+            SqlServerMergeMatchedUpdateProof = !shape.IsUpdate ? null :
+                new SqlServerMergeMatchedUpdateProof(
+                    shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
+                    shape.UpdatedColumns.Select(cell => cell.Column).ToImmutableArray(),
+                    shape.UpdatedColumns.Select(cell => cell.Value).ToImmutableArray(),
+                    fingerprint, matchFingerprint, snapshot.Sha256)
         };
     }
 
