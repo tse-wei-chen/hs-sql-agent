@@ -289,6 +289,8 @@ public sealed class DmlPlanFactory(
         // this one exceptionally narrow authority.
         var shape = SqlServerMergeMatchedDeleteSafety.RequireShape(
             merge, parsedMutation.SourceDialect, targetProvider, maxAffectedRows);
+        SqlServerMergeMatchedDeleteSafety.RequireExactSourceKeyToken(
+            merge, shape.KeyValue, parsedMutation.RawSql);
         if (assurance != DmlRowIdentityAssurance.Strict
             || metadataConnection is null
             || metadataConnection.State != System.Data.ConnectionState.Open
