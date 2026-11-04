@@ -11,7 +11,11 @@ namespace SqlAgent.Service.Core.Execution;
 /// </summary>
 internal static class NativeSingleRowConflictSafety
 {
-    internal sealed record Shape(string UniqueKeyColumn, long UniqueKeyValue, ImmutableArray<string> UpdatedColumns = default);
+    internal sealed record Shape(
+        string UniqueKeyColumn,
+        long UniqueKeyValue,
+        ImmutableArray<string> UpdatedColumns = default,
+        ImmutableArray<string> BigintColumns = default);
 
     internal static bool IsBoundedShape(InsertStatement insert) =>
         IsBoundedShape(insert, SqlAgentToolType.Sqlite)
@@ -98,6 +102,7 @@ internal static class NativeSingleRowConflictSafety
         // duplicate SET targets or implicit source values can be approved.
         var seen = new HashSet<string>(StringComparer.Ordinal) { key };
         var updated = ImmutableArray.CreateBuilder<string>(conflict.Assignments.Length);
+        var bigint = ImmutableArray.CreateBuilder<string>();
         foreach (var assignment in conflict.Assignments)
         {
             if (assignment.Column.Parts.Length != 1
@@ -119,9 +124,21 @@ internal static class NativeSingleRowConflictSafety
                         throw new NotSupportedException("Duplicate PostgreSQL INSERT column cannot be approved.");
                     ordinal = index;
                 }
-            if (ordinal < 0 || values.Rows[0][ordinal] is not LiteralExpr { Value: string })
+            if (ordinal < 0)
                 throw new NotSupportedException(
-                    "Native PostgreSQL conflict update requires a literal non-NULL TEXT value for every updated column.");
+                    "Native PostgreSQL conflict update requires every updated column in the single VALUES row.");
+            var value = values.Rows[0][ordinal];
+            if (value is LiteralExpr { Value: string })
+            {
+                // Physical TEXT type is attested by the real PostgreSQL Catalog.
+            }
+            else if (IsExactInt64Literal(value))
+            {
+                bigint.Add(name);
+            }
+            else
+                throw new NotSupportedException(
+                    "Native PostgreSQL conflict update accepts only non-NULL TEXT or exact INT64 literals.");
             updated.Add(name);
         }
         if (seen.Count != insert.Columns.Length
@@ -141,6 +158,19 @@ internal static class NativeSingleRowConflictSafety
                 || !displayFields.Add("__after_" + name))
                 throw new NotSupportedException(
                     "PostgreSQL physical identifiers collide with approval before/after preview fields.");
-        return new Shape(key, exactInteger.Value, updated.MoveToImmutable());
+        return new Shape(key, exactInteger.Value,
+            updated.MoveToImmutable(), bigint.MoveToImmutable());
     }
+
+    private static bool IsExactInt64Literal(SqlExpr expression) =>
+        expression switch
+        {
+            LiteralExpr { Value: int } => true,
+            LiteralExpr { Value: long } => true,
+            LiteralExpr { Value: decimal number }
+                when number == decimal.Truncate(number)
+                  && (decimal.GetBits(number)[3] & 0x00FF0000) == 0
+                  && number >= long.MinValue && number <= long.MaxValue => true,
+            _ => false
+        };
 }
