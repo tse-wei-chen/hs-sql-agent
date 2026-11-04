@@ -112,6 +112,74 @@ public sealed class SqlServerMergeMatchedDeleteApprovalLiveTests
         });
     }
 
+    [Theory]
+    [InlineData("7.0")]
+    [InlineData("7e0")]
+    [InlineData("7.00")]
+    [InlineData("'7'")]
+    [InlineData("7 + 0")]
+    [InlineData("NULL")]
+    public async Task NonExactIntegerSourceTokens_RefuseHostApproval(string value)
+    {
+        await WithTableAsync(async (provider, cs, table, runtime, ct) =>
+        {
+            var sql = $"MERGE INTO dbo.[{table}] AS t USING (VALUES({value})) AS s(id) " +
+                "ON t.id=s.id WHEN MATCHED THEN DELETE;";
+            await Assert.ThrowsAnyAsync<Exception>(async () =>
+            {
+                var parsed = await runtime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                    provider, cs, sql, SqlAgentToolType.MsSqlServer, ct);
+                await runtime.PreviewAsync(provider, cs, parsed, Policy, Allowed(table), Actor, ct);
+            });
+            Assert.Equal(0, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{table}]", ct));
+        });
+    }
+
+    [Theory]
+    [InlineData("ON t.id=s.id OR t.quantity=10")]
+    [InlineData("ON t.id=s.id AND t.quantity=10")]
+    [InlineData("ON t.id=s.id + 0")]
+    [InlineData("ON t.quantity=s.id")]
+    public async Task NonExactMatchPredicate_NeverApproves(string predicate)
+    {
+        await WithTableAsync(async (provider, cs, table, runtime, ct) =>
+        {
+            var sql = $"MERGE INTO dbo.[{table}] AS t USING (VALUES(7)) AS s(id) " +
+                $"{predicate} WHEN MATCHED THEN DELETE;";
+            await Assert.ThrowsAnyAsync<Exception>(async () =>
+            {
+                var parsed = await runtime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                    provider, cs, sql, SqlAgentToolType.MsSqlServer, ct);
+                await runtime.PreviewAsync(provider, cs, parsed, Policy, Allowed(table), Actor, ct);
+            });
+            Assert.Equal(0, await ScalarAsync(cs, $"SELECT COUNT(*) FROM dbo.[{table}]", ct));
+        });
+    }
+
+    [Fact]
+    public async Task AdditionalUniqueIndex_RefusesAmbiguousPhysicalKeyInventory()
+    {
+        await WithTableAsync(async (provider, cs, table, runtime, ct) =>
+        {
+            await ExecuteAsync(cs,
+                $"CREATE UNIQUE INDEX [uq_{table}_quantity] ON dbo.[{table}](quantity)", ct);
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                PreviewAsync(provider, cs, table, runtime, ct));
+        });
+    }
+
+    [Fact]
+    public async Task PhysicalTriggerCannotHideSecondaryWritesBehindDelete()
+    {
+        await WithTableAsync(async (provider, cs, table, runtime, ct) =>
+        {
+            await ExecuteAsync(cs,
+                $"CREATE TRIGGER dbo.[tr_{table}] ON dbo.[{table}] AFTER DELETE AS BEGIN SET NOCOUNT ON; END;", ct);
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                PreviewAsync(provider, cs, table, runtime, ct));
+        });
+    }
+
     private static async Task<TypedDmlApprovalSession> PreviewAsync(
         MsSqlServerProvider provider, string cs, string table,
         TypedDmlRuntime runtime, CancellationToken ct)
