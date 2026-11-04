@@ -15,10 +15,12 @@ internal static class SqlServerMergeMatchedDeleteSafety
 
     internal sealed record Shape(
         string Schema, string Table, string KeyColumn, int KeyValue,
-        ImmutableArray<UpdatedInt> UpdatedColumns)
+        ImmutableArray<UpdatedInt> UpdatedColumns,
+        ImmutableArray<UpdatedInt> InsertedColumns)
     {
         internal string PhysicalTable => Schema + "." + Table;
         internal bool IsUpdate => !UpdatedColumns.IsDefaultOrEmpty;
+        internal bool IsInsert => !InsertedColumns.IsDefaultOrEmpty;
     }
 
     internal static bool IsBoundedShape(MergeStatement merge)
@@ -39,10 +41,9 @@ internal static class SqlServerMergeMatchedDeleteSafety
             || merge.SourceAlias.Value != "s"
             || merge.SourceColumns.Length is < 1 or > 4
             || merge.SourceValues.Length != merge.SourceColumns.Length
-            || merge.NotMatched is not null
-            || merge.Matched is null)
+            || ((merge.Matched is null) == (merge.NotMatched is null)))
             throw new NotSupportedException(
-                "SQL Server MERGE Host admits only one dbo target and one bounded source VALUES row, with matched-only DELETE or direct INT UPDATE.");
+                "SQL Server MERGE Host admits one dbo target and one bounded source VALUES row, with exactly one direct matched DELETE, UPDATE or not-matched INSERT action.");
 
         var key = RequireDirectField(merge.SourceColumns[0]);
         var sourceValues = new int[merge.SourceValues.Length];
@@ -67,6 +68,36 @@ internal static class SqlServerMergeMatchedDeleteSafety
               || (IsExactKey(match.Right, "t", key) && IsExactKey(match.Left, "s", key))))
             throw new NotSupportedException(
                 "MERGE requires precisely t.<key> = s.<key> without extra predicates.");
+
+        // A NOT MATCHED INSERT must map every source field exactly once to
+        // the same-named physical target, without expressions, defaults,
+        // duplicate columns, computed values or an additional MATCHED branch.
+        if (merge.Matched is null)
+        {
+            var insert = merge.NotMatched!;
+            if (sourceNames.Length is < 2 or > 4
+                || insert.Columns.Length != sourceNames.Length
+                || insert.Values.Length != sourceNames.Length)
+                throw new NotSupportedException(
+                    "SQL Server MERGE INSERT requires one INT primary key plus 1–3 complete direct INT payload fields.");
+            var assigned = new HashSet<string>(StringComparer.Ordinal);
+            for (var index = 0; index < insert.Columns.Length; index++)
+            {
+                var field = RequireDirectField(insert.Columns[index]);
+                if (!assigned.Add(field)
+                    || !sourceNames.Contains(field, StringComparer.Ordinal)
+                    || !IsExactKey(insert.Values[index], "s", field))
+                    throw new NotSupportedException(
+                        "SQL Server MERGE INSERT requires each physical column exactly once from the same-named source field.");
+            }
+            if (assigned.Count != sourceNames.Length)
+                throw new NotSupportedException(
+                    "SQL Server MERGE INSERT cannot omit or duplicate source fields.");
+            return new Shape("dbo", merge.Target.Name.Parts[1].Value, key,
+                sourceValues[0], ImmutableArray<UpdatedInt>.Empty,
+                sourceNames.Skip(1).Select((name, index) =>
+                    new UpdatedInt(name, sourceValues[index + 1])).ToImmutableArray());
+        }
 
         var updated = ImmutableArray.CreateBuilder<UpdatedInt>();
         switch (merge.Matched.Kind)
@@ -103,7 +134,7 @@ internal static class SqlServerMergeMatchedDeleteSafety
                     "MERGE matched approval permits DELETE or bounded direct-column UPDATE only, never INSERT or mixed actions.");
         }
         return new Shape("dbo", merge.Target.Name.Parts[1].Value, key,
-            sourceValues[0], updated.ToImmutable());
+            sourceValues[0], updated.ToImmutable(), ImmutableArray<UpdatedInt>.Empty);
     }
 
     internal static void RequireExactSourceLiterals(
@@ -117,6 +148,7 @@ internal static class SqlServerMergeMatchedDeleteSafety
             [shape.KeyColumn] = shape.KeyValue
         };
         foreach (var cell in shape.UpdatedColumns) allowed.Add(cell.Column, cell.Value);
+        foreach (var cell in shape.InsertedColumns) allowed.Add(cell.Column, cell.Value);
         for (var i = 0; i < merge.SourceValues.Length; i++)
         {
             var column = RequireDirectField(merge.SourceColumns[i]);

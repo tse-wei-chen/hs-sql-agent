@@ -945,6 +945,27 @@ module internal RewriteSchemaValidation =
                             |> List.distinct
                             |> List.length) = payload.Length
                     | _ -> false
+                let notMatchedProven =
+                    match merge.Matched, merge.NotMatched with
+                    | None, Some insert ->
+                        let targets = NonEmpty.toList insert.InsertColumns
+                        let values = NonEmpty.toList insert.InsertValues
+                        let namedTargets = targets |> List.map (fun identifier ->
+                            match Identifier.parts identifier with
+                            | [ field ] -> keyPart catalog.Dialect field
+                            | _ -> "")
+                        let physicalColumns = Set.ofList target.Columns
+                        let sourceColumns = Set.ofList normalizedSourceFields
+                        sourceParts.Length >= 2 && sourceParts.Length <= 4
+                        && target.Columns.Length = sourceParts.Length
+                        && physicalColumns = sourceColumns
+                        && targets.Length = sourceParts.Length
+                        && values.Length = targets.Length
+                        && (Set.ofList namedTargets) = sourceColumns
+                        && (namedTargets |> List.distinct |> List.length) = namedTargets.Length
+                        && (List.forall2 (fun name value ->
+                            name <> "" && directColumn "s" name value) namedTargets values)
+                    | _ -> false
                 let proven =
                     catalog.Dialect = SqlAgentToolType.MsSqlServer
                     && targetNames.Length = 2
@@ -961,13 +982,13 @@ module internal RewriteSchemaValidation =
                         match unwrap value with
                         | Literal _ -> true
                         | _ -> false))
-                    && merge.NotMatched.IsNone
                     && provenMatch
-                    && matchedProven
+                    && ((merge.Matched.IsSome && merge.NotMatched.IsNone && matchedProven)
+                        || notMatchedProven)
                 if not proven then
                     reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (
                         "Strict snapshot mode proves only a single literal source key and " +
-                        "SQL Server MATCHED DELETE or bounded direct-column UPDATE; " +
+                        "SQL Server MATCHED DELETE, bounded UPDATE or complete direct-column NOT MATCHED INSERT; " +
                         "live physical UNIQUE and transaction approval remain Host-only.")
 
 
