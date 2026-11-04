@@ -889,28 +889,61 @@ module internal RewriteSchemaValidation =
                 let target = namedSource catalog.Dialect merge.Target
                                      (Some merge.TargetAlias) (physicalTable catalog merge.Target)
                 let targetNames = Identifier.parts merge.Target
-                let sourceKeyParts = NonEmpty.toList merge.Source.SourceColumns
+                let sourceParts = NonEmpty.toList merge.Source.SourceColumns
+                let sourceValues = NonEmpty.toList merge.Source.SourceValues
                 let key =
-                    match sourceKeyParts with
-                    | [ part ] -> keyPart catalog.Dialect part
+                    match sourceParts with
+                    | part :: _ -> keyPart catalog.Dialect part
                     | _ -> ""
                 let rec unwrap = function
                     | Spanned(_, inner) -> unwrap inner
                     | other -> other
-                let exactColumn alias expression =
+                let directColumn alias expected expression =
                     match unwrap expression with
                     | Column identifier | BoundColumn(identifier, _) ->
                         match Identifier.parts identifier with
                         | [ qualifier; field ] ->
                             qualifier.Value = alias
-                            && keyPart catalog.Dialect field = key
+                            && keyPart catalog.Dialect field = expected
                         | _ -> false
                     | _ -> false
                 let provenMatch =
                     match unwrap merge.MatchPredicate with
                     | Binary(Equal, left, right) ->
-                        (exactColumn "t" left && exactColumn "s" right)
-                        || (exactColumn "t" right && exactColumn "s" left)
+                        (directColumn "t" key left && directColumn "s" key right)
+                        || (directColumn "t" key right && directColumn "s" key left)
+                    | _ -> false
+                let normalizedSourceFields =
+                    sourceParts |> List.map (keyPart catalog.Dialect)
+                let physicalPayload columns =
+                    columns |> List.forall (fun name ->
+                        name <> key
+                        && not (name.StartsWith("__", StringComparison.Ordinal))
+                        && countColumn target name = 1)
+                let matchedProven =
+                    match merge.Matched with
+                    | Some MergeDelete -> sourceParts.Length = 1
+                    | Some(MergeUpdate assignments) ->
+                        let payload = normalizedSourceFields |> List.tail
+                        let updates = NonEmpty.toList assignments
+                        payload.Length >= 1 && payload.Length <= 3
+                        && updates.Length = payload.Length
+                        && physicalPayload payload
+                        && (updates
+                            |> List.forall (fun assignment ->
+                                match Identifier.parts assignment.Target with
+                                | [ field ] ->
+                                    let name = keyPart catalog.Dialect field
+                                    payload |> List.contains name
+                                    && directColumn "s" name assignment.Value
+                                | _ -> false))
+                        && (updates
+                            |> List.map (fun assignment ->
+                                Identifier.parts assignment.Target
+                                |> List.head
+                                |> keyPart catalog.Dialect)
+                            |> List.distinct
+                            |> List.length) = payload.Length
                     | _ -> false
                 let proven =
                     catalog.Dialect = SqlAgentToolType.MsSqlServer
@@ -919,22 +952,22 @@ module internal RewriteSchemaValidation =
                     && merge.TargetAlias.Value = "t"
                     && merge.Source.Alias.Value = "s"
                     && key <> ""
+                    && not (key.StartsWith("__", StringComparison.Ordinal))
                     && countColumn target key = 1
-                    && sourceKeyParts.Length = 1
-                    && NonEmpty.length merge.Source.SourceValues = 1
-                    && (match NonEmpty.toList merge.Source.SourceValues with
-                        | [ value ] ->
-                            match unwrap value with
-                            | Literal _ -> true
-                            | _ -> false
-                        | _ -> false)
-                    && merge.Matched = Some MergeDelete
+                    && sourceParts.Length = sourceValues.Length
+                    && sourceParts.Length <= 4
+                    && (normalizedSourceFields |> List.distinct |> List.length) = sourceParts.Length
+                    && (sourceValues |> List.forall (fun value ->
+                        match unwrap value with
+                        | Literal _ -> true
+                        | _ -> false))
                     && merge.NotMatched.IsNone
                     && provenMatch
+                    && matchedProven
                 if not proven then
                     reject "SQL_SCHEMA_MERGE_UNPROVABLE" doc.Span (
                         "Strict snapshot mode proves only a single literal source key and " +
-                        "SQL Server WHEN MATCHED THEN DELETE with one exact t.key=s.key; " +
+                        "SQL Server MATCHED DELETE or bounded direct-column UPDATE; " +
                         "live physical UNIQUE and transaction approval remain Host-only.")
 
 
