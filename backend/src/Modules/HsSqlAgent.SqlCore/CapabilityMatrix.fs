@@ -166,7 +166,7 @@ type SqlCapabilityMatrix private () =
                 rejected,
                 "Aggregate FILTER has no declared portable target contract for " + string provider + "."
 
-        let groupsStatus, groupsDetail =
+        let nativePeerFrameStatus capability meaning =
             match provider with
             | SqlAgentToolType.Postgres | SqlAgentToolType.Sqlite ->
                 let minimum =
@@ -175,16 +175,21 @@ type SqlCapabilityMatrix private () =
                 match profileServerVersion with
                 | Some version when version.CompareTo(minimum) < 0 ->
                     rejected,
-                    "SQL capability 'window.groups' requires ServerVersion " + string minimum
+                    "SQL capability '" + capability + "' requires ServerVersion " + string minimum
                     + "+; declared target version is " + string version + "."
                 | _ ->
                     supported,
-                    "GROUPS counts native ORDER BY peer groups and requires an explicit ORDER BY. "
-                    + "Supported for PostgreSQL 11+ and SQLite 3.28+; explicitly older versions are rejected. "
-                    + "An omitted profile assumes the Core current-release baseline; Host must attest live runtime."
+                    meaning + " Supported for PostgreSQL 11+ and SQLite 3.28+; explicitly older "
+                    + "versions are rejected. An omitted profile assumes the Core current-release baseline; "
+                    + "Host must attest live runtime."
             | _ ->
                 rejected,
-                "SQL capability 'window.groups' has no proven native peer-frame semantics for this provider."
+                "SQL capability '" + capability + "' has no proven native frame semantics for this provider."
+
+        let groupsStatus, groupsDetail =
+            nativePeerFrameStatus "window.groups" "GROUPS counts native ORDER BY peer groups and requires an explicit ORDER BY."
+        let excludeCurrentRowStatus, excludeCurrentRowDetail =
+            nativePeerFrameStatus "window.exclude.current_row" "EXCLUDE CURRENT ROW removes only the current physical row from an explicit ordered frame."
 
         let aggregateOrderingStatus, aggregateOrderingDetail =
             match provider with
@@ -614,6 +619,7 @@ type SqlCapabilityMatrix private () =
                 yield cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
                 yield cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
                 yield cap("window.groups","window",groupsStatus,groupsDetail)
+                yield cap("window.exclude.current_row","window",excludeCurrentRowStatus,excludeCurrentRowDetail)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
