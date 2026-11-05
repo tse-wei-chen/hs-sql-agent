@@ -460,9 +460,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     intermediate + " WHERE middle.x IS NOT NULL",
                     intermediate.Replace(") AS middle", ") AS middle " +
                         "INNER JOIN dbo.[" + src + "] AS extra ON middle.x = extra.k1",
-                        StringComparison.Ordinal),
-                    // Depth expansion is separately tested below; retain
-                    // negative ambiguity/expressions/extra-source checks.
+                        StringComparison.Ordinal)
                 })
                 {
                     var rejected = sql.Replace(intermediate, invalid,
