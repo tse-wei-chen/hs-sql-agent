@@ -62,6 +62,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Guard domain-organized test layout
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_test_suite_layout.py' -v
+          python3 .github/scripts/verify_test_suite_layout.py --check .
       - name: Verify released v2.0.6 Admin Store migration baseline is immutable
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
@@ -136,6 +140,20 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Gate observed six-provider SQL coverage ledger (3.1)
+        shell: bash
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_sqlcore_coverage_ledger.py' -v
+          python3 .github/scripts/sqlcore_coverage_ledger.py --check \
+            --manifest backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sqlcore-coverage-manifest.json \
+            --output artifacts/sqlcore-coverage-ledger.json
+      - name: Upload observed SQL coverage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sqlcore-observed-coverage-ledger
+          path: artifacts/sqlcore-coverage-ledger.json
+          if-no-files-found: warn
       - name: Run generated SQL grammar matrices
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter '(FullyQualifiedName~GrammarMatrixTests|FullyQualifiedName~MutationMatrixTests|FullyQualifiedName~NegativeBindingPolicyMatrixTests|FullyQualifiedName~NegativeTargetCapabilityMatrixTests|FullyQualifiedName~NegativeTablePolicyMatrixTests|FullyQualifiedName~SqlGrammarBombardmentCoverageTests)'
       - name: Validate SQL compiler benchmark harness (smoke only)

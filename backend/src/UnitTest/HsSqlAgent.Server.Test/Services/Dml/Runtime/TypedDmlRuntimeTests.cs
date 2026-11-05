@@ -249,6 +249,40 @@ public class TypedDmlRuntimeTests
         provider.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData("principal")]
+    [InlineData("target")]
+    [InlineData("provider")]
+    [InlineData("database")]
+    [InlineData("principal-unicode")]
+    [InlineData("database-case")]
+    public async Task CommitAsync_RejectsApprovalContextTamperingBeforeProviderAccess(
+        string changedComponent)
+    {
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 25 };
+        var session = BuildSession(
+            TypedDmlRuntime.ComputePolicyVersion(policy, null), DefaultApprovalContext);
+        var changed = changedComponent switch
+        {
+            "principal" => DefaultApprovalContext with { PrincipalIdentity = "mcp-key:8" },
+            "target" => DefaultApprovalContext with { TargetIdentity = "db-management:12" },
+            "provider" => DefaultApprovalContext with { Provider = SqlAgentToolType.MySQL },
+            "database" => DefaultApprovalContext with { DatabaseIdentity = "otherdb" },
+            "principal-unicode" => DefaultApprovalContext with { PrincipalIdentity = "mcp-key:7\u200B" },
+            "database-case" => DefaultApprovalContext with { DatabaseIdentity = "APPDB" },
+            _ => throw new ArgumentOutOfRangeException(nameof(changedComponent))
+        };
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new TypedDmlRuntime().CommitAsync(
+                provider.Object, "connection", session, policy,
+                null, changed, TestContext.Current.CancellationToken));
+
+        Assert.Contains("execution context", exception.Message, StringComparison.OrdinalIgnoreCase);
+        provider.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task CommitAsync_StrictSchemaModeRejectsLegacyApprovalBeforeProviderAccess()
     {

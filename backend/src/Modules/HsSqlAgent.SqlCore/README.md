@@ -6,6 +6,45 @@
 
 The compiler uses a closed F# AST, typed validation and capability checks, and provider-native rendering behind a CLR-friendly C# facade. **It does not connect to a database or execute SQL.**
 
+### 3.1 bounded SQL Server ordered-key CTE / derived admission
+
+Native SQL Server 2022 UPDATE/DELETE with independently live-attested
+physical UNIQUE keys can traverse **up to three** non-lateral, read-only
+derived SELECT layers that preserve the full ordered physical key tuple as
+direct, unambiguous, injective column projections. CTE renaming and derived
+projections now share the same ordered-key mapping rule. Expressions,
+reordered or duplicated keys, filters, extra/multiplying joins, and four or
+more derived layers remain fail-closed. Static Catalog cardinality does
+not authorize execution: Host still verifies the physical index, current
+schema, Preview row set, one-use Approval and transaction-time key freshness.
+No additional provider, MCP tool or CLR public API is enabled.
+
+### 3.1 observed SQL coverage ledger (compiler evidence, not a support percentage)
+
+The six-provider coverage ledger reads the *existing checked-in positive compiler
+regression corpora* and verifies exact counts, statement family, native source/target
+identity, unique case IDs, and declared version profiles. It is not an official
+SQL grammar denominator, a proof of arbitrary SQL support, or a Host/real-DB
+execution claim. DDL/DCL/TCL/Session/Utility/Procedural coverage is not
+implied by DQL or DML cases. Negative fail-closed and real DB parity remain
+independently gated by the existing test jobs.
+
+To regenerate the CI evidence locally from the repository root:
+
+```bash
+python3 -m unittest discover -s .github/scripts -p 'test_sqlcore_coverage_ledger.py'
+python3 .github/scripts/sqlcore_coverage_ledger.py --check \
+  --manifest backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sqlcore-coverage-manifest.json \
+  --output artifacts/sqlcore-coverage-ledger.json
+```
+
+The output records observed case totals per dialect and semantic family. A new
+regression corpus must be added explicitly to the manifest; changing a corpus
+without updating its declared counts fails CI. Evidence is generated as an
+artifact by the existing syntax-matrix job; no additional Compiler, NuGet, MCP,
+database driver, approval path or SQL execution capability is introduced.
+
+
 ## Install
 
 ```bash

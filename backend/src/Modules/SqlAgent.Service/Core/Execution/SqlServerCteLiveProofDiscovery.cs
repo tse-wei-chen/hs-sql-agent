@@ -376,7 +376,7 @@ internal static class SqlServerCteLiveProofDiscovery
     /// Physical column lineage is preserved even when payload is omitted
     /// by a later hop. All output names remain unambiguous.
     /// </summary>
-    // One or two direct derived projections may carry the original physical
+    // Up to three direct derived projections may carry the original physical
     // UNIQUE tuple. The bounded recursion never grants physical authority:
     // sys.index_columns, the F# admission gate and transaction IsCurrent
     // independently prove the actual index and all mandatory equalities.
@@ -391,7 +391,7 @@ internal static class SqlServerCteLiveProofDiscovery
     {
         physicalTable = "";
         outputs = ImmutableArray<ProjectionLineage>.Empty;
-        if (depth > 2 || derived.IsLateral || !SafeName(derived.Alias.Value)
+        if (depth > 3 || derived.IsLateral || !SafeName(derived.Alias.Value)
             || derived.Query is not SelectStatement inner
             || inner.Ctes.Length != 0 || inner.Joins.Length != 0
             || inner.Where is not null || inner.Distinct
@@ -409,7 +409,7 @@ internal static class SqlServerCteLiveProofDiscovery
         {
             if (!TryPhysicalTable(root.Name, out physicalTable)) return false;
         }
-        else if (depth < 2 && inner.From is DerivedTableSource nested
+        else if (depth < 3 && inner.From is DerivedTableSource nested
                  && TryDescribeDirectDerived(
                      nested, depth + 1, out physicalTable, out previous))
         {

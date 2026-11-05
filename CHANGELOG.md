@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.1.0] - Unreleased
+
+### G11 — SQL Server ordered composite-key projection proof reuse
+
+- Replace duplicated SQL Server CTE key renaming/ordinal proof with the
+  strict derived-key projection helper. Preserve direct-column-only, injective,
+  complete ordered physical UNIQUE-key lineage and declared CTE alias handling.
+- Admit one additional (third) bounded, non-lateral derived SELECT layer for
+  native SQL Server UPDATE/DELETE through independent static cardinality and
+  executable physical-key proofs. Fourth-layer nesting, computed/repeated/
+  shuffled keys, filters, multiplicative joins and unverified targets still
+  fail closed. Real SQL Server 2022 live tests cover both operations, rejected
+  shapes, one-use approval, schema drift and transaction-time attestation.
+  No Host permission or public API changes.
+
+### SqlCore observed SQL coverage ledger (P0)
+
+- Add a deterministic CI ledger of existing checked-in six-provider positive compiler corpora, split by SQL statement family, provider, and declared version-profile evidence. Reject missing or duplicated fixtures, unknown providers, native target mismatches and unexpected count drift. CI publishes a JSON evidence artifact in the existing syntax-matrix job; no second test job, NuGet API or execution path.
+- Deliberately report **no official grammar coverage percentage** and **no Host execution parity claim**: the current 4,883 fixture cases do not represent the denominator of supported SQL syntax, and negative/live behavior remains independently gated.
+
 All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
