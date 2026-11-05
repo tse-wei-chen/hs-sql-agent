@@ -375,11 +375,18 @@ module internal RewriteCompatibilityAstAdapter =
                     let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
                     HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, exclusion, unknown))
                 |> Option.defaultValue (Unchecked.defaultof<_>)
-            HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
-                window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
-                window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
-                frame,
-                unknown)
+            let result =
+                HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
+                    window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
+                    window.OrderBy |> List.map orderByOf |> ImmutableArray.CreateRange,
+                    frame,
+                    unknown)
+            result.NullTreatment <-
+                match window.NullTreatment with
+                | WindowNullTreatment.DefaultNullTreatment -> HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.Unspecified
+                | WindowNullTreatment.IgnoreNulls -> HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.IgnoreNulls
+                | WindowNullTreatment.RespectNulls -> HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.RespectNulls
+            result
 
         and tableSourceOf source : HsSqlAgent.SqlCore.Core.Ast.TableSource =
             match source with
