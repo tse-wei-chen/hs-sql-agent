@@ -156,12 +156,20 @@ type WindowFrameBoundCore(kind: WindowFrameBoundKindCore, offset: Nullable<int>,
     member _.Kind = kind
     member _.Offset = offset
 
+type WindowFrameExclusionKind =
+    | NoOthers = 0
+    | CurrentRow = 1
+
 [<Sealed>]
-type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, span: SourceSpan) =
+type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, span: SourceSpan, exclusion: WindowFrameExclusionKind) =
     inherit SqlNode(span)
+    // Keep the existing 4-argument CLR constructor source/binary compatible.
+    new(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, span: SourceSpan) =
+        WindowFrame(unitKind, startBound, endBound, span, WindowFrameExclusionKind.NoOthers)
     member _.Unit = unitKind
     member _.Start = startBound
     member _.End = endBound
+    member _.Exclusion = exclusion
 
 [<Sealed>]
 type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<OrderByItem>, frame: WindowFrame | null, span: SourceSpan) =
