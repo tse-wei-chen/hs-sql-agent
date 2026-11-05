@@ -273,6 +273,23 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
+                    if window.NullTreatment <> WindowNullTreatment.DefaultNullTreatment then
+                        match Expr.unspan value with
+                        | FunctionCall call
+                            when not call.IsDistinct
+                                 && call.AggregateOrderBy.IsEmpty
+                                 && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                                 && (String.Equals(FunctionName.value call.Name, "LAG", StringComparison.OrdinalIgnoreCase)
+                                     || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)) -> ()
+                        | _ -> raise (SqlCompilationException(
+                                    "SQL capability 'window.null_treatment' permits LAG/LEAD only."))
+                        // Structured CLR windows cannot bypass source grammar admission.
+                        match SqlWindowNullTreatmentCapabilityRules.ValidationError(source, sourceProfile, "source") with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                        match SqlWindowNullTreatmentCapabilityRules.ValidationError(target, targetProfile, "target") with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
                     match window.Frame with
                     | Some frame ->
                         let prove capability =
