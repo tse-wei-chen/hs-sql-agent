@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — Native PostgreSQL/SQLite EXCLUDE CURRENT ROW window semantics (develop only)
+
+- Preserve `EXCLUDE CURRENT ROW` on ordered, explicit ROWS/RANGE/GROUPS windows through a sealed F# frame exclusion, native renderer and bidirectional CLR compatibility AST. PostgreSQL 11+ and SQLite 3.28+ have independently checked source/target versions. Unmodeled exclusion forms, missing frames and other dialects remain rejected; native result parity is covered by dedicated PostgreSQL 16/SQLite tests. No MCP tool or DML permission/default change.
+
+
 ### G10/Q02 — Native PostgreSQL and SQLite GROUPS window frames (develop only)
 
 - Extend the F# closed window-frame AST and exhaustive CLR compatibility projection with native `GROUPS` peer-group frames. PostgreSQL 11+ and SQLite 3.28+ preserve `GROUPS BETWEEN ... AND ...` without rewriting it to non-equivalent `ROWS` or `RANGE`; other four dialects reject unproven source/target semantics.
