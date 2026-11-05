@@ -365,12 +365,12 @@ module internal RewriteMutationSourceMatchProof =
                                           UniqueKeys = keys }
 
                 // Each derived layer must preserve a single physical row
-                // identity with a direct, injective column projection. Two
-                // layers are the bounded M06 extension; deeper nesting,
+                // identity with a direct, injective column projection. Up to
+                // three layers are bounded; deeper nesting,
                 // correlated/lateral or multiplicative sources remain closed.
                 let rec derivedSource depth (query: Query) (alias: IdentifierPart) =
                     let head = query.Head
-                    if depth > 2 || not query.SetOperations.IsEmpty
+                    if depth > 3 || not query.SetOperations.IsEmpty
                        || not query.OrderBy.IsEmpty
                        || query.Limit.IsSome || query.Offset.IsSome
                        || query.FetchPercent.IsSome || query.FetchWithTies
@@ -384,7 +384,7 @@ module internal RewriteMutationSourceMatchProof =
                             match head.From with
                             | Some(NamedTable(name, physicalAlias)) ->
                                 create 0 name physicalAlias
-                            | Some(DerivedTable(nested, nestedAlias)) when depth < 2 ->
+                            | Some(DerivedTable(nested, nestedAlias)) when depth < 3 ->
                                 derivedSource (depth + 1) nested nestedAlias
                             | _ -> None
                         input
