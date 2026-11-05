@@ -577,6 +577,12 @@ type SqlCapabilityMatrix private () =
                     else
                         "PostgreSQL-style INTERVAL 'literal' has no declared target equivalent for this provider. Raw SQL that parses into this Core interval-literal shape is also rejected when the declared source dialect is non-PostgreSQL; provider-native interval forms such as MySQL INTERVAL expr unit require a separate structured translation contract.")
                 yield cap("expression.filter","expression",filterStatus,filterDetail)
+                yield cap("aggregate.filtered_count","aggregate",
+                    (if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then translated else filterStatus),
+                    if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
+                        "Only COUNT(*) or COUNT(direct local column) FILTER from an admissible source is lowered to MySQL COUNT(CASE WHEN predicate THEN value END) or SQL Server 64-bit COUNT_BIG(CASE WHEN predicate THEN value END). DISTINCT, SUM, volatile expressions, subqueries and outer references fail closed; FILTER is not valid raw MySQL/SQL Server source grammar."
+                    else
+                        "FILTER COUNT follows native expression.filter target capability and its provider/version proof.")
                 yield cap("aggregate.string","aggregate",translated,"String aggregation lowers to provider-native syntax.")
                 yield cap("aggregate.string.ordering","aggregate",aggregateOrderingStatus,aggregateOrderingDetail)
                 yield cap("aggregate.string.dynamic_separator","aggregate",rejected,"Dynamic aggregate separators remain fail-closed.")

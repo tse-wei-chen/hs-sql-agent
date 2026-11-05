@@ -3115,9 +3115,15 @@ module internal RewriteStages =
         targetCheck (fun () -> RewriteStructuralValidation.validateNestedCteDocument targetRuntime document)
         targetCheck (fun () -> RewriteStructuralValidation.validateNoFromDocument targetRuntime document)
         sourceCheck (fun () ->
-            RewriteCapabilityValidation.proveFilterDocument sourceCapabilityMessage sourceExpressions document)
+            RewriteCapabilityValidation.proveFilterDocument
+                sourceCapabilityMessage sourceExpressions false document)
         targetCheck (fun () ->
-            RewriteCapabilityValidation.proveFilterDocument targetCapabilityMessage targetExpressions document)
+            let provider = TargetRuntime.provider targetRuntime
+            let allowFilteredCount =
+                provider = SqlAgentToolType.MySQL
+                || provider = SqlAgentToolType.MsSqlServer
+            RewriteCapabilityValidation.proveFilterDocument
+                targetCapabilityMessage targetExpressions allowFilteredCount document)
 
         let validated =
             semanticCheck (fun () ->

@@ -840,7 +840,18 @@ module internal RewriteRenderer =
             match ctx.Provider with
             | PostgreSql | SQLite | Oracle | Firebird ->
                 renderExpr ctx value + " FILTER (WHERE " + renderPredicate ctx predicate + ")"
-            | _ -> invalidOp "Aggregate FILTER requires provider-specific lowering before rendering."
+            | MySql | SqlServer ->
+                match Expr.tryFilteredCountArgument value with
+                | Some argument when Expr.isBoundedCountFilterPredicate predicate ->
+                    let counted =
+                        match argument with
+                        | Expr.AllRows -> doc ctx "1"
+                        | Expr.DirectColumn value -> renderExpr ctx value
+                    let nativeCount =
+                        if ctx.Provider = SqlServer then "COUNT_BIG(" else "COUNT("
+                    nativeCount + "CASE WHEN " + renderPredicate ctx predicate
+                    + " THEN " + counted + " END)"
+                | _ -> invalidOp "Unproven expression.filter reached COUNT CASE lowering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
         | Expr.Cast _ | Expr.Extract _ -> renderScalarGraph ctx expression
         | Expr.SimpleCase(input, branches, fallback) ->

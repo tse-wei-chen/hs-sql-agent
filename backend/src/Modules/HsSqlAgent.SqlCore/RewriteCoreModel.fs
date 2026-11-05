@@ -969,6 +969,65 @@ module internal CoreModel =
                 | _ -> doneWalking <- true
             current
 
+        /// One structural proof used by target validation and native lowering.
+        /// COUNT(*) has a different argument shape from COUNT(direct_column).
+        type FilteredCountArgument =
+            | AllRows
+            | DirectColumn of Expr
+
+        let tryFilteredCountArgument value =
+            match unspan value with
+            | FunctionCall call
+                when not call.IsDistinct
+                     && call.AggregateOrderBy.IsEmpty
+                     && call.AggregateOrderSyntax = NoAggregateOrder
+                     && call.AggregateSeparator.IsNone
+                     && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                     && String.Equals(
+                         FunctionName.value call.Name, "COUNT",
+                         StringComparison.OrdinalIgnoreCase) ->
+                match call.Arguments with
+                | [ argument ] ->
+                    match unspan argument with
+                    | Wildcard None -> Some AllRows
+                    | Column _ | BoundColumn(_, LocalRowSource) ->
+                        Some(DirectColumn argument)
+                    | _ -> None
+                | _ -> None
+            | _ -> None
+
+        // Require a bounded boolean predicate graph over direct local columns
+        // and literals. Scalar expressions, subqueries, outer references and
+        // volatile calls must never be re-evaluated by CASE lowering.
+        let isBoundedCountFilterPredicate expression =
+            let isDirectValue value =
+                match unspan value with
+                | Column _ | BoundColumn(_, LocalRowSource) | Literal _ -> true
+                | _ -> false
+            let pending = ResizeArray<Expr>()
+            pending.Add expression
+            let mutable supported = true
+            while supported && pending.Count > 0 do
+                let last = pending.Count - 1
+                let next = unspan pending.[last]
+                pending.RemoveAt(last)
+                match next with
+                | Binary(operator, left, right) ->
+                    match operator with
+                    | And | Or ->
+                        pending.Add right
+                        pending.Add left
+                    | Equal | NotEqual | GreaterThan | LessThan
+                    | GreaterThanOrEqual | LessThanOrEqual ->
+                        if not (isDirectValue left && isDirectValue right) then
+                            supported <- false
+                    | _ -> supported <- false
+                | Unary(Not, value) -> pending.Add value
+                | IsNull(value, _) ->
+                    if not (isDirectValue value) then supported <- false
+                | _ -> supported <- false
+            supported
+
         // Compare expression pairs iteratively: deep legal SQL does not
         // consume one managed call frame per AST node. A subquery remains
         // conservatively non-equivalent, matching the original proof rule.
