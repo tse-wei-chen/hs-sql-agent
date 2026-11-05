@@ -57,6 +57,48 @@ public sealed class SqlCoreWindowRangeOffsetSourceProofTests
         Assert.NotNull(parsed.Statement);
     }
 
+    [Fact]
+    public void StructuredSqlServerSource_CannotBypassRangeOffsetProof()
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = TableName,
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "SUM",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    Window = new WindowDefinition
+                    {
+                        OrderBy = [new FieldOrderByCondition { FieldName = "grp", Direction = SortDirection.Asc }],
+                        Frame = new WindowFrameDefinition
+                        {
+                            Unit = WindowFrameUnit.Range,
+                            Start = new WindowFrameBound
+                            {
+                                Kind = WindowFrameBoundKind.Preceding,
+                                Offset = 1
+                            },
+                            End = new WindowFrameBound { Kind = WindowFrameBoundKind.CurrentRow }
+                        }
+                    }
+                }
+            ]
+        };
+
+        var statement = new ParsedStatement(
+            QueryDefinitionCoreMapper.Map(definition),
+            SqlAgentToolType.MsSqlServer);
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            CoreSqlCompiler.CreateDefault().Compile(
+                statement,
+                SqlAgentToolType.Postgres,
+                new SqlPlanValidationContext("g10-structured-range-source-proof"),
+                new SqlExecutionPlanPolicy()));
+        Assert.Contains("window.range_offset", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(SqlAgentToolType.Postgres)]
     [InlineData(SqlAgentToolType.Sqlite)]
