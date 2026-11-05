@@ -285,8 +285,9 @@ module internal RewriteStages =
                             | None -> ()
                         // A CLR/structured statement cannot bypass the source grammar
                         // simply by selecting a target which supports numeric RANGE.
-                        if enforceSource
-                           && source = SqlAgentToolType.MsSqlServer
+                        // Structured CLR statements must satisfy this source
+                        // grammar rule even when legacy lexical enforcement is off.
+                        if source = SqlAgentToolType.MsSqlServer
                            && frame.Unit = WindowFrameUnit.Range
                            && frame.HasNumericOffset then
                             raise (SqlCompilationException(
