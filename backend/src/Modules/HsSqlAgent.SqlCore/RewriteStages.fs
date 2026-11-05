@@ -942,9 +942,19 @@ module internal RewriteStages =
                         derivedKeyChain (depth + 1) nested
                         |> Option.map (fun keys -> keys, nestedAlias.Value)
                     | _ -> None
-                source
-                |> Option.bind (fun (keys, qualifier) ->
-                    projectDerivedKeys keys qualifier head.Projection [])
+                let mapped =
+                    source
+                    |> Option.bind (fun (keys, qualifier) ->
+                        projectDerivedKeys keys qualifier head.Projection [])
+                // TEMP G11 diagnostics: structural states only, no SQL text.
+                if depth = 3 then
+                    System.Console.Error.WriteLine(
+                        "G11TRACE derived depth=3 source=" + string source.IsSome
+                        + " mapped=" + string mapped.IsSome
+                        + " named=" + string (match head.From with
+                                              | Some(NamedTable _) -> true
+                                              | _ -> false))
+                mapped
         let provenDirectDerivedKeys (derived: Query) = derivedKeyChain 1 derived
 
         // M06: two independently read, directly projected instances of ONE
@@ -1126,6 +1136,11 @@ module internal RewriteStages =
                             // The same strict key mapping is used by
                             // derived sources, linear CTEs and diamonds.
                             projectDerivedKeys keys qualifier head.Projection cte.ColumnAliases)
+                    // TEMP G11: no identifiers, values, SQL text, or secrets.
+                    if index = 0 then
+                        System.Console.Error.WriteLine(
+                            "G11TRACE cte0 input=" + string input.IsSome
+                            + " direct=" + string directProjection.IsSome)
                     if not valid
                        || not (seen.Add cte.Name.Value)
                        || cte.RecursiveScope
