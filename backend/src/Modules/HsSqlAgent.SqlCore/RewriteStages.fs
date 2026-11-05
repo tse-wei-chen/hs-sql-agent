@@ -284,10 +284,16 @@ module internal RewriteStages =
                         | _ -> raise (SqlCompilationException(
                                     "SQL capability 'window.null_treatment' permits LAG/LEAD only."))
                         // Structured CLR windows cannot bypass source grammar admission.
-                        match SqlWindowNullTreatmentCapabilityRules.ValidationError(source, sourceProfile, "source") with
+                        // SQL Server IGNORE NULLS also requires the CU4 correctness fix.
+                        let validateTreatment provider profile side =
+                            if window.NullTreatment = WindowNullTreatment.IgnoreNulls then
+                                SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, side)
+                            else
+                                SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, side)
+                        match validateTreatment source sourceProfile "source" with
                         | null -> ()
                         | message -> raise (SqlCompilationException(message))
-                        match SqlWindowNullTreatmentCapabilityRules.ValidationError(target, targetProfile, "target") with
+                        match validateTreatment target targetProfile "target" with
                         | null -> ()
                         | message -> raise (SqlCompilationException(message))
                     match window.Frame with

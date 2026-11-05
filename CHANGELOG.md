@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### G10/Q02 — Native SQL Server/Oracle LAG/LEAD IGNORE/RESPECT NULLS (develop only)
 
-- Preserve `LAG/LEAD(value) IGNORE NULLS OVER (...)` and explicit `RESPECT NULLS` in a closed F# null-treatment DU, source and target version profiles (SQL Server 2022+, Oracle 12.1+), function placement and native renderer. PostgreSQL/MySQL/SQLite/Firebird remain rejected; no lowering to semantically different ordinary LAG/LEAD.
+- Preserve `LAG/LEAD(value) IGNORE NULLS OVER (...)` and explicit `RESPECT NULLS` in a closed F# null-treatment DU, source and target version profiles (SQL Server 2022+ for RESPECT NULLS, SQL Server 2022 CU4 / build 16.0.4035.4+ for IGNORE NULLS, Oracle 12.1+ for both), function placement and native renderer. A 16.0-only SQL Server profile does not prove the CU4 correctness fix. PostgreSQL/MySQL/SQLite/Firebird remain rejected; no lowering to semantically different ordinary LAG/LEAD.
 - Add binary-compatible CLR WindowSpec and structured WindowDefinition enum properties while retaining default and constructor behavior. Actual SQL Server/Oracle parity, six-provider source/target grammar negatives, malformed modifiers and illegal-function cases. No new MCP tool, driver, Host permission or DML/DDL execution path.
 
 

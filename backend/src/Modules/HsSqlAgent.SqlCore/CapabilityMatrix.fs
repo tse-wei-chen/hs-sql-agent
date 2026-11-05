@@ -642,8 +642,15 @@ type SqlCapabilityMatrix private () =
                 yield cap("window.null_treatment","window",
                     (if isNull nullTreatmentError then supported else rejected),
                     if isNull nullTreatmentError then
-                        "LAG/LEAD IGNORE NULLS and RESPECT NULLS preserve native behavior on SQL Server 2022+ or Oracle 12.1+. Explicit source and target version proof required; other providers and unsupported window functions remain fail-closed."
+                        "LAG/LEAD RESPECT NULLS: SQL Server 2022+ or Oracle 12.1+. IGNORE NULLS additionally requires SQL Server 2022 CU4 (16.0.4035.4)+; Oracle 12.1+ is supported. Explicit source/target profiles are required."
                     else nullTreatmentError)
+                let ignoreError =
+                    SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, "target")
+                yield cap("window.null_treatment.ignore","window",
+                    (if isNull ignoreError then supported else rejected),
+                    if isNull ignoreError then
+                        "LAG/LEAD IGNORE NULLS requires SQL Server 2022 CU4+ or Oracle 12.1+ with matching explicit source and target profiles."
+                    else ignoreError)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then

@@ -1107,6 +1107,19 @@ module internal SqlWindowNullTreatmentCapabilityRules =
                 + " ServerVersion " + string min + "+; declared " + string declared + "."
             | _ -> null
 
+    // SQL Server 2022 LAG/LEAD IGNORE NULLS was corrected in CU4.
+    // Explicit RESPECT NULLS still needs only the original 16.0 syntax gate.
+    let IgnoreNullsValidationError(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile | null, side: string) : string | null =
+        let error = ValidationError(provider, profile, side)
+        if not (isNull error) || provider <> SqlAgentToolType.MsSqlServer then error
+        else
+            let fixedBuild = Version(16, 0, 4035, 4)
+            let declared = profile.ServerVersion
+            if declared.Major = 16 && declared.CompareTo(fixedBuild) < 0 then
+                "SQL capability 'window.null_treatment' IGNORE NULLS requires " + side
+                + " SQL Server 2022 CU4 (16.0.4035.4)+; declared " + string declared + "."
+            else null
+
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)
     let private sqlite = Version(3,30)

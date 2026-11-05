@@ -30,7 +30,8 @@ public sealed class SqlCoreWindowNullTreatmentTests
     public void NativeNullTreatment_PreservesPlacementAndFunction(
         SqlAgentToolType provider, int major, int minor, string treatment)
     {
-        var profile = Profile(provider, major, minor);
+        var profile = provider == SqlAgentToolType.MsSqlServer
+            ? ProvenProfile(provider) : Profile(provider, major, minor);
         foreach (var fn in new[] { "LAG", "LEAD" })
         {
             var command = Compile(Query("orders", fn, treatment), provider, provider, profile, profile);
@@ -59,7 +60,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
     [InlineData(SqlAgentToolType.Firebird)]
     public void UnprovenTarget_RejectsIgnoreNullsBeforeRender(SqlAgentToolType target)
     {
-        var sqlServer = Profile(SqlAgentToolType.MsSqlServer, 16, 0);
+        var sqlServer = ProvenProfile(SqlAgentToolType.MsSqlServer);
         var ex = Assert.Throws<SqlCompilationException>(() =>
             Compile(Query("orders", "LEAD", "IGNORE NULLS"),
                 SqlAgentToolType.MsSqlServer, target, sqlServer, null));
@@ -73,7 +74,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
         SqlAgentToolType provider, int major, int minor)
     {
         var old = Profile(provider, major, minor);
-        var current = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var current = ProvenProfile(provider);
         var sql = Query("orders", "LAG", "IGNORE NULLS");
         var sourceError = Assert.Throws<SqlCompilationException>(() =>
             Compile(sql, provider, provider, old, current));
@@ -88,7 +89,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
     [InlineData(SqlAgentToolType.Oracle)]
     public void MissingProfile_FailsClosedRatherThanAssumingNewServer(SqlAgentToolType provider)
     {
-        var current = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var current = ProvenProfile(provider);
         var sql = Query("orders", "LAG", "IGNORE NULLS");
         var sourceError = Assert.Throws<SqlCompilationException>(() =>
             Compile(sql, provider, provider, null, current));
@@ -144,7 +145,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
     public void SoftKeywordCaseDoesNotAlterNativeNullTreatment(
         SqlAgentToolType provider, string modifier)
     {
-        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var profile = ProvenProfile(provider);
         var result = Compile(Query("orders", "LAG", modifier),
             provider, provider, profile, profile);
         Assert.Contains(" " + modifier.ToUpperInvariant() + " OVER (",
@@ -157,7 +158,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
     public void StructuredWindowDefinition_UsesIdenticalTypedProof(
         SqlAgentToolType provider)
     {
-        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var profile = ProvenProfile(provider);
         var query = new QueryDefinition
         {
             TableName = "orders",
@@ -254,7 +255,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
     [InlineData(SqlAgentToolType.Oracle)]
     public void PlainLagLeadWithoutExplicitModifier_RemainsUnchanged(SqlAgentToolType provider)
     {
-        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var profile = ProvenProfile(provider);
         var command = Compile(Query("orders", "LAG", ""), provider, provider, profile, profile);
         Assert.DoesNotContain("IGNORE NULLS", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RESPECT NULLS", command.Sql, StringComparison.OrdinalIgnoreCase);
@@ -266,10 +267,32 @@ public sealed class SqlCoreWindowNullTreatmentTests
     public void CapabilityMatrix_OnlyModelsProvenNativeProfiles(SqlAgentToolType provider)
     {
         var old = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 15 : 11, 0);
-        var current = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var current = ProvenProfile(provider);
         Assert.Equal(SqlCapabilityStatus.Rejected, Status(SqlCapabilityMatrix.ForProvider(provider, old)));
         Assert.Equal(SqlCapabilityStatus.Supported, Status(SqlCapabilityMatrix.ForProvider(provider, current)));
         Assert.Equal(SqlCapabilityStatus.Rejected, Status(SqlCapabilityMatrix.ForProvider(provider)));
+    }
+
+    [Fact]
+    public void SqlServer2022Rtm_ExplicitRespectNullsRemainsSupported()
+    {
+        var rtm = Profile(SqlAgentToolType.MsSqlServer, 16, 0);
+        var result = Compile(Query("orders", "LAG", "RESPECT NULLS"),
+            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer, rtm, rtm);
+        Assert.Contains("RESPECT NULLS OVER (", result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void IgnoreNullsCapability_MustExposeSqlServerCu4BuildFence()
+    {
+        var rtm = Profile(SqlAgentToolType.MsSqlServer, 16, 0);
+        var patched = ProvenProfile(SqlAgentToolType.MsSqlServer);
+        var oldCapabilities = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer, rtm);
+        var newCapabilities = SqlCapabilityMatrix.ForProvider(SqlAgentToolType.MsSqlServer, patched);
+        Assert.Equal(SqlCapabilityStatus.Rejected, oldCapabilities.Capabilities
+            .Single(x => x.Id == "window.null_treatment.ignore").Status);
+        Assert.Equal(SqlCapabilityStatus.Supported, newCapabilities.Capabilities
+            .Single(x => x.Id == "window.null_treatment.ignore").Status);
     }
 
     private static SqlCapabilityStatus Status(ProviderSqlCapabilities capabilities) =>
@@ -278,6 +301,11 @@ public sealed class SqlCoreWindowNullTreatmentTests
     internal static string Query(string table, string fn, string modifier) =>
         "SELECT id, " + fn + "(value)" + (modifier.Length == 0 ? "" : " " + modifier) +
         " OVER (PARTITION BY grp ORDER BY id) AS picked FROM " + table + " ORDER BY id";
+
+    internal static SqlProviderCapabilityProfile ProvenProfile(SqlAgentToolType provider) =>
+        provider == SqlAgentToolType.MsSqlServer
+            ? new(provider, new Version(16, 0, 4035, 4))
+            : Profile(provider, 26, 0);
 
     internal static SqlProviderCapabilityProfile Profile(SqlAgentToolType provider, int major, int minor) =>
         new(provider, new Version(major, minor));
@@ -321,7 +349,7 @@ public sealed class SqlCoreWindowNullTreatmentTests
     internal static async Task VerifyNativeAndCompiled(DbConnection db, string table,
         SqlAgentToolType provider, CancellationToken token)
     {
-        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var profile = ProvenProfile(provider);
         foreach (var fn in new[] { "LAG", "LEAD" })
         {
             var sql = Query(table, fn, "IGNORE NULLS");

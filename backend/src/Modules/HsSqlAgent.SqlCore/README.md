@@ -33,9 +33,11 @@ Console.WriteLine(command.Sql);
 
 ### Native SQL Server/Oracle LAG/LEAD NULL treatment (G10/Q02)
 
-SQL Server 2022+ and Oracle 12.1+ can preserve explicit
-`LAG(value) IGNORE NULLS OVER (PARTITION BY grp ORDER BY id)` and
-`LEAD(value) RESPECT NULLS OVER (...)`. The closed F# window AST carries
+Oracle 12.1+ supports explicit `LAG(value) IGNORE NULLS OVER (...)`
+and `LEAD(value) RESPECT NULLS OVER (...)`. SQL Server 2022+ supports
+`RESPECT NULLS`; `LAG/LEAD IGNORE NULLS` requires SQL Server 2022 CU4+
+(build 16.0.4035.4+) because earlier SQL Server 2022 builds have a native
+IGNORE NULLS correctness defect. A 16.0-only profile does not attest CU4. The closed F# window AST carries
 `WindowNullTreatment` rather than discarding the modifier during parsing.
 An explicit matching source and target ServerVersion profile is required;
 PostgreSQL, MySQL, SQLite and Firebird remain fail-closed.
