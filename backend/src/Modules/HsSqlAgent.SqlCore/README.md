@@ -31,6 +31,22 @@ Console.WriteLine(command.Sql);
 
 `CompiledSqlCommand` contains native SQL, bound parameters, and compiler evidence. The caller remains responsible for database access, connection identity, permissions, and runtime limits.
 
+### Native SQL Server/Oracle LAG/LEAD NULL treatment (G10/Q02)
+
+SQL Server 2022+ and Oracle 12.1+ can preserve explicit
+`LAG(value) IGNORE NULLS OVER (PARTITION BY grp ORDER BY id)` and
+`LEAD(value) RESPECT NULLS OVER (...)`. The closed F# window AST carries
+`WindowNullTreatment` rather than discarding the modifier during parsing.
+An explicit matching source and target ServerVersion profile is required;
+PostgreSQL, MySQL, SQLite and Firebird remain fail-closed.
+Only LAG and LEAD are proven. The CLR `WindowSpec.NullTreatment` property
+and structured `WindowDefinition.NullTreatment` DTO share the same
+validation; the original CLR constructor and default LAG/LEAD behavior
+are unchanged. Invalid or repeated modifiers, missing OVER and unsupported
+window functions reject. Real SQL Server 2022 and Oracle 26ai row-parity
+tests prove NULL-skipping semantics; SqlCore does not execute SQL or grant
+permissions.
+
 ### Bounded conditional DISTINCT COUNT (G10/Q02)
 
 A valid FILTER source such as PostgreSQL
