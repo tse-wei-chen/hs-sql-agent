@@ -31,7 +31,9 @@ public sealed class SqlCoreFilteredCountLoweringTests
     {
         var sql = Query(aggregate, window, "status = 1");
         var compiled = Compile(sql, target);
-        Assert.Contains("COUNT(CASE WHEN", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        var expectedAggregate = target == SqlAgentToolType.MsSqlServer
+            ? "COUNT_BIG(CASE WHEN" : "COUNT(CASE WHEN";
+        Assert.Contains(expectedAggregate, compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("THEN", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("END)", compiled.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("FILTER (WHERE", compiled.Sql, StringComparison.OrdinalIgnoreCase);
