@@ -996,9 +996,14 @@ module internal CoreModel =
                 | _ -> None
             | _ -> None
 
-        // Conditional COUNT must not evaluate volatile expressions, subqueries,
-        // outer scope references or target-dependent scalar-to-boolean coercions.
+        // Require a bounded boolean predicate graph over direct local columns
+        // and literals. Scalar expressions, subqueries, outer references and
+        // volatile calls must never be re-evaluated by CASE lowering.
         let isBoundedCountFilterPredicate expression =
+            let isDirectValue value =
+                match unspan value with
+                | Column _ | BoundColumn(_, LocalRowSource) | Literal _ -> true
+                | _ -> false
             let pending = ResizeArray<Expr>()
             pending.Add expression
             let mutable supported = true
@@ -1007,15 +1012,19 @@ module internal CoreModel =
                 let next = unspan pending.[last]
                 pending.RemoveAt(last)
                 match next with
-                | Binary((Equal | NotEqual | GreaterThan | LessThan
-                          | GreaterThanOrEqual | LessThanOrEqual
-                          | And | Or), left, right) ->
-                    pending.Add right
-                    pending.Add left
-                | Unary(Not, value)
+                | Binary(operator, left, right) ->
+                    match operator with
+                    | And | Or ->
+                        pending.Add right
+                        pending.Add left
+                    | Equal | NotEqual | GreaterThan | LessThan
+                    | GreaterThanOrEqual | LessThanOrEqual ->
+                        if not (isDirectValue left && isDirectValue right) then
+                            supported <- false
+                    | _ -> supported <- false
+                | Unary(Not, value) -> pending.Add value
                 | IsNull(value, _) ->
-                    pending.Add value
-                | Column _ | BoundColumn(_, LocalRowSource) | Literal _ -> ()
+                    if not (isDirectValue value) then supported <- false
                 | _ -> supported <- false
             supported
 
