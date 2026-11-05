@@ -44,6 +44,22 @@ a claim that an arbitrary older runtime can execute the plan. The Host must
 verify its actual runtime version; no fallback to `ROWS` or `RANGE` exists.
 MySQL, SQL Server, Oracle and Firebird remain rejected for this capability.
 
+### Native EXCLUDE CURRENT ROW window frames (G10/Q02)
+
+PostgreSQL 11+ and SQLite 3.28+ can compile native `EXCLUDE CURRENT ROW`
+inside explicitly specified, ordered `ROWS`, `RANGE` or `GROUPS` frames.
+For example, `SUM(amount) OVER (ORDER BY grp GROUPS BETWEEN 1 PRECEDING
+AND CURRENT ROW EXCLUDE CURRENT ROW)` excludes only the physical current row,
+not its ORDER BY peers. The typed F# AST, capability validator, compatibility
+AST and renderer preserve the modifier; it is never lowered into an
+inaccurate alternative frame.
+
+Explicit source and target runtime versions are checked independently; when
+profiles are missing, the Host must still attest its real runtime version.
+`EXCLUDE GROUP`, `EXCLUDE TIES`, `EXCLUDE NO OTHERS`, missing explicit frame
+or ORDER BY, and the four other provider dialects remain fail-closed.
+Compilation never grants authority to execute against a database.
+
 ## Other compiler APIs
 
 | API | Purpose | Execution authority |
