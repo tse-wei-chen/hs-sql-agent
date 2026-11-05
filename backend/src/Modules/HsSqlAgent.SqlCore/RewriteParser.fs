@@ -1379,17 +1379,19 @@ module internal RewriteParser =
                     filterSeen <- true
                 | _ ->
                     fail cursor.Current "FILTER must modify a function call"
-            | Keyword "IGNORE"
-            | Keyword "RESPECT"
-            | Identifier("IGNORE", false)
-            | Identifier("RESPECT", false) ->
+            | Keyword modifier
+            | Identifier(modifier, false)
+                when modifier.Equals("IGNORE", StringComparison.OrdinalIgnoreCase)
+                  || modifier.Equals("RESPECT", StringComparison.OrdinalIgnoreCase) ->
                 if not directFunctionSyntax || overSeen || castSeen
                    || nullTreatment <> WindowNullTreatment.DefaultNullTreatment then
                     fail cursor.Current "Window null treatment must occur once after LAG/LEAD and before OVER."
                 let token = cursor.Current
                 let treatment =
                     match token.Kind with
-                    | Keyword "IGNORE" | Identifier("IGNORE", false) -> WindowNullTreatment.IgnoreNulls
+                    | Keyword value
+                    | Identifier(value, false) when value.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ->
+                        WindowNullTreatment.IgnoreNulls
                     | _ -> WindowNullTreatment.RespectNulls
                 match Expr.unspan expression with
                 | FunctionCall call
@@ -1402,7 +1404,9 @@ module internal RewriteParser =
                     | _ -> fail token "SQL capability 'window.null_treatment' is not valid for this source dialect."
                     cursor.Advance()
                     match cursor.Current.Kind with
-                    | Keyword "NULLS" | Identifier("NULLS", false) -> cursor.Advance()
+                    | Keyword value
+                    | Identifier(value, false) when value.Equals("NULLS", StringComparison.OrdinalIgnoreCase) ->
+                        cursor.Advance()
                     | _ -> fail cursor.Current "IGNORE/RESPECT requires NULLS."
                     nullTreatment <- treatment
                 | _ -> fail token "SQL capability 'window.null_treatment' requires LAG or LEAD."
