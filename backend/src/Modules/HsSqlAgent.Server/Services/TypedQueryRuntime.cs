@@ -180,7 +180,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             await fence.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        var execution = await QueryExecutor.ExecuteQueryAsync(
+        var execution = await QueryExecutor.ExecuteQueryInTransactionAsync(
             command, connection, timeoutSeconds, transaction, cancellationToken);
         await transaction.RollbackAsync(cancellationToken);
         return execution;
