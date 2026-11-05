@@ -175,6 +175,7 @@ module internal CoreModel =
     type NullOrdering = Default | NullsFirst | NullsLast
     type SetOperator = Union | UnionAll | Intersect | IntersectAll | Except | ExceptAll
     type WindowFrameUnit = Rows | Range | Groups
+    type WindowFrameExclusion = NoExclusion | ExcludeCurrentRow
 
     type FrameOffset = private FrameOffset of int
 
@@ -197,7 +198,8 @@ module internal CoreModel =
 
     type WindowFrame =
         { Unit: WindowFrameUnit
-          Extent: WindowFrameExtent }
+          Extent: WindowFrameExtent
+          Exclusion: WindowFrameExclusion }
         member this.Start =
             match this.Extent with
             | SingleBound start | BetweenBounds(start, _) -> start
