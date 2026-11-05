@@ -1431,7 +1431,8 @@ module internal RewriteParser =
                 // identifiers in unrelated SQL must not become reserved.
                 let acceptSoft text =
                     match cursor.Current.Kind with
-                    | Identifier(value, false) when value.Equals(text, StringComparison.OrdinalIgnoreCase) ->
+                    | Identifier(value, false)
+                    | Keyword value when value.Equals(text, StringComparison.OrdinalIgnoreCase) ->
                         cursor.Advance()
                         true
                     | _ -> false
