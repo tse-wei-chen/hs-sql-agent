@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using System.Data.Common;
 using Microsoft.Data.Sqlite;
 using Npgsql;
