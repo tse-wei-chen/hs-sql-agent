@@ -205,10 +205,8 @@ module internal RewriteStages =
         | AggregateSelect of selectBody: Select
         | AggregateSelectAfterCtes of selectionBody: Select
 
-    // Version evidence belongs to the existing full-graph capability walk,
-    // not to the renderer. Unknown profiles retain the present-supported
-    // release baseline; explicitly old runtimes can never mint GROUPS plans.
-    let private groupsFrameVersionError side provider (profile: SqlProviderCapabilityProfile | null) =
+    // Native GROUPS and EXCLUDE CURRENT ROW share one source/target version gate.
+    let private nativeWindowFrameVersionError capability side provider (profile: SqlProviderCapabilityProfile | null) =
         let minimum =
             match provider with
             | SqlAgentToolType.Postgres -> Some(Version(11, 0))
@@ -216,12 +214,12 @@ module internal RewriteStages =
             | _ -> None
         match minimum with
         | None ->
-            Some("SQL capability 'window.groups' has no proven " + side
+            Some("SQL capability '" + capability + "' has no proven " + side
                  + " semantics for provider " + string provider + ".")
         | Some required ->
             match profileVersion profile with
             | Some declared when declared.CompareTo(required) < 0 ->
-                Some("SQL capability 'window.groups' requires " + side
+                Some("SQL capability '" + capability + "' requires " + side
                      + " ServerVersion " + string required
                      + "+; declared version is " + string declared + ".")
             | _ -> None
@@ -273,16 +271,21 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
-                    match window.Frame with
-                    | Some { Unit = WindowFrameUnit.Groups } ->
+                    let checkNative capability =
                         if enforceSource then
-                            match groupsFrameVersionError "source" source sourceProfile with
+                            match nativeWindowFrameVersionError capability "source" source sourceProfile with
                             | Some message -> raise (SqlCompilationException(message))
                             | None -> ()
-                        match groupsFrameVersionError "target" target targetProfile with
+                        match nativeWindowFrameVersionError capability "target" target targetProfile with
                         | Some message -> raise (SqlCompilationException(message))
                         | None -> ()
-                    | _ -> ()
+                    match window.Frame with
+                    | Some frame ->
+                        if frame.Exclusion = WindowFrameExclusion.ExcludeCurrentRow then
+                            checkNative "window.exclude.current_row"
+                        if frame.Unit = WindowFrameUnit.Groups then
+                            checkNative "window.groups"
+                    | None -> ()
                     pushOrders window.OrderBy
                     pushExprs window.PartitionBy
                     push (AggregateExpr value)
@@ -2694,6 +2697,13 @@ module internal RewriteStages =
                     if provider <> SqlAgentToolType.Postgres
                        && provider <> SqlAgentToolType.Sqlite then
                         raise (targetCapabilityError provider "window.groups")
+                if frame.Exclusion = WindowFrameExclusion.ExcludeCurrentRow then
+                    if window.OrderBy.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'window.exclude.current_row.order_by' requires explicit ORDER BY."))
+                    if provider <> SqlAgentToolType.Postgres
+                       && provider <> SqlAgentToolType.Sqlite then
+                        raise (targetCapabilityError provider "window.exclude.current_row")
                 if contract.IsWindowFrameInsensitive
                    && (provider = SqlAgentToolType.MsSqlServer
                        || provider = SqlAgentToolType.Oracle) then
