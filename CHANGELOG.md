@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### G10/Q02 — Bounded MySQL/SQL Server conditional COUNT lowering (develop only)
 
-- Prove and render native `COUNT(CASE WHEN ... THEN ... END)` for PostgreSQL-source `COUNT(*)`/`COUNT(direct_column)` `FILTER (WHERE ...)` on MySQL and SQL Server. Reuse the closed F# FilteredAggregate graph; one typed COUNT/predicate shape proof handles capability validation and rendering. Preserve false/NULL/empty and per-frame counts; fail closed on SUM, DISTINCT, computed operands, volatile/subquery/outer-reference predicates and invalid MySQL/SQL Server FILTER source syntax.
+- Prove and render MySQL `COUNT(CASE WHEN ... THEN ... END)` and SQL Server `COUNT_BIG(CASE WHEN ... THEN ... END)` for PostgreSQL-source `COUNT(*)`/`COUNT(direct_column)` `FILTER (WHERE ...)` on MySQL and SQL Server. Reuse the closed F# FilteredAggregate graph; one typed COUNT/predicate shape proof handles capability validation and rendering. Preserve false/NULL/empty and per-frame counts; fail closed on SUM, DISTINCT, computed operands, volatile/subquery/outer-reference predicates and invalid MySQL/SQL Server FILTER source syntax.
 - Add a dedicated `aggregate.filtered_count` capability entry while the unrestricted `expression.filter` capability remains rejected; real PostgreSQL/MySQL 8.4/SQL Server 2022 comparison tests and syntax negatives, with no new MCP tools or public CLR APIs.
 
 
