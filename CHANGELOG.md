@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — Native PostgreSQL and SQLite GROUPS window frames (develop only)
+
+- Extend the F# closed window-frame AST and exhaustive CLR compatibility projection with native `GROUPS` peer-group frames. PostgreSQL 11+ and SQLite 3.28+ preserve `GROUPS BETWEEN ... AND ...` without rewriting it to non-equivalent `ROWS` or `RANGE`; other four dialects reject unproven source/target semantics.
+- Require window `ORDER BY`, validate bound ordering and explicit source/target version profiles, and expose `window.groups` in the provider capability matrix. Actual database versions still require Host verification. TDD covers positive/negative grammar, version gating and PostgreSQL 16/SQLite live peer-group parity; existing DML approval and the default four read-only tools with DML disabled are unchanged.
+
+
 ### G9 — SQL Server 2022 native MERGE NOT MATCHED INSERT with one-use physical key absence proof (develop only)
 
 - Add one exact SQL Server `MERGE INTO dbo.table AS t USING (VALUES(...)) AS s(...) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(...) VALUES(s...)` Host Preview → Approval → Commit. One physical non-null non-identity INT PRIMARY key, sole immediately enforced simple UNIQUE key; 1–3 distinct exact native INT payload columns. The INSERT clause must explicitly cover **every actual target column exactly once**, each directly mapped to its same-named source field; different source/INSERT column order is supported. Other provider and MERGE source/action shapes fail closed.

@@ -1,3 +1,4 @@
+using HsSqlAgent.SqlCore;
 using Microsoft.Data.Sqlite;
 using Npgsql;
 using System.Data.Common;
@@ -50,6 +51,34 @@ public sealed class SqlCoreWindowGroupsFrameTests
         var error = Assert.Throws<SqlCompilationException>(() =>
             Compile(GroupsQuery, SqlAgentToolType.Postgres, target));
         Assert.Contains("window.groups", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres, 10, 0, 11, 0)]
+    [InlineData(SqlAgentToolType.Sqlite, 3, 27, 3, 28)]
+    public void Compile_ExplicitOlderSourceOrTargetVersion_RemainsFailClosed(
+        SqlAgentToolType provider, int oldMajor, int oldMinor, int newMajor, int newMinor)
+    {
+        var older = new SqlProviderCapabilityProfile(provider, new Version(oldMajor, oldMinor));
+        var newer = new SqlProviderCapabilityProfile(provider, new Version(newMajor, newMinor));
+        Assert.Equal(SqlCapabilityStatus.Rejected,
+            Assert.Single(SqlCapabilityMatrix.ForProvider(provider, older).Capabilities,
+                item => item.Id == "window.groups").Status);
+        Assert.Equal(SqlCapabilityStatus.Supported,
+            Assert.Single(SqlCapabilityMatrix.ForProvider(provider, newer).Capabilities,
+                item => item.Id == "window.groups").Status);
+
+        var context = new SqlPlanValidationContext("g10-groups-version-proof-v1");
+        var policy = new SqlExecutionPlanPolicy();
+        var oldTarget = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(GroupsQuery, provider, provider,
+                context, policy, older));
+        Assert.Contains("window.groups", oldTarget.Message, StringComparison.OrdinalIgnoreCase);
+
+        var oldSource = Assert.Throws<SqlCompilationException>(() =>
+            SqlCoreFacade.CompileQuery(GroupsQuery, provider, provider,
+                context, policy, older, newer));
+        Assert.Contains("window.groups", oldSource.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
