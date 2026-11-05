@@ -143,6 +143,13 @@ type WindowFrameUnitKind =
     | Range = 1
     | Groups = 2
 
+type WindowFrameExclusionKind =
+    | Unspecified = 0
+    | CurrentRow = 1
+    | Group = 2
+    | Ties = 3
+    | NoOthers = 4
+
 type WindowFrameBoundKindCore =
     | UnboundedPreceding = 0
     | Preceding = 1
@@ -157,11 +164,15 @@ type WindowFrameBoundCore(kind: WindowFrameBoundKindCore, offset: Nullable<int>,
     member _.Offset = offset
 
 [<Sealed>]
-type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, span: SourceSpan) =
+type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore, endBound: WindowFrameBoundCore | null, exclusion: WindowFrameExclusionKind, span: SourceSpan) =
     inherit SqlNode(span)
+    // Retain the original public CLR constructor for NuGet binary callers.
+    new(unitKind, startBound, endBound, span) =
+        WindowFrame(unitKind, startBound, endBound, WindowFrameExclusionKind.Unspecified, span)
     member _.Unit = unitKind
     member _.Start = startBound
     member _.End = endBound
+    member _.Exclusion = exclusion
 
 [<Sealed>]
 type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<OrderByItem>, frame: WindowFrame | null, span: SourceSpan) =

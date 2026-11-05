@@ -210,6 +210,7 @@ and WindowFrameDefinition() =
     member val Unit = WindowFrameUnit.Rows with get, set
     member val Start = WindowFrameBound() with get, set
     member val End: WindowFrameBound | null = null with get, set
+    member val Exclusion = WindowFrameExclusionMode.Unspecified with get, set
 
 and WindowFrameBound() =
     member val Kind = WindowFrameBoundKind.CurrentRow with get, set

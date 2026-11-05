@@ -411,7 +411,15 @@ module internal RewriteLegacyAstAdapter =
                         match Option.ofObj frame.End with
                         | None -> WindowFrameExtent.SingleBound start
                         | Some finish -> WindowFrameExtent.BetweenBounds(start, frameBound finish)
-                    { WindowFrame.Unit = unit; Extent = extent })
+                    let exclusion =
+                        match frame.Exclusion with
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Unspecified -> None
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.CurrentRow -> Some WindowFrameExclusion.ExcludeCurrentRow
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Group -> Some WindowFrameExclusion.ExcludeGroup
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Ties -> Some WindowFrameExclusion.ExcludeTies
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.NoOthers -> Some WindowFrameExclusion.ExcludeNoOthers
+                        | value -> raise (SqlCompilationException("Unsupported window frame exclusion '" + string value + "'."))
+                    { WindowFrame.Unit = unit; Extent = extent; Exclusion = exclusion })
             { WindowSpec.PartitionBy = window.PartitionBy |> Seq.map exprOf |> Seq.toList
               OrderBy = window.OrderBy |> Seq.map orderByOf |> Seq.toList
               Frame = frame }

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — Native PostgreSQL/SQLite EXCLUDE window-frame parity (develop only)
+
+- Preserve explicit `EXCLUDE CURRENT ROW / GROUP / TIES / NO OTHERS` for native `ROWS / RANGE / GROUPS` frame membership. The F# closed exclusion DU, parser, full-query capability proof, validator and renderer own this feature; the additive CLR compatibility enum, existing constructor overload, and structured `WindowFrameDefinition.Exclusion` roundtrip without an alternate SQL path or new MCP tools.
+- PostgreSQL 11+ and SQLite 3.28+ are the only proven native source/targets; explicit older versions and MySQL/SQL Server/Oracle/Firebird reject. Actual PostgreSQL 16 and SQLite peer/NULL-aware aggregate parity, negative source/target grammar and version checks, and existing four-default-read-only/DML-off behavior are tested. No `ROWS`/`RANGE` substitution for `EXCLUDE`.
+
+
 ### G10/Q02 — Native PostgreSQL and SQLite GROUPS window frames (develop only)
 
 - Extend the F# closed window-frame AST and exhaustive CLR compatibility projection with native `GROUPS` peer-group frames. PostgreSQL 11+ and SQLite 3.28+ preserve `GROUPS BETWEEN ... AND ...` without rewriting it to non-equivalent `ROWS` or `RANGE`; other four dialects reject unproven source/target semantics.

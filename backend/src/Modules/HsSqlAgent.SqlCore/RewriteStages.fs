@@ -205,10 +205,10 @@ module internal RewriteStages =
         | AggregateSelect of selectBody: Select
         | AggregateSelectAfterCtes of selectionBody: Select
 
-    // Version evidence belongs to the existing full-graph capability walk,
-    // not to the renderer. Unknown profiles retain the present-supported
-    // release baseline; explicitly old runtimes can never mint GROUPS plans.
-    let private groupsFrameVersionError side provider (profile: SqlProviderCapabilityProfile | null) =
+    // One source/target proof owner for native GROUPS frames and EXCLUDE.
+    // An absent profile uses the current-supported-release baseline;
+    // explicitly older engines cannot mint either plan.
+    let private peerFrameVersionError capability side provider (profile: SqlProviderCapabilityProfile | null) =
         let minimum =
             match provider with
             | SqlAgentToolType.Postgres -> Some(Version(11, 0))
@@ -216,12 +216,12 @@ module internal RewriteStages =
             | _ -> None
         match minimum with
         | None ->
-            Some("SQL capability 'window.groups' has no proven " + side
+            Some("SQL capability '" + capability + "' has no proven " + side
                  + " semantics for provider " + string provider + ".")
         | Some required ->
             match profileVersion profile with
             | Some declared when declared.CompareTo(required) < 0 ->
-                Some("SQL capability 'window.groups' requires " + side
+                Some("SQL capability '" + capability + "' requires " + side
                      + " ServerVersion " + string required
                      + "+; declared version is " + string declared + ".")
             | _ -> None
@@ -274,15 +274,18 @@ module internal RewriteStages =
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
                     match window.Frame with
-                    | Some { Unit = WindowFrameUnit.Groups } ->
-                        if enforceSource then
-                            match groupsFrameVersionError "source" source sourceProfile with
+                    | Some frame ->
+                        let prove capability =
+                            if enforceSource then
+                                match peerFrameVersionError capability "source" source sourceProfile with
+                                | Some message -> raise (SqlCompilationException(message))
+                                | None -> ()
+                            match peerFrameVersionError capability "target" target targetProfile with
                             | Some message -> raise (SqlCompilationException(message))
                             | None -> ()
-                        match groupsFrameVersionError "target" target targetProfile with
-                        | Some message -> raise (SqlCompilationException(message))
-                        | None -> ()
-                    | _ -> ()
+                        if frame.Unit = WindowFrameUnit.Groups then prove "window.groups"
+                        if frame.Exclusion.IsSome then prove "window.exclude"
+                    | None -> ()
                     pushOrders window.OrderBy
                     pushExprs window.PartitionBy
                     push (AggregateExpr value)

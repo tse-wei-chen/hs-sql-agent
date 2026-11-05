@@ -364,9 +364,16 @@ module internal RewriteCompatibilityAstAdapter =
                         | WindowFrameUnit.Rows -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows
                         | WindowFrameUnit.Range -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range
                         | WindowFrameUnit.Groups -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Groups
+                    let exclusion =
+                        match value.Exclusion with
+                        | None -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Unspecified
+                        | Some WindowFrameExclusion.ExcludeCurrentRow -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.CurrentRow
+                        | Some WindowFrameExclusion.ExcludeGroup -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Group
+                        | Some WindowFrameExclusion.ExcludeTies -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Ties
+                        | Some WindowFrameExclusion.ExcludeNoOthers -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.NoOthers
                     let start = frameBound value.Start
                     let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
-                    HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, unknown))
+                    HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, exclusion, unknown))
                 |> Option.defaultValue (Unchecked.defaultof<_>)
             HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
                 window.PartitionBy |> List.map exprOf |> ImmutableArray.CreateRange,
