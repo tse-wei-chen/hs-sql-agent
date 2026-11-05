@@ -31,6 +31,19 @@ Console.WriteLine(command.Sql);
 
 `CompiledSqlCommand` contains native SQL, bound parameters, and compiler evidence. The caller remains responsible for database access, connection identity, permissions, and runtime limits.
 
+### Native GROUPS peer-frame queries (G10/Q02)
+
+For PostgreSQL 11+ and SQLite 3.28+, the F# query compiler can preserve a
+bounded `GROUPS BETWEEN ... AND ...` window frame natively. Unlike `ROWS`,
+`GROUPS` counts ordered peer groups rather than individual rows. An explicit
+window `ORDER BY` is required; backward bounds and other unsupported shapes
+fail closed. The source and target dialect are both checked, and an explicitly
+declared server version older than the required minimum is rejected. An absent
+version profile uses the current-supported-release compilation baseline, **not**
+a claim that an arbitrary older runtime can execute the plan. The Host must
+verify its actual runtime version; no fallback to `ROWS` or `RANGE` exists.
+MySQL, SQL Server, Oracle and Firebird remain rejected for this capability.
+
 ## Other compiler APIs
 
 | API | Purpose | Execution authority |

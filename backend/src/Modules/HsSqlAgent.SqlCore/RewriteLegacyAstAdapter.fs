@@ -404,6 +404,7 @@ module internal RewriteLegacyAstAdapter =
                         match frame.Unit with
                         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows -> WindowFrameUnit.Rows
                         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range -> WindowFrameUnit.Range
+                        | HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Groups -> WindowFrameUnit.Groups
                         | value -> raise (SqlCompilationException("Unsupported window frame unit '" + string value + "'."))
                     let start = frameBound frame.Start
                     let extent =

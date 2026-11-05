@@ -174,7 +174,7 @@ module internal CoreModel =
     type OnJoinKind = Inner | Left | Right | Full
     type NullOrdering = Default | NullsFirst | NullsLast
     type SetOperator = Union | UnionAll | Intersect | IntersectAll | Except | ExceptAll
-    type WindowFrameUnit = Rows | Range
+    type WindowFrameUnit = Rows | Range | Groups
 
     type FrameOffset = private FrameOffset of int
 

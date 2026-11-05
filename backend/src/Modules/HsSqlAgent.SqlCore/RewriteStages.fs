@@ -205,6 +205,27 @@ module internal RewriteStages =
         | AggregateSelect of selectBody: Select
         | AggregateSelectAfterCtes of selectionBody: Select
 
+    // Version evidence belongs to the existing full-graph capability walk,
+    // not to the renderer. Unknown profiles retain the present-supported
+    // release baseline; explicitly old runtimes can never mint GROUPS plans.
+    let private groupsFrameVersionError side provider (profile: SqlProviderCapabilityProfile | null) =
+        let minimum =
+            match provider with
+            | SqlAgentToolType.Postgres -> Some(Version(11, 0))
+            | SqlAgentToolType.Sqlite -> Some(Version(3, 28))
+            | _ -> None
+        match minimum with
+        | None ->
+            Some("SQL capability 'window.groups' has no proven " + side
+                 + " semantics for provider " + string provider + ".")
+        | Some required ->
+            match profileVersion profile with
+            | Some declared when declared.CompareTo(required) < 0 ->
+                Some("SQL capability 'window.groups' requires " + side
+                     + " ServerVersion " + string required
+                     + "+; declared version is " + string declared + ".")
+            | _ -> None
+
     let private validateAggregateWalk enforceSource source sourceProfile target targetProfile root =
         let pending = ResizeArray<AggregateFrame>()
         let inline push frame = pending.Add frame
@@ -252,6 +273,16 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
+                    match window.Frame with
+                    | Some { Unit = WindowFrameUnit.Groups } ->
+                        if enforceSource then
+                            match groupsFrameVersionError "source" source sourceProfile with
+                            | Some message -> raise (SqlCompilationException(message))
+                            | None -> ()
+                        match groupsFrameVersionError "target" target targetProfile with
+                        | Some message -> raise (SqlCompilationException(message))
+                        | None -> ()
+                    | _ -> ()
                     pushOrders window.OrderBy
                     pushExprs window.PartitionBy
                     push (AggregateExpr value)
@@ -2655,6 +2686,14 @@ module internal RewriteStages =
             match window.Frame with
             | Some frame ->
                 validateWindowFrameShape frame
+                if frame.Unit = WindowFrameUnit.Groups then
+                    // GROUPS counts ORDER BY peer groups, not rows or numeric ranges.
+                    if window.OrderBy.IsEmpty then
+                        raise (SqlCompilationException(
+                            "SQL capability 'window.groups.order_by' requires an explicit ORDER BY peer key."))
+                    if provider <> SqlAgentToolType.Postgres
+                       && provider <> SqlAgentToolType.Sqlite then
+                        raise (targetCapabilityError provider "window.groups")
                 if contract.IsWindowFrameInsensitive
                    && (provider = SqlAgentToolType.MsSqlServer
                        || provider = SqlAgentToolType.Oracle) then

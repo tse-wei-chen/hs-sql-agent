@@ -363,6 +363,7 @@ module internal RewriteCompatibilityAstAdapter =
                         match value.Unit with
                         | WindowFrameUnit.Rows -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows
                         | WindowFrameUnit.Range -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Range
+                        | WindowFrameUnit.Groups -> HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Groups
                     let start = frameBound value.Start
                     let finish = value.End |> Option.map frameBound |> Option.defaultValue (Unchecked.defaultof<_>)
                     HsSqlAgent.SqlCore.Core.Ast.WindowFrame(unit, start, finish, unknown))
