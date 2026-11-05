@@ -917,6 +917,7 @@ module internal RewriteStages =
                                |> List.forall (fun ((before, _), (after, _)) -> before < after) then
                                 Some(ordered |> List.map snd)
                             else None
+        let mutable observedThirdDepth = false
         let rec derivedKeyChain depth (derived: Query) =
             let head = derived.Head
             if depth > 3 || not derived.SetOperations.IsEmpty
@@ -946,14 +947,11 @@ module internal RewriteStages =
                     source
                     |> Option.bind (fun (keys, qualifier) ->
                         projectDerivedKeys keys qualifier head.Projection [])
-                // TEMP G11 diagnostics: structural states only, no SQL text.
                 if depth = 3 then
+                    observedThirdDepth <- true
                     System.Console.Error.WriteLine(
-                        "G11TRACE derived depth=3 source=" + string source.IsSome
-                        + " mapped=" + string mapped.IsSome
-                        + " named=" + string (match head.From with
-                                              | Some(NamedTable _) -> true
-                                              | _ -> false))
+                        "G11TRACE depth3 source=" + string source.IsSome
+                        + " mapped=" + string mapped.IsSome)
                 mapped
         let provenDirectDerivedKeys (derived: Query) = derivedKeyChain 1 derived
 
@@ -1136,11 +1134,13 @@ module internal RewriteStages =
                             // The same strict key mapping is used by
                             // derived sources, linear CTEs and diamonds.
                             projectDerivedKeys keys qualifier head.Projection cte.ColumnAliases)
-                    // TEMP G11: no identifiers, values, SQL text, or secrets.
-                    if index = 0 then
+                    if observedThirdDepth then
                         System.Console.Error.WriteLine(
-                            "G11TRACE cte0 input=" + string input.IsSome
-                            + " direct=" + string directProjection.IsSome)
+                            "G11TRACE cte-index=" + string index
+                            + " input=" + string input.IsSome
+                            + " direct=" + string directProjection.IsSome
+                            + " where=" + string head.Where.IsSome
+                            + " aliases=" + string cte.ColumnAliases.Length)
                     if not valid
                        || not (seen.Add cte.Name.Value)
                        || cte.RecursiveScope
@@ -1173,10 +1173,19 @@ module internal RewriteStages =
                         lastName <- ctes.[2].Name.Value
                         lastKeys <- keys
                     | None -> ()
+                if observedThirdDepth then
+                    System.Console.Error.WriteLine(
+                        "G11TRACE post-cte valid=" + string valid
+                        + " lastKeyCount=" + string lastKeys.Length)
                 let outerNameMatches =
                     match Identifier.parts cteIdentifier with
                     | [name] -> same name.Value lastName
                     | _ -> false
+                if observedThirdDepth then
+                    System.Console.Error.WriteLine(
+                        "G11TRACE gate name=" + string outerNameMatches
+                        + " second=" + string outerSecond.IsSome
+                        + " targetKeyCount=" + string targetKeys.Length)
                 if not valid || not outerNameMatches
                    || outerSecond.IsNone
                    || List.length lastKeys <> targetKeys.Length then false
@@ -1247,11 +1256,18 @@ module internal RewriteStages =
                             match outerSecond with
                             | Some(Some _) -> safeExtra <- false
                             | _ -> ()
-                    safeExtra && not duplicate && (proven |> Array.forall id)
-                    && (match outerSecond with
-                        | Some None -> true
-                        | Some(Some _) -> otherProven |> Array.forall id
-                        | None -> false)
+                    let finalProof =
+                        safeExtra && not duplicate && (proven |> Array.forall id)
+                        && (match outerSecond with
+                            | Some None -> true
+                            | Some(Some _) -> otherProven |> Array.forall id
+                            | None -> false)
+                    if observedThirdDepth then
+                        System.Console.Error.WriteLine(
+                            "G11TRACE final=" + string finalProof
+                            + " duplicates=" + string duplicate
+                            + " targetMatched=" + string (proven |> Array.forall id))
+                    finalProof
             | _ -> false
 
     /// Public CLR mutation statements may be constructed without the native
