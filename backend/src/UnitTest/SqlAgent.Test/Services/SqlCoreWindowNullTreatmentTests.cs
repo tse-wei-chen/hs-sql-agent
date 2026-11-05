@@ -99,6 +99,78 @@ public sealed class SqlCoreWindowNullTreatmentTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer, "ignore nulls")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "IgNoRe NuLlS")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "respect nulls")]
+    [InlineData(SqlAgentToolType.Oracle, "ignore nulls")]
+    [InlineData(SqlAgentToolType.Oracle, "IgNoRe NuLlS")]
+    [InlineData(SqlAgentToolType.Oracle, "respect nulls")]
+    public void SoftKeywordCaseDoesNotAlterNativeNullTreatment(
+        SqlAgentToolType provider, string modifier)
+    {
+        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var result = Compile(Query("orders", "LAG", modifier),
+            provider, provider, profile, profile);
+        Assert.Contains(" " + modifier.ToUpperInvariant() + " OVER (",
+            result.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void StructuredWindowDefinition_UsesIdenticalTypedProof(
+        SqlAgentToolType provider)
+    {
+        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var query = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "LAG",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    Window = new WindowDefinition
+                    {
+                        OrderBy =
+                        [
+                            new FieldOrderByCondition
+                            {
+                                FieldName = "id", Direction = SortDirection.Asc
+                            }
+                        ],
+                        NullTreatment = WindowNullTreatmentMode.IgnoreNulls
+                    }
+                }
+            ]
+        };
+        var ast = QueryDefinitionCoreMapper.Map(query);
+        var parsed = new ParsedStatement(ast, provider, false, profile);
+        var compiled = CoreSqlCompiler.CreateDefault().Compile(
+            parsed, provider,
+            new SqlPlanValidationContext("g10-window-null-treatment-dto"),
+            new SqlExecutionPlanPolicy(), profile);
+        Assert.Contains("IGNORE NULLS OVER (",
+            compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PublicLegacyWindowSpecConstructor_RemainsBinaryCompatible()
+    {
+        var window = new HsSqlAgent.SqlCore.Core.Ast.WindowSpec(
+            System.Collections.Immutable.ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.SqlExpr>.Empty,
+            System.Collections.Immutable.ImmutableArray<HsSqlAgent.SqlCore.Core.Ast.OrderByItem>.Empty,
+            null,
+            HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown);
+        Assert.Equal(HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.Unspecified,
+            window.NullTreatment);
+        window.NullTreatment = HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.IgnoreNulls;
+        Assert.Equal(HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.IgnoreNulls,
+            window.NullTreatment);
+    }
+
+    [Theory]
     [InlineData("COUNT")]
     [InlineData("SUM")]
     [InlineData("ROW_NUMBER")]
