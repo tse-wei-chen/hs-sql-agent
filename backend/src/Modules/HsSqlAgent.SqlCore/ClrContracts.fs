@@ -56,6 +56,14 @@ type SortDirection =
 type WindowFrameUnit =
     | Rows = 0
     | Range = 1
+    | Groups = 2
+
+type WindowFrameExclusionMode =
+    | Unspecified = 0
+    | CurrentRow = 1
+    | Group = 2
+    | Ties = 3
+    | NoOthers = 4
 
 type WindowFrameBoundKind =
     | UnboundedPreceding = 0

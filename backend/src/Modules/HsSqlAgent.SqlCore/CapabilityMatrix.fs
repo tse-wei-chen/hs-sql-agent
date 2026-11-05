@@ -186,6 +186,16 @@ type SqlCapabilityMatrix private () =
                 rejected,
                 "SQL capability 'window.groups' has no proven native peer-frame semantics for this provider."
 
+        let exclusionDetail =
+            match provider with
+            | SqlAgentToolType.Postgres | SqlAgentToolType.Sqlite ->
+                "SQL capability 'window.exclude' preserves explicit CURRENT ROW/GROUP/TIES/NO OTHERS "
+                + "frame membership natively for PostgreSQL 11+ / SQLite 3.28+. "
+                + "An explicitly older ServerVersion is rejected. Without a profile Core assumes "
+                + "the current-supported-release baseline; Host must attest the actual engine."
+            | _ ->
+                "SQL capability 'window.exclude' has no proven frame-exclusion semantics for this provider."
+
         let aggregateOrderingStatus, aggregateOrderingDetail =
             match provider with
             | SqlAgentToolType.Postgres -> supported, "PostgreSQL STRING_AGG supports inline ORDER BY."
@@ -614,6 +624,7 @@ type SqlCapabilityMatrix private () =
                 yield cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
                 yield cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
                 yield cap("window.groups","window",groupsStatus,groupsDetail)
+                yield cap("window.exclude","window",groupsStatus,exclusionDetail)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
