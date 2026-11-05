@@ -114,6 +114,28 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
     }
 
     [Fact]
+    public async Task VolatileUserDefinedFunction_CannotWriteThroughAllowedSelect()
+    {
+        await WithSchemaAsync(async schema =>
+        {
+            // Actual database function, deliberately volatile and permitted to UPDATE
+            // the whitelisted relation when run outside a read-only transaction.
+            await ExecuteAsync("CREATE FUNCTION " + schema +
+                ".mutate_user() RETURNS integer LANGUAGE plpgsql VOLATILE AS $ " +
+                "BEGIN UPDATE " + schema + ".users SET name='hijacked' WHERE id=1; " +
+                "RETURN 1; END $");
+            var sql = "SELECT " + schema + ".mutate_user() AS value FROM " +
+                schema + ".users WHERE id=1";
+            var before = await SnapshotAsync(schema);
+            var response = await Tool(schema).ExecuteQuerySql(
+                sql, TestContext.Current.CancellationToken);
+            Assert.False(response.Success, sql);
+            Assert.Empty(response.Rows);
+            Assert.Equal(before, await SnapshotAsync(schema));
+        });
+    }
+
+    [Fact]
     public async Task BoundInjectionShapedLiteral_IsQueryableWithoutExecutingPayload()
     {
         await WithSchemaAsync(async schema =>
