@@ -651,6 +651,13 @@ type SqlCapabilityMatrix private () =
                     if isNull ignoreError then
                         "LAG/LEAD IGNORE NULLS requires SQL Server 2022 CU4+ or Oracle 12.1+ with matching explicit source and target profiles."
                     else ignoreError)
+                let firstLastError =
+                    SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, "target")
+                yield cap("window.null_treatment.first_last","window",
+                    (if isNull firstLastError then supported else rejected),
+                    if isNull firstLastError then
+                        "FIRST_VALUE/LAST_VALUE IGNORE/RESPECT NULLS: native SQL Server 2022+ or Oracle 12.1+. Explicit ROWS frame controls LAST_VALUE partition semantics; matching source/target version profiles and same-provider compilation required (cross-provider NULL ordering not proven). SQL Server CU4 correctness fence applies to LAG/LEAD IGNORE only."
+                    else firstLastError)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
