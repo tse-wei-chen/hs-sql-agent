@@ -66,7 +66,10 @@ A matching explicit source and target ServerVersion is required;
 SQL Server 2022 RTM (16.0) and Oracle 12.1+ are supported. The SQL Server
 CU4 correctness requirement remains **specific to LAG/LEAD IGNORE NULLS**,
 not FIRST/LAST. Four unsupported providers, malformed functions/modifiers
-and unproven profiles are rejected. Existing C# CLR/structured DTOs reuse
+and unproven profiles are rejected. Cross-provider SQL Server/Oracle
+lowering remains fail-closed: their implicit NULL ordering may differ, and
+this feature only proves same-provider native window semantics. Existing
+C# CLR/structured DTOs reuse
 the same typed proof; SqlCore grants no SQL execution or permission.
 
 ### Bounded conditional DISTINCT COUNT (G10/Q02)

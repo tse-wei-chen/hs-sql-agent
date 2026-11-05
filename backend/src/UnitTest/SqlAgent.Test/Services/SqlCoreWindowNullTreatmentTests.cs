@@ -423,6 +423,25 @@ public sealed class SqlCoreWindowNullTreatmentTests
             x => x.Id == "window.null_treatment.first_last").Status);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer, SqlAgentToolType.Oracle)]
+    [InlineData(SqlAgentToolType.Oracle, SqlAgentToolType.MsSqlServer)]
+    public void FirstLastCrossProvider_DefaultNullOrderingIsNotProven(
+        SqlAgentToolType source, SqlAgentToolType target)
+    {
+        var sourceProfile = Profile(source, source == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var targetProfile = Profile(target, target == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        foreach (var fn in new[] { "FIRST_VALUE", "LAST_VALUE" })
+            foreach (var modifier in new[] { "IGNORE NULLS", "RESPECT NULLS" })
+            {
+                var error = Assert.Throws<SqlCompilationException>(() =>
+                    Compile(FirstLastQuery("orders", fn, modifier),
+                        source, target, sourceProfile, targetProfile));
+                Assert.Contains("window.null_treatment.first_last",
+                    error.Message, StringComparison.OrdinalIgnoreCase);
+            }
+    }
+
     internal static async Task VerifyFirstLastNativeAndCompiled(DbConnection db, string table,
         SqlAgentToolType provider, CancellationToken token)
     {

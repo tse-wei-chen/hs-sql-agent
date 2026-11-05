@@ -294,6 +294,13 @@ module internal RewriteStages =
                         let offsetFunction =
                             String.Equals(functionName, "LAG", StringComparison.OrdinalIgnoreCase)
                             || String.Equals(functionName, "LEAD", StringComparison.OrdinalIgnoreCase)
+                        let frameFunction = not offsetFunction
+                        // Oracle and SQL Server differ in default NULL ordering,
+                        // which can change the first/last selected frame value.
+                        // No cross-provider equivalence proof is available yet.
+                        if frameFunction && source <> target then
+                            raise (SqlCompilationException(
+                                "SQL capability 'window.null_treatment.first_last' requires the same source and target provider until cross-provider frame/NULL-order equivalence is proven."))
                         let validateTreatment provider profile side =
                             if offsetFunction && window.NullTreatment = WindowNullTreatment.IgnoreNulls then
                                 SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, side)
