@@ -1263,6 +1263,7 @@ module internal RewriteParser =
         let mutable filterSeen = false
         let mutable overSeen = false
         let mutable castSeen = false
+        let mutable nullTreatment = WindowNullTreatment.DefaultNullTreatment
 
         while scanning do
             match cursor.Current.Kind with
@@ -1378,6 +1379,43 @@ module internal RewriteParser =
                     filterSeen <- true
                 | _ ->
                     fail cursor.Current "FILTER must modify a function call"
+            | Keyword modifier
+            | Identifier(modifier, false)
+                when (modifier.Equals("IGNORE", StringComparison.OrdinalIgnoreCase)
+                      || modifier.Equals("RESPECT", StringComparison.OrdinalIgnoreCase))
+                     && (match (cursor.Peek 1).Kind with
+                         | Keyword next
+                         | Identifier(next, false) ->
+                             next.Equals("NULLS", StringComparison.OrdinalIgnoreCase)
+                             || next.Equals("OVER", StringComparison.OrdinalIgnoreCase)
+                         | _ -> false) ->
+                if not directFunctionSyntax || overSeen || castSeen
+                   || nullTreatment <> WindowNullTreatment.DefaultNullTreatment then
+                    fail cursor.Current "Window null treatment must occur once after LAG/LEAD and before OVER."
+                let token = cursor.Current
+                let treatment =
+                    match token.Kind with
+                    | Keyword value
+                    | Identifier(value, false) when value.Equals("IGNORE", StringComparison.OrdinalIgnoreCase) ->
+                        WindowNullTreatment.IgnoreNulls
+                    | _ -> WindowNullTreatment.RespectNulls
+                match Expr.unspan expression with
+                | FunctionCall call
+                    when not call.IsDistinct
+                         && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                         && (String.Equals(FunctionName.value call.Name, "LAG", StringComparison.OrdinalIgnoreCase)
+                             || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)) ->
+                    match cursor.Dialect with
+                    | SourceDialect.SqlServer | SourceDialect.Oracle -> ()
+                    | _ -> fail token "SQL capability 'window.null_treatment' is not valid for this source dialect."
+                    cursor.Advance()
+                    match cursor.Current.Kind with
+                    | Keyword value
+                    | Identifier(value, false) when value.Equals("NULLS", StringComparison.OrdinalIgnoreCase) ->
+                        cursor.Advance()
+                    | _ -> fail cursor.Current "IGNORE/RESPECT requires NULLS."
+                    nullTreatment <- treatment
+                | _ -> fail token "SQL capability 'window.null_treatment' requires LAG or LEAD."
             | Keyword "OVER" ->
                 if not directFunctionSyntax then
                     fail cursor.Current "OVER must directly modify a function call or its FILTER result"
@@ -1387,12 +1425,15 @@ module internal RewriteParser =
                 | FunctionCall _
                 | FilteredAggregate _ ->
                     cursor.Advance()
-                    expression <- Windowed(expression, parseWindow cursor)
+                    let window = parseWindow cursor
+                    expression <- Windowed(expression, { window with NullTreatment = nullTreatment })
                     overSeen <- true
                 | _ ->
                     fail cursor.Current "OVER must modify a function call or FILTER result"
             | _ ->
                 scanning <- false
+        if nullTreatment <> WindowNullTreatment.DefaultNullTreatment && not overSeen then
+            fail cursor.Current "SQL capability 'window.null_treatment' requires OVER after IGNORE/RESPECT NULLS."
         expression
 
     and private parseWindow cursor =
@@ -1465,7 +1506,10 @@ module internal RewriteParser =
                 Some frame
             else None
         expectSymbol ')' cursor
-        { PartitionBy = partitions |> Seq.toList; OrderBy = orderBy; Frame = frame }
+        { PartitionBy = partitions |> Seq.toList
+          OrderBy = orderBy
+          Frame = frame
+          NullTreatment = WindowNullTreatment.DefaultNullTreatment }
 
     and private parseFrameBound cursor =
         if acceptKeyword "UNBOUNDED" cursor then

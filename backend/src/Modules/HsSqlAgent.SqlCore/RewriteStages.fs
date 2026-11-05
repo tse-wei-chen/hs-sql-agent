@@ -273,6 +273,29 @@ module internal RewriteStages =
                     push (AggregateExpr value)
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
+                    if window.NullTreatment <> WindowNullTreatment.DefaultNullTreatment then
+                        match Expr.unspan value with
+                        | FunctionCall call
+                            when not call.IsDistinct
+                                 && call.AggregateOrderBy.IsEmpty
+                                 && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                                 && (String.Equals(FunctionName.value call.Name, "LAG", StringComparison.OrdinalIgnoreCase)
+                                     || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)) -> ()
+                        | _ -> raise (SqlCompilationException(
+                                    "SQL capability 'window.null_treatment' permits LAG/LEAD only."))
+                        // Structured CLR windows cannot bypass source grammar admission.
+                        // SQL Server IGNORE NULLS also requires the CU4 correctness fix.
+                        let validateTreatment provider profile side =
+                            if window.NullTreatment = WindowNullTreatment.IgnoreNulls then
+                                SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, side)
+                            else
+                                SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, side)
+                        match validateTreatment source sourceProfile "source" with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
+                        match validateTreatment target targetProfile "target" with
+                        | null -> ()
+                        | message -> raise (SqlCompilationException(message))
                     match window.Frame with
                     | Some frame ->
                         let prove capability =

@@ -854,7 +854,13 @@ module internal RewriteRenderer =
                     nativeCount + distinct + "CASE WHEN " + renderPredicate ctx predicate
                     + " THEN " + counted + " END)"
                 | _ -> invalidOp "Unproven expression.filter reached COUNT CASE lowering."
-        | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
+        | Expr.Windowed(value, window) ->
+            let modifier =
+                match window.NullTreatment with
+                | WindowNullTreatment.DefaultNullTreatment -> ""
+                | WindowNullTreatment.IgnoreNulls -> " IGNORE NULLS"
+                | WindowNullTreatment.RespectNulls -> " RESPECT NULLS"
+            renderExpr ctx value + modifier + " OVER (" + renderWindow ctx window + ")"
         | Expr.Cast _ | Expr.Extract _ -> renderScalarGraph ctx expression
         | Expr.SimpleCase(input, branches, fallback) ->
             let cases = branches |> NonEmpty.toList |> List.map (fun branch -> " WHEN " + renderExpr ctx branch.Match + " THEN " + renderExpr ctx branch.Result) |> joinDocuments ctx ""

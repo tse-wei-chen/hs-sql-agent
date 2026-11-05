@@ -553,6 +553,11 @@ module internal CoreModel =
 
         let value (LikeEscape value) = value
 
+    type WindowNullTreatment =
+        | DefaultNullTreatment
+        | IgnoreNulls
+        | RespectNulls
+
     type ColumnBinding =
         | LocalRowSource
         | OuterRowSource
@@ -603,7 +608,7 @@ module internal CoreModel =
 
     and SimpleCaseBranch = { Match: Expr; Result: Expr }
     and SearchedCaseBranch = { Condition: Expr; Result: Expr }
-    and WindowSpec = { PartitionBy: Expr list; OrderBy: OrderBy list; Frame: WindowFrame option }
+    and WindowSpec = { PartitionBy: Expr list; OrderBy: OrderBy list; Frame: WindowFrame option; NullTreatment: WindowNullTreatment }
     and OrderBy = { Expression: Expr; Descending: bool; NullOrdering: NullOrdering }
     and SelectItem = { Expression: Expr; Alias: IdentifierPart option }
 
@@ -1135,6 +1140,7 @@ module internal CoreModel =
                     push a b
                 | Windowed(a, windowA), Windowed(b, windowB) ->
                     same <- windowA.Frame = windowB.Frame
+                            && windowA.NullTreatment = windowB.NullTreatment
                             && List.length windowA.PartitionBy = List.length windowB.PartitionBy
                             && List.length windowA.OrderBy = List.length windowB.OrderBy
                     if same then

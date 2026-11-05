@@ -174,12 +174,18 @@ type WindowFrame(unitKind: WindowFrameUnitKind, startBound: WindowFrameBoundCore
     member _.End = endBound
     member _.Exclusion = exclusion
 
+type WindowNullTreatmentKind =
+    | Unspecified = 0
+    | IgnoreNulls = 1
+    | RespectNulls = 2
+
 [<Sealed>]
 type WindowSpec(partitionBy: ImmutableArray<SqlExpr>, orderBy: ImmutableArray<OrderByItem>, frame: WindowFrame | null, span: SourceSpan) =
     inherit SqlNode(span)
     member _.PartitionBy = partitionBy
     member _.OrderBy = orderBy
     member _.Frame = frame
+    member val NullTreatment = WindowNullTreatmentKind.Unspecified with get, set
 
 [<Sealed>]
 type WindowedExpr(expression: SqlExpr, window: WindowSpec, span: SourceSpan) =
