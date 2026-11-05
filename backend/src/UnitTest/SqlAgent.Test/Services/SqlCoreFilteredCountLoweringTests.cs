@@ -76,14 +76,24 @@ public sealed class SqlCoreFilteredCountLoweringTests
     [InlineData(SqlAgentToolType.MsSqlServer, "EXISTS (SELECT 1)")]
     [InlineData(SqlAgentToolType.MySQL, "status + 1 = 2")]
     [InlineData(SqlAgentToolType.MsSqlServer, "status + 1 = 2")]
-    [InlineData(SqlAgentToolType.MySQL, "RANDOM() > 0")]
-    [InlineData(SqlAgentToolType.MsSqlServer, "RANDOM() > 0")]
     public void UnprovenFilterPredicates_RejectBeforeTargetRendering(
         SqlAgentToolType target, string predicate)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
             Compile(Query("COUNT(*)", false, predicate), target));
         Assert.Contains("expression.filter", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    public void VolatileRandomFilter_PreservesEarlierCrossProviderSafetyDiagnostic(
+        SqlAgentToolType target)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(Query("COUNT(*)", false, "RANDOM() > 0"), target));
+        Assert.Contains("Random function", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not translated across", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
