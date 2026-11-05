@@ -72,6 +72,21 @@ public sealed class SqlCoreFilteredCountLoweringTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.MySQL, "EXISTS (SELECT 1)")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "EXISTS (SELECT 1)")]
+    [InlineData(SqlAgentToolType.MySQL, "status + 1 = 2")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "status + 1 = 2")]
+    [InlineData(SqlAgentToolType.MySQL, "RANDOM() > 0")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "RANDOM() > 0")]
+    public void UnprovenFilterPredicates_RejectBeforeTargetRendering(
+        SqlAgentToolType target, string predicate)
+    {
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(Query("COUNT(*)", false, predicate), target));
+        Assert.Contains("expression.filter", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData(SqlAgentToolType.MySQL)]
     [InlineData(SqlAgentToolType.MsSqlServer)]
     public void RawSourceFilterSyntax_RemainsRejected(SqlAgentToolType source)
@@ -110,7 +125,7 @@ public sealed class SqlCoreFilteredCountLoweringTests
             : "CREATE TEMPORARY TABLE " + table + " (id INTEGER, grp INTEGER, amount INTEGER NULL, status INTEGER)";
         await Execute(connection, create, [], token);
         await Execute(connection,
-            $"INSERT INTO {table} (id,grp,amount,status) VALUES (1,1,10,1),(2,1,NULL,1),(3,2,20,0),(4,2,NULL,1)", [], token);
+            $"INSERT INTO {table} (id,grp,amount,status) VALUES (1,1,10,1),(2,1,NULL,1),(3,2,20,0),(4,2,NULL,1),(5,3,30,NULL)", [], token);
 
         foreach (var (agg, predicate, window, expected) in Cases())
         {
@@ -127,8 +142,12 @@ public sealed class SqlCoreFilteredCountLoweringTests
         yield return ("COUNT(amount)", "status = 1", false, [1]);
         yield return ("COUNT(*)", "status = 99", false, [0]);
         yield return ("COUNT(amount)", "status = 99", false, [0]);
-        yield return ("COUNT(*)", "status = 1", true, [1, 2, 0, 1]);
-        yield return ("COUNT(amount)", "status = 1", true, [1, 1, 0, 0]);
+        yield return ("COUNT(*)", "status = 1", true, [1, 2, 0, 1, 0]);
+        yield return ("COUNT(amount)", "status = 1", true, [1, 1, 0, 0, 0]);
+        yield return ("COUNT(*)", "status IS NULL", false, [1]);
+        yield return ("COUNT(amount)", "status IS NULL", false, [1]);
+        yield return ("COUNT(*)", "status IS NULL", true, [0, 0, 0, 0, 1]);
+        yield return ("COUNT(amount)", "status IS NULL", true, [0, 0, 0, 0, 1]);
     }
 
     internal static string Query(string aggregate, bool window, string predicate, string table = Source) =>
@@ -198,7 +217,7 @@ public sealed class SqlCoreFilteredCountSqlServerLiveTests
         try
         {
             await SqlCoreFilteredCountLoweringTests.Execute(connection,
-                $"INSERT INTO {table} (id,grp,amount,status) VALUES (1,1,10,1),(2,1,NULL,1),(3,2,20,0),(4,2,NULL,1)", [], token);
+                $"INSERT INTO {table} (id,grp,amount,status) VALUES (1,1,10,1),(2,1,NULL,1),(3,2,20,0),(4,2,NULL,1),(5,3,30,NULL)", [], token);
             foreach (var (agg, predicate, window, expected) in SqlCoreFilteredCountLoweringTests.Cases())
             {
                 var sql = SqlCoreFilteredCountLoweringTests.Query(agg, window, predicate, table);
