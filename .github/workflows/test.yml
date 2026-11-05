@@ -965,7 +965,7 @@ jobs:
         env:
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Run remaining SQL service tests
-        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -999,7 +999,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
+      - run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName!~SqlAgent.Test.Services&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
@@ -1056,6 +1056,13 @@ jobs:
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
           --filter 'FullyQualifiedName~SqlCoreSqlServerMergeHoldLockLiveTests'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+
+      - name: Verify G10 LAG LEAD IGNORE NULLS on real SQL Server 2022
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~SqlCoreSqlServerWindowNullTreatmentLiveTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
 
@@ -1159,6 +1166,13 @@ jobs:
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
           TEST_ORACLE_ADMIN_CONNECTION: "User Id=sys;Password=Strong_Password_123!;DBA Privilege=SYSDBA;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify G10 LAG LEAD IGNORE NULLS on real Oracle
+        run: >
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
+          --filter 'FullyQualifiedName~SqlCoreOracleWindowNullTreatmentLiveTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+
       - name: Verify real Oracle 26ai Catalog, joined DML and LATERAL DQL parity
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
