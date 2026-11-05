@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sqlcore_coverage_ledger import CoverageLedgerError, build_report
+from sqlcore_coverage_ledger import CoverageLedgerError, build_report, load_manifest
 
 
 DIALECTS = ("Postgres", "MySQL", "MsSqlServer", "Sqlite", "Oracle", "Firebird")
@@ -114,6 +114,23 @@ class CoverageLedgerTests(unittest.TestCase):
         del invalid["suites"][0]["expectedByProvider"]["Firebird"]
         with self.assertRaisesRegex(CoverageLedgerError, "expectedByProvider"):
             build_report(self.directory, invalid)
+
+
+    def test_checked_in_six_provider_corpus_has_verifiable_baseline(self):
+        repository = Path(__file__).resolve().parents[2]
+        manifest_path = (repository / "backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus"
+                         / "sqlcore-coverage-manifest.json")
+        report = build_report(manifest_path.parent, load_manifest(manifest_path))
+        self.assertEqual(4883, report["totalCases"])
+        self.assertEqual(6, len(report["suites"]))
+        self.assertEqual(
+            {"Postgres": 543, "MySQL": 987, "MsSqlServer": 571,
+             "Sqlite": 864, "Oracle": 979, "Firebird": 939},
+            {dialect: item["totalCases"] for dialect, item in report["providers"].items()})
+        self.assertTrue(all(
+            item["byFamily"]["DML"] == 7 for item in report["providers"].values()))
+        self.assertFalse(report["liveExecutionProven"])
+        self.assertIsNone(report["officialGrammarDenominator"])
 
 
 if __name__ == "__main__":
