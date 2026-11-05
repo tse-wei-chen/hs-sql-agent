@@ -27,7 +27,7 @@ public sealed class CompiledSqlCommandExecutor : ISqlCommandExecutor
 
     // A transaction-bound overload keeps provider-specific execution fences on
     // the exact same connection and command without changing the existing interface.
-    public Task<QueryExecutionResult> ExecuteQueryAsync(
+    public Task<QueryExecutionResult> ExecuteQueryInTransactionAsync(
         CompiledSqlCommand command,
         DbConnection openConnection,
         int commandTimeoutSeconds,
