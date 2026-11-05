@@ -121,9 +121,9 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
             // Actual database function, deliberately volatile and permitted to UPDATE
             // the whitelisted relation when run outside a read-only transaction.
             await ExecuteAsync("CREATE FUNCTION " + schema +
-                ".mutate_user() RETURNS integer LANGUAGE plpgsql VOLATILE AS $ " +
+                ".mutate_user() RETURNS integer LANGUAGE plpgsql VOLATILE AS $$ " +
                 "BEGIN UPDATE " + schema + ".users SET name='hijacked' WHERE id=1; " +
-                "RETURN 1; END $");
+                "RETURN 1; END; $$");
             var sql = "SELECT " + schema + ".mutate_user() AS value FROM " +
                 schema + ".users WHERE id=1";
             var before = await SnapshotAsync(schema);
