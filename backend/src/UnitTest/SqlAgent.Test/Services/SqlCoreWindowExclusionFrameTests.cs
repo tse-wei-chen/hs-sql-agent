@@ -13,6 +13,11 @@ namespace SqlAgent.Test.Services;
 /// </summary>
 public sealed class SqlCoreWindowExclusionFrameTests
 {
+    private const string ExcludeRowsQuery =
+        "SELECT COUNT(amount) OVER (ORDER BY id " +
+        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) " +
+        "FROM sqlcore_exclusion_frames";
+
     private const string ExclusionQuery =
         "SELECT id, SUM(amount) OVER (ORDER BY grp " +
         "GROUPS BETWEEN 1 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) AS peer_without_self, " +
@@ -40,7 +45,7 @@ public sealed class SqlCoreWindowExclusionFrameTests
     public void Parse_UnprovenExclusionSource_FailsClosed(SqlAgentToolType source)
     {
         var error = Assert.Throws<SqlParseException>(() =>
-            CoreSqlTextParser.ParseQuery(ExclusionQuery, source));
+            CoreSqlTextParser.ParseQuery(ExcludeRowsQuery, source));
         Assert.Contains("window.exclude", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -52,7 +57,7 @@ public sealed class SqlCoreWindowExclusionFrameTests
     public void Compile_UnprovenExclusionTarget_FailsClosed(SqlAgentToolType target)
     {
         var error = Assert.Throws<SqlCompilationException>(() =>
-            Compile(ExclusionQuery, SqlAgentToolType.Postgres, target));
+            Compile(ExcludeRowsQuery, SqlAgentToolType.Postgres, target));
         Assert.Contains("window.exclude", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -73,11 +78,11 @@ public sealed class SqlCoreWindowExclusionFrameTests
         var context = new SqlPlanValidationContext("g10-window-exclusion-version-v1");
         var policy = new SqlExecutionPlanPolicy();
         var oldTarget = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(ExclusionQuery, provider, provider,
+            SqlCoreFacade.CompileQuery(ExcludeRowsQuery, provider, provider,
                 context, policy, oldProfile));
         Assert.Contains("window.exclude", oldTarget.Message, StringComparison.OrdinalIgnoreCase);
         var oldSource = Assert.Throws<SqlCompilationException>(() =>
-            SqlCoreFacade.CompileQuery(ExclusionQuery, provider, provider,
+            SqlCoreFacade.CompileQuery(ExcludeRowsQuery, provider, provider,
                 context, policy, oldProfile, newProfile));
         Assert.Contains("window.exclude", oldSource.Message, StringComparison.OrdinalIgnoreCase);
     }
