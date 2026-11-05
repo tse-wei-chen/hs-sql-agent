@@ -171,6 +171,22 @@ public sealed class SqlCoreWindowNullTreatmentTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Postgres, "ignore")]
+    [InlineData(SqlAgentToolType.Postgres, "respect")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "ignore")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "respect")]
+    public void OrdinaryFunctionAliasesAreNotNullTreatment(
+        SqlAgentToolType provider, string alias)
+    {
+        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 16, 0);
+        var command = Compile("SELECT ABS(amount) " + alias + " FROM orders",
+            provider, provider, profile, profile);
+        Assert.DoesNotContain("IGNORE NULLS", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RESPECT NULLS", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(alias, command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData("COUNT")]
     [InlineData("SUM")]
     [InlineData("ROW_NUMBER")]
