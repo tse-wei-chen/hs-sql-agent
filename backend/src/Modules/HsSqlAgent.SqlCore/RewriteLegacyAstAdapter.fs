@@ -420,9 +420,16 @@ module internal RewriteLegacyAstAdapter =
                         | HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.NoOthers -> Some WindowFrameExclusion.ExcludeNoOthers
                         | value -> raise (SqlCompilationException("Unsupported window frame exclusion '" + string value + "'."))
                     { WindowFrame.Unit = unit; Extent = extent; Exclusion = exclusion })
+            let treatment =
+                match window.NullTreatment with
+                | HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.Unspecified -> WindowNullTreatment.DefaultNullTreatment
+                | HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.IgnoreNulls -> WindowNullTreatment.IgnoreNulls
+                | HsSqlAgent.SqlCore.Core.Ast.WindowNullTreatmentKind.RespectNulls -> WindowNullTreatment.RespectNulls
+                | value -> raise (SqlCompilationException("Unsupported window null treatment '" + string value + "'."))
             { WindowSpec.PartitionBy = window.PartitionBy |> Seq.map exprOf |> Seq.toList
               OrderBy = window.OrderBy |> Seq.map orderByOf |> Seq.toList
-              Frame = frame }
+              Frame = frame
+              NullTreatment = treatment }
 
         and tableSourceOf (source: HsSqlAgent.SqlCore.Core.Ast.TableSource) : TableSource =
             match source with
