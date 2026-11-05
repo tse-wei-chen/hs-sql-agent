@@ -1391,7 +1391,7 @@ module internal RewriteParser =
                          | _ -> false) ->
                 if not directFunctionSyntax || overSeen || castSeen
                    || nullTreatment <> WindowNullTreatment.DefaultNullTreatment then
-                    fail cursor.Current "Window null treatment must occur once after LAG/LEAD and before OVER."
+                    fail cursor.Current "Window null treatment must occur once after a supported window function and before OVER."
                 let token = cursor.Current
                 let treatment =
                     match token.Kind with
@@ -1404,7 +1404,9 @@ module internal RewriteParser =
                     when not call.IsDistinct
                          && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
                          && (String.Equals(FunctionName.value call.Name, "LAG", StringComparison.OrdinalIgnoreCase)
-                             || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)) ->
+                             || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)
+                             || String.Equals(FunctionName.value call.Name, "FIRST_VALUE", StringComparison.OrdinalIgnoreCase)
+                             || String.Equals(FunctionName.value call.Name, "LAST_VALUE", StringComparison.OrdinalIgnoreCase)) ->
                     match cursor.Dialect with
                     | SourceDialect.SqlServer | SourceDialect.Oracle -> ()
                     | _ -> fail token "SQL capability 'window.null_treatment' is not valid for this source dialect."
@@ -1415,7 +1417,7 @@ module internal RewriteParser =
                         cursor.Advance()
                     | _ -> fail cursor.Current "IGNORE/RESPECT requires NULLS."
                     nullTreatment <- treatment
-                | _ -> fail token "SQL capability 'window.null_treatment' requires LAG or LEAD."
+                | _ -> fail token "SQL capability 'window.null_treatment' requires LAG, LEAD, FIRST_VALUE or LAST_VALUE."
             | Keyword "OVER" ->
                 if not directFunctionSyntax then
                     fail cursor.Current "OVER must directly modify a function call or its FILTER result"

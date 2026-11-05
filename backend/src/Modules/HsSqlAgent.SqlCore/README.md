@@ -49,6 +49,26 @@ window functions reject. Real SQL Server 2022 and Oracle 26ai row-parity
 tests prove NULL-skipping semantics; SqlCore does not execute SQL or grant
 permissions.
 
+### Native FIRST_VALUE/LAST_VALUE NULL treatment with full-frame proof (G10/Q02)
+
+SQL Server 2022+ and Oracle 12.1+ now preserve explicit
+`FIRST_VALUE(value) IGNORE NULLS OVER (...)` and
+`LAST_VALUE(value) RESPECT NULLS OVER (...)` in the same closed F# window
+AST. The modifier must appear between the function call and `OVER`.
+Unlike LAG/LEAD's offset behavior, FIRST/LAST evaluate the selected
+**window frame**: `LAST_VALUE` with the default frame often stops at the
+current row. Use an explicit
+`ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`
+for full-partition behavior; real SQL Server 2022 / Oracle 26ai tests
+compare both NULL modes, both functions, and native/compiled results.
+
+A matching explicit source and target ServerVersion is required;
+SQL Server 2022 RTM (16.0) and Oracle 12.1+ are supported. The SQL Server
+CU4 correctness requirement remains **specific to LAG/LEAD IGNORE NULLS**,
+not FIRST/LAST. Four unsupported providers, malformed functions/modifiers
+and unproven profiles are rejected. Existing C# CLR/structured DTOs reuse
+the same typed proof; SqlCore grants no SQL execution or permission.
+
 ### Bounded conditional DISTINCT COUNT (G10/Q02)
 
 A valid FILTER source such as PostgreSQL

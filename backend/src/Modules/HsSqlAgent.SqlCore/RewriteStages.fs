@@ -274,19 +274,28 @@ module internal RewriteStages =
                 | RawRegexCall(arguments, _) -> pushExprs arguments
                 | Windowed(value, window) ->
                     if window.NullTreatment <> WindowNullTreatment.DefaultNullTreatment then
-                        match Expr.unspan value with
-                        | FunctionCall call
-                            when not call.IsDistinct
-                                 && call.AggregateOrderBy.IsEmpty
-                                 && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
-                                 && (String.Equals(FunctionName.value call.Name, "LAG", StringComparison.OrdinalIgnoreCase)
-                                     || String.Equals(FunctionName.value call.Name, "LEAD", StringComparison.OrdinalIgnoreCase)) -> ()
-                        | _ -> raise (SqlCompilationException(
-                                    "SQL capability 'window.null_treatment' permits LAG/LEAD only."))
-                        // Structured CLR windows cannot bypass source grammar admission.
-                        // SQL Server IGNORE NULLS also requires the CU4 correctness fix.
+                        let functionName =
+                            match Expr.unspan value with
+                            | FunctionCall call
+                                when not call.IsDistinct
+                                     && call.AggregateOrderBy.IsEmpty
+                                     && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                                     && (let name = FunctionName.value call.Name
+                                         String.Equals(name, "LAG", StringComparison.OrdinalIgnoreCase)
+                                         || String.Equals(name, "LEAD", StringComparison.OrdinalIgnoreCase)
+                                         || String.Equals(name, "FIRST_VALUE", StringComparison.OrdinalIgnoreCase)
+                                         || String.Equals(name, "LAST_VALUE", StringComparison.OrdinalIgnoreCase)) ->
+                                FunctionName.value call.Name
+                            | _ -> raise (SqlCompilationException(
+                                        "SQL capability 'window.null_treatment' permits LAG/LEAD/FIRST_VALUE/LAST_VALUE only."))
+                        // SQL Server CU4 repaired LAG/LEAD IGNORE NULLS specifically.
+                        // FIRST/LAST retain the SQL Server 2022 RTM version gate.
+                        // Structured CLR windows use the same source/target capability proof.
+                        let offsetFunction =
+                            String.Equals(functionName, "LAG", StringComparison.OrdinalIgnoreCase)
+                            || String.Equals(functionName, "LEAD", StringComparison.OrdinalIgnoreCase)
                         let validateTreatment provider profile side =
-                            if window.NullTreatment = WindowNullTreatment.IgnoreNulls then
+                            if offsetFunction && window.NullTreatment = WindowNullTreatment.IgnoreNulls then
                                 SqlWindowNullTreatmentCapabilityRules.IgnoreNullsValidationError(provider, profile, side)
                             else
                                 SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, side)

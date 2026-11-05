@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — FIRST_VALUE/LAST_VALUE IGNORE/RESPECT NULLS with explicit frame parity (develop only)
+
+- Extend the existing closed F# window grammar and proof to native SQL Server 2022+ / Oracle 12.1+ FIRST_VALUE/LAST_VALUE. Preserve explicit IGNORE/RESPECT between function and OVER, and the caller's typed ROWS frame: full-partition LAST_VALUE is deliberately different from its default current-row frame.
+- Source and target require matching explicit ServerVersion profiles. SQL Server 2022 CU4 remains a **LAG/LEAD IGNORE** fence only; FIRST/LAST IGNORE is admitted on 16.0 RTM. Reuse the same native renderer and structured CLR DTO, plus six-provider positive/negative unit tests and independent real SQL Server/Oracle row parity. No new driver, MCP tool, Host execution, authorization or second compiler.
+
 ### G10/Q02 — Native SQL Server/Oracle LAG/LEAD IGNORE/RESPECT NULLS (develop only)
 
 - Preserve `LAG/LEAD(value) IGNORE NULLS OVER (...)` and explicit `RESPECT NULLS` in a closed F# null-treatment DU, source and target version profiles (SQL Server 2022+ for RESPECT NULLS, SQL Server 2022 CU4 / build 16.0.4035.4+ for IGNORE NULLS, Oracle 12.1+ for both), function placement and native renderer. A 16.0-only SQL Server profile does not prove the CU4 correctness fix. PostgreSQL/MySQL/SQLite/Firebird remain rejected; no lowering to semantically different ordinary LAG/LEAD.
