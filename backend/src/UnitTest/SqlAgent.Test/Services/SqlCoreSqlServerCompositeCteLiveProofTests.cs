@@ -117,6 +117,10 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
     [InlineData(true, false, 1, false, false, "DERIVED2", "INT", "BIGINT")]
     [InlineData(false, false, 3, false, false, "DERIVED2", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
     [InlineData(true, false, 2, true, false, "DERIVED2", "NVARCHAR(32)", "INT")]
+    // G11: three nested non-lateral, key-preserving derived projections.
+    // The Host must still re-attest the original physical UNIQUE tuple.
+    [InlineData(true, false, 2, false, false, "DERIVED3", "INT", "BIGINT")]
+    [InlineData(false, false, 3, true, false, "DERIVED3", "DECIMAL(12,2)", "UNIQUEIDENTIFIER")]
     // M06: two independent physical-key-preserving CTE branches reconverge
     // only through a complete ordinary-equality key JOIN (a diamond DAG).
     [InlineData(true, false, 3, false, false, "DIAMOND", "INT", "BIGINT")]
@@ -306,6 +310,14 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     src + "] AS innerSrc) AS middle) AS d";
                 firstProjection = "d.x AS a, d.y AS b";
             }
+            if (joined == "DERIVED3")
+            {
+                physicalSource = "(SELECT outerSrc.x AS x, outerSrc.y AS y FROM " +
+                    "(SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle) AS outerSrc) AS d";
+                firstProjection = "d.x AS a, d.y AS b";
+            }
             if (joined.StartsWith("DIAMOND", StringComparison.Ordinal))
             {
                 physicalSource = "dbo.[" + src + "] AS s";
@@ -322,7 +334,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
                 "SELF_LEFT" => " LEFT JOIN dbo.[" + src +
                     "] AS j ON s.k1 = j.k1 AND s.k2 = j.k2",
-                "NONE" or "DERIVED" or "DERIVED2" or "DIAMOND" or "DIAMOND_PAYLOAD"
+                "NONE" or "DERIVED" or "DERIVED2" or "DERIVED3" or "DIAMOND" or "DIAMOND_PAYLOAD"
                     or "DIAMOND_SEMI_LEFT" or "DIAMOND_SEMI_RIGHT"
                     or "DIAMOND_ANTI_LEFT" or "DIAMOND_ANTI_RIGHT" => "",
                 _ => throw new ArgumentOutOfRangeException(nameof(joined))
@@ -353,6 +365,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                   "INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y) "
                 : "WITH seed AS (SELECT " + firstProjection +
                   " FROM " + physicalSource + singletonJoin + ") ";
+            // Declared CTE column aliases share the same strict, ordered
+            // physical-key mapping as each nested derived projection.
+            if (joined == "DERIVED3" && !update)
+                cte = cte.Replace("WITH seed AS", "WITH seed(a, b) AS",
+                    StringComparison.Ordinal);
             if (!isDiamond && hops >= 2)
                 cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
             if (!isDiamond && hops >= 3)
@@ -399,7 +416,7 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 missingParsed, SqlAgentToolType.MsSqlServer, context,
                 new DmlCompilationPolicy(), profile, null));
 
-            if (joined is "DERIVED" or "DERIVED2")
+            if (joined is "DERIVED" or "DERIVED2" or "DERIVED3")
             {
                 // M06 negative grammar matrix: changing the nested source
                 // must never borrow a physical UNIQUE proof by alias alone.
@@ -448,13 +465,57 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                     intermediate + " WHERE middle.x IS NOT NULL",
                     intermediate.Replace(") AS middle", ") AS middle " +
                         "INNER JOIN dbo.[" + src + "] AS extra ON middle.x = extra.k1",
-                        StringComparison.Ordinal),
-                    // A third derived layer must not acquire a proof by recursion.
-                    "SELECT extra.x AS x, extra.y AS y FROM (" + intermediate +
-                        ") AS extra"
+                        StringComparison.Ordinal)
                 })
                 {
                     var rejected = sql.Replace(intermediate, invalid,
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, rejected);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(rejected,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+            }
+
+            if (joined == "DERIVED3")
+            {
+                var intermediate = "SELECT middle.x AS x, middle.y AS y FROM " +
+                    "(SELECT innerSrc.k1 AS x, innerSrc.k2 AS y FROM dbo.[" +
+                    src + "] AS innerSrc) AS middle";
+                var third = "SELECT outerSrc.x AS x, outerSrc.y AS y FROM (" +
+                    intermediate + ") AS outerSrc";
+                Assert.Contains(third, sql, StringComparison.Ordinal);
+                if (!update)
+                {
+                    var duplicateCteAlias = sql.Replace(
+                        "WITH seed(a, b) AS", "WITH seed(a, a) AS",
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, duplicateCteAlias);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(duplicateCteAlias,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
+                foreach (var invalid in new[]
+                {
+                    third.Replace("outerSrc.x AS x", "outerSrc.x + 0 AS x",
+                        StringComparison.Ordinal),
+                    third.Replace("outerSrc.y AS y", "outerSrc.x AS y",
+                        StringComparison.Ordinal),
+                    third + " WHERE outerSrc.x IS NOT NULL",
+                    third + " INNER JOIN dbo.[" + src +
+                        "] AS extra ON outerSrc.x = extra.k1",
+                    // A fourth derived layer must never inherit executable
+                    // UNIQUE-key authority through its display aliases.
+                    "SELECT extra.x AS x, extra.y AS y FROM (" + third + ") AS extra"
+                })
+                {
+                    var rejected = sql.Replace(third, invalid,
                         StringComparison.Ordinal);
                     Assert.NotEqual(sql, rejected);
                     Assert.ThrowsAny<Exception>(() =>

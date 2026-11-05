@@ -6,6 +6,19 @@
 
 The compiler uses a closed F# AST, typed validation and capability checks, and provider-native rendering behind a CLR-friendly C# facade. **It does not connect to a database or execute SQL.**
 
+### 3.1 bounded SQL Server ordered-key CTE / derived admission
+
+Native SQL Server 2022 UPDATE/DELETE with independently live-attested
+physical UNIQUE keys can traverse **up to three** non-lateral, read-only
+derived SELECT layers that preserve the full ordered physical key tuple as
+direct, unambiguous, injective column projections. CTE renaming and derived
+projections now share the same ordered-key mapping rule. Expressions,
+reordered or duplicated keys, filters, extra/multiplying joins, and four or
+more derived layers remain fail-closed. Static Catalog cardinality does
+not authorize execution: Host still verifies the physical index, current
+schema, Preview row set, one-use Approval and transaction-time key freshness.
+No additional provider, MCP tool or CLR public API is enabled.
+
 ### 3.1 observed SQL coverage ledger (compiler evidence, not a support percentage)
 
 The six-provider coverage ledger reads the *existing checked-in positive compiler
