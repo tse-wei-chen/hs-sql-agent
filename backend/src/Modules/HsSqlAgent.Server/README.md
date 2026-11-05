@@ -777,3 +777,18 @@ new gate. Other providers, arbitrary ALTER, multiple-target dependency
 graphs, DEFAULT/NOT NULL column additions, concurrent indexes and
 destructive DDL Batch are still not allowed. The front end still
 preselects four read-only tools and leaves DML/DDL unselected.
+
+## Explicit DML MCP permission gate
+
+The `execute_dml_sql` mutating tool requires an explicit, exact
+`execute_dml_sql` entry in the MCP access key's `AllowedTools` authorization
+context. Missing, empty, whitespace-only, substring and delimiter-smuggled
+tool lists are denied **before** provider lookup, preview, or approval. It is
+not enabled by the four default read-only tools; a DDL grant does not imply a
+DML grant. Existing read-only Query/metadata behavior for a present empty
+`AllowedTools` list is unchanged for backwards compatibility. DML additionally
+requires its independent approval and live row-set/commit proof.
+
+The regression campaign lives in
+`backend/src/UnitTest/HsSqlAgent.Server.Test/Tools/HostAdversarialMutationAuthorizationTests.cs`
+and `Services/TypedDmlRuntimeTests.cs`.
