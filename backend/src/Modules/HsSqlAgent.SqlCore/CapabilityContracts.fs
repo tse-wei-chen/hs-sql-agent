@@ -1080,6 +1080,33 @@ module internal SqlLateralDerivedTableCapabilityRules =
     let TargetValidationError(provider: SqlAgentToolType, targetProfile: SqlProviderCapabilityProfile | null) : string | null =
         validationError provider targetProfile "target"
 
+module internal SqlWindowNullTreatmentCapabilityRules =
+    let ValidationError(provider: SqlAgentToolType, profile: SqlProviderCapabilityProfile | null, side: string) : string | null =
+        let minimum =
+            match provider with
+            | SqlAgentToolType.MsSqlServer -> Some(Version(16, 0))
+            | SqlAgentToolType.Oracle -> Some(Version(12, 1))
+            | _ -> None
+        match minimum, profile with
+        | None, _ ->
+            "SQL capability 'window.null_treatment' is not proven for " + side
+            + " provider " + string provider + "."
+        | Some min, null ->
+            "SQL capability 'window.null_treatment' requires an explicit " + side
+            + " profile for " + string provider + " ServerVersion " + string min + "+."
+        | Some min, value when value.Provider <> provider ->
+            "SQL capability 'window.null_treatment' requires a matching " + side
+            + " profile for " + string provider + "."
+        | Some min, value ->
+            match value.ServerVersion with
+            | null ->
+                "SQL capability 'window.null_treatment' requires an explicit " + side
+                + " ServerVersion " + string min + "+."
+            | declared when declared.CompareTo(min) < 0 ->
+                "SQL capability 'window.null_treatment' requires " + side
+                + " ServerVersion " + string min + "+; declared " + string declared + "."
+            | _ -> null
+
 module internal SqlAggregateFilterCapabilityRules =
     let private pg = Version(9,4)
     let private sqlite = Version(3,30)
