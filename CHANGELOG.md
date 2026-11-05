@@ -2,6 +2,13 @@
 
 ## [3.1.0] - Unreleased
 
+### Host Query — PostgreSQL physical read-only execution fence
+
+- Correct the verified PostgreSQL Query tool vulnerability where an allowed SELECT calling a native VOLATILE function could UPDATE physical table rows. A real PostgreSQL 16 Testcontainers RED run demonstrated the mutation through `SqlAgentTool.ExecuteQuerySql`.
+- For PostgreSQL only, after compiling and verifying the runtime server profile, execute each immutable SELECT inside an explicit PostgreSQL transaction with `SET TRANSACTION READ ONLY`. Bind the exact transaction to Dapper execution and roll back after buffering results. Both `ExecuteAsync` and `ExecuteWithFactsAsync` share the same gate; SQL/parameters, table policy, audit and the Query/DML/DDL distinction are unchanged.
+- Add independent PostgreSQL real-DB cases for 32 stacked Query→mutation attempts, five whitelist bypass variants, native function sequence effects, a database VOLATILE UPDATE function, safe parameterized injection-like literals, and valid OR/CTE controls. Do not claim other five providers are covered by this PostgreSQL runtime fence. The database-specific read-only transaction does not establish that arbitrary SELECT has no external effects (for example advisory locks).
+
+
 ### G11 — SQL Server ordered composite-key projection proof reuse
 
 - Replace duplicated SQL Server CTE key renaming/ordinal proof with the

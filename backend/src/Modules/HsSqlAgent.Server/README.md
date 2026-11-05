@@ -5,6 +5,26 @@ Secret protection now requires independent Base64-encoded random 32-byte keys fo
 
 Embeddable MCP SQL Agent components for ASP.NET Core. New applications compose capabilities explicitly; each capability owns only the options it needs. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains as a compatibility path for existing consumers.
 
+## PostgreSQL Query execution: transaction-enforced read-only
+
+`execute_query_sql` is a read-only MCP tool, but a PostgreSQL `SELECT` alone is not a
+write-prevention boundary: a `VOLATILE` function can update tables or advance a sequence.
+When the selected provider is PostgreSQL, Host now wraps the **compiled** Query command
+in a real database transaction and runs `SET TRANSACTION READ ONLY` before executing
+the command on that same transaction. The result set is fully buffered before rolling
+back. The database, rather than a function-name blacklist, enforces persistent
+write restrictions. Read-only transaction failures surface as failed Query operations,
+not as successful empty results.
+
+The F# SqlCore compiler stays driver-free and retains the original SQL authorization
+and single-statement gates. DML/DDL and other five providers are unaffected by
+this provider-specific Host enforcement. Read-only transactions are not an all-purpose
+sandbox for locks, resource exhaustion, or arbitrary external function effects;
+limit database privileges and retain timeout/concurrency/audit controls.
+The real PostgreSQL 16 Host/UDF/sequence/no-side-effect tests are documented in
+`backend/src/UnitTest/HsSqlAgent.Server.Test/Services/Query/PHYSICAL-INJECTION.md`.
+
+
 ## Install
 
 ```bash
