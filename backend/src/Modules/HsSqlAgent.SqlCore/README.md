@@ -31,6 +31,20 @@ Console.WriteLine(command.Sql);
 
 `CompiledSqlCommand` contains native SQL, bound parameters, and compiler evidence. The caller remains responsible for database access, connection identity, permissions, and runtime limits.
 
+### Bounded cross-provider COUNT FILTER lowering (G10/Q02)
+
+PostgreSQL `COUNT(*) FILTER (WHERE status = 1)` and
+`COUNT(amount) FILTER (WHERE status = 1)` can now compile for MySQL and
+SQL Server targets as `COUNT(CASE WHEN ... THEN 1/amount END)`. This
+preserves empty-group results (zero, not NULL), NULL-sensitive
+`COUNT(amount)` and window-frame counts. Only unqualified, non-DISTINCT
+COUNT over `*` or a direct local column with bounded column/literal
+predicates is proven. `SUM`, DISTINCT, computed COUNT operands, functions,
+subqueries and outer references remain rejected; raw MySQL/SQL Server
+`FILTER` source syntax is still invalid. The separate
+`aggregate.filtered_count` capability does not weaken generic
+`expression.filter` rules. No SQL execution or approval is added.
+
 ### Native EXCLUDE frame membership (G10/Q02)
 
 PostgreSQL 11+ and SQLite 3.28+ preserve `EXCLUDE CURRENT ROW`, `EXCLUDE GROUP`,

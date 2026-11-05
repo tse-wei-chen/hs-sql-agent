@@ -299,7 +299,7 @@ module internal RewriteCapabilityValidation =
             | VisitCapabilityTail query ->
                 pushOrders query.OrderBy
 
-    let private proveFilterNode capabilityMessage (expressionProofs: ExpressionProofs) node =
+    let private proveFilterNode capabilityMessage (expressionProofs: ExpressionProofs) allowFilteredCount node =
         match node with
         | Interval _ ->
             requireFilterCapability capabilityMessage expressionProofs.IntervalLiteral
@@ -312,26 +312,32 @@ module internal RewriteCapabilityValidation =
                 requireFilterCapability capabilityMessage expressionProofs.QuotedFunction
             if FunctionName.isQualified call.Name then
                 requireFilterCapability capabilityMessage expressionProofs.QualifiedFunction
-        | FilteredAggregate(_, predicate) ->
-            requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
+        | FilteredAggregate(value, predicate) ->
+            let countLoweringIsProven =
+                allowFilteredCount
+                && (match Expr.tryFilteredCountArgument value with
+                    | Some _ -> Expr.isBoundedCountFilterPredicate predicate
+                    | None -> false)
+            if not countLoweringIsProven then
+                requireFilterCapability capabilityMessage expressionProofs.AggregateFilter
             // Predicate check precedes the scalar-operand traversal.
             proveFilterPredicate capabilityMessage expressionProofs.FilterPredicate predicate
         | _ -> ()
 
-    let private proveFilterGraph capabilityMessage expressionProofs frame =
+    let private proveFilterGraph capabilityMessage expressionProofs allowFilteredCount frame =
         walkCapabilityGraph
-            (proveFilterNode capabilityMessage expressionProofs)
+            (proveFilterNode capabilityMessage expressionProofs allowFilteredCount)
             (fun _ -> ()) (fun _ -> ()) (fun _ -> ())
             (fun _ -> ()) (fun _ -> ()) (fun _ -> ()) frame
 
-    let private proveFilterExpr capabilityMessage expressionProofs expression =
-        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityExpr expression)
+    let private proveFilterExpr capabilityMessage expressionProofs allowFilteredCount expression =
+        proveFilterGraph capabilityMessage expressionProofs allowFilteredCount (VisitCapabilityExpr expression)
 
-    let private proveFilterSource capabilityMessage expressionProofs source =
-        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilitySource source)
+    let private proveFilterSource capabilityMessage expressionProofs allowFilteredCount source =
+        proveFilterGraph capabilityMessage expressionProofs allowFilteredCount (VisitCapabilitySource source)
 
-    let private proveFilterQuery capabilityMessage expressionProofs query =
-        proveFilterGraph capabilityMessage expressionProofs (VisitCapabilityQuery query)
+    let private proveFilterQuery capabilityMessage expressionProofs allowFilteredCount query =
+        proveFilterGraph capabilityMessage expressionProofs allowFilteredCount (VisitCapabilityQuery query)
 
     /// This pass only requires capabilities; it does not construct semantic
     /// evidence, normalize expressions or perform policy checks. If every
@@ -352,42 +358,42 @@ module internal RewriteCapabilityValidation =
         && accepted proofs.FilterPredicate.Subquery
         && accepted proofs.FilterPredicate.WindowFunction
 
-    let private proveFilterDocumentWhenRequired capabilityMessage expressionProofs document =
+    let private proveFilterDocumentWhenRequired capabilityMessage expressionProofs allowFilteredCount document =
         match document.Statement with
         | QueryStatement query ->
-            proveFilterQuery capabilityMessage expressionProofs query
+            proveFilterQuery capabilityMessage expressionProofs allowFilteredCount query
         | InsertStatement insert ->
             match insert.Input with
-            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
-            | QuerySource query -> proveFilterQuery capabilityMessage expressionProofs query
+            | Values rows -> rows |> NonEmpty.iter (NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount))
+            | QuerySource query -> proveFilterQuery capabilityMessage expressionProofs allowFilteredCount query
             | DefaultValues -> ()
-            insert.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+            insert.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Expression)
         | UpdateStatement update ->
-            update.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs cte.Query)
-            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveFilterExpr capabilityMessage expressionProofs assignment.Value)
-            update.From |> List.iter (proveFilterSource capabilityMessage expressionProofs)
-            update.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-            update.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+            update.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs allowFilteredCount cte.Query)
+            update.AssignmentItems |> NonEmpty.iter (fun assignment -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount assignment.Value)
+            update.From |> List.iter (proveFilterSource capabilityMessage expressionProofs allowFilteredCount)
+            update.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount)
+            update.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Expression)
         | DeleteStatement delete ->
-            delete.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs cte.Query)
-            delete.Using |> List.iter (proveFilterSource capabilityMessage expressionProofs)
-            delete.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs)
-            delete.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Expression)
+            delete.Ctes |> List.iter (fun cte -> proveFilterQuery capabilityMessage expressionProofs allowFilteredCount cte.Query)
+            delete.Using |> List.iter (proveFilterSource capabilityMessage expressionProofs allowFilteredCount)
+            delete.Where |> Option.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount)
+            delete.Returning |> List.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Expression)
         | MergeStatement merge ->
-            merge.Source.SourceValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs)
-            proveFilterExpr capabilityMessage expressionProofs merge.MatchPredicate
+            merge.Source.SourceValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount)
+            proveFilterExpr capabilityMessage expressionProofs allowFilteredCount merge.MatchPredicate
             merge.Matched
             |> Option.iter (function
                 | MergeDelete -> ()
                 | MergeUpdate assignments ->
-                    assignments |> NonEmpty.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs item.Value))
+                    assignments |> NonEmpty.iter (fun item -> proveFilterExpr capabilityMessage expressionProofs allowFilteredCount item.Value))
             merge.NotMatched
             |> Option.iter (fun mergeInsert ->
-                mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs))
+                mergeInsert.InsertValues |> NonEmpty.iter (proveFilterExpr capabilityMessage expressionProofs allowFilteredCount))
 
-    let proveFilterDocument capabilityMessage expressionProofs document =
+    let proveFilterDocument capabilityMessage expressionProofs allowFilteredCount document =
         if not (allFilterCapabilitiesProven expressionProofs) then
-            proveFilterDocumentWhenRequired capabilityMessage expressionProofs document
+            proveFilterDocumentWhenRequired capabilityMessage expressionProofs allowFilteredCount document
 
     // Oracle CASE-based null-safe lowering may evaluate operands more
     // than once. Reject any unproven/volatile construct, but traverse

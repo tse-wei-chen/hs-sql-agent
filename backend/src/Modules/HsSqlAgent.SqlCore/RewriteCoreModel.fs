@@ -969,6 +969,56 @@ module internal CoreModel =
                 | _ -> doneWalking <- true
             current
 
+        /// One structural proof used by target validation and native lowering.
+        /// COUNT(*) has a different argument shape from COUNT(direct_column).
+        type FilteredCountArgument =
+            | AllRows
+            | DirectColumn of Expr
+
+        let tryFilteredCountArgument value =
+            match unspan value with
+            | FunctionCall call
+                when not call.IsDistinct
+                     && call.AggregateOrderBy.IsEmpty
+                     && call.AggregateOrderSyntax = NoAggregateOrder
+                     && call.AggregateSeparator.IsNone
+                     && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
+                     && String.Equals(
+                         FunctionName.value call.Name, "COUNT",
+                         StringComparison.OrdinalIgnoreCase) ->
+                match call.Arguments with
+                | [ argument ] ->
+                    match unspan argument with
+                    | Wildcard None -> Some AllRows
+                    | Column _ | BoundColumn(_, LocalRowSource) ->
+                        Some(DirectColumn argument)
+                    | _ -> None
+                | _ -> None
+            | _ -> None
+
+        // Conditional COUNT must not evaluate volatile expressions, subqueries,
+        // outer scope references or target-dependent scalar-to-boolean coercions.
+        let isBoundedCountFilterPredicate expression =
+            let pending = ResizeArray<Expr>()
+            pending.Add expression
+            let mutable supported = true
+            while supported && pending.Count > 0 do
+                let last = pending.Count - 1
+                let next = unspan pending.[last]
+                pending.RemoveAt(last)
+                match next with
+                | Binary((Equal | NotEqual | GreaterThan | LessThan
+                          | GreaterThanOrEqual | LessThanOrEqual
+                          | And | Or), left, right) ->
+                    pending.Add right
+                    pending.Add left
+                | Unary(Not, value)
+                | IsNull(value, _) ->
+                    pending.Add value
+                | Column _ | BoundColumn(_, LocalRowSource) | Literal _ -> ()
+                | _ -> supported <- false
+            supported
+
         // Compare expression pairs iteratively: deep legal SQL does not
         // consume one managed call frame per AST node. A subquery remains
         // conservatively non-equivalent, matching the original proof rule.

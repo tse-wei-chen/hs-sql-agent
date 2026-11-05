@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — Bounded MySQL/SQL Server conditional COUNT lowering (develop only)
+
+- Prove and render native `COUNT(CASE WHEN ... THEN ... END)` for PostgreSQL-source `COUNT(*)`/`COUNT(direct_column)` `FILTER (WHERE ...)` on MySQL and SQL Server. Reuse the closed F# FilteredAggregate graph; one typed COUNT/predicate shape proof handles capability validation and rendering. Preserve false/NULL/empty and per-frame counts; fail closed on SUM, DISTINCT, computed operands, volatile/subquery/outer-reference predicates and invalid MySQL/SQL Server FILTER source syntax.
+- Add a dedicated `aggregate.filtered_count` capability entry while the unrestricted `expression.filter` capability remains rejected; real PostgreSQL/MySQL 8.4/SQL Server 2022 comparison tests and syntax negatives, with no new MCP tools or public CLR APIs.
+
+
+
 ### G10/Q02 — SQL Server source RANGE offset validation (develop only)
 
 - Reject T-SQL numeric `RANGE n PRECEDING/FOLLOWING` at source parsing and typed source capability proof even when the selected target supports numeric RANGE. Reuse one typed frame-offset predicate for source and target validation; preserve SQL Server legal `ROWS` / unbounded `RANGE` and PostgreSQL/SQLite native numeric RANGE behavior. Add negative/positive compiler tests and real PostgreSQL/SQLite parity; no new public API, MCP tool or runtime dependency.
