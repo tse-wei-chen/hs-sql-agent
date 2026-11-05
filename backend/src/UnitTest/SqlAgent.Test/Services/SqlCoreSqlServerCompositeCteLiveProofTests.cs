@@ -365,6 +365,11 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                   "INNER JOIN twin AS r ON l.a = r.x AND l.b = r.y) "
                 : "WITH seed AS (SELECT " + firstProjection +
                   " FROM " + physicalSource + singletonJoin + ") ";
+            // Declared CTE column aliases share the same strict, ordered
+            // physical-key mapping as each nested derived projection.
+            if (joined == "DERIVED3" && !update)
+                cte = cte.Replace("WITH seed AS", "WITH seed(a, b) AS",
+                    StringComparison.Ordinal);
             if (!isDiamond && hops >= 2)
                 cte += ", picked AS (SELECT " + nextProjection + " FROM seed) ";
             if (!isDiamond && hops >= 3)
@@ -483,6 +488,19 @@ public sealed class SqlCoreSqlServerCompositeCteLiveProofTests
                 var third = "SELECT outerSrc.x AS x, outerSrc.y AS y FROM (" +
                     intermediate + ") AS outerSrc";
                 Assert.Contains(third, sql, StringComparison.Ordinal);
+                if (!update)
+                {
+                    var duplicateCteAlias = sql.Replace(
+                        "WITH seed(a, b) AS", "WITH seed(a, a) AS",
+                        StringComparison.Ordinal);
+                    Assert.NotEqual(sql, duplicateCteAlias);
+                    Assert.ThrowsAny<Exception>(() =>
+                        SqlCoreFacade.CompileDml(
+                            CoreSqlTextParser.ParseDml(duplicateCteAlias,
+                                SqlAgentToolType.MsSqlServer, profile),
+                            SqlAgentToolType.MsSqlServer, context,
+                            new DmlCompilationPolicy(), profile, null));
+                }
                 foreach (var invalid in new[]
                 {
                     third.Replace("outerSrc.x AS x", "outerSrc.x + 0 AS x",
