@@ -99,6 +99,42 @@ public sealed class SqlCoreWindowNullTreatmentTests
     }
 
     [Theory]
+    [InlineData(16, 0, 1000, 6)]
+    [InlineData(16, 0, 4035, 3)]
+    public void SqlServerBeforeCu4_CannotProveIgnoreNullsOnEitherSide(
+        int major, int minor, int build, int revision)
+    {
+        // Microsoft documents a LAG/LEAD IGNORE NULLS correctness fix in SQL Server 2022 CU4.
+        // A 16.0-only declaration must not be silently interpreted as CU4 or newer.
+        var stale = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer, new Version(major, minor, build, revision));
+        var patched = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer, new Version(16, 0, 4035, 4));
+        var sql = Query("orders", "LAG", "IGNORE NULLS");
+        var sourceError = Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                stale, patched));
+        Assert.Contains("CU4", sourceError.Message, StringComparison.OrdinalIgnoreCase);
+        var targetError = Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                patched, stale));
+        Assert.Contains("CU4", targetError.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SqlServerMajorMinorOnly_IsNotProofOfIgnoreNullsCu4()
+    {
+        var unspecifiedBuild = Profile(SqlAgentToolType.MsSqlServer, 16, 0);
+        var patched = new SqlProviderCapabilityProfile(
+            SqlAgentToolType.MsSqlServer, new Version(16, 0, 4035, 4));
+        var error = Assert.Throws<SqlCompilationException>(() =>
+            Compile(Query("orders", "LEAD", "IGNORE NULLS"),
+                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                unspecifiedBuild, patched));
+        Assert.Contains("CU4", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData(SqlAgentToolType.MsSqlServer, "ignore nulls")]
     [InlineData(SqlAgentToolType.MsSqlServer, "IgNoRe NuLlS")]
     [InlineData(SqlAgentToolType.MsSqlServer, "respect nulls")]
