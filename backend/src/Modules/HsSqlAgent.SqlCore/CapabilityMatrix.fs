@@ -637,6 +637,13 @@ type SqlCapabilityMatrix private () =
                 yield cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
                 yield cap("window.groups","window",groupsStatus,groupsDetail)
                 yield cap("window.exclude","window",groupsStatus,exclusionDetail)
+                let nullTreatmentError =
+                    SqlWindowNullTreatmentCapabilityRules.ValidationError(provider, profile, "target")
+                yield cap("window.null_treatment","window",
+                    (if isNull nullTreatmentError then supported else rejected),
+                    if isNull nullTreatmentError then
+                        "LAG/LEAD IGNORE NULLS and RESPECT NULLS preserve native behavior on SQL Server 2022+ or Oracle 12.1+. Explicit source and target version proof required; other providers and unsupported window functions remain fail-closed."
+                    else nullTreatmentError)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
