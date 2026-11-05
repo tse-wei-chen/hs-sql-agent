@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — MySQL/SQL Server conditional DISTINCT COUNT (develop only)
+
+- Extend the existing closed F# conditional COUNT shape with one direct-column `DISTINCT` case. For a valid native FILTER source such as PostgreSQL, render MySQL `COUNT(DISTINCT CASE WHEN ... THEN column END)` or SQL Server 64-bit `COUNT_BIG(DISTINCT CASE WHEN ... THEN column END)`. NULL inputs, duplicate values, false and unknown predicates, grouped and global counts retain their target SQL aggregate semantics; 3 real databases cover the bounded integer parity matrix.
+- Reject `COUNT(DISTINCT ...) OVER (...)` at the existing semantic window gate, computed/multiple DISTINCT arguments, volatile/subquery predicates, and invalid MySQL/SQL Server raw FILTER source grammar. New `aggregate.filtered_distinct_count` entry does not relax general `expression.filter`; no new public APIs, drivers, permissions, or MCP tools.
+
+
+
 ### G10/Q02 — Bounded MySQL/SQL Server conditional COUNT lowering (develop only)
 
 - Prove and render MySQL `COUNT(CASE WHEN ... THEN ... END)` and SQL Server `COUNT_BIG(CASE WHEN ... THEN ... END)` for PostgreSQL-source `COUNT(*)`/`COUNT(direct_column)` `FILTER (WHERE ...)` on MySQL and SQL Server. Reuse the closed F# FilteredAggregate graph; one typed COUNT/predicate shape proof handles capability validation and rendering. Preserve false/NULL/empty and per-frame counts; fail closed on SUM, DISTINCT, computed operands, volatile/subquery/outer-reference predicates and invalid MySQL/SQL Server FILTER source syntax.

@@ -843,13 +843,15 @@ module internal RewriteRenderer =
             | MySql | SqlServer ->
                 match Expr.tryFilteredCountArgument value with
                 | Some argument when Expr.isBoundedCountFilterPredicate predicate ->
-                    let counted =
+                    let counted, distinct =
                         match argument with
-                        | Expr.AllRows -> doc ctx "1"
-                        | Expr.DirectColumn value -> renderExpr ctx value
+                        | Expr.AllRows -> doc ctx "1", ""
+                        | Expr.DirectColumn value -> renderExpr ctx value, ""
+                        | Expr.DirectDistinctColumn value ->
+                            renderExpr ctx value, "DISTINCT "
                     let nativeCount =
                         if ctx.Provider = SqlServer then "COUNT_BIG(" else "COUNT("
-                    nativeCount + "CASE WHEN " + renderPredicate ctx predicate
+                    nativeCount + distinct + "CASE WHEN " + renderPredicate ctx predicate
                     + " THEN " + counted + " END)"
                 | _ -> invalidOp "Unproven expression.filter reached COUNT CASE lowering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"

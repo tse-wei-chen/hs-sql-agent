@@ -580,9 +580,15 @@ type SqlCapabilityMatrix private () =
                 yield cap("aggregate.filtered_count","aggregate",
                     (if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then translated else filterStatus),
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
-                        "Only COUNT(*) or COUNT(direct local column) FILTER from an admissible source is lowered to MySQL COUNT(CASE WHEN predicate THEN value END) or SQL Server 64-bit COUNT_BIG(CASE WHEN predicate THEN value END). DISTINCT, SUM, volatile expressions, subqueries and outer references fail closed; FILTER is not valid raw MySQL/SQL Server source grammar."
+                        "COUNT(*) and COUNT(direct local column) FILTER from an admissible source lower to MySQL COUNT(CASE WHEN predicate THEN value END) or SQL Server 64-bit COUNT_BIG(CASE WHEN predicate THEN value END). DISTINCT direct-column COUNT is separately proven by aggregate.filtered_distinct_count; SUM, computed operands and unbounded predicates remain fail-closed."
                     else
                         "FILTER COUNT follows native expression.filter target capability and its provider/version proof.")
+                yield cap("aggregate.filtered_distinct_count","aggregate",
+                    (if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then translated else filterStatus),
+                    if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then
+                        "COUNT(DISTINCT direct local column) FILTER with bounded local predicates lowers to COUNT(DISTINCT CASE WHEN ... THEN column END) on MySQL and 64-bit COUNT_BIG(DISTINCT CASE WHEN ... THEN column END) on SQL Server. DISTINCT window aggregates, computed/volatile expressions, multiple DISTINCT operands, unbounded predicates and raw MySQL/SQL Server FILTER source grammar remain rejected."
+                    else
+                        "FILTER DISTINCT COUNT follows the native expression.filter capability and its explicit provider/version proof.")
                 yield cap("aggregate.string","aggregate",translated,"String aggregation lowers to provider-native syntax.")
                 yield cap("aggregate.string.ordering","aggregate",aggregateOrderingStatus,aggregateOrderingDetail)
                 yield cap("aggregate.string.dynamic_separator","aggregate",rejected,"Dynamic aggregate separators remain fail-closed.")
