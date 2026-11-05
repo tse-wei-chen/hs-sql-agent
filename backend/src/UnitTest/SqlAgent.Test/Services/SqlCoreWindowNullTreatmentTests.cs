@@ -295,6 +295,158 @@ public sealed class SqlCoreWindowNullTreatmentTests
             .Single(x => x.Id == "window.null_treatment.ignore").Status);
     }
 
+    // G10/Q02: FIRST_VALUE/LAST_VALUE have frame semantics, not offset semantics.
+    // Explicit full-partition ROWS frame prevents the LAST_VALUE default-frame trap.
+    internal static string FirstLastQuery(string table, string fn, string modifier) =>
+        "SELECT id, " + fn + "(value) " + modifier +
+        " OVER (PARTITION BY grp ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)" +
+        " AS picked FROM " + table + " ORDER BY id";
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer, "FIRST_VALUE", "IGNORE NULLS")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "LAST_VALUE", "IGNORE NULLS")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "FIRST_VALUE", "RESPECT NULLS")]
+    [InlineData(SqlAgentToolType.MsSqlServer, "LAST_VALUE", "RESPECT NULLS")]
+    [InlineData(SqlAgentToolType.Oracle, "FIRST_VALUE", "IGNORE NULLS")]
+    [InlineData(SqlAgentToolType.Oracle, "LAST_VALUE", "IGNORE NULLS")]
+    [InlineData(SqlAgentToolType.Oracle, "FIRST_VALUE", "RESPECT NULLS")]
+    [InlineData(SqlAgentToolType.Oracle, "LAST_VALUE", "RESPECT NULLS")]
+    public void FirstLastNativeModifier_RetainsExactFunctionAndFullFrame(
+        SqlAgentToolType provider, string fn, string modifier)
+    {
+        // Unlike LAG/LEAD, SQL Server FIRST/LAST IGNORE has no known CU4 requirement.
+        var profile = provider == SqlAgentToolType.MsSqlServer
+            ? Profile(provider, 16, 0) : Profile(provider, 26, 0);
+        var compiled = Compile(FirstLastQuery("orders", fn, modifier),
+            provider, provider, profile, profile);
+        Assert.Contains(fn + "(value) " + modifier + " OVER (", compiled.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("UNBOUNDED FOLLOWING", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer, 15, 0)]
+    [InlineData(SqlAgentToolType.Oracle, 11, 1)]
+    public void FirstLastUnprovenVersion_FailsClosedOnBothSides(
+        SqlAgentToolType provider, int major, int minor)
+    {
+        var old = Profile(provider, major, minor);
+        var current = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var sql = FirstLastQuery("orders", "FIRST_VALUE", "IGNORE NULLS");
+        Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, provider, provider, old, current));
+        Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, provider, provider, current, old));
+        Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, provider, provider, null, current));
+        Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, provider, provider, current, null));
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.Postgres)]
+    [InlineData(SqlAgentToolType.MySQL)]
+    [InlineData(SqlAgentToolType.Sqlite)]
+    [InlineData(SqlAgentToolType.Firebird)]
+    public void FirstLastUnsupportedDialect_RejectsSourceAndTarget(SqlAgentToolType provider)
+    {
+        var sql = FirstLastQuery("orders", "LAST_VALUE", "IGNORE NULLS");
+        Assert.Throws<SqlParseException>(() => CoreSqlTextParser.ParseQuery(sql, provider));
+        var source = Profile(SqlAgentToolType.Oracle, 26, 0);
+        Assert.Throws<SqlCompilationException>(() =>
+            Compile(sql, SqlAgentToolType.Oracle, provider, source, null));
+    }
+
+    [Fact]
+    public void FirstLast_RtmSqlServerIgnoreDoesNotRequireLagLeadCu4()
+    {
+        var sqlServerRtm = Profile(SqlAgentToolType.MsSqlServer, 16, 0);
+        Assert.Contains("IGNORE NULLS", Compile(
+            FirstLastQuery("orders", "LAST_VALUE", "IGNORE NULLS"),
+            SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+            sqlServerRtm, sqlServerRtm).Sql, StringComparison.OrdinalIgnoreCase);
+        var oldLag = Assert.Throws<SqlCompilationException>(() =>
+            Compile(Query("orders", "LAG", "IGNORE NULLS"),
+                SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+                sqlServerRtm, sqlServerRtm));
+        Assert.Contains("CU4", oldLag.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void FirstLastStructuredClrDto_UsesSameNativeProof(SqlAgentToolType provider)
+    {
+        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        var definition = new QueryDefinition
+        {
+            TableName = "orders",
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "FIRST_VALUE",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    Window = new WindowDefinition
+                    {
+                        OrderBy = [new FieldOrderByCondition
+                        {
+                            FieldName = "id", Direction = SortDirection.Asc
+                        }],
+                        NullTreatment = WindowNullTreatmentMode.IgnoreNulls
+                    }
+                }
+            ]
+        };
+        var parsed = new ParsedStatement(QueryDefinitionCoreMapper.Map(definition),
+            provider, false, profile);
+        var command = CoreSqlCompiler.CreateDefault().Compile(
+            parsed, provider, new SqlPlanValidationContext("g10-first-last-nulls-v1"),
+            new SqlExecutionPlanPolicy(), profile);
+        Assert.Contains("FIRST_VALUE(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("IGNORE NULLS OVER", command.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(SqlAgentToolType.MsSqlServer)]
+    [InlineData(SqlAgentToolType.Oracle)]
+    public void FirstLastCapability_TracksSqlServerRtmAndOracle121(SqlAgentToolType provider)
+    {
+        var current = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 12,
+            provider == SqlAgentToolType.MsSqlServer ? 0 : 1);
+        var matrix = SqlCapabilityMatrix.ForProvider(provider, current);
+        Assert.Equal(SqlCapabilityStatus.Supported, Assert.Single(matrix.Capabilities,
+            x => x.Id == "window.null_treatment.first_last").Status);
+        var missing = SqlCapabilityMatrix.ForProvider(provider);
+        Assert.Equal(SqlCapabilityStatus.Rejected, Assert.Single(missing.Capabilities,
+            x => x.Id == "window.null_treatment.first_last").Status);
+    }
+
+    internal static async Task VerifyFirstLastNativeAndCompiled(DbConnection db, string table,
+        SqlAgentToolType provider, CancellationToken token)
+    {
+        var profile = Profile(provider, provider == SqlAgentToolType.MsSqlServer ? 16 : 26, 0);
+        foreach (var fn in new[] { "FIRST_VALUE", "LAST_VALUE" })
+        {
+            foreach (var modifier in new[] { "IGNORE NULLS", "RESPECT NULLS" })
+            {
+                var sql = FirstLastQuery(table, fn, modifier);
+                var compiled = Compile(sql, provider, provider, profile, profile);
+                var actual = await Read(db, compiled.Sql, compiled.Parameters, token);
+                var native = await Read(db, sql, [], token);
+                int?[] expected = modifier == "IGNORE NULLS"
+                    ? fn == "FIRST_VALUE"
+                        ? [10, 10, 10, 10, 10, 10, 10, 50, 50, 50, 50]
+                        : [40, 40, 40, 40, 40, 40, 40, 60, 60, 60, 60]
+                    : fn == "FIRST_VALUE"
+                        ? [10, 10, 10, 10, 10, 10, 10, null, null, null, null]
+                        : [40, 40, 40, 40, 40, 40, 40, 60, 60, 60, 60];
+                Assert.Equal(expected, actual);
+                Assert.Equal(native, actual);
+            }
+        }
+    }
+
     private static SqlCapabilityStatus Status(ProviderSqlCapabilities capabilities) =>
         Assert.Single(capabilities.Capabilities, item => item.Id == "window.null_treatment").Status;
 
@@ -394,6 +546,8 @@ public sealed class SqlCoreSqlServerWindowNullTreatmentLiveTests
             await SqlCoreWindowNullTreatmentTests.Seed(db, table, token);
             await SqlCoreWindowNullTreatmentTests.VerifyNativeAndCompiled(
                 db, table, SqlAgentToolType.MsSqlServer, token);
+            await SqlCoreWindowNullTreatmentTests.VerifyFirstLastNativeAndCompiled(
+                db, table, SqlAgentToolType.MsSqlServer, token);
         }
         finally
         {
@@ -429,6 +583,8 @@ public sealed class SqlCoreOracleWindowNullTreatmentLiveTests
         {
             await SqlCoreWindowNullTreatmentTests.Seed(db, table, token);
             await SqlCoreWindowNullTreatmentTests.VerifyNativeAndCompiled(
+                db, table, SqlAgentToolType.Oracle, token);
+            await SqlCoreWindowNullTreatmentTests.VerifyFirstLastNativeAndCompiled(
                 db, table, SqlAgentToolType.Oracle, token);
         }
         finally
