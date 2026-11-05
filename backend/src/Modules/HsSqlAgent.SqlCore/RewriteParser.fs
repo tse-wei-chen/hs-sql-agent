@@ -1411,6 +1411,7 @@ module internal RewriteParser =
             | _ -> false
         let frame =
             if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current || groupsToken then
+                let frameToken = cursor.Current
                 let unit =
                     if acceptKeyword "ROWS" cursor then WindowFrameUnit.Rows
                     elif acceptKeyword "RANGE" cursor then WindowFrameUnit.Range
@@ -1454,7 +1455,14 @@ module internal RewriteParser =
                             else fail cursor.Current "EXCLUDE NO requires OTHERS"
                         else fail cursor.Current "Expected CURRENT ROW, GROUP, TIES or NO OTHERS after EXCLUDE"
                     else None
-                Some { Unit = unit; Extent = extent; Exclusion = exclusion }
+                let frame = { Unit = unit; Extent = extent; Exclusion = exclusion }
+                // SQL Server permits numeric frame offsets for ROWS only.
+                // Reject at the SOURCE grammar, even if another target accepts RANGE offsets.
+                if cursor.Dialect = SourceDialect.SqlServer
+                   && frame.Unit = WindowFrameUnit.Range
+                   && frame.HasNumericOffset then
+                    fail frameToken "SQL capability 'window.range_offset' is not valid for SQL Server source RANGE frames."
+                Some frame
             else None
         expectSymbol ')' cursor
         { PartitionBy = partitions |> Seq.toList; OrderBy = orderBy; Frame = frame }

@@ -207,6 +207,14 @@ module internal CoreModel =
             match this.Extent with
             | SingleBound _ -> None
             | BetweenBounds(_, finish) -> Some finish
+        /// Typed frame shape evidence shared by source grammar and target validation.
+        member this.HasNumericOffset =
+            let isOffset = function
+                | Preceding _ | Following _ -> true
+                | _ -> false
+            match this.Extent with
+            | SingleBound bound -> isOffset bound
+            | BetweenBounds(start, finish) -> isOffset start || isOffset finish
 
     /// First sealed semantic shape for SQL exact numerics outside CLR
     /// Decimal. The sign is separate so folding a unary minus never changes

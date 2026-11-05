@@ -43,6 +43,15 @@ AST and CLR compatibility layer. Other four source/target providers and
 explicitly old runtime versions reject before SQL emission; the Host still
 must verify its actual database engine before execution.
 
+### SQL Server RANGE source-dialect fence (G10/Q02)
+
+SQL Server does not permit numeric `PRECEDING` or `FOLLOWING` offsets for
+`RANGE` frames. SqlCore rejects these as **source syntax** even when targeting
+PostgreSQL or SQLite; it also rejects them when SQL Server is the target of
+a structured query. Numeric `ROWS` offsets and supported
+`RANGE UNBOUNDED PRECEDING/CURRENT ROW` forms remain valid.
+PostgreSQL and SQLite retain their native numeric `RANGE` semantics.
+
 ### Native GROUPS peer-frame queries (G10/Q02)
 
 For PostgreSQL 11+ and SQLite 3.28+, the F# query compiler can preserve a
