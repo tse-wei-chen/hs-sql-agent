@@ -295,11 +295,19 @@ type QueryDefinitionCoreMapper private () =
             match window.Frame with
             | null -> null
             | value -> QueryDefinitionCoreMapper.MapWindowFrame(value)
-        WindowSpec(
-            partition,
-            QueryDefinitionCoreMapper.MapOrderBy(window.OrderBy),
-            frame,
-            unknown)
+        let mapped =
+            WindowSpec(
+                partition,
+                QueryDefinitionCoreMapper.MapOrderBy(window.OrderBy),
+                frame,
+                unknown)
+        mapped.NullTreatment <-
+            match window.NullTreatment with
+            | WindowNullTreatmentMode.Unspecified -> WindowNullTreatmentKind.Unspecified
+            | WindowNullTreatmentMode.IgnoreNulls -> WindowNullTreatmentKind.IgnoreNulls
+            | WindowNullTreatmentMode.RespectNulls -> WindowNullTreatmentKind.RespectNulls
+            | value -> raise (ArgumentOutOfRangeException("window.NullTreatment", value, "Unknown window null treatment."))
+        mapped
 
     static member private MapWindowFrame(frame: WindowFrameDefinition) =
         let unitKind =
