@@ -1427,7 +1427,33 @@ module internal RewriteParser =
                         expectKeyword "AND" cursor
                         BetweenBounds(first, parseFrameBound cursor)
                     else SingleBound(parseFrameBound cursor)
-                Some { Unit = unit; Extent = extent }
+                // EXCLUDE / TIES / NO OTHERS remain soft keywords: existing
+                // identifiers in unrelated SQL must not become reserved.
+                let acceptSoft text =
+                    match cursor.Current.Kind with
+                    | Identifier(value, false) when value.Equals(text, StringComparison.OrdinalIgnoreCase) ->
+                        cursor.Advance()
+                        true
+                    | _ -> false
+                let exclusionToken = cursor.Current
+                let exclusion =
+                    if acceptSoft "EXCLUDE" then
+                        match cursor.Dialect with
+                        | SourceDialect.PostgreSql | SourceDialect.SQLite -> ()
+                        | _ -> fail exclusionToken "SQL capability 'window.exclude' is not proven for this source dialect."
+                        if acceptKeyword "CURRENT" cursor then
+                            expectKeyword "ROW" cursor
+                            Some WindowFrameExclusion.ExcludeCurrentRow
+                        elif acceptKeyword "GROUP" cursor then
+                            Some WindowFrameExclusion.ExcludeGroup
+                        elif acceptSoft "TIES" then
+                            Some WindowFrameExclusion.ExcludeTies
+                        elif acceptSoft "NO" then
+                            if acceptSoft "OTHERS" then Some WindowFrameExclusion.ExcludeNoOthers
+                            else fail cursor.Current "EXCLUDE NO requires OTHERS"
+                        else fail cursor.Current "Expected CURRENT ROW, GROUP, TIES or NO OTHERS after EXCLUDE"
+                    else None
+                Some { Unit = unit; Extent = extent; Exclusion = exclusion }
             else None
         expectSymbol ')' cursor
         { PartitionBy = partitions |> Seq.toList; OrderBy = orderBy; Frame = frame }

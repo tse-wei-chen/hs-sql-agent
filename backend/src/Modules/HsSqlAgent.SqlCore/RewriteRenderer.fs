@@ -1487,7 +1487,14 @@ module internal RewriteRenderer =
                 | WindowFrameUnit.Range -> "RANGE"
                 | WindowFrameUnit.Groups -> "GROUPS"
             let frameSql = match frame.Extent with SingleBound start -> unitText + " " + frameBoundText start | BetweenBounds(start, finish) -> unitText + " BETWEEN " + frameBoundText start + " AND " + frameBoundText finish
-            parts.Add(frameSql))
+            let exclusionSql =
+                match frame.Exclusion with
+                | None -> ""
+                | Some WindowFrameExclusion.ExcludeCurrentRow -> " EXCLUDE CURRENT ROW"
+                | Some WindowFrameExclusion.ExcludeGroup -> " EXCLUDE GROUP"
+                | Some WindowFrameExclusion.ExcludeTies -> " EXCLUDE TIES"
+                | Some WindowFrameExclusion.ExcludeNoOthers -> " EXCLUDE NO OTHERS"
+            parts.Add(frameSql + exclusionSql))
         joinDocuments ctx " " parts
 
     and private renderOrderBy (ctx: RenderContext) setTail (order: OrderBy) : SqlDocument list =
