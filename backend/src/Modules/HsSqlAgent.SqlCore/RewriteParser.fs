@@ -1409,6 +1409,12 @@ module internal RewriteParser =
             match cursor.Current.Kind with
             | Identifier(name, false) when name.Equals("GROUPS", StringComparison.OrdinalIgnoreCase) -> true
             | _ -> false
+        // EXCLUDE remains a soft keyword so existing unquoted identifiers retain
+        // their meaning outside a window frame.
+        let excludeToken () =
+            match cursor.Current.Kind with
+            | Identifier(name, false) when name.Equals("EXCLUDE", StringComparison.OrdinalIgnoreCase) -> true
+            | _ -> false
         let frame =
             if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current || groupsToken then
                 let unit =
@@ -1427,8 +1433,24 @@ module internal RewriteParser =
                         expectKeyword "AND" cursor
                         BetweenBounds(first, parseFrameBound cursor)
                     else SingleBound(parseFrameBound cursor)
-                Some { Unit = unit; Extent = extent }
-            else None
+                let exclusion =
+                    if excludeToken () then
+                        let token = cursor.Current
+                        match cursor.Dialect with
+                        | SourceDialect.PostgreSql | SourceDialect.SQLite -> ()
+                        | _ -> fail token "SQL capability 'window.exclude.current_row' is not proven for this source dialect."
+                        cursor.Advance()
+                        if acceptKeyword "CURRENT" cursor then
+                            expectKeyword "ROW" cursor
+                            WindowFrameExclusion.ExcludeCurrentRow
+                        else
+                            fail cursor.Current "SQL capability 'window.exclude' supports only EXCLUDE CURRENT ROW."
+                    else WindowFrameExclusion.NoExclusion
+                Some { Unit = unit; Extent = extent; Exclusion = exclusion }
+            else
+                if excludeToken () then
+                    fail cursor.Current "SQL capability 'window.exclude' requires an explicit ROWS, RANGE or GROUPS frame."
+                None
         expectSymbol ')' cursor
         { PartitionBy = partitions |> Seq.toList; OrderBy = orderBy; Frame = frame }
 
