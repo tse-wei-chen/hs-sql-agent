@@ -141,6 +141,7 @@ type FilterExpr(expression: SqlExpr, predicate: SqlExpr, span: SourceSpan) =
 type WindowFrameUnitKind =
     | Rows = 0
     | Range = 1
+    | Groups = 2
 
 type WindowFrameBoundKindCore =
     | UnboundedPreceding = 0
