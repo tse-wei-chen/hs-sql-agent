@@ -858,7 +858,7 @@ module internal RewriteStages =
                     not (RewriteAstTraversal.exists true (function
                         | Exists _ | InSubquery _ | ScalarSubquery _ -> true
                         | _ -> false) expression)
-        // M06: the live-proof gate needs its OWN exact physical-key
+        // G11: the live-proof gate retains its OWN exact physical-key
         // reconstruction, independent of generic mutation cardinality
         // and Host metadata discovery. A single non-lateral derived table
         // may only rename direct columns of the attested physical source.
@@ -868,12 +868,17 @@ module internal RewriteStages =
         // static mutation cardinality and Host physical index discovery.
         // Every layer preserves the *ordered* attested key columns, with
         // direct references only and no alias/input ambiguity.
-        let projectDerivedKeys (keys: string list) qualifier (items: SelectItem list) =
-            if items.Length < keys.Length || items.Length > 32 then None
+        // One exact, order-preserving mapping for both derived and CTE
+        // projections. A declared CTE alias list is an explicit rename,
+        // not independent evidence of physical UNIQUE-key identity.
+        let projectDerivedKeys (keys: string list) qualifier (items: SelectItem list)
+                               (aliases: IdentifierPart list) =
+            if (not aliases.IsEmpty && aliases.Length <> items.Length)
+               || items.Length < keys.Length || items.Length > 32 then None
             else
                 let columns =
                     items
-                    |> List.map (fun item ->
+                    |> List.mapi (fun index item ->
                         let input =
                             match Expr.unspan item.Expression with
                             | Column identifier
@@ -885,8 +890,11 @@ module internal RewriteStages =
                                 | _ -> None
                             | _ -> None
                         input |> Option.map (fun name ->
-                            name, defaultArg
-                                (item.Alias |> Option.map (fun a -> a.Value)) name))
+                            let output =
+                                if aliases.IsEmpty then
+                                    defaultArg (item.Alias |> Option.map (fun a -> a.Value)) name
+                                else aliases.[index].Value
+                            name, output))
                 if columns |> List.exists Option.isNone then None
                 else
                     let mapping = columns |> List.choose id
@@ -911,7 +919,7 @@ module internal RewriteStages =
                             else None
         let rec derivedKeyChain depth (derived: Query) =
             let head = derived.Head
-            if depth > 2 || not derived.SetOperations.IsEmpty
+            if depth > 3 || not derived.SetOperations.IsEmpty
                || not derived.OrderBy.IsEmpty
                || derived.Limit.IsSome || derived.Offset.IsSome
                || derived.FetchPercent.IsSome || derived.FetchWithTies
@@ -930,13 +938,13 @@ module internal RewriteStages =
                             | None, [_; table] -> table.Value
                             | _ -> ""
                         Some(proof.SourceKeyColumns |> Seq.toList, qualifier)
-                    | Some(DerivedTable(nested, nestedAlias)) when depth < 2 ->
+                    | Some(DerivedTable(nested, nestedAlias)) when depth < 3 ->
                         derivedKeyChain (depth + 1) nested
                         |> Option.map (fun keys -> keys, nestedAlias.Value)
                     | _ -> None
                 source
                 |> Option.bind (fun (keys, qualifier) ->
-                    projectDerivedKeys keys qualifier head.Projection)
+                    projectDerivedKeys keys qualifier head.Projection [])
         let provenDirectDerivedKeys (derived: Query) = derivedKeyChain 1 derived
 
         // M06: two independently read, directly projected instances of ONE
@@ -995,7 +1003,7 @@ module internal RewriteStages =
                             // all payload columns must also be direct,
                             // unambiguous and input-injective. Only the
                             // full ordered physical key becomes authority.
-                            projectDerivedKeys sourceKeys owner head.Projection
+                            projectDerivedKeys sourceKeys owner head.Projection []
                         | _ -> None
                 let left = ctes.[0]
                 let right = ctes.[1]
@@ -1045,7 +1053,7 @@ module internal RewriteStages =
                         // branch but may not compute, duplicate or shadow
                         // any original physical key.
                         if completeJoin then
-                            projectDerivedKeys leftKeys leftAlias.Value head.Projection
+                            projectDerivedKeys leftKeys leftAlias.Value head.Projection []
                         else None
                     | _ -> None
                 | _ -> None
@@ -1114,65 +1122,10 @@ module internal RewriteStages =
                             | _ -> None
                         | _ -> None
                     let directProjection =
-                        match input with
-                        | Some(keys, qualifier)
-                            when List.length head.Projection >= List.length keys
-                                 && List.length head.Projection <= 32
-                                 && (cte.ColumnAliases.IsEmpty
-                                     || List.length cte.ColumnAliases = List.length head.Projection) ->
-                            // A key may sit anywhere among inert payload
-                            // columns. Every projected expression remains a
-                            // direct local-row-source column: no scalar
-                            // subquery, multiplication or computed key can
-                            // borrow the physical uniqueness witness.
-                            let projected =
-                                head.Projection
-                                |> List.mapi (fun ordinal item ->
-                                    let inputName =
-                                        match Expr.unspan item.Expression with
-                                        | Column identifier
-                                        | BoundColumn(identifier, ColumnBinding.LocalRowSource) ->
-                                            match Identifier.parts identifier with
-                                            | [column] -> Some column.Value
-                                            | [owner; column] when same owner.Value qualifier ->
-                                                Some column.Value
-                                            | _ -> None
-                                        | _ -> None
-                                    inputName
-                                    |> Option.map (fun name ->
-                                        let output =
-                                            if cte.ColumnAliases.IsEmpty then
-                                                defaultArg (item.Alias |> Option.map (fun a -> a.Value)) name
-                                            else
-                                                (List.item ordinal cte.ColumnAliases).Value
-                                        name, output))
-                            if projected |> List.forall Option.isSome then
-                                let columns = projected |> List.choose id
-                                let inputNames = columns |> List.map fst
-                                let outputNames = columns |> List.map snd
-                                let selectedKeys =
-                                    keys |> List.map (fun key ->
-                                        let matching =
-                                            columns
-                                            |> List.mapi (fun pos (name, output) ->
-                                                if same name key then Some(pos, output)
-                                                else None)
-                                            |> List.choose id
-                                        match matching with
-                                        | [single] -> Some single
-                                        | _ -> None)
-                                if List.length (List.distinct inputNames) = List.length columns
-                                   && List.length (List.distinct outputNames) = List.length columns
-                                   && (selectedKeys |> List.forall Option.isSome) then
-                                    let positions = selectedKeys |> List.choose id
-                                    if (positions |> List.pairwise
-                                        |> List.forall (fun ((before, _), (after, _)) ->
-                                            before < after)) then
-                                        Some(positions |> List.map snd)
-                                    else None
-                                else None
-                            else None
-                        | _ -> None
+                        input |> Option.bind (fun (keys, qualifier) ->
+                            // The same strict key mapping is used by
+                            // derived sources, linear CTEs and diamonds.
+                            projectDerivedKeys keys qualifier head.Projection cte.ColumnAliases)
                     if not valid
                        || not (seen.Add cte.Name.Value)
                        || cte.RecursiveScope
