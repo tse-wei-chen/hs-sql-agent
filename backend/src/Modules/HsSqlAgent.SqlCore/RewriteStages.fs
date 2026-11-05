@@ -283,6 +283,15 @@ module internal RewriteStages =
                             match peerFrameVersionError capability "target" target targetProfile with
                             | Some message -> raise (SqlCompilationException(message))
                             | None -> ()
+                        // A CLR/structured statement cannot bypass the source grammar
+                        // simply by selecting a target which supports numeric RANGE.
+                        // Structured CLR statements must satisfy this source
+                        // grammar rule even when legacy lexical enforcement is off.
+                        if source = SqlAgentToolType.MsSqlServer
+                           && frame.Unit = WindowFrameUnit.Range
+                           && frame.HasNumericOffset then
+                            raise (SqlCompilationException(
+                                "SQL capability 'window.range_offset' is not valid for SQL Server source RANGE frames."))
                         if frame.Unit = WindowFrameUnit.Groups then prove "window.groups"
                         if frame.Exclusion.IsSome then prove "window.exclude"
                     | None -> ()
@@ -2620,11 +2629,6 @@ module internal RewriteStages =
         | WindowFrameBound.Following offset -> int64 (FrameOffset.value offset)
         | WindowFrameBound.UnboundedFollowing -> Int64.MaxValue
 
-    let private hasOffsetBound = function
-        | WindowFrameBound.Preceding _
-        | WindowFrameBound.Following _ -> true
-        | _ -> false
-
     let private validateWindowFrameShape (frame: WindowFrame) =
         match frame.Extent with
         | WindowFrameExtent.SingleBound WindowFrameBound.UnboundedFollowing ->
@@ -2703,14 +2707,9 @@ module internal RewriteStages =
                     raise (targetCapabilityError provider (
                         "window.frame." + name.ToLowerInvariant()))
                 if provider = SqlAgentToolType.MsSqlServer
-                   && frame.Unit = WindowFrameUnit.Range then
-                    match frame.Extent with
-                    | WindowFrameExtent.SingleBound bound when hasOffsetBound bound ->
-                        raise (targetCapabilityError provider "window.range_offset")
-                    | WindowFrameExtent.BetweenBounds(start, finish)
-                        when hasOffsetBound start || hasOffsetBound finish ->
-                        raise (targetCapabilityError provider "window.range_offset")
-                    | _ -> ()
+                   && frame.Unit = WindowFrameUnit.Range
+                   && frame.HasNumericOffset then
+                    raise (targetCapabilityError provider "window.range_offset")
             | None -> ()
             if provider = SqlAgentToolType.MsSqlServer
                && contract.Kind = SqlCanonicalFunctionKind.Window

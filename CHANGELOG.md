@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — SQL Server source RANGE offset validation (develop only)
+
+- Reject T-SQL numeric `RANGE n PRECEDING/FOLLOWING` at source parsing and typed source capability proof even when the selected target supports numeric RANGE. Reuse one typed frame-offset predicate for source and target validation; preserve SQL Server legal `ROWS` / unbounded `RANGE` and PostgreSQL/SQLite native numeric RANGE behavior. Add negative/positive compiler tests and real PostgreSQL/SQLite parity; no new public API, MCP tool or runtime dependency.
+
+
 ### G10/Q02 — Native PostgreSQL/SQLite EXCLUDE window-frame parity (develop only)
 
 - Preserve explicit `EXCLUDE CURRENT ROW / GROUP / TIES / NO OTHERS` for native `ROWS / RANGE / GROUPS` frame membership. The F# closed exclusion DU, parser, full-query capability proof, validator and renderer own this feature; the additive CLR compatibility enum, existing constructor overload, and structured `WindowFrameDefinition.Exclusion` roundtrip without an alternate SQL path or new MCP tools.

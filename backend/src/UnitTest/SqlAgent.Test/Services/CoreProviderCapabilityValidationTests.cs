@@ -53,7 +53,7 @@ public class CoreProviderCapabilityValidationTests
     {
         var ex = Assert.Throws<SqlCompilationException>(() => Compile(
             "SELECT SUM(amount) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM orders",
-            SqlAgentToolType.MsSqlServer,
+            SqlAgentToolType.Postgres,
             SqlAgentToolType.MsSqlServer));
 
         Assert.Contains("window.range_offset", ex.Message, StringComparison.OrdinalIgnoreCase);
