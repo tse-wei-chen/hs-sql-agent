@@ -28,14 +28,19 @@ public partial class SqlAgentTool
         return Task.FromResult(new SqlRuntimeConfig());
     }
 
-    private void ValidateToolAccess(string? toolName = null)
+    private void ValidateToolAccess(string? toolName = null, bool requireExplicitGrant = false)
     {
         var context = _httpContextAccessor.HttpContext
             ?? throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
         if (!context.Items.TryGetValue(McpContextItemKeys.AllowedTools, out var allowedToolsValue))
             throw new UnauthorizedAccessException("MCP tool authorization context is missing.");
         var allowedTools = allowedToolsValue?.ToString();
-        if (string.IsNullOrWhiteSpace(allowedTools)) return;
+        if (string.IsNullOrWhiteSpace(allowedTools))
+        {
+            if (!requireExplicitGrant) return;
+            throw new UnauthorizedAccessException(
+                $"API key requires explicit permission to use tool: {toolName}");
+        }
         if (!allowedTools.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Any(t => t.Equals(toolName, StringComparison.OrdinalIgnoreCase)))
             throw new UnauthorizedAccessException($"API key does not have permission to use tool: {toolName}");

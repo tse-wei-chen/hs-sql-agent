@@ -36,7 +36,7 @@ public partial class SqlAgentTool
         string? providerName = null;
         try
         {
-            ValidateToolAccess("execute_dml_sql");
+            ValidateToolAccess("execute_dml_sql", requireExplicitGrant: true);
             if (string.IsNullOrWhiteSpace(sql))
             {
                 return McpDmlToolResult.Failed(
