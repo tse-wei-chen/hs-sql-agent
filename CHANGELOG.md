@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G10/Q02 — Native SQL Server/Oracle LAG/LEAD IGNORE/RESPECT NULLS (develop only)
+
+- Preserve `LAG/LEAD(value) IGNORE NULLS OVER (...)` and explicit `RESPECT NULLS` in a closed F# null-treatment DU, source and target version profiles (SQL Server 2022+, Oracle 12.1+), function placement and native renderer. PostgreSQL/MySQL/SQLite/Firebird remain rejected; no lowering to semantically different ordinary LAG/LEAD.
+- Add binary-compatible CLR WindowSpec and structured WindowDefinition enum properties while retaining default and constructor behavior. Actual SQL Server/Oracle parity, six-provider source/target grammar negatives, malformed modifiers and illegal-function cases. No new MCP tool, driver, Host permission or DML/DDL execution path.
+
+
+
 ### G10/Q02 — MySQL/SQL Server conditional DISTINCT COUNT (develop only)
 
 - Extend the existing closed F# conditional COUNT shape with one direct-column `DISTINCT` case. For a valid native FILTER source such as PostgreSQL, render MySQL `COUNT(DISTINCT CASE WHEN ... THEN column END)` or SQL Server 64-bit `COUNT_BIG(DISTINCT CASE WHEN ... THEN column END)`. NULL inputs, duplicate values, false and unknown predicates, grouped and global counts retain their target SQL aggregate semantics; 3 real databases cover the bounded integer parity matrix.
