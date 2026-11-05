@@ -1381,8 +1381,14 @@ module internal RewriteParser =
                     fail cursor.Current "FILTER must modify a function call"
             | Keyword modifier
             | Identifier(modifier, false)
-                when modifier.Equals("IGNORE", StringComparison.OrdinalIgnoreCase)
-                  || modifier.Equals("RESPECT", StringComparison.OrdinalIgnoreCase) ->
+                when (modifier.Equals("IGNORE", StringComparison.OrdinalIgnoreCase)
+                      || modifier.Equals("RESPECT", StringComparison.OrdinalIgnoreCase))
+                     && (match (cursor.Peek 1).Kind with
+                         | Keyword next
+                         | Identifier(next, false) ->
+                             next.Equals("NULLS", StringComparison.OrdinalIgnoreCase)
+                             || next.Equals("OVER", StringComparison.OrdinalIgnoreCase)
+                         | _ -> false) ->
                 if not directFunctionSyntax || overSeen || castSeen
                    || nullTreatment <> WindowNullTreatment.DefaultNullTreatment then
                     fail cursor.Current "Window null treatment must occur once after LAG/LEAD and before OVER."
