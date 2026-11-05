@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.0.0] - Unreleased
 
+### G9 — SQL Server 2022 native MERGE NOT MATCHED INSERT with one-use physical key absence proof (develop only)
+
+- Add one exact SQL Server `MERGE INTO dbo.table AS t USING (VALUES(...)) AS s(...) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(...) VALUES(s...)` Host Preview → Approval → Commit. One physical non-null non-identity INT PRIMARY key, sole immediately enforced simple UNIQUE key; 1–3 distinct exact native INT payload columns. The INSERT clause must explicitly cover **every actual target column exactly once**, each directly mapped to its same-named source field; different source/INSERT column order is supported. Other provider and MERGE source/action shapes fail closed.
+- Preview checks physical target PK presence, shows the immutable proposed full INSERT payload only when missing, and seals its values, exact compiled SQL, match-query fingerprint, actor/policy, full Schema/index digest and row-set hash to an existing one-use challenge. A present key predicts 0 affected rows; absent key predicts 1. Commit acquires transaction-held SQL Server `SERIALIZABLE` `TABLOCKX/HOLDLOCK`, reattests the real Catalog and key state **before** any write, cancels on drift or key/index revocation, and commits only when the actual mutation affected exactly the approved 0/1 rows. Strong table locks intentionally constrain concurrent writers.
+- Reuses the F# closed MERGE compiler and #543/#544 native Host physical catalog, strict snapshot, one-use approval and DML coordinator. No extra MCP tool, public API method, database driver, migration or independent transaction executor. Reject defaults, omitted columns, alternate UNIQUE, triggers/foreign key side effects, extra match predicates, expression/NULL/coercion sources, UPDATE/DELETE mixed actions, composite/multirow keys and MERGE atomic batches. Default four selected read-only MCP tools and disabled DML remain unchanged.
+
+
 ### G9 — SQL Server 2022 native MERGE MATCHED UPDATE with sealed old/new value approval (develop only)
 
 - Extend the existing one-row MERGE MATCHED DELETE Host proof to a bounded **MATCHED UPDATE** of **1–3 direct, distinct, non-key INT columns** from one exact `VALUES` row. The single exact native INT PRIMARY key is still the sole enforced physical UNIQUE key, with complete Schema/index/trigger/side-effect attestation; no casts, expressions, nullable/identity columns, extra predicates, UPDATE key assignment, mixed INSERT/DELETE or atomic MERGE batches.

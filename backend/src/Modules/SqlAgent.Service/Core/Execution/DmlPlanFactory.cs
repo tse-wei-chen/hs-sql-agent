@@ -333,8 +333,15 @@ public sealed class DmlPlanFactory(
 
         // Reuse the existing one-round-trip live physical INT check for
         // both the primary key and every direct UPDATE payload field.
+        var dataCells = shape.IsInsert ? shape.InsertedColumns : shape.UpdatedColumns;
         var checkedColumns = new[] { shape.KeyColumn }
-            .Concat(shape.UpdatedColumns.Select(cell => cell.Column)).ToArray();
+            .Concat(dataCells.Select(cell => cell.Column)).ToArray();
+        if (shape.IsInsert
+            && (snapshot.Tables[0].Columns.Count != checkedColumns.Length
+                || snapshot.Tables[0].Columns.Any(name =>
+                    !checkedColumns.Contains(name, StringComparer.Ordinal))))
+            throw new InvalidOperationException(
+                "SQL Server MERGE INSERT requires a direct value for every physical target column; no defaults or omitted fields.");
         await using (var typeCheck = metadataConnection.CreateCommand())
         {
             typeCheck.CommandText = """
@@ -417,9 +424,18 @@ public sealed class DmlPlanFactory(
             command, validationContext.PolicyVersion);
         var matchFingerprint = DmlFingerprintService.ComputePlanFingerprint(
             match, validationContext.PolicyVersion);
+        var insertedValues = shape.IsInsert
+            ? ImmutableArray.Create(
+                new[] { new SqlServerMergeMatchedDeleteSafety.UpdatedInt(
+                    shape.KeyColumn, shape.KeyValue) }
+                    .Concat(shape.InsertedColumns)
+                    .ToImmutableDictionary(item => item.Column,
+                        item => (object?)item.Value, StringComparer.Ordinal))
+            : ImmutableArray<ImmutableDictionary<string, object?>>.Empty;
 
         return new ValidatedDmlPlan(
-            shape.IsUpdate ? DmlOperation.Update : DmlOperation.Delete,
+            shape.IsInsert ? DmlOperation.Insert
+                : shape.IsUpdate ? DmlOperation.Update : DmlOperation.Delete,
             shape.PhysicalTable,
             command,
             match,
@@ -429,12 +445,15 @@ public sealed class DmlPlanFactory(
             validationContext.PolicyVersion,
             approvalTtl.GetValueOrDefault(TimeSpan.FromMinutes(5)),
             maxAffectedRows,
-            shape.IsUpdate
-                ? DmlApprovalMode.SqlServerMergeMatchedUpdate
-                : DmlApprovalMode.SqlServerMergeMatchedDelete,
+            shape.IsInsert
+                ? DmlApprovalMode.SqlServerMergeNotMatchedInsert
+                : shape.IsUpdate
+                    ? DmlApprovalMode.SqlServerMergeMatchedUpdate
+                    : DmlApprovalMode.SqlServerMergeMatchedDelete,
+            InsertRows: insertedValues,
             SchemaSnapshot: snapshot)
         {
-            SqlServerMergeMatchedDeleteProof = shape.IsUpdate ? null :
+            SqlServerMergeMatchedDeleteProof = shape.IsInsert || shape.IsUpdate ? null :
                 new SqlServerMergeMatchedDeleteProof(
                     shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
                     fingerprint, matchFingerprint, snapshot.Sha256),
@@ -443,6 +462,13 @@ public sealed class DmlPlanFactory(
                     shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
                     shape.UpdatedColumns.Select(cell => cell.Column).ToImmutableArray(),
                     shape.UpdatedColumns.Select(cell => cell.Value).ToImmutableArray(),
+                    fingerprint, matchFingerprint, snapshot.Sha256),
+            SqlServerMergeNotMatchedInsertProof = !shape.IsInsert ? null :
+                new SqlServerMergeNotMatchedInsertProof(
+                    shape.PhysicalTable, shape.KeyColumn, shape.KeyValue,
+                    checkedColumns.ToImmutableArray(),
+                    new[] { shape.KeyValue }.Concat(
+                        shape.InsertedColumns.Select(cell => cell.Value)).ToImmutableArray(),
                     fingerprint, matchFingerprint, snapshot.Sha256)
         };
     }

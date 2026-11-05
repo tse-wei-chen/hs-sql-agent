@@ -72,6 +72,48 @@ public sealed class CoreDmlMergeMilestoneTests
         Assert.Contains("Strict snapshot", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static SqlPlanValidationContext StrictInsertOnlyMergeContext() =>
+        new SqlPlanValidationContext("g9-native-merge-insert-strict").WithSchemaSnapshot(
+            new SqlSchemaSnapshot(SqlAgentToolType.MsSqlServer,
+                "physical-schema-names-fixture-insert",
+                [new SqlSchemaTable("dbo.inventory", ["id", "quantity", "status"])]));
+
+    [Theory]
+    [InlineData("USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id,quantity,status) VALUES(s.id,s.quantity,s.status)")]
+    [InlineData("USING (VALUES(7,4,25)) AS s(id,status,quantity) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(status,id,quantity) VALUES(s.status,s.id,s.quantity)")]
+    public void StrictSnapshot_CompleteNotMatchedInsert_ProvesExactSourceAndTargetNames(string tail)
+    {
+        var sql = "MERGE INTO dbo.inventory AS t " + tail + ";";
+        var compiled = CoreDmlCompiler.CreateDefault().Compile(
+            CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer),
+            SqlAgentToolType.MsSqlServer,
+            StrictInsertOnlyMergeContext(),
+            conflictTargetAssurance: DmlConflictTargetAssurance.FromPrimaryKey(["id"]));
+        Assert.Equal(SqlStatementKind.Merge, compiled.Kind);
+        Assert.Contains("WITH (HOLDLOCK)", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("WHEN NOT MATCHED THEN INSERT", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        // Strict Snapshot proves SQL field identity only: physical INT/UNIQUE
+        // enforcement and the missing-row approval are independently Host-only.
+    }
+
+    [Theory]
+    [InlineData("USING (VALUES(7,25)) AS s(id,quantity) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id,quantity) VALUES(s.id,s.quantity)")]
+    [InlineData("USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id,quantity,status) VALUES(s.id,s.status,s.quantity)")]
+    [InlineData("USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(id,quantity,status) VALUES(s.id,25,s.status)")]
+    [InlineData("USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id WHEN MATCHED THEN DELETE WHEN NOT MATCHED THEN INSERT(id,quantity,status) VALUES(s.id,s.quantity,s.status)")]
+    [InlineData("USING (VALUES(7,25,4)) AS s(id,quantity,status) ON t.id=s.id AND t.quantity=25 WHEN NOT MATCHED THEN INSERT(id,quantity,status) VALUES(s.id,s.quantity,s.status)")]
+    public void StrictSnapshot_IncompleteOrAmbiguousMergeInsert_FailsClosed(string tail)
+    {
+        var sql = "MERGE INTO dbo.inventory AS t " + tail + ";";
+        var ex = Assert.Throws<SqlCompilationException>(() =>
+            CoreDmlCompiler.CreateDefault().Compile(
+                CoreSqlTextParser.ParseDml(sql, SqlAgentToolType.MsSqlServer),
+                SqlAgentToolType.MsSqlServer,
+                StrictInsertOnlyMergeContext(),
+                conflictTargetAssurance: DmlConflictTargetAssurance.FromPrimaryKey(["id"])));
+        Assert.Contains("Strict snapshot", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     public static TheoryData<string> PositiveGrammarCases => new()
     {
         "MERGE INTO inventory AS t USING (VALUES (1, 3)) AS s (id, quantity) ON t.id = s.id WHEN MATCHED THEN UPDATE SET quantity = s.quantity;",

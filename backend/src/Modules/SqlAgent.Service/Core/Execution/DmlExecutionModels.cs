@@ -27,7 +27,9 @@ public enum DmlApprovalMode
     /// <summary>Native SQL Server single-source INT primary-key MATCHED DELETE; no INSERT/UPDATE branches.</summary>
     SqlServerMergeMatchedDelete,
     /// <summary>Native SQL Server matched direct INT UPDATE with sealed old/new row evidence.</summary>
-    SqlServerMergeMatchedUpdate
+    SqlServerMergeMatchedUpdate,
+    /// <summary>SQL Server exact one-row NOT MATCHED INSERT with physical absence + full INT payload approval.</summary>
+    SqlServerMergeNotMatchedInsert
 }
 
 /// <summary>Only the trusted plan factory can mint this executable source-shape proof.</summary>
@@ -69,6 +71,11 @@ internal sealed record SqlServerMergeMatchedUpdateProof(
     ImmutableArray<string> UpdatedColumns, ImmutableArray<int> ProposedValues,
     string MutationFingerprint, string TargetQueryFingerprint, string SchemaSha256);
 
+internal sealed record SqlServerMergeNotMatchedInsertProof(
+    string PhysicalTarget, string UniqueKeyColumn, int KeyValue,
+    ImmutableArray<string> InsertColumns, ImmutableArray<int> InsertValues,
+    string MutationFingerprint, string TargetQueryFingerprint, string SchemaSha256);
+
 public sealed record ValidatedDmlPlan(
     DmlOperation Operation,
     string TableName,
@@ -104,6 +111,8 @@ public sealed record ValidatedDmlPlan(
     internal SqlServerMergeMatchedDeleteProof? SqlServerMergeMatchedDeleteProof { get; init; }
 
     internal SqlServerMergeMatchedUpdateProof? SqlServerMergeMatchedUpdateProof { get; init; }
+
+    internal SqlServerMergeNotMatchedInsertProof? SqlServerMergeNotMatchedInsertProof { get; init; }
 }
 
 public sealed record DmlPreview(

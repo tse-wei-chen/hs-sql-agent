@@ -153,6 +153,8 @@ public sealed class DmlAtomicTransactionCoordinatorTests
 
     [Theory]
     [InlineData(DmlApprovalMode.SqlServerMergeMatchedDelete)]
+    [InlineData(DmlApprovalMode.SqlServerMergeMatchedUpdate)]
+    [InlineData(DmlApprovalMode.SqlServerMergeNotMatchedInsert)]
     [InlineData(DmlApprovalMode.InsertConflictDoUpdate)]
     public async Task AtomicCoordinator_RejectsNativeMergeAndConflictUpdateBeforeConnection(
         DmlApprovalMode unsafeMode)
