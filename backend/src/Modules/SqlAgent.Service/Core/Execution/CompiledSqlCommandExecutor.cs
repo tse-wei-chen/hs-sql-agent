@@ -18,11 +18,29 @@ public sealed class CompiledSqlCommandExecutor : ISqlCommandExecutor
         DapperTemporalTypeHandlerRegistry.EnsureRegistered();
     }
 
-    public async Task<QueryExecutionResult> ExecuteQueryAsync(
+    public Task<QueryExecutionResult> ExecuteQueryAsync(
         CompiledSqlCommand command,
         DbConnection openConnection,
         int commandTimeoutSeconds,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        ExecuteQueryCoreAsync(command, openConnection, commandTimeoutSeconds, null, cancellationToken);
+
+    // A transaction-bound overload keeps provider-specific execution fences on
+    // the exact same connection and command without changing the existing interface.
+    public Task<QueryExecutionResult> ExecuteQueryAsync(
+        CompiledSqlCommand command,
+        DbConnection openConnection,
+        int commandTimeoutSeconds,
+        DbTransaction transaction,
+        CancellationToken cancellationToken = default) =>
+        ExecuteQueryCoreAsync(command, openConnection, commandTimeoutSeconds, transaction, cancellationToken);
+
+    private static async Task<QueryExecutionResult> ExecuteQueryCoreAsync(
+        CompiledSqlCommand command,
+        DbConnection openConnection,
+        int commandTimeoutSeconds,
+        DbTransaction? transaction,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(openConnection);
@@ -34,6 +52,10 @@ public sealed class CompiledSqlCommandExecutor : ISqlCommandExecutor
             throw new InvalidOperationException(
                 "Query executor requires an already-open database connection.");
 
+        if (transaction is not null && !ReferenceEquals(transaction.Connection, openConnection))
+            throw new InvalidOperationException(
+                "Query execution transaction must belong to the supplied connection.");
+
         var parameters = new DynamicParameters();
         foreach (var parameter in command.Parameters)
             parameters.Add(NormalizeParameterName(parameter.Name), parameter.Value);
@@ -43,6 +65,7 @@ public sealed class CompiledSqlCommandExecutor : ISqlCommandExecutor
             new CommandDefinition(
                 command.Sql,
                 parameters,
+                transaction: transaction,
                 commandTimeout: NormalizeTimeout(commandTimeoutSeconds),
                 cancellationToken: cancellationToken));
         stopwatch.Stop();
