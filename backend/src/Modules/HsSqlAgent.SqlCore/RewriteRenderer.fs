@@ -847,7 +847,9 @@ module internal RewriteRenderer =
                         match argument with
                         | Expr.AllRows -> doc ctx "1"
                         | Expr.DirectColumn value -> renderExpr ctx value
-                    "COUNT(CASE WHEN " + renderPredicate ctx predicate
+                    let nativeCount =
+                        if ctx.Provider = SqlServer then "COUNT_BIG(" else "COUNT("
+                    nativeCount + "CASE WHEN " + renderPredicate ctx predicate
                     + " THEN " + counted + " END)"
                 | _ -> invalidOp "Unproven expression.filter reached COUNT CASE lowering."
         | Expr.Windowed(value, window) -> renderExpr ctx value + " OVER (" + renderWindow ctx window + ")"
