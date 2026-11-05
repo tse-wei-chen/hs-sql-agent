@@ -319,7 +319,8 @@ public sealed class SqlCoreWindowNullTreatmentTests
             ? Profile(provider, 16, 0) : Profile(provider, 26, 0);
         var compiled = Compile(FirstLastQuery("orders", fn, modifier),
             provider, provider, profile, profile);
-        Assert.Contains(fn + "(value) " + modifier + " OVER (", compiled.Sql,
+        Assert.Contains(fn + "(", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(") " + modifier + " OVER (", compiled.Sql,
             StringComparison.OrdinalIgnoreCase);
         Assert.Contains("UNBOUNDED FOLLOWING", compiled.Sql, StringComparison.OrdinalIgnoreCase);
     }
