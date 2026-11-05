@@ -75,6 +75,65 @@ public sealed class SqlCoreWindowExcludeFrameTests
     }
 
     [Theory]
+    [InlineData(SqlAgentToolType.Postgres, WindowFrameExclusionMode.CurrentRow, "EXCLUDE CURRENT ROW")]
+    [InlineData(SqlAgentToolType.Sqlite, WindowFrameExclusionMode.Group, "EXCLUDE GROUP")]
+    [InlineData(SqlAgentToolType.Postgres, WindowFrameExclusionMode.Ties, "EXCLUDE TIES")]
+    [InlineData(SqlAgentToolType.Sqlite, WindowFrameExclusionMode.NoOthers, "EXCLUDE NO OTHERS")]
+    public void StructuredQueryDefinition_ExclusionRoundTripsIntoNativeCompiler(
+        SqlAgentToolType provider, WindowFrameExclusionMode mode, string sqlFragment)
+    {
+        var definition = new QueryDefinition
+        {
+            TableName = Table,
+            SelectColumns =
+            [
+                new FunctionSelectCondition
+                {
+                    FunctionName = "SUM",
+                    Arguments = [new FieldSelectCondition { FieldName = "amount" }],
+                    Window = new WindowDefinition
+                    {
+                        OrderBy = [new FieldOrderByCondition { FieldName = "grp", Direction = SortDirection.Asc }],
+                        Frame = new WindowFrameDefinition
+                        {
+                            Unit = WindowFrameUnit.Groups,
+                            Start = new WindowFrameBound { Kind = WindowFrameBoundKind.UnboundedPreceding },
+                            End = new WindowFrameBound { Kind = WindowFrameBoundKind.CurrentRow },
+                            Exclusion = mode
+                        }
+                    }
+                }
+            ]
+        };
+        var compiled = CoreSqlCompiler.CreateDefault().Compile(
+            new ParsedStatement(QueryDefinitionCoreMapper.Map(definition), provider),
+            provider,
+            new SqlPlanValidationContext("g10-structured-exclude-v1"),
+            new SqlExecutionPlanPolicy());
+        Assert.Contains("GROUPS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", compiled.Sql,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(sqlFragment, compiled.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LegacyFrameCtorStillMeansImplicitDefaultAndClrEnumsKeepOldValues()
+    {
+        Assert.Equal(0, (int)WindowFrameExclusionMode.Unspecified);
+        Assert.Equal(0, (int)WindowFrameUnit.Rows);
+        Assert.Equal(1, (int)WindowFrameUnit.Range);
+        Assert.Equal(2, (int)WindowFrameUnit.Groups);
+        var frame = new HsSqlAgent.SqlCore.Core.Ast.WindowFrame(
+            HsSqlAgent.SqlCore.Core.Ast.WindowFrameUnitKind.Rows,
+            new HsSqlAgent.SqlCore.Core.Ast.WindowFrameBoundCore(
+                HsSqlAgent.SqlCore.Core.Ast.WindowFrameBoundKindCore.CurrentRow,
+                default, HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown),
+            null,
+            HsSqlAgent.SqlCore.Core.Ast.SourceSpan.Unknown);
+        Assert.Equal(HsSqlAgent.SqlCore.Core.Ast.WindowFrameExclusionKind.Unspecified,
+            frame.Exclusion);
+    }
+
+    [Theory]
     [InlineData(SqlAgentToolType.Postgres, 10, 0, 11, 0)]
     [InlineData(SqlAgentToolType.Sqlite, 3, 27, 3, 28)]
     public void ExplicitlyOldSourceOrTargetVersionsRemainRejected(

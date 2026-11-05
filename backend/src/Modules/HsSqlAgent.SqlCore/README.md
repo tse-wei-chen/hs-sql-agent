@@ -31,6 +31,18 @@ Console.WriteLine(command.Sql);
 
 `CompiledSqlCommand` contains native SQL, bound parameters, and compiler evidence. The caller remains responsible for database access, connection identity, permissions, and runtime limits.
 
+### Native EXCLUDE frame membership (G10/Q02)
+
+PostgreSQL 11+ and SQLite 3.28+ preserve `EXCLUDE CURRENT ROW`, `EXCLUDE GROUP`,
+`EXCLUDE TIES`, and explicit `EXCLUDE NO OTHERS` for `ROWS`, `RANGE`
+and `GROUPS` window frames. These alter which *peer rows* are visible to
+frame-sensitive functions; they are **not** interchangeable with a WHERE
+filter or another frame unit. Both raw SQL and structured
+`WindowFrameDefinition.Exclusion` carry the explicit mode through the F#
+AST and CLR compatibility layer. Other four source/target providers and
+explicitly old runtime versions reject before SQL emission; the Host still
+must verify its actual database engine before execution.
+
 ### Native GROUPS peer-frame queries (G10/Q02)
 
 For PostgreSQL 11+ and SQLite 3.28+, the F# query compiler can preserve a
