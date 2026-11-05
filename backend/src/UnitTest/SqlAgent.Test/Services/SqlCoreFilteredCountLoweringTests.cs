@@ -56,11 +56,9 @@ public sealed class SqlCoreFilteredCountLoweringTests
 
     [Theory]
     [InlineData(SqlAgentToolType.MySQL, "SUM(amount)")]
-    [InlineData(SqlAgentToolType.MySQL, "COUNT(DISTINCT amount)")]
     [InlineData(SqlAgentToolType.MySQL, "COUNT(amount + 1)")]
     [InlineData(SqlAgentToolType.MySQL, "COUNT(1)")]
     [InlineData(SqlAgentToolType.MsSqlServer, "SUM(amount)")]
-    [InlineData(SqlAgentToolType.MsSqlServer, "COUNT(DISTINCT amount)")]
     [InlineData(SqlAgentToolType.MsSqlServer, "COUNT(amount + 1)")]
     [InlineData(SqlAgentToolType.MsSqlServer, "COUNT(1)")]
     public void UnprovenFilteredAggregateShapes_StillFailClosed(

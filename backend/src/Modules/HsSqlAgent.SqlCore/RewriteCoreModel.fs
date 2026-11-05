@@ -974,12 +974,12 @@ module internal CoreModel =
         type FilteredCountArgument =
             | AllRows
             | DirectColumn of Expr
+            | DirectDistinctColumn of Expr
 
         let tryFilteredCountArgument value =
             match unspan value with
             | FunctionCall call
-                when not call.IsDistinct
-                     && call.AggregateOrderBy.IsEmpty
+                when call.AggregateOrderBy.IsEmpty
                      && call.AggregateOrderSyntax = NoAggregateOrder
                      && call.AggregateSeparator.IsNone
                      && not (FunctionName.requiresNativeIdentifierSemantics call.Name)
@@ -989,9 +989,12 @@ module internal CoreModel =
                 match call.Arguments with
                 | [ argument ] ->
                     match unspan argument with
-                    | Wildcard None -> Some AllRows
+                    | Wildcard None when not call.IsDistinct -> Some AllRows
                     | Column _ | BoundColumn(_, LocalRowSource) ->
-                        Some(DirectColumn argument)
+                        if call.IsDistinct then
+                            Some(DirectDistinctColumn argument)
+                        else
+                            Some(DirectColumn argument)
                     | _ -> None
                 | _ -> None
             | _ -> None

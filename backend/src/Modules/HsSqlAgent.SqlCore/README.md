@@ -31,6 +31,22 @@ Console.WriteLine(command.Sql);
 
 `CompiledSqlCommand` contains native SQL, bound parameters, and compiler evidence. The caller remains responsible for database access, connection identity, permissions, and runtime limits.
 
+### Bounded conditional DISTINCT COUNT (G10/Q02)
+
+A valid FILTER source such as PostgreSQL
+`COUNT(DISTINCT amount) FILTER (WHERE status = 1)` can compile to
+MySQL `COUNT(DISTINCT CASE WHEN status = 1 THEN amount END)` and
+SQL Server `COUNT_BIG(DISTINCT CASE WHEN status = 1 THEN amount END)`.
+Only a direct local column, one DISTINCT argument and a proven bounded
+predicate are authorized. NULLs, duplicates, no-match zero counts and
+group-by results are regression-tested in PostgreSQL, MySQL and SQL Server.
+`DISTINCT` window aggregates remain rejected on both targets (they are not
+supported in MySQL 8.4 or SQL Server 2022); computed DISTINCT arguments,
+multi-argument DISTINCT, other FILTER aggregates and invalid source syntax
+remain fail-closed. Cross-database string collations and type coercions are
+provider-specific and are **not** claimed equivalent by this numeric parity
+evidence; SqlCore does not execute SQL.
+
 ### Bounded cross-provider COUNT FILTER lowering (G10/Q02)
 
 PostgreSQL `COUNT(*) FILTER (WHERE status = 1)` and
