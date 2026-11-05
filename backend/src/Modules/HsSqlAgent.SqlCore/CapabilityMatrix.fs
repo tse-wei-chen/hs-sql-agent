@@ -166,6 +166,26 @@ type SqlCapabilityMatrix private () =
                 rejected,
                 "Aggregate FILTER has no declared portable target contract for " + string provider + "."
 
+        let groupsStatus, groupsDetail =
+            match provider with
+            | SqlAgentToolType.Postgres | SqlAgentToolType.Sqlite ->
+                let minimum =
+                    if provider = SqlAgentToolType.Postgres then Version(11, 0)
+                    else Version(3, 28)
+                match profileServerVersion with
+                | Some version when version.CompareTo(minimum) < 0 ->
+                    rejected,
+                    "SQL capability 'window.groups' requires ServerVersion " + string minimum
+                    + "+; declared target version is " + string version + "."
+                | _ ->
+                    supported,
+                    "GROUPS counts native ORDER BY peer groups and requires an explicit ORDER BY. "
+                    + "Supported for PostgreSQL 11+ and SQLite 3.28+; explicitly older versions are rejected. "
+                    + "An omitted profile assumes the Core current-release baseline; Host must attest live runtime."
+            | _ ->
+                rejected,
+                "SQL capability 'window.groups' has no proven native peer-frame semantics for this provider."
+
         let aggregateOrderingStatus, aggregateOrderingDetail =
             match provider with
             | SqlAgentToolType.Postgres -> supported, "PostgreSQL STRING_AGG supports inline ORDER BY."
@@ -593,6 +613,7 @@ type SqlCapabilityMatrix private () =
                         "Oracle SYSDATE is native-only because its server-clock DATE semantics are not interchangeable with provider current-timestamp functions.")
                 yield cap("window.basic","window",translated,"OVER with PARTITION BY and ORDER BY is represented structurally.")
                 yield cap("window.frame","window",translated,"ROWS/RANGE frames are represented structurally.")
+                yield cap("window.groups","window",groupsStatus,groupsDetail)
                 yield cap("ordering.ordinal","ordering",translated,"Statement ORDER BY output positions are typed ordinals.")
                 yield cap("ordering.nulls","ordering",nullOrdering,
                     if provider=SqlAgentToolType.MySQL || provider=SqlAgentToolType.MsSqlServer then

@@ -1481,7 +1481,11 @@ module internal RewriteRenderer =
         if not window.PartitionBy.IsEmpty then parts.Add("PARTITION BY " + (window.PartitionBy |> List.map (renderExpr ctx) |> joinDocuments ctx ", "))
         if not window.OrderBy.IsEmpty then parts.Add("ORDER BY " + (window.OrderBy |> List.map (renderOrderBy ctx false) |> List.collect id |> joinDocuments ctx ", "))
         window.Frame |> Option.iter (fun frame ->
-            let unitText = match frame.Unit with WindowFrameUnit.Rows -> "ROWS" | WindowFrameUnit.Range -> "RANGE"
+            let unitText =
+                match frame.Unit with
+                | WindowFrameUnit.Rows -> "ROWS"
+                | WindowFrameUnit.Range -> "RANGE"
+                | WindowFrameUnit.Groups -> "GROUPS"
             let frameSql = match frame.Extent with SingleBound start -> unitText + " " + frameBoundText start | BetweenBounds(start, finish) -> unitText + " BETWEEN " + frameBoundText start + " AND " + frameBoundText finish
             parts.Add(frameSql))
         joinDocuments ctx " " parts

@@ -1403,9 +1403,24 @@ module internal RewriteParser =
             partitions.Add(parseExpression cursor)
             while acceptSymbol ',' cursor do partitions.Add(parseExpression cursor)
         let orderBy = parseOrderBy false cursor
+        // GROUPS is a soft keyword: do not make existing identifiers named
+        // groups reserved across the six source dialects.
+        let groupsToken =
+            match cursor.Current.Kind with
+            | Identifier(name, false) when name.Equals("GROUPS", StringComparison.OrdinalIgnoreCase) -> true
+            | _ -> false
         let frame =
-            if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current then
-                let unit = if acceptKeyword "ROWS" cursor then WindowFrameUnit.Rows else expectKeyword "RANGE" cursor; WindowFrameUnit.Range
+            if isKeyword "ROWS" cursor.Current || isKeyword "RANGE" cursor.Current || groupsToken then
+                let unit =
+                    if acceptKeyword "ROWS" cursor then WindowFrameUnit.Rows
+                    elif acceptKeyword "RANGE" cursor then WindowFrameUnit.Range
+                    else
+                        let token = cursor.Current
+                        match cursor.Dialect with
+                        | SourceDialect.PostgreSql | SourceDialect.SQLite -> ()
+                        | _ -> fail token "SQL capability 'window.groups' is not proven for this source dialect."
+                        cursor.Advance()
+                        WindowFrameUnit.Groups
                 let extent =
                     if acceptKeyword "BETWEEN" cursor then
                         let first = parseFrameBound cursor
