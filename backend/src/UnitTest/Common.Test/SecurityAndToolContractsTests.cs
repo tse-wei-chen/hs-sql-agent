@@ -60,9 +60,9 @@ public class SecurityAndToolContractsTests
         Assert.StartsWith("v2:active:", cipher);
         Assert.NotEqual(value, cipher);
         Assert.Equal(value, crypto.DecryptText(cipher, context));
-        Assert.Throws<CryptographicException>(
+        Assert.Throws<AuthenticationTagMismatchException>(
             () => crypto.DecryptText(cipher, "db-password:connection-18"));
-        Assert.Throws<CryptographicException>(
+        Assert.Throws<AuthenticationTagMismatchException>(
             () => crypto.DecryptText(cipher, "dml-payload:connection-17"));
     }
 
@@ -75,7 +75,7 @@ public class SecurityAndToolContractsTests
         var bytes = Convert.FromBase64String(parts[2]);
         bytes[^1] ^= 1;
         var tampered = $"{parts[0]}:{parts[1]}:{Convert.ToBase64String(bytes)}";
-        Assert.Throws<CryptographicException>(
+        Assert.Throws<AuthenticationTagMismatchException>(
             () => crypto.DecryptText(tampered, "dml-payload:request-1"));
     }
 
