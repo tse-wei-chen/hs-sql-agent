@@ -13,24 +13,28 @@ public class CacheServiceContractsTests
     {
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var service = new MemoryCacheService(cache);
-        Assert.Null(await service.GetAsync<string>("missing"));
+        Assert.Null(await service.GetAsync<string>("missing", TestContext.Current.CancellationToken));
 
-        await service.SetAsync("request:1", "opaque-value");
-        Assert.Equal("opaque-value", await service.GetAsync<string>("request:1"));
+        await service.SetAsync("request:1", "opaque-value", cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal("opaque-value", await service.GetAsync<string>("request:1", TestContext.Current.CancellationToken));
 
-        await service.RemoveAsync("request:1");
+        await service.RemoveAsync("request:1", TestContext.Current.CancellationToken);
         Assert.Null(await service.GetAsync<string>("request:1"));
     }
 
     [Fact]
-    public async Task MemoryCache_RespectsAbsoluteExpiration()
+    public async Task MemoryCache_RejectsNonPositiveExpirationAndSupportsPositiveTtl()
     {
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var service = new MemoryCacheService(cache);
+        var cancellation = TestContext.Current.CancellationToken;
 
-        await service.SetAsync("short-lived", "cannot-be-reused", TimeSpan.Zero);
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
+            () => service.SetAsync("invalid-ttl", "never-cached", TimeSpan.Zero, cancellation));
+        Assert.Null(await service.GetAsync<string>("invalid-ttl", cancellation));
 
-        Assert.Null(await service.GetAsync<string>("short-lived"));
+        await service.SetAsync("valid-ttl", "short-lived", TimeSpan.FromMinutes(1), cancellation);
+        Assert.Equal("short-lived", await service.GetAsync<string>("valid-ttl", cancellation));
     }
 
     [Theory]
