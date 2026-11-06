@@ -92,7 +92,9 @@ public sealed class SqlCoreDepthGateTests
                     var shape = profile == "projection"
                         ? index < 6 ? "nested-scalar-subquery-typed-schema" : "nested-case-scalar-typed-schema"
                         : profile + (index % 2 == 0 ? "-typed-schema" : "");
-                    var depth = index == samples - 1 ? 2048 : 128;
+                    var depth = profile == "projection"
+                        ? index is 5 or 11 ? 2048 : 128
+                        : index == samples - 1 ? 2048 : 128;
                     observations.Add(Sample(shape, depth, "Postgres", profile == "facts"));
                 }
             }
