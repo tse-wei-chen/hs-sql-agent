@@ -172,8 +172,8 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
         await WithSchemaAsync(async schema =>
         {
             await ExecuteAsync("CREATE FUNCTION " + schema +
-                ".leak_secret() RETURNS text LANGUAGE sql STABLE AS $ " +
-                "SELECT secret FROM " + schema + ".secrets WHERE id=1 $");
+                ".leak_secret() RETURNS text LANGUAGE sql STABLE AS 'SELECT secret FROM " +
+                schema + ".secrets WHERE id=1'");
             var before = await SnapshotAsync(schema);
             var result = await Tool(schema).ExecuteQuerySql(
                 "SELECT " + schema + ".leak_secret() AS leaked FROM " +
