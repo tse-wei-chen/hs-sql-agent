@@ -50,8 +50,8 @@ def audit_repository(root):
         section = _job_section(workflow, job)
         if section is None:
             errors.append(f"Missing measured offline test job: {job}")
-        elif ('--collect:"XPlat Code Coverage"' not in section
-              or "--logger" not in section
+        elif ('--coverlet' not in section
+              or "--report-xunit-trx" not in section
               or f"--results-directory artifacts/test-evidence/{job}" not in section
               or f"ci_test_evidence.py verify --directory artifacts/test-evidence/{job}" not in section):
             errors.append(f"{job}: missing actual TRX/Cobertura collection or validation")
