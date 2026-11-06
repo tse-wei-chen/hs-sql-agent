@@ -12,6 +12,33 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  common-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Run Common.Test with real test and coverage evidence
+        run: >
+          dotnet test --project backend/src/UnitTest/Common.Test/Common.Test.csproj
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
+          --results-directory artifacts/test-evidence/common-test
+      - name: Require nonempty xUnit TRX and production-code coverage
+        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/common-test --suite Common.Test
+      - name: Upload Common.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-common-test
+          path: artifacts/test-evidence/common-test/
+          if-no-files-found: warn
+
   infrastructure-test:
     runs-on: ubuntu-latest
     permissions:
@@ -23,7 +50,25 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
+      - name: Audit test project ownership and evidence contracts
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_ci_test_evidence.py' -v
+          python3 .github/scripts/ci_test_evidence.py audit --root .
+      - name: Run Infrastructure.Test with real test and coverage evidence
+        run: >
+          dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
+          --results-directory artifacts/test-evidence/infrastructure-test
+      - name: Require nonempty xUnit TRX and production-code coverage
+        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/infrastructure-test --suite Infrastructure.Test
+      - name: Upload Infrastructure.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-infrastructure-test
+          path: artifacts/test-evidence/infrastructure-test/
+          if-no-files-found: warn
 
   auth-test:
     runs-on: ubuntu-latest
@@ -36,7 +81,21 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj
+      - name: Run Auth.Test with real test and coverage evidence
+        run: >
+          dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
+          --results-directory artifacts/test-evidence/auth-test
+      - name: Require nonempty xUnit TRX and production-code coverage
+        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/auth-test --suite Auth.Test
+      - name: Upload Auth.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-auth-test
+          path: artifacts/test-evidence/auth-test/
+          if-no-files-found: warn
 
   admin-test:
     runs-on: ubuntu-latest
@@ -49,7 +108,21 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
+      - name: Run Admin.Test with real test and coverage evidence
+        run: >
+          dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
+          --results-directory artifacts/test-evidence/admin-test
+      - name: Require nonempty xUnit TRX and production-code coverage
+        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/admin-test --suite Admin.Test
+      - name: Upload Admin.Test TRX and instrumented source coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence-admin-test
+          path: artifacts/test-evidence/admin-test/
+          if-no-files-found: warn
 
   server-test:
     runs-on: ubuntu-latest

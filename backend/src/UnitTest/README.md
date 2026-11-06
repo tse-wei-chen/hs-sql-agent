@@ -12,7 +12,35 @@ SQL syntax corpus contract at [SqlAgent.Test/SyntaxCorpus/README.md](SqlAgent.Te
 | `Admin.Test` | Admin persistence, policies, lifecycle, migrations | `admin-test` |
 | `Auth.Test` | Auth/session/role/token behavior | `auth-test` |
 | `Infrastructure.Test` | Infrastructure adapters | `infrastructure-test` |
-| `Common.Test` | Shared contracts | included via project build and applicable runners |
+| `Common.Test` | Shared contracts, crypto envelope/context binding, connection option whitelist and built-in MCP tool defaults | `common-test` |
+
+## Real execution evidence and bounded coverage baseline
+
+The `common-test`, `infrastructure-test`, `auth-test` and `admin-test` jobs
+run actual xUnit tests and collect both **TRX test counts** and **Coverlet
+Cobertura source-line coverage**. Each job uploads its own
+`test-evidence-<job>` Actions artifact containing `run.trx`, a
+timestamped `coverage.cobertura.*.xml` and a parsed `summary.json`.
+
+The fail-closed `.github/scripts/ci_test_evidence.py` gate rejects missing or
+ambiguous reports, zero-test/skip-only suites, failed tests and zero measurable
+production lines. It also checks that **every** backend test project has a
+`dotnet test --project` invocation in CI, and rejects placeholder
+`Assert.True(true)` assertions. Its own parser and failure behavior are
+covered by `test_ci_test_evidence.py` and executed before the infrastructure
+test job.
+
+**Coverage numbers are intentionally limited to those four instrumented
+offline suites.** They are *not* combined across filtered SQL jobs, do not
+include physical database integrations, and are **not the total solution
+coverage**. The existing `sqlcore_coverage_ledger.py` measures observed SQL
+grammar corpus contracts, **not CLR/F# line or branch coverage**. Never
+treat a syntax case count as execution coverage. Full CI remains the owner of
+provider parity, approvals, SQL grammar and resource/proof tests.
+
+To inspect an actual baseline, open the `Tests` workflow run, then its four
+`test-evidence-*` artifacts and the GitHub Step Summary. Missing artifacts or
+zero completed tests are regressions, even if a project compiles.
 
 ## SqlAgent.Test/Services/
 
@@ -69,6 +97,8 @@ handler tests remain under `Authorization/`.
 ```bash
 python3 -m unittest discover -s .github/scripts -p 'test_test_suite_layout.py' -v
 python3 .github/scripts/verify_test_suite_layout.py --check .
+python3 -m unittest discover -s .github/scripts -p 'test_ci_test_evidence.py' -v
+python3 .github/scripts/ci_test_evidence.py audit --root .
 dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
 dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
 ```

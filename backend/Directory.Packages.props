@@ -51,6 +51,7 @@
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="coverlet.MTP" Version="10.1.0" />
     <PackageVersion Include="Moq" Version="4.21.0" />
     <PackageVersion Include="Moq.EntityFrameworkCore" Version="10.0.0.2" />
     <PackageVersion Include="dapper" Version="2.1.89" />
