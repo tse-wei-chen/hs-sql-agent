@@ -104,7 +104,7 @@ def validate_evidence(directory, suite):
             f"executed={executed}, passed={passed}, failed={failed})"
         )
 
-    cobertura = _xml(_one(directory, "coverage.cobertura.xml"))
+    cobertura = _xml(_one(directory, "coverage.cobertura*.xml"))
     if cobertura.tag != "coverage":
         raise EvidenceError("Expected a Cobertura coverage root")
     try:
