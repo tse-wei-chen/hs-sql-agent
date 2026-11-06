@@ -35,6 +35,12 @@ and Dapper-backed executor; direct Npgsql setup and snapshots are independent.
   `users` table must be refused by the PostgreSQL read-only execution fence.
   A test-first GitHub Actions run reproduced a successful, unsafe Query before
   the production fix.
+- `pg_catalog.query_to_xml` can run a hidden SELECT over a disallowed relation,
+  even inside a read-only transaction. An independent PostgreSQL test-first RED
+  execution reproduced the secret leak. Policy now rejects this native call.
+- A qualified SQL-language STABLE UDF selecting from the forbidden table must
+  be denied by the Query policy; a same-name user UDF that shadows LOWER in
+  search_path must not override the explicitly pg_catalog-bound safe function.
 - Positive controls assert a malicious-looking quoted literal is sent as a
   typed parameter and remains queryable; ordinary OR and CTE forms still work.
 - Query result rows, actual user data, secret count, added columns, created
