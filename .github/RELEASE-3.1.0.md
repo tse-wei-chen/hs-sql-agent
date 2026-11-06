@@ -9,7 +9,7 @@ This is a release-candidate checklist, not a release announcement. Only merge fe
 - [ ] Confirm DQL remains read-only; DML and DDL still require independent permissions, impact preview, human approval and execution-time live proof. Four existing read-only tools selected by default; neither DML nor DDL selected.
 - [ ] Review changes to approval and durable-state versions, migration/recovery implications, independent MySQL/Oracle implicit-commit DDL contracts and `OutcomeUnknown`. Preserve unknown as unknown, never claim cross-provider DDL atomicity.
 - [ ] Review source/binary CLR facade compatibility, packaging, docs site and samples. Do not advertise unsupported six-provider grammar as executable.
-- [ ] Before publication, reconcile the historical `CHANGELOG.md` sections: its older `[3.0.0] - Unreleased` heading still contains develop-only additions made after the published v3.0.0 tag. Do not misattribute those additions to v3.0.0; move them under the correct 3.1.0 release entry and review chronology.
+- [x] Reconcile CHANGELOG.md with published v3.0.0 (2026-10-25): preserve original 3.0.0 notes and 2.x history; attribute 55 distinct post-v3.0.0 Query/DML/DDL capability sections to 3.1.0. Keep 3.1.0 marked Unreleased until maintainer publication.
 
 ## Release (maintainer only)
 
