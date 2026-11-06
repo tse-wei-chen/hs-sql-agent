@@ -12,11 +12,14 @@ static string Option(string[] args, string key, string? fallback = null)
 try
 {
     if (args.Length == 0)
-        throw new GovernanceException("Usage: audit [--root .] | layout [--root .] | verify --directory <path> --suite <name>");
+        throw new GovernanceException("Usage: audit [--root .] | layout [--root .] | verify --directory <path> --suite <name> | release-version --root . --tag vX.Y.Z");
 
     var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
     switch (args[0])
     {
+        case "release-version":
+            Console.WriteLine($"Verified release v{ReleaseVersionGate.Verify(Option(args, "--root", "."), Option(args, "--tag"))}");
+            break;
         case "audit":
             Console.WriteLine(JsonSerializer.Serialize(Governance.Audit(Option(args, "--root", ".")), options));
             break;

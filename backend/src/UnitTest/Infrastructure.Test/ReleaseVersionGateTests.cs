@@ -63,6 +63,31 @@ public sealed class ReleaseVersionGateTests
         Assert.Equal("3.1.0", ReleaseVersionGate.Verify(directory.FullName, "v3.1.0"));
     }
 
+    [Fact]
+    public void BothReleasePublishers_VerifyVersionBeforeAnyArtifactPublication()
+    {
+        var root = LocateRepository();
+        foreach (var (workflow, publication) in new[]
+                 {
+                     (".github/workflows/nuget-publish.yml", "Pack all public packages"),
+                     (".github/workflows/docker-publish.yml", "Build and push Docker image")
+                 })
+        {
+            var content = File.ReadAllText(Path.Combine(root, workflow));
+            var gate = content.IndexOf("release-version --root . --tag", StringComparison.Ordinal);
+            var publish = content.IndexOf(publication, StringComparison.Ordinal);
+            Assert.True(gate >= 0 && publish > gate, $"{workflow}: require release-version validation before publishing");
+        }
+    }
+
+    private static string LocateRepository()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "CHANGELOG.md")))
+            directory = directory.Parent;
+        return Assert.IsType<DirectoryInfo>(directory).FullName;
+    }
+
     private sealed class ReleaseFixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "hssqlagent-release-version-" + Guid.NewGuid().ToString("N"));
