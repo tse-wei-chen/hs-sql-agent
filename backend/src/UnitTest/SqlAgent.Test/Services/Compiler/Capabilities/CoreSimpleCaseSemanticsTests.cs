@@ -25,7 +25,9 @@ public class CoreSimpleCaseSemanticsTests
         var command = CompileQuery(
             "SELECT CASE ABS(id) WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM users");
 
-        Assert.Contains("CASE ABS(", command.Sql, StringComparison.OrdinalIgnoreCase);
+        // With a table allowlist, PostgreSQL Query policy pins built-ins to
+        // pg_catalog so search_path cannot shadow an otherwise-safe ABS call.
+        Assert.Contains("CASE PG_CATALOG.ABS(", command.Sql, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, CountOccurrences(command.Sql, "ABS(", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain("ABS(\"id\") =", command.Sql, StringComparison.OrdinalIgnoreCase);
     }
