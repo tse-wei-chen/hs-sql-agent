@@ -214,8 +214,7 @@ jobs:
       - name: Gate observed six-provider SQL coverage ledger (3.1)
         shell: bash
         run: |
-          python3 -m unittest discover -s .github/scripts -p 'test_sqlcore_coverage_ledger.py' -v
-          python3 .github/scripts/sqlcore_coverage_ledger.py --check \
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- sql-corpus \
             --manifest backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sqlcore-coverage-manifest.json \
             --output artifacts/sqlcore-coverage-ledger.json
       - name: Upload observed SQL coverage evidence
@@ -1346,7 +1345,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/verify-admin-openapi.py artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- admin-openapi --file artifacts/openapi/HsSqlAgent.ApiSpec_admin.json
       - uses: actions/upload-artifact@v4
         with:
           name: hs-sql-agent-admin-openapi

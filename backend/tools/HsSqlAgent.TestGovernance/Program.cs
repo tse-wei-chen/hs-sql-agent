@@ -12,7 +12,7 @@ static string Option(string[] args, string key, string? fallback = null)
 try
 {
     if (args.Length == 0)
-        throw new GovernanceException("Usage: audit [--root .] | layout [--root .] | verify --directory <path> --suite <name> | release-version --root . --tag vX.Y.Z");
+        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi|perf-compare|code-delta|release-version (see workflow for options)");
 
     var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
     switch (args[0])
@@ -51,12 +51,57 @@ try
                     + "This is **suite-scoped**, not whole-repository code coverage.\n");
             break;
         }
+        case "sql-corpus":
+        {
+            var manifest = Option(args, "--manifest");
+            var target = Option(args, "--output");
+            var report = SqlCorpusLedger.Build(manifest);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(target))!);
+            var json = JsonSerializer.Serialize(report, options) + "\n";
+            File.WriteAllText(target, json);
+            using var document = JsonDocument.Parse(json);
+            Console.WriteLine($"Verified {document.RootElement.GetProperty("suites").GetArrayLength()} observed SQL corpora / "
+                + $"{document.RootElement.GetProperty("totalCases").GetInt32()} cases across 6 providers");
+            Console.WriteLine($"Evidence artifact: {target} (no official coverage percentage)");
+            break;
+        }
+        case "stage-profile":
+        {
+            var count = SqlCoreStageProfile.Verify(Option(args, "--file"));
+            Console.WriteLine($"Verified {count} complete compiler-stage provider/workload cases.");
+            break;
+        }
+        case "admin-openapi":
+        {
+            var count = AdminOpenApiProof.Verify(Option(args, "--file"));
+            Console.WriteLine($"Verified {count} Admin REST operations, typed contracts and credential metadata.");
+            break;
+        }
+        case "perf-compare":
+        {
+            var folder = Option(args, "--directory");
+            var report = SqlCorePerfComparison.Compare(folder);
+            Console.WriteLine($"Verified six-provider, 48-workload three-pair benchmark baseline: {folder}");
+            break;
+        }
+        case "code-delta":
+        {
+            var repo = Option(args, "--repo");
+            var baseline = Option(args, "--base");
+            var candidate = Option(args, "--head");
+            var target = Option(args, "--output");
+            var result = SqlCoreCodeDelta.Summarize(repo, baseline, candidate);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(target))!);
+            File.WriteAllText(target, JsonSerializer.Serialize(result, options) + "\n");
+            Console.WriteLine(SqlCoreCodeDelta.Markdown(result));
+            break;
+        }
         default:
             throw new GovernanceException($"Unknown test governance command: {args[0]}");
     }
 }
 catch (Exception error) when (error is GovernanceException or IOException or UnauthorizedAccessException
-                              or System.Xml.XmlException or ArgumentException)
+                              or System.Xml.XmlException or ArgumentException or JsonException)
 {
     Console.Error.WriteLine($"test governance gate failed: {error.Message}");
     Environment.ExitCode = 1;
