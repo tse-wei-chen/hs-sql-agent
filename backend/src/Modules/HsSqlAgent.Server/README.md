@@ -27,6 +27,20 @@ applies only to whitelisted PostgreSQL Query compilation, not to the six-dialect
 Parser or DML/DDL tools. It may reject previously accepted unproven native
 functions; those require an explicit security capability decision.
 
+PostgreSQL operator resolution is a separate boundary from named SQL functions.
+A connection can explicitly place an untrusted schema ahead of `pg_catalog`
+and shadow built-in operators such as integer `=`, letting a seemingly
+allowed SELECT invoke hidden SQL against excluded tables. For PostgreSQL
+Query only, the same `READ ONLY` transaction now also uses transaction-local
+`pg_catalog.set_config` to put `pg_catalog` first in `search_path` while
+retaining the caller's remaining schema order for ordinary relation lookup.
+Rollback restores the prior session setting, including pooled connections;
+both query entrypoints share the single Host gate. The PostgreSQL 16 physical
+attack/regression and no-pool-reset rollback control are in
+`Services/Query/PHYSICAL-INJECTION.md` under the Host tests. This is not
+a complete sandbox for arbitrary user-defined operators or types; database
+roles must still have least-privilege relation and CREATE permissions.
+
 The F# SqlCore compiler stays driver-free and retains the original SQL authorization
 and single-statement gates. DML/DDL and other five providers are unaffected by
 this provider-specific Host enforcement. Read-only transactions are not an all-purpose
