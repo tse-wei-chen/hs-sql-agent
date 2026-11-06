@@ -40,13 +40,13 @@ public class SecurityAndToolContractsTests
         Assert.Equal(6, McpBuiltInTools.Names.Count);
         Assert.Equal(4, McpBuiltInTools.DefaultNames.Count);
         Assert.All(McpBuiltInTools.Catalog, tool => Assert.True(tool.IsBuiltIn));
-        Assert.True(McpBuiltInTools.DefaultNames.Contains(McpBuiltInTools.GetSchemas));
-        Assert.True(McpBuiltInTools.DefaultNames.Contains(McpBuiltInTools.GetTables));
-        Assert.True(McpBuiltInTools.DefaultNames.Contains(McpBuiltInTools.GetColumns));
-        Assert.True(McpBuiltInTools.DefaultNames.Contains(McpBuiltInTools.ExecuteQuerySql));
-        Assert.False(McpBuiltInTools.DefaultNames.Contains(McpBuiltInTools.ExecuteDmlSql));
-        Assert.False(McpBuiltInTools.DefaultNames.Contains(McpBuiltInTools.ExecuteDdlSql));
-        Assert.True(McpBuiltInTools.Names.Contains("GET_SCHEMAS"));
+        Assert.Contains(McpBuiltInTools.GetSchemas, McpBuiltInTools.DefaultNames);
+        Assert.Contains(McpBuiltInTools.GetTables, McpBuiltInTools.DefaultNames);
+        Assert.Contains(McpBuiltInTools.GetColumns, McpBuiltInTools.DefaultNames);
+        Assert.Contains(McpBuiltInTools.ExecuteQuerySql, McpBuiltInTools.DefaultNames);
+        Assert.DoesNotContain(McpBuiltInTools.ExecuteDmlSql, McpBuiltInTools.DefaultNames);
+        Assert.DoesNotContain(McpBuiltInTools.ExecuteDdlSql, McpBuiltInTools.DefaultNames);
+        Assert.Contains("GET_SCHEMAS", McpBuiltInTools.Names);
     }
 
     [Fact]
