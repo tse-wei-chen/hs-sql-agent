@@ -26,8 +26,8 @@ jobs:
       - name: Run Common.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Common.Test/Common.Test.csproj
-          --logger 'trx;LogFileName=run.trx'
-          --collect:"XPlat Code Coverage"
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/common-test
       - name: Require nonempty xUnit TRX and production-code coverage
         run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/common-test --suite Common.Test
@@ -57,8 +57,8 @@ jobs:
       - name: Run Infrastructure.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
-          --logger 'trx;LogFileName=run.trx'
-          --collect:"XPlat Code Coverage"
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/infrastructure-test
       - name: Require nonempty xUnit TRX and production-code coverage
         run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/infrastructure-test --suite Infrastructure.Test
@@ -84,8 +84,8 @@ jobs:
       - name: Run Auth.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Auth.Test/Auth.Test.csproj
-          --logger 'trx;LogFileName=run.trx'
-          --collect:"XPlat Code Coverage"
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/auth-test
       - name: Require nonempty xUnit TRX and production-code coverage
         run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/auth-test --suite Auth.Test
@@ -111,8 +111,8 @@ jobs:
       - name: Run Admin.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Admin.Test/Admin.Test.csproj
-          --logger 'trx;LogFileName=run.trx'
-          --collect:"XPlat Code Coverage"
+          --report-xunit-trx --report-xunit-trx-filename run.trx
+          --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/admin-test
       - name: Require nonempty xUnit TRX and production-code coverage
         run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/admin-test --suite Admin.Test
