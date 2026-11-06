@@ -59,7 +59,7 @@ jobs:
             git ls-files -- '*.py' >&2
             exit 1
           fi
-          if grep -RnE 'python[0-9]*[[:space:]]|<<.PY.' .github/workflows; then
+          if grep -RnE '[p]ython[0-9]*[[:space:]]|[<]<.PY.' .github/workflows; then
             echo "Inline Python or Python interpreter invocations are not allowed in CI." >&2
             exit 1
           fi
