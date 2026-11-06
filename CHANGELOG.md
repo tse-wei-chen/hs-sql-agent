@@ -1,6 +1,17 @@
 # Changelog
 
+All notable changes to this project will be documented in this file.
+
 ## [3.1.0] - Unreleased
+
+### 3.1.0 release scope (candidate)
+
+- **Query safety:** PostgreSQL execution uses physical read-only transaction and built-in function/operator fences for specifically attested shapes. This is not a blanket claim that all SQL functions or other providers have no side effects.
+- **SqlCore capabilities:** expand typed Query/Window, native DML and Schema Compiler / DDL subsets only where source/target versions, policy and real-provider proofs are available. Unproven syntax continues to fail closed.
+- **Host governance:** Query, DML and DDL retain separate execution boundaries. Mutation/schema changes require explicit opt-in, permissions, preview, approval and live revalidation; provider transaction/implicit-commit behavior is not interchangeable.
+- **Compatibility and release:** retain the default four safe MCP tool selections, DML/DDL disabled by default, previous CLR constructor compatibility and first-party package/tag publication gates.
+- **Evidence:** six-provider corpus and real database tests demonstrate bounded proven cases, **not** complete SQL grammar support. Final release date and promotion to `main` or tags remain maintainer-controlled.
+
 
 ### Host Query — PostgreSQL built-in operator resolution fence
 
@@ -34,137 +45,114 @@
 - Add a deterministic CI ledger of existing checked-in six-provider positive compiler corpora, split by SQL statement family, provider, and declared version-profile evidence. Reject missing or duplicated fixtures, unknown providers, native target mismatches and unexpected count drift. CI publishes a JSON evidence artifact in the existing syntax-matrix job; no second test job, NuGet API or execution path.
 - Deliberately report **no official grammar coverage percentage** and **no Host execution parity claim**: the current 4,883 fixture cases do not represent the denominator of supported SQL syntax, and negative/live behavior remains independently gated.
 
-All notable changes to this project will be documented in this file.
-
-## [3.0.0] - Unreleased
-
-### G10/Q02 — FIRST_VALUE/LAST_VALUE IGNORE/RESPECT NULLS with explicit frame parity (develop only)
+### G10/Q02 — FIRST_VALUE/LAST_VALUE IGNORE/RESPECT NULLS with explicit frame parity
 
 - Extend the existing closed F# window grammar and proof to native SQL Server 2022+ / Oracle 12.1+ FIRST_VALUE/LAST_VALUE. Preserve explicit IGNORE/RESPECT between function and OVER, and the caller's typed ROWS frame: full-partition LAST_VALUE is deliberately different from its default current-row frame.
 - Source and target require matching explicit ServerVersion profiles; FIRST/LAST NULL treatment is restricted to the same provider until cross-provider NULL ordering/frame equivalence is proven. SQL Server 2022 CU4 remains a **LAG/LEAD IGNORE** fence only; FIRST/LAST IGNORE is admitted on 16.0 RTM. Reuse the same native renderer and structured CLR DTO, plus six-provider positive/negative unit tests and independent real SQL Server/Oracle row parity. No new driver, MCP tool, Host execution, authorization or second compiler.
 
-### G10/Q02 — Native SQL Server/Oracle LAG/LEAD IGNORE/RESPECT NULLS (develop only)
+### G10/Q02 — Native SQL Server/Oracle LAG/LEAD IGNORE/RESPECT NULLS
 
 - Preserve `LAG/LEAD(value) IGNORE NULLS OVER (...)` and explicit `RESPECT NULLS` in a closed F# null-treatment DU, source and target version profiles (SQL Server 2022+ for RESPECT NULLS, SQL Server 2022 CU4 / build 16.0.4035.4+ for IGNORE NULLS, Oracle 12.1+ for both), function placement and native renderer. A 16.0-only SQL Server profile does not prove the CU4 correctness fix. PostgreSQL/MySQL/SQLite/Firebird remain rejected; no lowering to semantically different ordinary LAG/LEAD.
 - Add binary-compatible CLR WindowSpec and structured WindowDefinition enum properties while retaining default and constructor behavior. Actual SQL Server/Oracle parity, six-provider source/target grammar negatives, malformed modifiers and illegal-function cases. No new MCP tool, driver, Host permission or DML/DDL execution path.
 
-
-
-### G10/Q02 — MySQL/SQL Server conditional DISTINCT COUNT (develop only)
+### G10/Q02 — MySQL/SQL Server conditional DISTINCT COUNT
 
 - Extend the existing closed F# conditional COUNT shape with one direct-column `DISTINCT` case. For a valid native FILTER source such as PostgreSQL, render MySQL `COUNT(DISTINCT CASE WHEN ... THEN column END)` or SQL Server 64-bit `COUNT_BIG(DISTINCT CASE WHEN ... THEN column END)`. NULL inputs, duplicate values, false and unknown predicates, grouped and global counts retain their target SQL aggregate semantics; 3 real databases cover the bounded integer parity matrix.
 - Reject `COUNT(DISTINCT ...) OVER (...)` at the existing semantic window gate, computed/multiple DISTINCT arguments, volatile/subquery predicates, and invalid MySQL/SQL Server raw FILTER source grammar. New `aggregate.filtered_distinct_count` entry does not relax general `expression.filter`; no new public APIs, drivers, permissions, or MCP tools.
 
-
-
-### G10/Q02 — Bounded MySQL/SQL Server conditional COUNT lowering (develop only)
+### G10/Q02 — Bounded MySQL/SQL Server conditional COUNT lowering
 
 - Prove and render MySQL `COUNT(CASE WHEN ... THEN ... END)` and SQL Server `COUNT_BIG(CASE WHEN ... THEN ... END)` for PostgreSQL-source `COUNT(*)`/`COUNT(direct_column)` `FILTER (WHERE ...)` on MySQL and SQL Server. Reuse the closed F# FilteredAggregate graph; one typed COUNT/predicate shape proof handles capability validation and rendering. Preserve false/NULL/empty and per-frame counts; fail closed on SUM, DISTINCT, computed operands, volatile/subquery/outer-reference predicates and invalid MySQL/SQL Server FILTER source syntax.
 - Add a dedicated `aggregate.filtered_count` capability entry while the unrestricted `expression.filter` capability remains rejected; real PostgreSQL/MySQL 8.4/SQL Server 2022 comparison tests and syntax negatives, with no new MCP tools or public CLR APIs.
 
-
-
-### G10/Q02 — SQL Server source RANGE offset validation (develop only)
+### G10/Q02 — SQL Server source RANGE offset validation
 
 - Reject T-SQL numeric `RANGE n PRECEDING/FOLLOWING` at source parsing and typed source capability proof even when the selected target supports numeric RANGE. Reuse one typed frame-offset predicate for source and target validation; preserve SQL Server legal `ROWS` / unbounded `RANGE` and PostgreSQL/SQLite native numeric RANGE behavior. Add negative/positive compiler tests and real PostgreSQL/SQLite parity; no new public API, MCP tool or runtime dependency.
 
-
-### G10/Q02 — Native PostgreSQL/SQLite EXCLUDE window-frame parity (develop only)
+### G10/Q02 — Native PostgreSQL/SQLite EXCLUDE window-frame parity
 
 - Preserve explicit `EXCLUDE CURRENT ROW / GROUP / TIES / NO OTHERS` for native `ROWS / RANGE / GROUPS` frame membership. The F# closed exclusion DU, parser, full-query capability proof, validator and renderer own this feature; the additive CLR compatibility enum, existing constructor overload, and structured `WindowFrameDefinition.Exclusion` roundtrip without an alternate SQL path or new MCP tools.
 - PostgreSQL 11+ and SQLite 3.28+ are the only proven native source/targets; explicit older versions and MySQL/SQL Server/Oracle/Firebird reject. Actual PostgreSQL 16 and SQLite peer/NULL-aware aggregate parity, negative source/target grammar and version checks, and existing four-default-read-only/DML-off behavior are tested. No `ROWS`/`RANGE` substitution for `EXCLUDE`.
 
-
-### G10/Q02 — Native PostgreSQL and SQLite GROUPS window frames (develop only)
+### G10/Q02 — Native PostgreSQL and SQLite GROUPS window frames
 
 - Extend the F# closed window-frame AST and exhaustive CLR compatibility projection with native `GROUPS` peer-group frames. PostgreSQL 11+ and SQLite 3.28+ preserve `GROUPS BETWEEN ... AND ...` without rewriting it to non-equivalent `ROWS` or `RANGE`; other four dialects reject unproven source/target semantics.
 - Require window `ORDER BY`, validate bound ordering and explicit source/target version profiles, and expose `window.groups` in the provider capability matrix. Actual database versions still require Host verification. TDD covers positive/negative grammar, version gating and PostgreSQL 16/SQLite live peer-group parity; existing DML approval and the default four read-only tools with DML disabled are unchanged.
 
-
-### G9 — SQL Server 2022 native MERGE NOT MATCHED INSERT with one-use physical key absence proof (develop only)
+### G9 — SQL Server 2022 native MERGE NOT MATCHED INSERT with one-use physical key absence proof
 
 - Add one exact SQL Server `MERGE INTO dbo.table AS t USING (VALUES(...)) AS s(...) ON t.id=s.id WHEN NOT MATCHED THEN INSERT(...) VALUES(s...)` Host Preview → Approval → Commit. One physical non-null non-identity INT PRIMARY key, sole immediately enforced simple UNIQUE key; 1–3 distinct exact native INT payload columns. The INSERT clause must explicitly cover **every actual target column exactly once**, each directly mapped to its same-named source field; different source/INSERT column order is supported. Other provider and MERGE source/action shapes fail closed.
 - Preview checks physical target PK presence, shows the immutable proposed full INSERT payload only when missing, and seals its values, exact compiled SQL, match-query fingerprint, actor/policy, full Schema/index digest and row-set hash to an existing one-use challenge. A present key predicts 0 affected rows; absent key predicts 1. Commit acquires transaction-held SQL Server `SERIALIZABLE` `TABLOCKX/HOLDLOCK`, reattests the real Catalog and key state **before** any write, cancels on drift or key/index revocation, and commits only when the actual mutation affected exactly the approved 0/1 rows. Strong table locks intentionally constrain concurrent writers.
 - Reuses the F# closed MERGE compiler and #543/#544 native Host physical catalog, strict snapshot, one-use approval and DML coordinator. No extra MCP tool, public API method, database driver, migration or independent transaction executor. Reject defaults, omitted columns, alternate UNIQUE, triggers/foreign key side effects, extra match predicates, expression/NULL/coercion sources, UPDATE/DELETE mixed actions, composite/multirow keys and MERGE atomic batches. Default four selected read-only MCP tools and disabled DML remain unchanged.
 
-
-### G9 — SQL Server 2022 native MERGE MATCHED UPDATE with sealed old/new value approval (develop only)
+### G9 — SQL Server 2022 native MERGE MATCHED UPDATE with sealed old/new value approval
 
 - Extend the existing one-row MERGE MATCHED DELETE Host proof to a bounded **MATCHED UPDATE** of **1–3 direct, distinct, non-key INT columns** from one exact `VALUES` row. The single exact native INT PRIMARY key is still the sole enforced physical UNIQUE key, with complete Schema/index/trigger/side-effect attestation; no casts, expressions, nullable/identity columns, extra predicates, UPDATE key assignment, mixed INSERT/DELETE or atomic MERGE batches.
 - Preview reads all affected physical **before-values**, displays immutable **after-values** and fingerprints the whole old-value row alongside the compiled mutation, match SQL, schema digest, policy and actor in the existing one-use approval. Commit holds SQL Server `SERIALIZABLE` `TABLOCKX/HOLDLOCK`, rechecks full schema and every approved old-value, and enforces exact affected-row count before confirming a write. Changed payload without a changed key fails closed, not overwritten. Missing source match affects zero rows. Strong table-level locks limit parallel writer throughput.
 - Uses the same F# MERGE compiler, typed Host DML coordinator and existing `execute_dml_sql` entrypoint. A new approval-mode enum member is required internally; **no new MCP tool**, SQL driver or DB migration. All six-provider safety fences and the four default read-only selections with DML off are preserved.
 
-
-### G9 — SQL Server MERGE matched DELETE, actual Host row-set approval (develop only)
+### G9 — SQL Server MERGE matched DELETE, actual Host row-set approval
 
 - Promote **only** a single native SQL Server 2022 `MERGE INTO dbo.<table> AS t USING (VALUES(<exact INT>)) AS s (<key>) ON t.<key>=s.<key> WHEN MATCHED THEN DELETE` from Compiler-only HOLDLOCK support to a complete `execute_dml_sql` Host Preview → one-use Approval → Commit. Reject UPDATE, NOT MATCHED INSERT, combined actions, multirow/composite-key matches, arbitrary ON predicates, unverified providers and atomic MERGE batches.
 - Reuse the F# closed MERGE AST, Strict Snapshot name/shape proof, native SQL Server actual sole enforced non-identity INT PRIMARY key, built-in full column/index/trigger/schema digest, and compiled `MERGE WITH (HOLDLOCK)`. Preview exposes 0 or 1 physical primary-key identity, sealing the actual key, compiled match/mutation SQL, schema SHA, actor and policy in a single-use challenge. The compiled DML may **only** execute after a transaction-held `SERIALIZABLE` `TABLOCKX/HOLDLOCK` target pin, fresh catalog digest and complete approved key-rowset recheck. Changed row presence or revoked key/index/schema cancels without side effects.
 - Existing `DmlCoordinator` verifies exact affected-row count and confirmed transaction commit; no new MCP tool, public API, SQL driver, approval coordinator or metadata bypass. Strong target table lock intentionally reduces write concurrency. Default four read-only MCP tools stay selected and DML unchecked; no generic MERGE support implied.
 
-
-### G9 — PostgreSQL one-row DO NOTHING direct key RETURNING (develop only)
+### G9 — PostgreSQL one-row DO NOTHING direct key RETURNING
 
 - Extend the proven single-row native PostgreSQL `ON CONFLICT (id) DO NOTHING` Host approval with **`RETURNING id` only** when the direct projected column exactly matches the sole physically enforced, non-null INT2/INT4/INT8 UNIQUE key. The closed F# strict schema model and native Host structural admission reject non-key, wildcard, duplicate, aliased, qualified, computed and system RETURNING items; SQLite conflict skip remains unchanged and still forbids RETURNING.
 - Preview keeps the same key-presence check, one-time approval, schema fingerprint and transaction-held `SHARE ROW EXCLUSIVE NOWAIT` key/index freshness verification. Only the actual PostgreSQL row from a **confirmed inserted and committed** mutation is published; an approved DO NOTHING skip produces an empty result set. Changed conflict state, revoked index and replay fail closed, without result-row leakage.
 - Reuse the existing `execute_dml_sql` structured `ReturnedRows`, native compiler and metadata reads. No new public API, MCP tool, driver, migration or atomic conflict batch capability. Default four selected read-only tools and DML-off remain unchanged; strong table-lock write contention remains a deliberate tradeoff.
 
-
-### G9 — PostgreSQL bounded native conflict UPDATE direct RETURNING (develop only)
+### G9 — PostgreSQL bounded native conflict UPDATE direct RETURNING
 
 - Allow 1–5 distinct unqualified physical direct columns in `RETURNING` on the already proven single-row PostgreSQL `ON CONFLICT (id) DO UPDATE SET field=EXCLUDED.field` Host approval. Columns must be a subset of the exact physical key + 1–4 values, and the existing F# strict snapshot and Host structural gate both reject wildcards, expressions, aliases, qualified/duplicate or system fields. No broader UPSERT or source dialect capability is implied.
 - Preview and one-use approval still bind the entire before/after row, immutable proposed payload, exact compiled SQL and complete physical schema digest. Commit rechecks all values and index/catalog drift under `SHARE ROW EXCLUSIVE NOWAIT` and returns only the actual PostgreSQL output row after a successful atomic commit, including SQL NULL. Stale approvals return no result rows; replay fails closed.
 - Reuse existing `execute_dml_sql` structured `ReturnedRows` plumbing. No new MCP tool, public API, driver or metadata round trip. DML batches containing native conflict updates still fail closed. Default four read-only MCP selections and DML off remain unchanged. The table-level writer concurrency cost is unchanged; SqlCore benchmark measures compiler regression, not Host throughput.
 
-
-### G9/M13 safety fence — Original integer token and quoted-column row identity (develop only)
+### G9/M13 safety fence — Original integer token and quoted-column row identity
 
 - The PostgreSQL Host's typed `ON CONFLICT DO UPDATE` approval now attests each proposed SMALLINT/INTEGER/BIGINT value against the **original F#-parsed source span**. Lexical values such as `1e10`, `4.2e1`, `42.0` are rejected for Host execution approval even if F# accurately normalizes them to integral values. Real plain decimal integers including signed values remain eligible after existing physical range/type, uniqueness and transaction rechecks. The general F# SQL parser is unaffected.
 - PostgreSQL quoted case-sensitive key/value columns that alias under the shared row-fingerprint's case-insensitive field lookup are denied (e.g. `id` and `"ID"`); case-folded synthetic before/after label collisions such as `"__ACTION"` are also denied. This is deliberately Host-local, without broadening globally shared six-provider name semantics.
 - Keep the already merged M13 TEXT/SMALLINT/INTEGER/BIGINT/SQL NULL scope, physical Catalog proof, one-use approval, `SHARE ROW EXCLUSIVE NOWAIT` commit lock, and default four read-only MCP tools with DML disabled. No new parser, extra DB round trip, public API, driver or MCP tool. See real PostgreSQL RED→GREEN tests and independent SqlCore baseline in the PR.
 
-
-### G9/M13 — Native PostgreSQL exact signed integer and SQL NULL-aware conflict UPDATE approval (develop only)
+### G9/M13 — Native PostgreSQL exact signed integer and SQL NULL-aware conflict UPDATE approval
 
 - Extend the existing bounded 1–4-field PostgreSQL `ON CONFLICT (id) DO UPDATE SET field=EXCLUDED.field` typed Host path from TEXT NOT NULL only to **exact TEXT, SMALLINT, INTEGER, BIGINT**, where each physical value column may be nullable or NOT NULL. A proposed string must match physical TEXT, a signed integral literal must fit the exact physical INT2/4/8 range, and SQL NULL is admitted only when the real column permits NULL; reject implicit text→number coercion, float/fractional values, date/time/NUMERIC/UUID and expressions. The single sole immediate BIGINT unique/primary key remains NOT NULL.
 - Reuse the closed F# strict DML AST/grammar, the physical full-index/trigger schema digest, sole-key proof, full old-row fingerprint, one-time challenge and `SHARE ROW EXCLUSIVE NOWAIT` transaction-held lock. Preview shows real SQL NULL before/after alongside all other values, including NULL→value, value→NULL and NULL→NULL; commit re-attests type/nullability and every old value before executing the F#-compiled parameterized statement. No new database round trip, MCP tool, public API, dependency or changes to default four read-only tools / DML unchecked.
 - Bump the internal conflict-update approval-binding discriminator to `v3`. In-flight M12 approvals must be previewed anew after upgrade. Host write concurrency is still limited by the deliberately strong table lock; SqlCore compilation baseline measures a different path and is not evidence of better Host throughput.
 
-
-### G9/M12 — Bounded PostgreSQL multi-column conflict UPDATE approval (develop only)
+### G9/M12 — Bounded PostgreSQL multi-column conflict UPDATE approval
 
 - Reuse M11's native PostgreSQL typed Host `ON CONFLICT DO UPDATE` plan, Preview, one-time approval and commit-time `SHARE ROW EXCLUSIVE NOWAIT` physical table lock; support **1–4 exactly matching `TEXT NOT NULL` proposed columns**, including new 2–4 value-column cases. The source is one VALUES row with an exact non-NULL BIGINT sole simple immediate PRIMARY/UNIQUE key; assignments must cover every inserted non-key column through `SET column = EXCLUDED.column`, without duplicates, other expressions, NULL or partial updates.
 - A permanent ordinary target must consist of exactly the key plus those value columns; no extra columns, indexes, defaults, CHECK/FK constraints, user triggers, rules, inheritance, partitions or RLS. Preview exposes an `INSERT`/`UPDATE` action with **before and after values for every column**; their complete old-row fingerprint, exact proposal, physical catalog SHA and compiled SQL are sealed in the challenge. Commit revalidates all values and cancels the whole operation on any drift, without new MCP tools, APIs, drivers or changes to the default four read-only tools / DML unchecked.
 - Updated-column proof and challenge-binding version are intentionally bumped. In-flight M11 previews must be requested again when rolling to M12; pre-existing ordinary DML and `DO NOTHING` flows are preserved. Table-lock writer contention remains the explicit cost. No compiler performance improvement is claimed.
 
-
-### G9/M11 — PostgreSQL one-row conflict UPDATE with immutable Before/After Host approval (develop only)
+### G9/M11 — PostgreSQL one-row conflict UPDATE with immutable Before/After Host approval
 
 - Extend typed Host DML from `ON CONFLICT DO NOTHING` to the narrowly proven PostgreSQL `ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name` one-row path. The physical table must contain exactly a NOT NULL BIGINT sole simple immediate PRIMARY/UNIQUE key and one TEXT NOT NULL value column, without any defaults, CHECK/foreign keys, extra indices, triggers, rewrite rules, partition/inheritance or RLS.
 - Preview binds either INSERT (before value absent) or UPDATE (old actual value shown) plus proposed new value and full old-row fingerprint to one-time approval. Commit takes a `SHARE ROW EXCLUSIVE NOWAIT` transaction-held table lock, rechecks the complete catalog digest and old row, and executes the F# compiled command only once. New/conflicting rows, old-value changes, index drift and changed policy cause refusal.
 - Generic UPSERT, arbitrary SET expressions, updating the key, UPDATE WHERE, multiple assignments/rows, RETURNING and DML batch remain denied. Existing SQLite/PostgreSQL DO NOTHING and four default read-only tools with DML unchecked are unchanged. Strong lock contention is an intentional safety-first tradeoff; no throughput improvement is claimed.
 
-
-### G9/M10 — PostgreSQL native single-row DO NOTHING approval (develop only)
+### G9/M10 — PostgreSQL native single-row DO NOTHING approval
 
 - Extend the existing SQLite bounded `ON CONFLICT (id) DO NOTHING` Host approval to native PostgreSQL, preserving the F# strict single-row/column shape and one-time row-set approval.
 - The built-in PostgreSQL 16 provider must prove the **sole simple immediately enforced (NOT DEFERRABLE) PRIMARY or UNIQUE key**, exact non-NULL INT2/INT4/INT8 physical type, real permanent plain relation, no trigger/rule/partition/RLS, and full index/constraint/catalog fingerprint. Preview binds 1 insert or 0 conflict skip; commit takes a PostgreSQL `SHARE ROW EXCLUSIVE NOWAIT` table lock before comparing full schema and actual conflict state, then executes only the F# compiled parameterized INSERT once. Index drift, a changed conflict outcome or changed approval fails closed.
 - The strong table lock deliberately blocks concurrent writers during commit-time proof; this is a narrow safe first slice, not a low-contention general upsert. Partial/expression/composite/multiple unique keys, NULL/text/UUID conflict keys, DO UPDATE, RETURNING, multi-row and atomic batches remain denied. No new MCP tool, public API, dependency or frontend default change.
 
-
-### G9/M10 — SQLite sole physical UNIQUE conflict approval (develop only)
+### G9/M10 — SQLite sole physical UNIQUE conflict approval
 
 - Extend the existing single-row SQLite `ON CONFLICT (id) DO NOTHING` Host Approval from a sole PRIMARY KEY to a **sole simple physically enforced UNIQUE column or ordinary nonpartial UNIQUE index**. Reuse the same F# structural validator, native metadata, one-row payload, preview conflict-state fingerprint, one-time challenge, SQLite IMMEDIATE transaction and live freshness recheck. The key remains an explicit non-NULL exact INT64 literal; no generic UPSERT is enabled.
 - Reject multiple/partial/expression/composite unique keys, non-unique indexes, triggers, DO UPDATE, RETURNING, multirow and batch forms. An index revoked between Preview and Commit invalidates the approval before any write. Existing PK behavior is unchanged.
 - Real SQLite positive and negative live tests cover insert/skip and schema-index revocation. The internal versioned approval binding distinguishes the new sole-UNIQUE-key proof; stale approvals require a fresh Preview. No new NuGet/public API, MCP tool or driver and no frontend default change.
 
-### G9/M10 — native SQLite PRIMARY KEY `ON CONFLICT DO NOTHING` Host approval (develop only)
+### G9/M10 — native SQLite PRIMARY KEY `ON CONFLICT DO NOTHING` Host approval
 
 - Add the first **narrow native conflict Host approval** without promoting general Upsert/MERGE: one SQLite `INSERT VALUES` row with an explicit, non-NULL exact INT64 PRIMARY KEY literal; the PK must be the **sole physical enforced unique key**, policy `DmlMaxAffectedRows=1`, built-in native SQLite provider, native target schema capture and commit freshness. Any trigger-bearing target is rejected because trigger side effects are outside the approved one-row count. `DO UPDATE`, `RETURNING`, targetless conflict, multiple rows, alternate/composite/extra unique keys, non-SQLite dialects and atomic batches remain fail-closed.
 - Host Preview reads the actual PK match, binds an expected **1 INSERT vs 0 DO NOTHING** result and immutable payload in the one-time Approval challenge. Commit rechecks the exact PK set in SQLite's IMMEDIATE write transaction, pins schema freshness, checks actual affected row count, and rolls back any drift. Existing approval context, policy, nonce, transaction witness and target fence contracts are reused; no new public API, MCP tool, driver, or generic conflict execution path.
 - F# Strict Schema Snapshot now proves only the one-row explicit-target SQLite `DO NOTHING` column shape; `DO UPDATE` and other unproven UPSERT assignments remain rejected in strict mode. Physical uniqueness stays a separate Host-owned live proof.
 - Real SQLite file-database Host integration and SqlCore positive/negative regression tests cover insert, skip, replay, conflict presence/absence drift, schema/index revocation, ambiguous uniqueness, trigger effects, unproven expressions and batch rejection. Existing four selected read-only frontend tools and DML disabled default are unchanged.
 
-### G9/M10 — SQL Server native single-row MERGE target key-range locking (develop only)
+### G9/M10 — SQL Server native single-row MERGE target key-range locking
 
 - Reuse the existing F# closed single-row SQL Server MERGE and
   metadata-backed full PRIMARY/UNIQUE target match-key assurance. Its native
@@ -181,7 +169,7 @@ All notable changes to this project will be documented in this file.
   parser, coordinator, or provider-generic MERGE lowering. Frontend defaults
   remain four read-only tools selected with DML disabled.
 
-### G9/M09 — bounded direct-column NULL predicates for native INSERT SELECT (develop only)
+### G9/M09 — bounded direct-column NULL predicates for native INSERT SELECT
 
 - Physically attested native SQLite, PostgreSQL, MySQL 8.4 InnoDB and SQL Server 2022
   source-row approval additionally accepts `column IS NULL` and `column IS NOT NULL`,
@@ -204,7 +192,7 @@ All notable changes to this project will be documented in this file.
   revalidation at commit. Four read-only UI tools stay selected and
   DML stays disabled by default.
 
-### G9/M09 — SQLite bounded INSERT SELECT in ordered atomic DML approval (develop only)
+### G9/M09 — SQLite bounded INSERT SELECT in ordered atomic DML approval
 
 - Reuse the **existing** 2–16-statement typed atomic DML transaction
   and one-time aggregate approval; admit **exactly one** SQLite native
@@ -235,7 +223,7 @@ All notable changes to this project will be documented in this file.
   (not just the startup log) and retry only transient transport disconnects
   with a finite bound. Missing/unhealthy DB and SQL errors still fail CI.
 
-### G9/M09 — bounded native BETWEEN for four physical INSERT SELECT sources (develop only)
+### G9/M09 — bounded native BETWEEN for four physical INSERT SELECT sources
 
 - Four already-attested native provider source predicates (SQLite, PostgreSQL,
   MySQL 8.4 InnoDB, SQL Server 2022) additionally accept direct
@@ -255,7 +243,7 @@ All notable changes to this project will be documented in this file.
 - No added MCP tool, provider driver, public API or changed frontend
   defaults (four read-only tools selected; DML disabled).
 
-### G9/M09 — four-provider bounded native INSERT SELECT IN/OR source predicates (develop only)
+### G9/M09 — four-provider bounded native INSERT SELECT IN/OR source predicates
 
 - Existing physically attested **SQLite, PostgreSQL, MySQL 8.4 InnoDB
   and SQL Server 2022** single-/dual-source `INSERT SELECT` approval
@@ -276,7 +264,7 @@ All notable changes to this project will be documented in this file.
   all four providers, multi-row inserts, source drift and row-policy excess.
 - Frontend default remains four read-only tools selected and DML disabled.
 
-### G9/M09 — SQL Server 2022 native INSERT SELECT OUTPUT INSERTED (develop only)
+### G9/M09 — SQL Server 2022 native INSERT SELECT OUTPUT INSERTED
 
 - Reuse existing real physical single-/two-table source-row approval to admit
   1–32 distinct direct SQL Server `OUTPUT INSERTED.<target column>` items
@@ -293,7 +281,7 @@ All notable changes to this project will be documented in this file.
   denied; MySQL 8.4 `RETURNING` remains unavailable. No additional MCP tool,
   SQL parser, driver, public SqlCore API or frontend-default change.
 
-### G9/M09 — SQL Server 2022 single-physical-table INSERT SELECT (develop only)
+### G9/M09 — SQL Server 2022 single-physical-table INSERT SELECT
 
 - Extend existing bounded SQL Server 2022 native `INSERT SELECT` source-row approval
   to **one ordinary permanent dbo table used as both source and target**.
@@ -310,7 +298,7 @@ All notable changes to this project will be documented in this file.
   other Providers and SQL Server two-table paths are unchanged.
   Strict privileges remain SELECT/INSERT/VIEW DEFINITION on the same table.
 
-### G9/M09 — SQL Server 2022 physical INSERT SELECT source-row approval (develop only)
+### G9/M09 — SQL Server 2022 physical INSERT SELECT source-row approval
 
 - Enable single-statement bounded `INSERT INTO dbo.target(name) SELECT name FROM dbo.source
   WHERE id = 1` only between **two distinct permanent physical SQL Server 2022
@@ -332,7 +320,7 @@ All notable changes to this project will be documented in this file.
   `sqlagent-fence-sqlserver` CI job. No new MCP tool, public SqlCore API or
   provider driver. Four default read-only tools, DML disabled.
 
-### G9 / M09 — Bounded conjunctive native INSERT SELECT source predicates (develop only)
+### G9 / M09 — Bounded conjunctive native INSERT SELECT source predicates
 
 - Allow one to four direct `column = non-NULL literal` source predicates joined
   only by `AND` for the existing native SQLite, PostgreSQL and MySQL 8.4
@@ -350,7 +338,7 @@ All notable changes to this project will be documented in this file.
   API, transaction coordinator or change to the four selected read-only tools
   and disabled-by-default DML behavior.
 
-### G9 / M09 — MySQL 8.4 InnoDB same-table INSERT SELECT approval (develop only)
+### G9 / M09 — MySQL 8.4 InnoDB same-table INSERT SELECT approval
 
 - Extend native bounded `INSERT INTO db.target (name) SELECT name FROM db.target
   WHERE id = 1` to source and destination being **one actual physical InnoDB
@@ -369,7 +357,7 @@ All notable changes to this project will be documented in this file.
   foreign-key and grant exclusions remain fail-closed. No new MCP tool,
   public SqlCore API, dependency or alternative compiler pipeline.
 
-### G9 / M09 — MySQL 8.4 InnoDB INSERT SELECT source-row approval (develop only)
+### G9 / M09 — MySQL 8.4 InnoDB INSERT SELECT source-row approval
 
 - Strict **single-statement, two different real InnoDB base tables** in the
   same non-system MySQL database; explicit unique target columns, direct
@@ -397,7 +385,7 @@ All notable changes to this project will be documented in this file.
   SqlCore API, MCP tool, SQL renderer or third-party dependency. UI defaults
   remain four read-only tools selected, DML disabled.
 
-### G9 / M09 — PostgreSQL self-source INSERT SELECT approval (develop only)
+### G9 / M09 — PostgreSQL self-source INSERT SELECT approval
 
 - Extend strict PostgreSQL `INSERT ... SELECT` to the case where the
   explicitly qualified permanent source is **the same physical table** as
@@ -418,7 +406,7 @@ All notable changes to this project will be documented in this file.
 - No additional MCP tools, public API, provider package, SQL compiler or
   approval executor. Four read-only tools remain selected; DML remains off.
 
-### G9 / M09 — PostgreSQL two-table INSERT SELECT approval (develop only)
+### G9 / M09 — PostgreSQL two-table INSERT SELECT approval
 
 - Native PostgreSQL now admits a **single distinct physical source table** and
   **one target table in the same non-system schema**, for bounded
@@ -442,7 +430,7 @@ All notable changes to this project will be documented in this file.
   adequate PostgreSQL table lock privileges are required. No new MCP tool
   or package; four read-only tools remain selected and DML remains off.
 
-### G9 / M09 — SQLite INSERT SELECT direct RETURNING result rows (develop only)
+### G9 / M09 — SQLite INSERT SELECT direct RETURNING result rows
 
 - Allow native SQLite **3.35+** bounded, single-statement `INSERT ... SELECT
   ... RETURNING` with distinct, unqualified direct target columns only
@@ -459,7 +447,7 @@ All notable changes to this project will be documented in this file.
   tool, public API, provider support, driver or dependency. DML remains off
   by default.
 
-### G9 / M09 — SQLite dual-physical-table INSERT SELECT approval (develop only)
+### G9 / M09 — SQLite dual-physical-table INSERT SELECT approval
 
 - Extend the previously bounded SQLite `INSERT SELECT` source-row approval
   to **one second, distinct, physical `main` source table**, while retaining
@@ -479,7 +467,7 @@ All notable changes to this project will be documented in this file.
   or public API. The default four read-only tools and DML disabled remain
   unchanged.
 
-### G9 / M09 — SQLite self-source INSERT SELECT approval (develop only)
+### G9 / M09 — SQLite self-source INSERT SELECT approval
 
 - Admit only explicitly bounded native SQLite `INSERT INTO main.table (columns) SELECT direct_columns FROM main.table WHERE column = literal`, with the source and target being the **same physical main table**. Preview hashes every projected source value, including duplicate rows; the approved row count and immutable compiler-generated SQL are bound into a one-time challenge.
 - A real SQLite IMMEDIATE write transaction revalidates the physical schema and complete projected source row multiset before executing the approved native insert once. Changed source values, row count, schema, runtime database version or authorization context fail closed or roll back; no new MCP tool.
@@ -488,7 +476,7 @@ All notable changes to this project will be documented in this file.
 This is a **major-version release candidate**, not an already published tag. All first-party NuGet
 packages use `VersionPrefix=3.0.0` in this branch. See the [documentation website](https://sql-agent.net/en/docs/).
 
-### G9 / M08 — bounded SQL Server native multi-source DML (develop only)
+### G9 / M08 — bounded SQL Server native multi-source DML
 
 - SQL Server `WITH ... UPDATE ... FROM` and `WITH ... DELETE ... FROM`
   now admit **two separate native DML FROM sources**: a direct
@@ -513,7 +501,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   MCP tool, public API, driver, privilege or dependency. Four
   read-only tools remain selected by default and DML remains off.
 
-### G9 / M07 — correlated semi/anti filters inside physical CTE diamond (develop only)
+### G9 / M07 — correlated semi/anti filters inside physical CTE diamond
 
 - Extend the bounded SQL Server three-CTE, same-physical-source, two-column
   UNIQUE-key diamond to allow a whole-branch `EXISTS` or `NOT EXISTS`
@@ -530,7 +518,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - No general DAG, unrestricted subquery, new multi-source DML syntax, provider
   scope increase, MCP tool or public API expansion.
 
-### G9 / M06 — bounded CTE diamond direct payload lineage (develop only)
+### G9 / M06 — bounded CTE diamond direct payload lineage
 
 - A three-CTE SQL Server diamond may carry additional direct, injective
   payload projections beside its complete, ordered two-column physical UNIQUE
@@ -546,7 +534,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   or extra physical sources remain rejected. No other database or MCP default
   changes, and no new public API, driver, permissions or tools.
 
-### G9 / M06 — bounded key-preserving CTE diamond (develop only)
+### G9 / M06 — bounded key-preserving CTE diamond
 
 - Two independent SQL Server CTEs can project the same live UNIQUE source,
   reconverging through a third CTE's complete two-column INNER key JOIN.
@@ -558,7 +546,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   missing/duplicated JOIN edges, OR, LEFT JOIN, WHERE, aggregation and
   ambiguous aliases are fail-closed. No new tool, API or provider grants.
 
-### G9 / M06 — two-level Derived Table physical key lineage (develop only)
+### G9 / M06 — two-level Derived Table physical key lineage
 
 - Extend the previously proven SQL Server CTE UPDATE/DELETE source from
   one to **exactly two** nested, non-lateral, row-preserving derived
@@ -576,7 +564,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   real SQL Server mixed-type UPDATE/DELETE, approval, index invalidation
   and negative shape matrices. No new MCP tool, public API or driver.
 
-### G9 / M06 — bounded Derived Table key-preserving physical lineage (develop only)
+### G9 / M06 — bounded Derived Table key-preserving physical lineage
 
 - Allow one non-lateral, row-preserving derived SELECT immediately under
   a SQL Server CTE root. Both derived and later 1–3 CTE projections may
@@ -603,7 +591,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   Other five database providers and existing DML defaults unchanged;
   zero new public API, tool, dependency or driver.
 
-### G9 / M05 — exact SQL Server linguistic-collation equality (develop only)
+### G9 / M05 — exact SQL Server linguistic-collation equality
 
 - Extend the closed F# physical KeyTuple with private
   `SqlServerTextEquality` cases for `Latin1_General_100_CI_AS`,
@@ -629,7 +617,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - **Unreleased, develop only**. No new public API, dependency,
   MCP tool, parser, driver, default DML/DDL selection or permission.
 
-### G9 / M05 — Nullable SQL Server source UNIQUE + ordinary equality witness (develop only)
+### G9 / M05 — Nullable SQL Server source UNIQUE + ordinary equality witness
 
 - Introduce the **closed F# source-null comparison witness**
   `AllKeysNotNull | NullableKeysOrdinaryAnsiEquality`; a nullable
@@ -657,7 +645,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   database engines remain unchanged; no added MCP tool,
   driver, public API, permission or default DML selection.
 
-### G9 / M04 — exact BIN2 VARCHAR/NVARCHAR physical key proof (develop only)
+### G9 / M04 — exact BIN2 VARCHAR/NVARCHAR physical key proof
 
 - Extend the **same** private closed F# SQL Server KeyTuple with
   `VarChar(n) | NVarChar(n)` under the **single attested collation**
@@ -682,7 +670,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - No new CLR API, MCP tool, SQL runner, permission, or default DML
   selection; `develop` only, not a production release.
 
-### G9 / M04 — SQL Server exact UNIQUEIDENTIFIER physical keys (develop only)
+### G9 / M04 — SQL Server exact UNIQUEIDENTIFIER physical keys
 
 - Add a closed F# `Uuid` physical key kind with exact live
   `sys.columns`/`sys.types` identity and unchanged full source UNIQUE
@@ -705,7 +693,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   **Unreleased develop-only**; no new tool, provider authorization,
   compiler, driver or default DML/DDL selection.
 
-### G9 / M04 — exact SQL Server fixed-decimal physical keys (develop only)
+### G9 / M04 — exact SQL Server fixed-decimal physical keys
 
 - Extend the same private F# closed physical KeyTuple to
   `FixedDecimal(precision, scale)` for built-in SQL Server `DECIMAL(p,s)`
@@ -731,7 +719,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   MCP tool, driver, public API or new permissions. UUID, text, nullable
   UNIQUE and arbitrary multi-join still fail closed.
 
-### G9 / M04 — exact 8/16-bit physical key kinds (develop only)
+### G9 / M04 — exact 8/16-bit physical key kinds
 
 - Extend SQL Server's private, closed physical KeyTuple algebra from
   `INT` / `BIGINT` to **built-in `TINYINT` (unsigned 8-bit) and
@@ -752,7 +740,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   provider semantics. DECIMAL, UUID, nullable source UNIQUE and
   unproven conversion/JOIN shapes remain fail-closed.
 
-### M07 — correlated semi-/anti-join filters on one attested source (develop only)
+### M07 — correlated semi-/anti-join filters on one attested source
 
 - Allow **EXISTS/NOT EXISTS** as a first-CTE WHERE filter in native SQL
   Server UPDATE/DELETE, limited to a read-only, nonmultiplying correlated
@@ -773,7 +761,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - **Unreleased** on backend/site develop, with no default permission,
   new MCP tool or arbitrary EXISTS/anti-join privilege.
 
-### M07 — independently attested second physical JOIN source (develop only)
+### M07 — independently attested second physical JOIN source
 
 - Extend SQL Server native CTE `UPDATE`/`DELETE` to one bounded
   `INNER` or `LEFT JOIN` against a **different** physical source table.
@@ -793,7 +781,7 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - **Unreleased:** main product/site branches remain untouched; site
   documentation is developed and verified on its own `develop`.
 
-### G9 / M04 — SQL Server exact integer key equivalence (develop only)
+### G9 / M04 — SQL Server exact integer key equivalence
 
 - Support a bounded live-verified, **exact INT/BIGINT** physical source-key
   and target equality pair at each ordinal of one-/two-component SQL Server
@@ -938,6 +926,25 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   index namespace collision, final column/index parity and transactional
   rollback. Existing five-other-provider Batch requests stay rejected.
 
+### G4: SQLite native DDL and live transactional Host adapter
+
+- Fix the SQLite F# native `CREATE INDEX` renderer to place the `main`
+  qualifier on the index name, not the `ON` table (SQLite rejects
+  `CREATE INDEX idx ON main.table`). Validate against a real SQLite engine.
+- Add a separate, default-disabled, file-backed SQLite DDL Host adapter
+  reusing the existing `execute_ddl_sql` tool and independent
+  `IDdlApprovalProvider`. No additional MCP tools or inherited DML consent.
+- Enforce actual `main` file identity, schema cookie/physical SQL snapshot,
+  SQLite ASCII-NOCASE identifiers, BEGIN IMMEDIATE transaction freshness,
+  exact typed postconditions, explicit rollback and OutcomeUnknown reporting.
+- Exercise live CREATE TABLE, nullable ADD COLUMN, plain CREATE INDEX,
+  Preview, reject/forged approval, schema drift, case-conflict, and native
+  transaction rollback. SQL Server/Firebird DDL execution remain disabled.
+
+## [3.0.0] - 2026-10-25
+
+Published as product tag `v3.0.0` on 2026-10-25; first-party NuGet packages used `VersionPrefix=3.0.0`. The tagged release-candidate checklist below is retained as historical evidence, not outstanding work for v3.1.0.
+
 ### PostgreSQL old-worker cutover verification
 
 - Introduce a fail-closed, read-only PostgreSQL old-role verifier that
@@ -979,21 +986,6 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
   including `WHERE 1=1`, are denied unless full-table authority is explicit.
 - Compiler input/token resource ceilings reject previously accepted oversized SQL.
 
-### G4: SQLite native DDL and live transactional Host adapter
-
-- Fix the SQLite F# native `CREATE INDEX` renderer to place the `main`
-  qualifier on the index name, not the `ON` table (SQLite rejects
-  `CREATE INDEX idx ON main.table`). Validate against a real SQLite engine.
-- Add a separate, default-disabled, file-backed SQLite DDL Host adapter
-  reusing the existing `execute_ddl_sql` tool and independent
-  `IDdlApprovalProvider`. No additional MCP tools or inherited DML consent.
-- Enforce actual `main` file identity, schema cookie/physical SQL snapshot,
-  SQLite ASCII-NOCASE identifiers, BEGIN IMMEDIATE transaction freshness,
-  exact typed postconditions, explicit rollback and OutcomeUnknown reporting.
-- Exercise live CREATE TABLE, nullable ADD COLUMN, plain CREATE INDEX,
-  Preview, reject/forged approval, schema drift, case-conflict, and native
-  transaction rollback. SQL Server/Firebird DDL execution remain disabled.
-
 ### SQL compiler, DML integrity and reliability
 
 - Add opt-in schema-aware name/type proofing and six-provider native DML schema
@@ -1031,8 +1023,13 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - Document experimental fence limits: passing six-provider database transaction
   tests is **not** proof of mixed-version fleet enrollment, an independently
   authorized revocation operator or safe `Executing` reconciliation.
+- Docker Compose still pins the last published 2.x image in this **unreleased**
+  branch; retag release assets and deployment examples only when the v3 image
+  has actually been published.
 
-### Programmatic administration
+The following administration and upgrade clarifications were carried forward from the previous `develop` draft. They describe earlier shipped behavior, **not** new v3.1.0 capabilities.
+
+### Management API Keys shipped by v3.0.0 (historical clarification)
 
 - Add dedicated **Management API Keys** for machine-to-machine access to the existing `/api` management endpoints. Authenticate using `X-API-Key: hsa_mgmt_...`; human sessions continue to use `Authorization: Bearer <JWT>`.
 - Provide an Admin UI for issuing, listing, immediately revoking, and rotating Management API Keys, with one-time plaintext display and an explicit allowlist of canonical API permissions.
@@ -1040,12 +1037,31 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - Persist hashed credentials with expiry / usage metadata in the Admin Store; add **SQLite and PostgreSQL schema migrations**, plus permission and credential-isolation tests.
 - Remove the repository docs directory; the documentation website already provides project documentation.
 
-### Upgrade notes
+### v3.0.0 upgrade notes (historical clarification)
 
 - Upgrading to 3.0.0 requires the Admin Store migrations for `ManagementApiKeys` before creating keys.
 - Existing JWT admin authentication and MCP keys are unchanged. No new API key is issued automatically.
 - Management API Keys are currently scoped by canonical API permissions, **not** by database or SaaS tenant; protect these keys as server-to-server credentials.
 - Follow the versioned documentation site's Management API Key guide for the request header and examples.
+
+## [2.0.6] - Unreleased (proposed)
+
+### Programmatic administration
+
+- Add dedicated **Management API Keys** for machine-to-machine access to the existing `/api` management endpoints. Authenticate using `X-API-Key: hsa_mgmt_...`; human sessions continue to use `Authorization: Bearer <JWT>`.
+- Provide an Admin UI for issuing, listing, immediately revoking, and rotating Management API Keys, with one-time plaintext display and an explicit allowlist of canonical API permissions.
+- Keep Management API Keys **fully separate** from MCP access keys, MCP tool authorization, and SQL execution. Machine keys cannot operate built-in identity/role administration, edit security policy, or issue other management keys.
+- Persist hashed credentials with expiry / usage metadata in the Admin Store; add **SQLite and PostgreSQL schema migrations**, plus permission and credential-isolation tests.
+- Move in-depth operator and integration guides to the standalone documentation site; `docs/*.md` in the application repository is no longer a documentation home.
+
+### Upgrade notes
+
+- Applying 2.0.6 requires the Admin Store migrations for `ManagementApiKeys` before creating keys.
+- Existing JWT admin authentication and MCP keys are unchanged. No new API key is issued automatically.
+- Management API Keys are currently scoped by canonical API permissions, **not** by database or SaaS tenant; protect these keys as server-to-server credentials.
+- Follow the versioned documentation site's Management API Key guide for the request header and examples.
+
+## [2.0.5] - Unreleased
 
 ### Agent-facing MCP contracts
 
@@ -1069,3 +1085,414 @@ packages use `VersionPrefix=3.0.0` in this branch. See the [documentation websit
 - Doctor classifies coordination posture as `SingleNode`, `Distributed`, or `Mixed`, checks Redis completeness and fail-closed distributed limiter/concurrency settings, and diagnoses MCP endpoint, Admin Store, Data Protection, DML webhook, OIDC, OTLP, Alert/SIEM, and secret-placeholder posture without returning secret values.
 - Expanded Home System Readiness into a five-stage launch path: configuration blockers, database, public MCP endpoint, MCP key, and first governed agent request.
 - Doctor warnings remain reviewable while Doctor errors are treated as launch blockers; onboarding may display the public endpoint but never MCP key secrets.
+
+### Release and compatibility
+
+- Set the first-party package version to `2.0.5` and updated NuGet release metadata for the Agent DX, explainability, and readiness release.
+- Existing fail-closed SQL compiler behavior, capability checks, table/tool authorization, DML approval/revalidation/rollback, server-owned transaction boundaries, and Admin Store schema remain unchanged.
+- No Admin Store schema migration is required for this release.
+
+## [2.0.4] - 2026-09-07
+
+### MCP contract and security
+
+- Added one canonical server-side catalog for the five documented built-in MCP tools: `get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`, and `execute_dml_sql`.
+- MCP startup now fails closed when reflected built-in tools do not exactly match the canonical catalog, preventing accidental tool-surface expansion.
+- Removed the undocumented `update_semantic_layer` method from MCP discovery. The CLR method remains for compatibility, while Semantic Layer writes continue through the permission-protected Admin UI/API.
+- The Admin tool-catalog endpoint now returns built-in/custom classification, Query/DML type, display name, and risk metadata for MCP-key experiences.
+- Added a regression test that locks the public built-in MCP method surface to the five-tool contract.
+
+### Developer experience
+
+- Set the next first-party package version to `2.0.4`.
+- Aligned the frontend Docker build with CI/package-manager pins: Node.js 22, pnpm 10.22.0, and `pnpm install --frozen-lockfile`.
+
+### Admin UI
+
+- Removed the inert `Search the docs...` sidebar control.
+- Replaced template-like sidebar branding with `hs-sql-agent` / `Admin Console`.
+
+### Compatibility note
+
+`update_semantic_layer` was not part of the documented 2.0.x five-tool MCP contract. Deployments that called it through MCP should move semantic metadata writes to **Runtime → DB Management → Semantic Layer** or the Admin API before upgrading. Existing MCP keys, SQL compiler behavior, DML approval semantics, and Admin Store schema do not require migration for these changes.
+
+## [1.8.3] - 2026-06-26
+## What's Changed
+* Remove outdated documentation files: Architecture, Configuration, Dep… by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/59
+* Add cover image to README by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/61
+* upgrade package by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/62
+* fux Vulnerabilities by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/63
+
+
+**Full Changelog**: https://github.com/tse-wei-chen/hs-sql-agent/compare/v1.8.2-alpha...v1.8.3
+
+## [1.8.2-alpha] - 2026-06-02
+## What's Changed
+* fix: add missing Dapper package reference causing runtime assembly load failure by @Copilot in https://github.com/tse-wei-chen/hs-sql-agent/pull/54
+* fix: move assignment of issuedPlaintextKey to after form reset for co… by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/56
+* fix: error 500 for connect to mcp endpoint by @tse-wei-chen in https://github.com/tse-wei-chen/hs-sql-agent/pull/58
+
+## New Contributors
+* @Copilot made their first contribution in https://github.com/tse-wei-chen/hs-sql-agent/pull/54
+
+**Full Changelog**: https://github.com/tse-wei-chen/hs-sql-agent/compare/v1.8.1-alpha...v1.8.2-alpha
+
+## [1.8.1-alpha] - 2026-05-30
+
+### NuGet Package Release
+fix package use
+
+## [1.8.0-alpha] - 2026-05-30
+
+### NuGet Package Release
+
+`HsSqlAgent.Server` is now available as a NuGet package — embed the full MCP SQL Agent into any existing ASP.NET Core application.
+
+```bash
+dotnet add package HsSqlAgent.Server
+```
+
+```csharp
+builder.Services.AddHsSqlAgent(options => { ... });
+app.UseHsSqlAgent();
+// app.UseHsSqlAgent().ServeAdminUi();  // optional Admin UI
+```
+
+- **Admin UI embedded in DLL**: The frontend SPA is compiled and embedded as assembly resources (`EmbeddedFileProvider`). No external `wwwroot` files to deploy — the UI ships inside the NuGet package.
+- **Dual-mode pipeline**: `UseHsSqlAgent()` for API-only (MCP + Admin API), `.ServeAdminUi()` to also serve the built-in Admin UI.
+- **Project references included**: `Admin.Service`, `Common`, `SqlAgent.Service`, and `SqlKata.*` are automatically bundled in the package via `CopyProjectReferencesToPackage`.
+- **GitHub Actions workflow**: New `.github/workflows/nuget-publish.yml` to publish on release or manually via `workflow_dispatch`.
+
+### Docker
+
+- **Fixed duplicate frontend build**: The `CompileFrontend` MSBuild target now skips `pnpm install/generate` when `wwwroot/index.html` already exists (e.g., Docker pre-populated). The existing files are still embedded as resources.
+- **Frontend dist goes to HsSqlAgent.Server**: Dockerfile copies frontend output to `HsSqlAgent.Server/wwwroot/` instead of `ToolBox/wwwroot/`, aligning with the embedded resource strategy.
+
+### Infrastructure
+
+- Added `Microsoft.Extensions.FileProviders.Embedded` package reference.
+- Added `<IsPackable>true</IsPackable>` to `HsSqlAgent.Server.csproj`.
+- Added `NODE_ENV=production` to the `pnpm generate` step in `CompileFrontend`.
+- Documentation moved to [GitHub Wiki](https://github.com/tse-wei-chen/hs-sql-agent/wiki) — main README simplified with links.
+
+## [1.7.0-alpha] - 2026-05-27
+
+### Breaking Change
+
+**Custom Tools saved with the old query definition schema will fail to execute.** Existing saved query definitions (in `CustomTool.JsonDefinition`) that use the removed types `"type": "in"`, `SelectArithmeticCondition`, or `SqlFunctionArgument` can no longer be deserialized. Affected Custom Tools must be rebuilt or their JSON definition updated to the new schema.
+
+- **Removed `InWhereCondition`**: IN/NOT IN is now handled by `BasicWhereCondition` via `Operator = "IN"` + `Values` array. The `type: "in"` discriminator no longer exists.
+- **Removed `SelectArithmeticCondition`** (5 types: `FieldArithmeticCondition`, `ConstantArithmeticCondition`, `OperationArithmeticCondition`, `FunctionArithmeticCondition`, `CaseWhenArithmeticCondition`): Arithmetic operands now use the unified `SelectCondition` type directly, eliminating the redundant parallel hierarchy.
+- **Removed `SqlFunctionArgument`** (4 types: `FieldFunctionArgument`, `ConstantFunctionArgument`, `NestedFunctionArgument`, `ArithmeticFunctionArgument`): Function arguments now use `SelectCondition` directly, same type as SELECT columns.
+
+### Refactor
+
+- **Backend** (`SqlAgent.Service`):
+  - `BasicWhereCondition` gained `Values` property for IN support.
+  - `OperationSelectCondition.Left`/`Right` changed from `SelectArithmeticCondition` to `SelectCondition`.
+  - `FunctionSelectCondition.Arguments` changed from `List<SqlFunctionArgument>` to `List<SelectCondition>`.
+  - Same change applied to `SqlFunctionCondition.Arguments`, `FunctionOrderByCondition.Arguments`, `FunctionGroupByCondition.Arguments`.
+  - `ResolveSource()` alias resolution fixed: outer `Alias` now takes priority over `fromQuery.Alias`.
+- **Frontend** (`query-definition.ts`, `useSqlBuilder.ts`, `SqlBuilderTabWhere.vue`):
+  - Type definitions fully aligned with new backend schema.
+  - `"in"` type removed from `WhereItem` union; IN conditions mapped to `type: "basic"` + `operator: "IN"`.
+  - UI: IN is no longer a separate dropdown option — shown automatically when operator is `IN`/`NOT IN`.
+
+## [1.6.0-alpha] - 2026-05-24
+
+### Feature
+
+- **Semantic Layer Update MCP Tool**: Added `UpdateSemanticLayer` MCP tool to upsert display names and descriptions for tables/columns, enriching schema discovery results.
+- **CI/CD Pipeline**: Added GitHub Actions workflow (`.github/workflows/test.yml`) running `Admin.Test`, `ToolBox.Test`, `SqlAgent.Test`, and frontend tests on release.
+
+### Infrastructure
+
+- New `Infrastructure.csproj` project with corresponding test project.
+- Added `ToolBox.Test`, `Common.Test`, `Infrastructure.Test` to solution.
+
+### Tests
+
+- **McpAccessKeyAuthMiddlewareTests** (+221 lines): Comprehensive coverage for MCP auth middleware — valid/invalid keys, missing Authorization, `X-MCP-Server-Key` header fallback, CORS origin enforcement, and context item propagation.
+- **CustomToolProxyTests** (+196 lines): Tests for tool not found, parameter replacement, missing SQL config, DML execution, and audit logging on success/failure.
+- **SanityTests**: Added to both `Common.Test` and `Infrastructure.Test`.
+
+### Fix
+
+- **Frontend `useVModel` removal**: Replaced `useVModel` (from `@vueuse/core`) with native `computed` getter/setter in `Input.vue`, `Textarea.vue`, and `PasswordInput.vue` to reduce dependency footprint. Added `value` prop as fallback for `modelValue`.
+- **PasswordInput.vue**: Renamed internal `value` computed → `model` to avoid prop name collision; added `value` prop support.
+- **db-management Select binding**: Fixed `Select` component to use explicit `:model-value` / `@update:model-value` instead of `v-bind="field"` for proper v-model compatibility.
+
+## [1.5.1-alpha] - 2026-05-22
+
+## fix form create/edit not work
+
+## [1.5.0-alpha] - 2026-05-18
+
+### Breaking Change
+
+**Custom tools must be rebuilt** — old custom tools will fail. please rebuild the custom tools.
+
+- **Table access validation**: Queries & DML now verify every referenced table against an API key whitelist (`McpContextItemKeys.TableWhitelist`). Missing permissions throw `UnauthorizedAccessException`.
+- **Frontend type system overhaul**: All query definition interfaces migrated to **discriminated polymorphic union types** (e.g., `SelectCondition = FieldSelectCondition | OperationSelectCondition | FunctionSelectCondition | ...`). Old-format saved query definitions are **incompatible**.
+- **Recursive table reference collection**: `CollectReferencesAndAliases` now traverses nested `FunctionSelectCondition`, `OperationSelectCondition`, `CaseWhenSelectCondition`, subquery arguments, and window definitions. Old custom tools that relied on simpler traversal may miss table references.
+- **SqlKata.Service submodule** updated.
+
+### Feature
+
+- **Table whitelist enforcement** — `CustomToolProxy.ValidateAllTableAccess()` for both `QueryDefinition` and `DmlDefinition`.
+- **SQL builder frontend enhancements**:
+  - JOIN type selection, alias, and ON conditions reworked.
+  - Function-based + field-based ordering with FILTER clauses.
+  - Full polymorphic condition editor (basic, column_compare, IN, subquery, nested groups).
+  - Comprehensive CRUD for select columns (arithmetic, function, case_when, subquery), order/group/having conditions.
+
+### Refactor
+
+- `HavingOpToSql` → `GetOperatorString` for clarity.
+- `CollectFrom*` methods extracted for reuse across proxy validation and execution.
+- `CollectFromQueryDefinition` now also collects HAVING, ORDER BY, GROUP BY references.
+
+### Tests
+
+- **+506 lines** of new strategy tests covering Orders table JOINs, WHERE, HAVING, ORDER BY, GROUP BY, window functions, CASE WHEN, arithmetic expressions, CTEs, and UNION.
+- All strategy test files (SQLite, Postgres, MySql, SqlServer, Oracle, Firebird) updated to pass the extended test matrix.
+
+## [1.4.2-alpha] - 2026-05-16
+
+### Changed
+
+- **Feature**:
+  - Refactor and expand SQL model classes to support advanced function and arithmetic expressions in query building.
+  - Introduce `SelectArithmeticCondition`, `SqlFunctionCondition`, and `SqlFunctionArgument` models for flexible, nested SQL function and arithmetic support.
+  - Enable recursive arithmetic and function composition in select, group by, order by, and having clauses.
+  - Add rich metadata and validation for each model property, improving API documentation and client usability.
+
+#### Details:
+
+- `SelectArithmeticCondition` now supports:
+  - Field, constant, left/right operands, operator, and nested function or arithmetic nodes for complex expressions.
+  - Example: Support for expressions like `(price * quantity) * (1 - discount)` and nested SQL functions.
+- `SqlFunctionCondition`:
+  - Represents SQL functions (aggregate/scalar) with a name and ordered argument list.
+  - Supports nesting and composition (e.g., `ROUND(AVG(price), 2)`).
+- `SqlFunctionArgument`:
+  - Allows each function argument to be a field, constant, nested function, or arithmetic expression.
+  - Enables deep composition for advanced SQL scenarios.
+- All new/updated models are used in select, group by, order by, and having clauses for full query flexibility.
+
+> **Note:** These changes are not breaking but significantly enhance the expressiveness and composability of SQL queries generated by the agent.
+
+## [1.4.1-alpha] - 2026-05-15
+
+### Changed
+
+- **Feature**:
+  - Add support for SQL function expressions
+  - Enhance arithmetic conditions
+
+## [1.4.0-alpha] - 2026-05-14
+
+### Breaking Change
+
+- **Remove "Configure Manually" mode**: MCP API keys now require association with a Database Management entry (`DbManagementId`). Legacy manual connection string input has been removed from both the API and UI.
+- Old MCP keys will no longer be able to connect to the database. Please regenerate new MCP keys.
+
+### Feature
+
+- **Table Whitelist**: Administrators can now restrict each MCP API key to specific database tables. When a whitelist is configured, `get_tables` results are filtered, and `get_columns` / `execute_query_safe` / `execute_dml_safe` will reject access to non-whitelisted tables.
+- **Semantic Layer**: Added a semantic metadata layer for databases, allowing administrators to define display names and descriptions for tables and columns. Semantic data is automatically merged into `get_tables` and `get_columns` MCP tool responses.
+- **Dynamic Breadcrumb**: The layout breadcrumb now dynamically reflects the current route path with proper labels and navigation links.
+
+## [1.3.17-alpha] - 2026-05-13
+
+### Feature
+
+- UI improve for sql multi select and display.
+
+## [1.3.16-alpha] - 2026-05-11
+
+### Feature
+
+- **SQL Server**: Add support `TrustedServerCertificate` and `Encrypt` options in the connection string when testing or using the database connection.
+
+## [1.3.15-alpha] - 2026-05-02
+
+### Changed
+
+- **CustomToolProxy Enhancement**:
+  - Integrated audit logging capabilities to monitor tool execution.
+  - Improved query value parsing for more robust handling of dynamic inputs.
+- **SQL Builder Refinement**:
+  - Added support for **Table Aliases**, enabling more complex and readable JOIN queries.
+  - Refactored **Column Options** to provide a more flexible and scalable configuration structure.
+
+### Fixed
+
+- **Sql Definition Json Builder**: Resolved an issue where the JSON builder incorrectly mapped schema definitions.
+- **Custom Tool Param Issue**: Fixed a bug where custom tool parameters failed to pass through the proxy, ensuring correct argument delivery to underlying services.
+
+## [1.3.14-alpha] - 2026-04-30
+
+### Features
+
+- **Testing Infrastructure**: Added comprehensive unit and integration test suites for all database strategies (**PostgreSQL**, **MySQL**, **SQLite**, **SQL Server**, **Oracle**) using **Testcontainers**, ensuring reliability across different database engines.
+- **Database Management**: Introduced `DbManagementService` and corresponding API controllers to manage database connections and metadata more efficiently.
+- **Validation Layers**: Integrated **FluentValidation** on the backend and **VeeValidate** on the frontend to provide robust data validation and improved user feedback.
+- **Frontend Enhancements**: Initialized **Vitest** for frontend unit testing and added **MCP configuration** logic to support dynamic tool discovery.
+- **Oracle & SQL Server Support**: Fully implemented and validated strategies for Oracle and SQL Server, including container-based integration tests.
+
+### Fix
+
+- **SqlKata Query Builder**: Fixed regressions in the SQL compiler related to subquery alias generation and side effects in column alias handling.
+- **Error Mapping**: Improved database error code handling in `BaseStrategy` to provide more accurate troubleshooting hints (e.g., column/table not found).
+- **MySQL Compatibility**: Fixed a bug where certain MySQL truncation errors (e.g., Error 1292) were not being correctly intercepted.
+
+### Refactor
+
+- **Code Cleanup**: Streamlined `using` directives and improved general code readability and maintainability across the backend modules.
+- **Contribution Guidelines**: Updated `CONTRIBUTING.md` and added issue templates to improve the development workflow.
+
+## [1.3.13-alpha] - 2026-04-24
+
+### Features
+
+- **Visual SQL Builder**: Introduced a comprehensive GUI for building SQL Query JSON definitions, allowing users to visually construct complex tools
+
+### Refactor
+
+- **SQL Builder Simplification**: Removed mandatory table alias (`mainAlias`) logic from the SQL builder to simplify the user interface and generated JSON structure.
+
+## [1.3.12-alpha] - 2026-04-22
+
+### Features
+
+- Added **Database Management** page.
+- Enabled direct association with existing databases when issuing **MCP API Keys**.
+
+## [1.3.11-alpha] - 2026-04-21
+
+### Breaking Change
+
+- replace AES encryption with AesGcm for improved security and performance in connection string encryption and decryption : this is a breaking change that requires existing encrypted connection strings in the database to be re-encrypted using the new AesGcm-based CryptoService implementation, as the encryption format and key management are updated for enhanced security.
+
+## [1.3.10-alpha] - 2026-04-20
+
+### Feature
+
+- **Custom SQL Tools (Low-Code Tool Plugin System)**: Administrators can now define domain-specific SQL operations (Query or DML) directly from the Admin Panel, exposing them as new MCP tools to the AI agent.
+- **Dynamic Parameter Injection**: Introduced `{{parameterName}}` syntax for custom tools, allowing the AI to pass context-aware arguments into pre-defined SQL statements.
+- **Admin UI Enhancements**: Added a dedicated management interface for creating, testing, and managing Custom SQL Tools.
+- **Documentation Refactoring**: Major overhaul of `README.md` with a high-speed aesthetic, improed information architecture, and integrated Admin Panel snapshots.
+
+## [1.3.9-alpha] - 2026-04-19
+
+### Security Issue Fix
+
+- Resource injection For ConnectString
+- Clear text storage of sensitive information
+- Exposure of private information
+- Log entries created from user input
+
+### Breaking Change
+
+- UI Change: Manual entry of ADO.NET connection strings is disabled in the UI.
+
+## [1.3.8-alpha] - 2026-04-18
+
+### Improvement
+
+- Remove unnecessary middleware to reduce performance consumption
+
+### Fix
+
+- Fix the issue where the dashboard is not displaying
+
+## [1.3.7-alpha] - 2026-04-16
+
+### Feature
+
+- `allowed Tools` For Dynamic Tool List
+- implement database connection testing feature 、 global provider support
+
+## [1.3.6-alpha] - 2026-04-16
+
+### Feature
+
+- `allowed Tools` Manage tool access for the API key : This feature allows administrators to specify which tools or API endpoints an issued API key has access to. By managing tool access at the API key level, you can enforce fine-grained permissions and restrict certain keys to only use specific functionalities of the MCP API, enhancing security and control over how the API is used.
+
+## [1.3.5-alpha] - 2026-04-16
+
+### Fix
+
+- Fix Where Condition IN/NOTIN
+
+## [1.3.4-alpha] - 2026-04-12
+
+### Breaking Change
+
+- remove `get_table_reference` tool from MCP API: this tool was rarely used and added complexity to the codebase, and its functionality can be achieved through a combination of `get_tables` and `get_columns` calls. Removing it simplifies the API and reduces maintenance overhead without significantly impacting usability.
+- Added support some new database providers: `SqlServer`, `Oracle`, and `FireBird`. The MCP API can now handle connections to these additional database types, expanding the range of supported databases for SQL query execution and metadata retrieval.
+- Added `execute_dml_safe` tool to MCP API: this new tool allows clients to execute DML statements (INSERT, UPDATE, DELETE) safely through the MCP API, with the same security guards and validation mechanisms as `execute_query_safe`. This expands the capabilities of the MCP API to support data modification operations in addition to query execution.
+
+## [1.3.3-alpha] - 2026-04-11
+
+### Refactor
+
+- Refactor SQL strategy classes and improve query handling
+
+## [1.3.2-alpha] - 2026-04-09
+
+### Bug Fix
+
+- Fixed MySQL case-insensitive string filters by avoiding unsupported `ILIKE` and using a compatible `LOWER(field) LIKE lower(pattern)` path.
+- Fixed `combineConditions` handling for `union all` by normalizing combine type values (`union all`, `union_all`, `unionall`).
+- Improved query error output strategy by database type, including PostgreSQL-specific guidance for `42P01` (relation/CTE reference not found).
+- Updated `get_tables` flow to require an explicit schema name so table discovery is deterministic across database providers.
+
+## [1.3.1-alpha] - 2026-04-08
+
+### Feature
+
+- form validation login and register
+
+## [1.3.0-alpha] - 2026-04-08
+
+### Breaking Change
+
+- implement ICryptoService for db connection string encryption and decryption : this is a breaking change that requires existing encrypted connection strings in the database to be re-encrypted using the new CryptoService implementation.
+
+## [1.2.0-alpha] - 2026-04-07
+
+### Refactor
+
+- module structure move
+
+### Security
+
+- enhance SQL query execution with security guards and aggregation validation
+
+## [1.1.1-alpha] - 2026-04-07
+
+### Bug Fix
+
+- Fixed a key-validation mapping issue where `SqlConnectionString` was not returned in `McpAccessKeyValidationResult`, which could cause MCP runtime database connection resolution to fail for valid keys.
+
+## [1.1.0-alpha] - 2026-04-06
+
+### Performance & Security
+
+- **Robust MCP Key Authentication Cache:** Implemented `IMemoryCache` with a SHA256 hashed cache-key and Striped Locking mechanism (`SemaphoreSlim`) to safely prevent cache stampede issues in high-concurrency environments while maintaining minimal memory overhead.
+- **Global IP-based Rate Limiting:** Simplified the rate limiting flow by removing per-key dynamic rate limit overrides. The MCP API now strictly relies on a global, IP-bucketed rate limiter configurable via `appsettings.json`, ensuring stable traffic control before authentication checks.
+- **Pre-serialized Error Responses:** Optimized overhead by returning pre-serialized byte arrays for frequent error responses (`401 Unauthorized`, `403 Forbidden`) during key evaluation.
+
+### Refactor
+
+- Stripped rate limit properties (`PermitLimitOverride`, `WindowSecondsOverride`, `QueueLimitOverride`) out of the database entity `McpAccessKey`, ViewModels, and the `McpAccessKeyService`.
+- Reordered ASP.NET Core middleware in the `/mcp` pipeline to execute rate limiting prior to identity validation.
+- Cleaned up the frontend UI (`index.vue`) by safely removing unused rate limiting fields and logic during API key issuance.
+
+## [1.0.0-alpha] - 2026-04-05
+
+### Feature
+
+- Initial release of hs-sql-agent backend and frontend modules.
