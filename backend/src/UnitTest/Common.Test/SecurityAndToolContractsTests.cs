@@ -46,7 +46,8 @@ public class SecurityAndToolContractsTests
         Assert.Contains(McpBuiltInTools.ExecuteQuerySql, McpBuiltInTools.DefaultNames.AsEnumerable());
         Assert.DoesNotContain(McpBuiltInTools.ExecuteDmlSql, McpBuiltInTools.DefaultNames.AsEnumerable());
         Assert.DoesNotContain(McpBuiltInTools.ExecuteDdlSql, McpBuiltInTools.DefaultNames.AsEnumerable());
-        Assert.Contains("GET_SCHEMAS", McpBuiltInTools.Names.AsEnumerable());
+        // Exercise the FrozenSet lookup comparer, not xUnit's default enumerable string comparison.
+        Assert.True(McpBuiltInTools.Names.Contains("GET_SCHEMAS"), "Tool lookup must be case-insensitive.");
     }
 
     [Fact]
