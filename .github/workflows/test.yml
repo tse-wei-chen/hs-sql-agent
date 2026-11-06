@@ -23,6 +23,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Audit test project ownership and evidence contracts
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_ci_test_evidence.py' -v
+          python3 .github/scripts/ci_test_evidence.py audit --root .
       - run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
 
   auth-test:
