@@ -19,7 +19,7 @@ COBERTURA = '<coverage lines-covered="{covered}" lines-valid="{valid}" line-rate
 
 def fake_evidence(path, *, total=2, executed=2, passed=2, failed=0,
                   not_executed=0, covered=3, valid=6):
-    path.mkdir(parents=True)
+    path.mkdir(parents=True, exist_ok=True)
     (path / "run.trx").write_text(
         TRX.format(total=total, executed=executed, passed=passed,
                    failed=failed, not_executed=not_executed),
