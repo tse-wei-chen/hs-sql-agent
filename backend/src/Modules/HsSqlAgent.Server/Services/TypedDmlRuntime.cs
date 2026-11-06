@@ -23,6 +23,9 @@ public sealed class TypedDmlRuntime(
     IDmlTargetExecutionFence? targetExecutionFence = null)
 {
     private const int MaxStatementsPerTransaction = 16;
+    // Direct approval sessions stay on the same process; durable recovery re-previews.
+    // A process-secret HMAC avoids exposing a guessable raw connection-string hash.
+    private static readonly byte[] PreviewConnectionBindingKey = RandomNumberGenerator.GetBytes(32);
     private static readonly IDmlPreviewTransactionFactory DriverNeutralPreviewTransactions =
         new ProviderDmlPreviewTransactionFactory();
 
@@ -201,7 +204,10 @@ public sealed class TypedDmlRuntime(
             cancellationToken,
             verifiedProfile.ServerVersionIdentity);
 
-        return new TypedDmlApprovalSession(plan, preview, verifiedProfile.ServerVersionIdentity);
+        return new TypedDmlApprovalSession(plan, preview, verifiedProfile.ServerVersionIdentity)
+        {
+            PreviewConnectionFingerprint = ComputePreviewConnectionFingerprint(provider.Type, connectionString)
+        };
     }
 
     public async Task<TypedDmlTransactionApprovalSession> PreviewTransactionAsync(
@@ -370,6 +376,8 @@ public sealed class TypedDmlRuntime(
             throw new InvalidOperationException(
                 "DML approval execution context changed after preview; request a new preview before committing.");
 
+        EnsureApprovedConnectionTarget(session.PreviewConnectionFingerprint, provider.Type, connectionString);
+
         if (currentApprovalContext.Provider != session.Plan.MutationCommand.TargetProvider
             || provider.Type != session.Plan.MutationCommand.TargetProvider)
             throw new InvalidOperationException("DML provider changed between preview and commit.");
@@ -444,6 +452,15 @@ public sealed class TypedDmlRuntime(
             || !string.Equals(expectedEvidenceFingerprint, session.Challenge.RowSetFingerprint, StringComparison.Ordinal)
             || total != session.Challenge.AffectedRows)
             throw new InvalidOperationException("DML transaction plan, order, or preview evidence changed after approval.");
+
+        var currentConnectionFingerprint = ComputePreviewConnectionFingerprint(provider.Type, connectionString);
+        if (session.Statements.Any(statement =>
+                string.IsNullOrWhiteSpace(statement.PreviewConnectionFingerprint)
+                || !string.Equals(
+                    statement.PreviewConnectionFingerprint, currentConnectionFingerprint,
+                    StringComparison.Ordinal)))
+            throw new InvalidOperationException(
+                "DML approved connection target changed after preview; request a new preview before committing.");
 
         foreach (var statement in session.Statements)
         {
@@ -555,6 +572,30 @@ public sealed class TypedDmlRuntime(
             $"The typed DML runtime does not support statement '{statement.GetType().Name}'.");
     }
 
+    private static string ComputePreviewConnectionFingerprint(
+        SqlAgentToolType provider, string connectionString)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        // Bind the provider and exact connection descriptor, not just Database/DataSource.
+        // Host, port, credentials, catalog or file path changes require fresh approval.
+        var material = "v1|" + FingerprintComponent(provider.ToString()) + "|" +
+            FingerprintComponent(connectionString);
+        return Convert.ToHexString(HMACSHA256.HashData(
+            PreviewConnectionBindingKey, Encoding.UTF8.GetBytes(material)));
+    }
+
+    private static void EnsureApprovedConnectionTarget(
+        string? expectedFingerprint, SqlAgentToolType provider, string connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(expectedFingerprint)
+            || !string.Equals(
+                expectedFingerprint,
+                ComputePreviewConnectionFingerprint(provider, connectionString),
+                StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "DML approved connection target changed after preview; request a new preview before committing.");
+    }
+
     internal static string ComputeApprovalContextFingerprint(DmlApprovalExecutionContext approvalContext)
     {
         ValidateApprovalContextFields(approvalContext);
@@ -602,7 +643,12 @@ public sealed class TypedDmlRuntime(
 public sealed record TypedDmlApprovalSession(
     ValidatedDmlPlan Plan,
     DmlPreview Preview,
-    string? VerifiedServerVersionIdentity = null);
+    string? VerifiedServerVersionIdentity = null)
+{
+    // Server-local proof; neither an MCP-supplied field nor a durable payload contract.
+    // Missing legacy proof is rejected before challenge consumption or DB access.
+    internal string? PreviewConnectionFingerprint { get; init; }
+}
 
 public sealed record TypedDmlTransactionApprovalSession(
     ImmutableArray<TypedDmlApprovalSession> Statements,
