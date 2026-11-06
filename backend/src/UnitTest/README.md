@@ -20,7 +20,7 @@ The `common-test`, `infrastructure-test`, `auth-test` and `admin-test` jobs
 run actual xUnit tests and collect both **TRX test counts** and **Coverlet
 Cobertura source-line coverage**. Each job uploads its own
 `test-evidence-<job>` Actions artifact containing `run.trx`, a
-`coverage.cobertura.xml` and a parsed `summary.json`.
+timestamped `coverage.cobertura.*.xml` and a parsed `summary.json`.
 
 The fail-closed `.github/scripts/ci_test_evidence.py` gate rejects missing or
 ambiguous reports, zero-test/skip-only suites, failed tests and zero measurable
