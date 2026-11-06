@@ -97,6 +97,33 @@ public sealed class TypedDmlSqliteApprovedConnectionTargetLiveTests
         });
     }
 
+    [Fact]
+    public async Task LegacyUnboundSession_CannotBypassPhysicalConnectionProof()
+    {
+        await WithIdenticalTargetsAsync(async (fileA, fileB, provider, runtime) =>
+        {
+            var parsed = await runtime.ParseDmlWithVerifiedRuntimeProfileAsync(
+                provider, fileA, "INSERT INTO main.users(id,name) VALUES (3,'Carol')",
+                SqlAgentToolType.Sqlite, TestContext.Current.CancellationToken);
+            var approved = await runtime.PreviewAsync(
+                provider, fileA, parsed, Policy(), AllowedTables, Context,
+                TestContext.Current.CancellationToken);
+            var legacy = approved with { PreviewConnectionFingerprint = null };
+
+            var denied = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                runtime.CommitAsync(provider, fileA, legacy, Policy(), AllowedTables,
+                    Context, TestContext.Current.CancellationToken));
+            Assert.Contains("connection", denied.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("1:Alice|2:Bob", await ReadRowsAsync(fileA));
+            Assert.Equal("1:Alice|2:Bob", await ReadRowsAsync(fileB));
+
+            var result = await runtime.CommitAsync(provider, fileA, approved, Policy(),
+                AllowedTables, Context, TestContext.Current.CancellationToken);
+            Assert.True(result.Committed);
+            Assert.Equal("1:Alice|2:Bob|3:Carol", await ReadRowsAsync(fileA));
+        });
+    }
+
     private static async Task WithIdenticalTargetsAsync(
         Func<string, string, SqliteProvider, TypedDmlRuntime, Task> test)
     {
