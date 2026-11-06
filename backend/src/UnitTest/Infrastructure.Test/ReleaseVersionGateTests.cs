@@ -80,6 +80,30 @@ public sealed class ReleaseVersionGateTests
         }
     }
 
+    [Fact]
+    public void PublishedV300AndCandidateV310_ChangelogEvidenceStaysInCorrectRelease()
+    {
+        var changelog = File.ReadAllText(Path.Combine(LocateRepository(), "CHANGELOG.md"));
+        var currentIndex = changelog.IndexOf("## [3.1.0] - Unreleased", StringComparison.Ordinal);
+        var publishedIndex = changelog.IndexOf("## [3.0.0] - 2026-10-25", StringComparison.Ordinal);
+
+        Assert.True(currentIndex >= 0 && publishedIndex > currentIndex,
+            "The already-published 3.0.0 entry must have a release date and follow the 3.1.0 candidate.");
+        var candidate = changelog[currentIndex..publishedIndex];
+        var published = changelog[publishedIndex..];
+
+        Assert.Contains("### G10/Q02 —", candidate, StringComparison.Ordinal);
+        Assert.Contains("### G9 / M09 —", candidate, StringComparison.Ordinal);
+        Assert.Contains("### SQL Core G1/G2", candidate, StringComparison.Ordinal);
+        Assert.Contains("### G4: SQLite native DDL", candidate, StringComparison.Ordinal);
+        Assert.DoesNotContain("(develop only)", candidate, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("### PostgreSQL old-worker cutover verification", published, StringComparison.Ordinal);
+        Assert.Contains("### SQL Server old-login cutover verifier", published, StringComparison.Ordinal);
+        Assert.DoesNotContain("### G9 / M09 —", published, StringComparison.Ordinal);
+        Assert.DoesNotContain("### G10/Q02 —", published, StringComparison.Ordinal);
+    }
+
     private static string LocateRepository()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
