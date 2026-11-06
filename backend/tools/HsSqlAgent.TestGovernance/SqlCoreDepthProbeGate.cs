@@ -55,9 +55,23 @@ public static class SqlCoreDepthProbeGate
 
         if (profile == "depth" || profile == "small-stack")
         {
+            Require(Int(report, "samples") >= 0 && Int(report, "crashesOrTimeouts") >= 0,
+                $"{profile}: missing observational report counters");
+            Require(profile != "depth" || Int(report, "failures") >= 0,
+                "Depth observations must retain failure counts");
+            Require(profile != "small-stack" || (Int(report, "resourceRejections") >= 0
+                    && Int(report, "unexpectedFailures") >= 0),
+                "Constrained-stack observations must retain resource rejection/failure counts");
             Console.WriteLine($"Observed {profile}: {observations.GetArrayLength()} diagnostic probes (observational only).");
             foreach (var sample in observations.EnumerateArray())
+            {
+                Require(Text(sample, "shape") is not null && Text(sample, "dialect") is not null
+                        && Int(sample, "depth") >= 0
+                        && sample.TryGetProperty("processExitCode", out var exit)
+                        && exit.ValueKind == JsonValueKind.Number && exit.TryGetInt32(out _),
+                    $"{profile}: missing observational worker identity or exit evidence");
                 Console.WriteLine($"  {Text(sample, "shape")} / {Text(sample, "dialect")} depth={Int(sample, "depth")}");
+            }
             return observations.GetArrayLength();
         }
         if (profile == "paging")
