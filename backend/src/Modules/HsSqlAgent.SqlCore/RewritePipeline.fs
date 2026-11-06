@@ -177,7 +177,12 @@ module internal RewritePipeline =
         let validated = RewriteQueryPipeline.validate (validate options) canonical
         let authorized =
             RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
-                RewriteQueryPipeline.authorize options.Policy.QueryRows validated)
+                let requirePostgresFunctionProof =
+                    Option.isSome options.AllowedTables
+                    && (match VerifiedTarget.runtime options.Target with
+                        | TargetRuntime.PostgreSqlRuntime -> true
+                        | _ -> false)
+                RewriteQueryPipeline.authorize options.Policy.QueryRows requirePostgresFunctionProof validated)
         RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
             RewriteQueryPipeline.render renderWithDiagnostic authorized)
 
