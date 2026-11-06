@@ -121,7 +121,7 @@ class SuiteOwnershipTests(unittest.TestCase):
                     f"  {job}:",
                     "    steps:",
                     "      - run: dotnet test --project backend/src/UnitTest/Common.Test/Common.Test.csproj "
-                    '--logger trx --collect:"XPlat Code Coverage" '
+                    '--report-xunit-trx --coverlet '
                     f"--results-directory artifacts/test-evidence/{job}",
                     "      - run: python3 .github/scripts/ci_test_evidence.py verify "
                     f"--directory artifacts/test-evidence/{job}",
