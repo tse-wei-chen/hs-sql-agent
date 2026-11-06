@@ -120,7 +120,14 @@ public sealed class SqlCorePairedReportGateTests
                 case "missing-stage":
                     ((JsonArray)first["Stages"]!).RemoveAt(0); break;
                 case "metric-invalid":
-                    ((JsonObject)((JsonArray)first["Stages"]!)[0]!)["MedianAllocatedBytes"] = -1; break;
+                {
+                    var deep = rows.Select(node => node!.AsObject())
+                        .First(row => row["Case"]!.GetValue<string>() == "query-derived-32");
+                    var validation = ((JsonArray)deep["Stages"]!).Select(node => node!.AsObject())
+                        .First(stage => stage["Name"]!.GetValue<string>() == "Validation");
+                    validation["MedianAllocatedBytes"] = -1;
+                    break;
+                }
                 case "zero-baseline":
                 {
                     var b = JsonNode.Parse(File.ReadAllText(ReportPath("base", 1)))!.AsObject();
