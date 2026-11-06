@@ -231,8 +231,11 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
                 ".= (LEFTARG = integer, RIGHTARG = integer, FUNCTION = " +
                 schema + ".leak_eq)");
 
+            // A one-connection pool with reset disabled makes the post-Host
+            // check observe the same physical PostgreSQL backend session.
             var shadowedConnection = fixture.ConnectionString +
-                ";Search Path=" + schema + ",pg_catalog,public";
+                ";Search Path=" + schema +
+                ",pg_catalog,public;Maximum Pool Size=1;No Reset On Close=true";
             await using (var direct = new NpgsqlConnection(shadowedConnection))
             {
                 await direct.OpenAsync(TestContext.Current.CancellationToken);
@@ -255,6 +258,17 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
             Assert.False(Convert.ToBoolean(Assert.Single(result.Rows)["secret_bit"]),
                 "Query resolved an attacker-owned equality operator that read excluded secrets.");
             Assert.Equal(before, await SnapshotAsync(schema));
+
+            // The Host must not leave its privileged catalog-first path in a
+            // pooled session after the transaction is rolled back.
+            await using (var restored = new NpgsqlConnection(shadowedConnection))
+            {
+                await restored.OpenAsync(TestContext.Current.CancellationToken);
+                await using var restoredCheck = new NpgsqlCommand(
+                    "SELECT 1::integer = 2::integer", restored);
+                Assert.True(Convert.ToBoolean(
+                    await restoredCheck.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+            }
         });
     }
 
