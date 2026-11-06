@@ -180,6 +180,23 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             await fence.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        // A connection may explicitly place an attacker-writable schema before
+        // pg_catalog. Such a schema can shadow built-in operators (including '='),
+        // causing approved SQL to execute a user function against excluded tables.
+        // Keep the caller's table search path after pg_catalog, but never permit
+        // it to override catalog operators/types during this one Query transaction.
+        // set_config(true) is transaction-local; every function below is schema-pinned,
+        // and no user-controlled string is interpolated into executable SQL text.
+        await using (var searchPathFence = connection.CreateCommand())
+        {
+            searchPathFence.Transaction = transaction;
+            searchPathFence.CommandText =
+                "SELECT pg_catalog.set_config('search_path', " +
+                "pg_catalog.concat('pg_catalog, ', pg_catalog.current_setting('search_path')), true)";
+            searchPathFence.CommandTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
+            await searchPathFence.ExecuteScalarAsync(cancellationToken);
+        }
+
         var execution = await QueryExecutor.ExecuteQueryInTransactionAsync(
             command, connection, timeoutSeconds, transaction, cancellationToken);
         await transaction.RollbackAsync(cancellationToken);

@@ -51,3 +51,37 @@ The read-only transaction protects PostgreSQL persisted changes even when the
 compiler supports a native opaque function name. It is **not** a general-purpose
 PostgreSQL sandbox (advisory locks and out-of-band effects require separate
 privilege/resource controls), nor is this a claimed live proof for other providers.
+
+
+## PostgreSQL operator search_path shadowing (G31)
+
+PostgreSQL resolves **operators as well as functions and types** through a
+configurable schema search path. A client connection that explicitly puts a
+writable schema before `pg_catalog` can select a user-defined `=(int4,int4)`
+over built-in integer equality even if all visible table sources are allowed.
+A SQL-language function behind that operator can read an excluded table in a
+READ ONLY transaction; the function-name policy alone cannot inspect or deny
+this hidden operator body.
+
+`ShadowedEqualityOperator_CannotLeakExcludedTableThroughApprovedQuery` is a
+physical PostgreSQL 16, first-party Host regression. The test creates the
+excluded-table-reading operator, independently verifies the overloaded
+operator resolves to TRUE under attacker-first search_path, then runs an MCP
+Query over two allowed aliases where ordinary integer equality must be FALSE.
+The original RED CI failed precisely on the forbidden secret-derived TRUE.
+It also checks snapshots and checks that a deliberately single-connection,
+no-pool-reset session retains its original path **after Host rollback**.
+
+GREEN fixes only the **existing Host Query execution transaction**. After
+`SET TRANSACTION READ ONLY`, it uses schema-qualified `pg_catalog` functions
+to transaction-locally prepend `pg_catalog` to the existing search_path
+before running compiled SQL. Existing relation path entries remain in order,
+so allowed non-system tables remain accessible; a rollback restores the
+original connection setting, including for pooled connections. No user SQL
+is interpolated into the Host's search-path command.
+
+This is **not** a proof of safety for arbitrary user-defined data types,
+operators with no pg_catalog equivalent, SQL inside functions, malicious
+SECURITY DEFINER code, out-of-band effects or relations hidden by an explicitly
+chosen schema path. Enforce least-privilege physical DB credentials and
+CREATE restrictions on schemas that Query sessions can resolve.
