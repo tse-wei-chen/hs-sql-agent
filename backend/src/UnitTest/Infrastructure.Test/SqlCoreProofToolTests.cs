@@ -49,8 +49,13 @@ public sealed class SqlCoreProofToolTests
     [Fact]
     public void CheckedInSqlCorpus_StillMatchesObservedSixProviderBaseline()
     {
-        var path = Path.Combine("backend", "src", "UnitTest", "SqlAgent.Test",
+        var relative = Path.Combine("backend", "src", "UnitTest", "SqlAgent.Test",
             "SyntaxCorpus", "sqlcore-coverage-manifest.json");
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, relative)))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var path = Path.Combine(root.FullName, relative);
         var report = JsonSerializer.SerializeToElement(SqlCorpusLedger.Build(path),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(4883, report.GetProperty("totalCases").GetInt32());
