@@ -135,6 +135,56 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
         });
     }
 
+    // A READ ONLY transaction prohibits mutation but cannot enforce the MCP table whitelist:
+    // PostgreSQL's native query_to_xml executes its argument as a separate SQL statement.
+    [Fact]
+    public async Task PgCatalogQueryToXml_CannotReadOutsideTableWhitelist()
+    {
+        await WithSchemaAsync(async schema =>
+        {
+            var hiddenSql = "SELECT secret FROM " + schema + ".secrets";
+            var directSql = "SELECT pg_catalog.query_to_xml('" + hiddenSql +
+                "', true, false, '')::text";
+            await using (var direct = new NpgsqlConnection(fixture.ConnectionString))
+            {
+                await direct.OpenAsync(TestContext.Current.CancellationToken);
+                await using var cmd = new NpgsqlCommand(directSql, direct);
+                var xml = (await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken))?.ToString();
+                Assert.Contains("SENTINEL_PRIVATE_VALUE", xml);
+            }
+
+            var before = await SnapshotAsync(schema);
+            var result = await Tool(schema).ExecuteQuerySql(
+                "SELECT pg_catalog.query_to_xml('" + hiddenSql +
+                "', true, false, '') AS leaked FROM " + schema + ".users WHERE id=1",
+                TestContext.Current.CancellationToken);
+            Assert.False(result.Success, "An opaque read-only SQL function bypassed the table whitelist.");
+            Assert.DoesNotContain("SENTINEL_PRIVATE_VALUE", result.ToString());
+            Assert.Equal(before, await SnapshotAsync(schema));
+        });
+    }
+
+    // STABLE read-only user functions also have privileged visibility to tables
+    // outside the SQL compiler's visible relation graph.
+    [Fact]
+    public async Task QualifiedSqlFunction_CannotReadOutsideTableWhitelist()
+    {
+        await WithSchemaAsync(async schema =>
+        {
+            await ExecuteAsync("CREATE FUNCTION " + schema +
+                ".leak_secret() RETURNS text LANGUAGE sql STABLE AS $ " +
+                "SELECT secret FROM " + schema + ".secrets WHERE id=1 $");
+            var before = await SnapshotAsync(schema);
+            var result = await Tool(schema).ExecuteQuerySql(
+                "SELECT " + schema + ".leak_secret() AS leaked FROM " +
+                schema + ".users WHERE id=1",
+                TestContext.Current.CancellationToken);
+            Assert.False(result.Success, "A qualified read-only UDF bypassed the table whitelist.");
+            Assert.DoesNotContain("SENTINEL_PRIVATE_VALUE", result.ToString());
+            Assert.Equal(before, await SnapshotAsync(schema));
+        });
+    }
+
     [Fact]
     public async Task BoundInjectionShapedLiteral_IsQueryableWithoutExecutingPayload()
     {
