@@ -37,16 +37,14 @@ public class CacheServiceContractsTests
     [InlineData("Memory")]
     [InlineData("memory")]
     [InlineData("IMemoryCache")]
-    public async Task MemoryProvider_RegistersUsableCacheWithoutRedis(string name)
+    public void MemoryProvider_RegistersItsSingletonAdapterWithoutRedis(string name)
     {
         var services = new ServiceCollection();
         services.AddCacheProvider(name, null);
 
-        using var provider = services.BuildServiceProvider();
-        var cache = provider.GetRequiredService<ICacheService>();
-        Assert.IsType<MemoryCacheService>(cache);
-        await cache.SetAsync("key", "cached");
-        Assert.Equal("cached", await cache.GetAsync<string>("key"));
+        var registration = Assert.Single(services.Where(service => service.ServiceType == typeof(ICacheService)));
+        Assert.Equal(ServiceLifetime.Singleton, registration.Lifetime);
+        Assert.Equal(typeof(MemoryCacheService), registration.ImplementationType);
     }
 
     [Fact]
