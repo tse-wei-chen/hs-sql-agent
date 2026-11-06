@@ -2,6 +2,12 @@
 
 ## [3.1.0] - Unreleased
 
+### Host Query — PostgreSQL built-in operator resolution fence
+
+- Fix a physical PostgreSQL 16 MCP Query privilege-boundary bypass: a writable schema placed before `pg_catalog` in connection `search_path` can shadow built-in `=(integer,integer)` with a SQL function that reads a table excluded by the MCP whitelist. A real RED test demonstrated that a whitelisted JOIN returned a secret-derived boolean under this path; the earlier READ ONLY transaction and named-function policy did not catch it.
+- Under the existing PostgreSQL Query transaction, put `pg_catalog` first in the transaction-local `search_path` before executing the compiled command while retaining the previous relation schema search order behind it. The rollback restores the original search path, verified with a single-connection Npgsql pool where connection reset is disabled.
+- No changes to F# parser/AST, other five providers, Query permissions, DML/DDL approval or public API; tests cover the real operator override, normal equality result, physical snapshot and pooled session restoration. This does not prove safety for arbitrary custom operators/types with no catalog implementation; use restricted database roles and schema CREATE privileges.
+
 ### Host Query — PostgreSQL physical read-only execution fence
 
 - Correct the verified PostgreSQL Query tool vulnerability where an allowed SELECT calling a native VOLATILE function could UPDATE physical table rows. A real PostgreSQL 16 Testcontainers RED run demonstrated the mutation through `SqlAgentTool.ExecuteQuerySql`.
