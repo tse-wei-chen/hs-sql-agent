@@ -33,6 +33,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Set up .NET for shared release-version gate
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Verify GitHub Release tag matches stable package version and changelog
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- release-version --root . --tag "$RELEASE_TAG"
+
       # Install the cosign tool
       # https://github.com/sigstore/cosign-installer
       - name: Install cosign
