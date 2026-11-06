@@ -25,6 +25,41 @@ public partial class SqlAgentTool(
     MySqlDdlRuntime? mySqlDdlRuntime = null,
     OracleDdlRuntime? oracleDdlRuntime = null)
 {
+    // Preserve the public v3.0.0 CLR constructor for already-compiled .NET consumers.
+    // The new DDL runtimes remain opt-in: this legacy entry point never injects
+    // or authorizes them and delegates to the same current implementation.
+    public SqlAgentTool(
+        IHttpContextAccessor httpContextAccessor,
+        ISqlProviderFactory sqlProviderFactory,
+        IAuditService auditService,
+        IDbSemanticService semanticService,
+        ISecurityPolicyRuntimeState securityPolicyRuntimeState,
+        ISqlExecutionConcurrencyLimiter sqlConcurrencyLimiter,
+        ITypedQueryRuntime? typedQueryRuntime,
+        TypedDmlRuntime? typedDmlRuntime,
+        IDmlApprovalProvider? dmlApprovalProvider,
+        IDmlApprovalCompletionSink? dmlApprovalCompletionSink)
+        : this(
+            httpContextAccessor,
+            sqlProviderFactory,
+            auditService,
+            semanticService,
+            securityPolicyRuntimeState,
+            sqlConcurrencyLimiter,
+            typedQueryRuntime,
+            typedDmlRuntime,
+            dmlApprovalProvider,
+            dmlApprovalCompletionSink,
+            postgresDdlRuntime: null,
+            ddlApprovalProvider: null,
+            sqliteDdlRuntime: null,
+            sqlServerDdlRuntime: null,
+            firebirdDdlRuntime: null,
+            mySqlDdlRuntime: null,
+            oracleDdlRuntime: null)
+    {
+    }
+
     private readonly IHttpContextAccessor _httpContextAccessor = httpContextAccessor;
     private readonly ISqlProviderFactory _sqlProviderFactory = sqlProviderFactory;
     private readonly IAuditService _auditService = auditService;
