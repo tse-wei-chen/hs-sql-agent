@@ -2,30 +2,43 @@ import { hasPermissionKey, type PermissionGrant } from "@/lib/permissions"
 
 export default defineNuxtRouteMiddleware((to, _from) => {
   if (import.meta.server) return;
-  const token = window.localStorage.getItem("accessToken");
-  const isLogin = !!token;
+
   const publicRoutes = ["/login", "/sign-up", "/forgot-password", "/reset-password", "/sso-callback", "/mfa", "/403"];
-  if (!isLogin && !publicRoutes.includes(to.path)) {
-    return navigateTo("/login");
-  }
-  if (isLogin && to.path === "/") {
-    return navigateTo("/home");
-  }
-  if (isLogin && publicRoutes.includes(to.path)) {
+  const token = window.localStorage.getItem("accessToken");
+
+  if (!token) {
+    if (!publicRoutes.includes(to.path)) return navigateTo("/login");
     return;
   }
 
+  // Only use locally decoded claims to guide navigation. The server is still
+  // responsible for authenticating and authorizing every API request.
+  let claims: Record<string, unknown>;
   try {
-    const payloadPart = token?.split(".")[1];
-    const payload = payloadPart ? JSON.parse(atob(payloadPart.replace(/-/g, "+").replace(/_/g, "/"))) : null;
-    if (payload?.password_change_required === "true" && to.path !== "/account") {
-      return navigateTo("/account");
+    const segments = token.split(".");
+    if (segments.length !== 3 || !segments[1]) throw new Error("Malformed token");
+    const parsed: unknown = JSON.parse(atob(segments[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Malformed token payload");
     }
-    if (payload?.mfa_enrollment_required === "true" && to.path !== "/account") {
-      return navigateTo("/account");
-    }
+    claims = parsed as Record<string, unknown>;
   } catch {
+    // Keep recovery/authentication routes reachable even if stale local
+    // credentials cannot be decoded; never bounce /login back to itself.
+    if (publicRoutes.includes(to.path)) return;
     return navigateTo("/login");
+  }
+
+  if (to.path === "/" || to.path === "/login" || to.path === "/sign-up") {
+    return navigateTo("/home");
+  }
+  if (publicRoutes.includes(to.path)) return;
+
+  if (claims.password_change_required === "true" && to.path !== "/account") {
+    return navigateTo("/account");
+  }
+  if (claims.mfa_enrollment_required === "true" && to.path !== "/account") {
+    return navigateTo("/account");
   }
 
   const required = to.meta.permission as string | undefined;
