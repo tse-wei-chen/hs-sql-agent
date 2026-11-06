@@ -84,8 +84,8 @@ public static class SqlCoreCodeDelta
         var lines = new List<string>
         {
             "## SqlCore PR code delta (source lines, not performance)",
-            $"Base: \`{report.BaseCommit}\`",
-            $"Head: \`{report.HeadCommit}\`",
+            $"Base: `{report.BaseCommit}`",
+            $"Head: `{report.HeadCommit}`",
             "",
             "| Category | Added | Deleted | Net | Files |",
             "|---|---:|---:|---:|---:|",
