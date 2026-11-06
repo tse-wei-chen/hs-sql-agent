@@ -12,7 +12,7 @@ static string Option(string[] args, string key, string? fallback = null)
 try
 {
     if (args.Length == 0)
-        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi|perf-compare|code-delta|release-version (see workflow for options)");
+        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi|perf-compare|code-delta|release-version|depth-probe|paired-report (see workflow for options)");
 
     var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
     switch (args[0])
@@ -94,6 +94,20 @@ try
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(target))!);
             File.WriteAllText(target, JsonSerializer.Serialize(result, options) + "\n");
             Console.WriteLine(SqlCoreCodeDelta.Markdown(result));
+            break;
+        }
+        case "depth-probe":
+        {
+            var profile = Option(args, "--profile");
+            var path = Option(args, "--file");
+            Console.WriteLine($"Depth-probe gate: {SqlCoreDepthProbeGate.Verify(profile, path)} observations validated.");
+            break;
+        }
+        case "paired-report":
+        {
+            var profile = Option(args, "--profile");
+            var directory = Option(args, "--directory");
+            Console.WriteLine($"Validated {SqlCorePairedReportGate.Verify(profile, directory)} paired {profile} workloads.");
             break;
         }
         default:

@@ -35,10 +35,16 @@ needed for these gates.
 **Coverage numbers are intentionally limited to those four instrumented
 offline suites.** They are *not* combined across filtered SQL jobs, do not
 include physical database integrations, and are **not the total solution
-coverage**. The existing `sqlcore_coverage_ledger.py` measures observed SQL
+coverage**. The native `HsSqlAgent.TestGovernance sql-corpus` command measures observed SQL
 grammar corpus contracts, **not CLR/F# line or branch coverage**. Never
 treat a syntax case count as execution coverage. Full CI remains the owner of
 provider parity, approvals, SQL grammar and resource/proof tests.
+
+
+All repository-owned CI proof tools now use .NET 10/C#, including deep
+SQL depth/projection/resource validation and the paired SqlCore benchmark
+reports. The `infrastructure-test` job refuses new tracked `.py` files
+or Python interpreter/heredoc calls in GitHub Actions. See Issue #569.
 
 To inspect an actual baseline, open the `Tests` workflow run, then its four
 `test-evidence-*` artifacts and the GitHub Step Summary. Missing artifacts or

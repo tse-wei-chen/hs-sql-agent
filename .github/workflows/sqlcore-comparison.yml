@@ -84,39 +84,7 @@ jobs:
                 --script-analysis --iterations 120 --warmup 24 --output "artifacts/script-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          samples = {side: [] for side in ("base", "head")}
-          for side in samples:
-              for run in range(1, 4):
-                  report = json.loads((root / f"script-{side}-{run}.json").read_text())
-                  rows = {(x["Provider"], x["Case"]): x for x in report["results"]}
-                  assert len(rows) == 12, (side, run, "Expected six dialects x two Script workloads")
-                  samples[side].append(rows)
-          keys = sorted(samples["base"][0])
-          lines = ["### Script analysis reuse (median of 3 same-runner rounds)",
-                   "| Dialect / workload | Candidate/base allocation | Candidate/base mean time |",
-                   "|---|---:|---:|"]
-          for key in keys:
-              old = [run[key] for run in samples["base"]]
-              new = [run[key] for run in samples["head"]]
-              assert len({r["OutputDigest"] for r in old + new}) == 1, (key, "Script result parity drift")
-              ratios = []
-              for metric in ("MeanAllocatedBytes", "MeanMicroseconds"):
-                  base = statistics.median(r[metric] for r in old)
-                  head = statistics.median(r[metric] for r in new)
-                  assert base > 0 and head > 0, (key, metric, base, head)
-                  ratios.append(f"{head/base:.3f}x")
-              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
-          output = "\n".join(lines)
-          print(output)
-          with open("artifacts/script-comparison.md", "w") as file:
-              file.write(output + "\n")
-          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as file:
-              file.write(output + "\n")
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile script --directory artifacts
       - name: Compare dense Virtual Catalog updates with identical six-dialect Scripts
         shell: bash
         env:
@@ -130,37 +98,7 @@ jobs:
                 --catalog-stress --iterations 16 --warmup 4 --output "artifacts/catalog-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, os, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          samples = {side: [] for side in ("base", "head")}
-          for side in samples:
-              for round in range(1, 4):
-                  data = json.loads((root / f"catalog-{side}-{round}.json").read_text())
-                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
-                  assert len(rows) == 12, (side, round, "Expected six dialects x two table counts")
-                  samples[side].append(rows)
-          lines = ["### Virtual Catalog stress comparison (median of three paired runs)",
-                   "| Dialect / workload | Candidate/base allocated | Candidate/base mean time |",
-                   "|---|---:|---:|"]
-          for key in sorted(samples["base"][0]):
-              old = [round[key] for round in samples["base"]]
-              new = [round[key] for round in samples["head"]]
-              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "Catalog analysis output changed")
-              ratios = []
-              for field in ("MeanAllocatedBytes", "MeanMicroseconds"):
-                  a = statistics.median(row[field] for row in old)
-                  b = statistics.median(row[field] for row in new)
-                  assert a > 0 and b > 0
-                  ratios.append(f"{b/a:.3f}x")
-              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
-          report = "\n".join(lines) + "\n"
-          print(report)
-          (root / "catalog-comparison.md").write_text(report)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
-              file.write(report)
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile catalog --directory artifacts
       - name: Compare exact Catalog lookup cost on 96 and 256 table snapshots
         shell: bash
         env:
@@ -174,38 +112,7 @@ jobs:
                 --catalog-lookup --iterations 150 --warmup 20 --output "artifacts/catalog-lookup-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, os, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          measurements = {}
-          for side in ("base", "head"):
-              measurements[side] = []
-              for run in (1, 2, 3):
-                  data = json.loads((root / f"catalog-lookup-{side}-{run}.json").read_text())
-                  rows = {r["Case"]: r for r in data["results"]}
-                  assert set(rows) == {"lookup-96", "lookup-256"}, (side, run, set(rows))
-                  measurements[side].append(rows)
-          lines = ["### Catalog lookup microbenchmark (512 exact probes, median of 3 paired runs)",
-                   "| Catalog | Candidate/base allocation | Candidate/base mean time |",
-                   "|---|---:|---:|"]
-          for case in ("lookup-96", "lookup-256"):
-              previous = [item[case] for item in measurements["base"]]
-              candidate = [item[case] for item in measurements["head"]]
-              assert len({item["OutputDigest"] for item in previous + candidate}) == 1, case
-              ratios = []
-              for measure in ("MeanAllocatedBytes", "MeanMicroseconds"):
-                  base = statistics.median(item[measure] for item in previous)
-                  head = statistics.median(item[measure] for item in candidate)
-                  assert base > 0 and head >= 0, (case, measure, base, head)
-                  ratios.append(f"{head / base:.3f}x")
-              lines.append(f"| {case} tables | {ratios[0]} | {ratios[1]} |")
-          report = "\n".join(lines) + "\n"
-          print(report)
-          (root / "catalog-lookup-comparison.md").write_text(report)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
-              output.write(report)
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile catalog-lookup --directory artifacts
       - name: Compare shared Name Type Catalog projection against exact develop baseline
         shell: bash
         env:
@@ -219,38 +126,7 @@ jobs:
                 --catalog-binding-stress --iterations 12 --warmup 3 --output "artifacts/binding-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, os, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          results = {}
-          for revision in ("base", "head"):
-              results[revision] = []
-              for run in (1, 2, 3):
-                  data = json.loads((root / f"binding-{revision}-{run}.json").read_text())
-                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
-                  assert len(rows) == 12, (revision, run, "six dialects x 24/96-table binding workloads")
-                  results[revision].append(rows)
-          lines = ["### Name/Type Binding shared Virtual Catalog projection (3 paired rounds)",
-                   "| Dialect / workload | Candidate/base allocation | Candidate/base mean latency |",
-                   "|---|---:|---:|"]
-          for key in sorted(results["base"][0]):
-              old = [round[key] for round in results["base"]]
-              new = [round[key] for round in results["head"]]
-              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "Analysis parity drift")
-              ratios = []
-              for metric in ("MeanAllocatedBytes", "MeanMicroseconds"):
-                  a = statistics.median(row[metric] for row in old)
-                  b = statistics.median(row[metric] for row in new)
-                  assert a > 0 and b >= 0, (key, metric, a, b)
-                  ratios.append(f"{b/a:.3f}x")
-              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
-          report = "\n".join(lines) + "\n"
-          print(report)
-          (root / "catalog-binding-comparison.md").write_text(report)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as file:
-              file.write(report)
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile binding --directory artifacts
       - name: Compare proven reverse View cascade closure on identical base/head
         shell: bash
         env:
@@ -264,38 +140,7 @@ jobs:
                 --view-cascade-stress --iterations 30 --warmup 5 --output "artifacts/view-cascade-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, os, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          samples = {}
-          for side in ("base", "head"):
-              samples[side] = []
-              for round in (1, 2, 3):
-                  rows = json.loads((root / f"view-cascade-{side}-{round}.json").read_text())["results"]
-                  keyed = {(row["Provider"], row["Case"]): row for row in rows}
-                  assert set(keyed) == {("Postgres", "cascade-24"), ("Postgres", "cascade-48")}, (side, round, keyed)
-                  samples[side].append(keyed)
-          lines = ["### Proven reversed View chain DROP TABLE CASCADE (3 paired rounds)",
-                   "| Chain depth | Candidate/base allocations | Candidate/base mean latency |",
-                   "|---|---:|---:|"]
-          for key in sorted(samples["base"][0]):
-              old = [round[key] for round in samples["base"]]
-              new = [round[key] for round in samples["head"]]
-              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "View cascade order/diagnostic drift")
-              ratios = []
-              for field in ("MeanAllocatedBytes", "MeanMicroseconds"):
-                  a = statistics.median(row[field] for row in old)
-                  b = statistics.median(row[field] for row in new)
-                  assert a > 0 and b > 0, (key, field, a, b)
-                  ratios.append(f"{b/a:.3f}x")
-              lines.append(f"| {key[1]} | {ratios[0]} | {ratios[1]} |")
-          report = "\n".join(lines) + "\n"
-          print(report)
-          (root / "view-cascade-comparison.md").write_text(report)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
-              output.write(report)
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile view-cascade --directory artifacts
       - name: Compare six-provider Normalization AST walks on proven source capabilities
         shell: bash
         env:
@@ -309,43 +154,7 @@ jobs:
                 --stage-profile --iterations 12 --warmup 4 --output "artifacts/regex-stage-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, os, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          samples = {}
-          for side in ("base", "head"):
-              samples[side] = []
-              for round in (1, 2, 3):
-                  data = json.loads((root / f"regex-stage-{side}-{round}.json").read_text())
-                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
-                  assert len(rows) == 48, (side, round, "six dialects x eight existing SQL shapes")
-                  samples[side].append(rows)
-          lines = ["### Proven source Regex stage fast-path (three paired rounds)",
-                   "| Provider / deep AST | Normalization allocation candidate/base | Normalization latency candidate/base |",
-                   "|---|---:|---:|"]
-          for key in sorted(samples["base"][0]):
-              old = [sample[key] for sample in samples["base"]]
-              new = [sample[key] for sample in samples["head"]]
-              assert len({row["OutputDigest"] for row in old + new}) == 1, (key, "Compile digest mismatch")
-              stages = lambda row: {stage["Name"]: stage for stage in row["Stages"]}
-              assert all(set(stages(row)) == set(stages(old[0])) for row in old + new), key
-              if key[1] not in ("query-derived-32", "query-scalar-32"):
-                  continue
-              ratios = []
-              for metric in ("MedianAllocatedBytes", "MedianMicroseconds"):
-                  before = statistics.median(stages(row)["Normalization"][metric] for row in old)
-                  after = statistics.median(stages(row)["Normalization"][metric] for row in new)
-                  assert before > 0 and after >= 0, (key, metric, before, after)
-                  ratios.append(f"{after/before:.3f}x")
-              lines.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
-          assert len(lines) == 15, len(lines)
-          report = "\n".join(lines) + "\n"
-          print(report)
-          (root / "regex-normalization-comparison.md").write_text(report)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
-              output.write(report)
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile normalization --directory artifacts
       - name: Compare six-provider Validation proof walks on identical 48-case corpus
         shell: bash
         env:
@@ -359,46 +168,7 @@ jobs:
                 --stage-profile --iterations 12 --warmup 4 --output "artifacts/validation-stage-$revision-$round.json"
             done
           done
-          python3 - <<'PY'
-          import json, os, statistics
-          from pathlib import Path
-          root = Path("artifacts")
-          runs = {}
-          for side in ("base", "head"):
-              runs[side] = []
-              for round in (1, 2, 3):
-                  data = json.loads((root / f"validation-stage-{side}-{round}.json").read_text())
-                  rows = {(row["Provider"], row["Case"]): row for row in data["results"]}
-                  assert len(rows) == 48, (side, round, "six providers x eight cases")
-                  runs[side].append(rows)
-          rows_out = ["### Fully proven Filter + Join validation AST fast-path (three paired rounds)",
-                      "| Dialect / deep AST | Validation allocations candidate/base | Validation time candidate/base |",
-                      "|---|---:|---:|"]
-          keys = set(runs["base"][0])
-          for side in ("base", "head"):
-              assert all(set(one) == keys for one in runs[side])
-          for key in sorted(keys):
-              old = [one[key] for one in runs["base"]]
-              new = [one[key] for one in runs["head"]]
-              assert len({one["OutputDigest"] for one in old + new}) == 1, (key, "Output parity")
-              stages = lambda row: {s["Name"]: s for s in row["Stages"]}
-              assert all(set(stages(row)) == set(stages(old[0])) for row in old + new), key
-              if key[1] not in ("query-derived-32", "query-scalar-32"):
-                  continue
-              ratios = []
-              for metric in ("MedianAllocatedBytes", "MedianMicroseconds"):
-                  before = statistics.median(stages(row)["Validation"][metric] for row in old)
-                  after = statistics.median(stages(row)["Validation"][metric] for row in new)
-                  assert before > 0 and after >= 0, (key, metric, before, after)
-                  ratios.append(f"{after/before:.3f}x")
-              rows_out.append(f"| {key[0]} / {key[1]} | {ratios[0]} | {ratios[1]} |")
-          assert len(rows_out) == 15, len(rows_out)
-          report = "\n".join(rows_out) + "\n"
-          print(report)
-          (root / "validation-fastpath-comparison.md").write_text(report)
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
-              output.write(report)
-          PY
+          dotnet run --no-build --project head/backend/tools/HsSqlAgent.TestGovernance -- paired-report --profile validation --directory artifacts
       - name: Enforce full corpus, output parity and broad regression ceilings
         run: dotnet run --project head/backend/tools/HsSqlAgent.TestGovernance -- perf-compare --directory artifacts
       - uses: actions/upload-artifact@v4
