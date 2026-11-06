@@ -30,7 +30,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/common-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/common-test --suite Common.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test --suite Common.Test
       - name: Upload Common.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -52,8 +52,7 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Audit test project ownership and evidence contracts
         run: |
-          python3 -m unittest discover -s .github/scripts -p 'test_ci_test_evidence.py' -v
-          python3 .github/scripts/ci_test_evidence.py audit --root .
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
       - name: Run Infrastructure.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
@@ -61,7 +60,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/infrastructure-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/infrastructure-test --suite Infrastructure.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test --suite Infrastructure.Test
       - name: Upload Infrastructure.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -88,7 +87,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/auth-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/auth-test --suite Auth.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test --suite Auth.Test
       - name: Upload Auth.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -115,7 +114,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/admin-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: python3 .github/scripts/ci_test_evidence.py verify --directory artifacts/test-evidence/admin-test --suite Admin.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test --suite Admin.Test
       - name: Upload Admin.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -137,8 +136,7 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Guard domain-organized test layout
         run: |
-          python3 -m unittest discover -s .github/scripts -p 'test_test_suite_layout.py' -v
-          python3 .github/scripts/verify_test_suite_layout.py --check .
+          dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
       - name: Verify released v2.0.6 Admin Store migration baseline is immutable
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh

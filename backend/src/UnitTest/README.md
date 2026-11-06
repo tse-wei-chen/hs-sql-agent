@@ -22,13 +22,15 @@ Cobertura source-line coverage**. Each job uploads its own
 `test-evidence-<job>` Actions artifact containing `run.trx`, a
 timestamped `coverage.cobertura.*.xml` and a parsed `summary.json`.
 
-The fail-closed `.github/scripts/ci_test_evidence.py` gate rejects missing or
-ambiguous reports, zero-test/skip-only suites, failed tests and zero measurable
+The fail-closed **.NET 10 C#** tool
+`backend/tools/HsSqlAgent.TestGovernance` rejects missing or ambiguous
+reports, zero-test/skip-only suites, failed tests and zero measurable
 production lines. It also checks that **every** backend test project has a
-`dotnet test --project` invocation in CI, and rejects placeholder
-`Assert.True(true)` assertions. Its own parser and failure behavior are
-covered by `test_ci_test_evidence.py` and executed before the infrastructure
-test job.
+`dotnet test --project` invocation in CI, rejects placeholder
+`Assert.True(true)` assertions, and prevents legacy flat test directories.
+Its contract is covered by actual xUnit tests in
+`Infrastructure.Test/TestGovernanceContractsTests.cs`; no Python runtime is
+needed for these gates.
 
 **Coverage numbers are intentionally limited to those four instrumented
 offline suites.** They are *not* combined across filtered SQL jobs, do not
@@ -95,10 +97,9 @@ handler tests remain under `Authorization/`.
 ### Commands
 
 ```bash
-python3 -m unittest discover -s .github/scripts -p 'test_test_suite_layout.py' -v
-python3 .github/scripts/verify_test_suite_layout.py --check .
-python3 -m unittest discover -s .github/scripts -p 'test_ci_test_evidence.py' -v
-python3 .github/scripts/ci_test_evidence.py audit --root .
+dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
+dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
+dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
 dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
 dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
 ```
