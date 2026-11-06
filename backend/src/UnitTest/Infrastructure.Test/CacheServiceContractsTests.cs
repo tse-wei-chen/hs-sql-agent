@@ -42,7 +42,7 @@ public class CacheServiceContractsTests
         var services = new ServiceCollection();
         services.AddCacheProvider(name, null);
 
-        var registration = Assert.Single(services.Where(service => service.ServiceType == typeof(ICacheService)));
+        var registration = Assert.Single(services, service => service.ServiceType == typeof(ICacheService));
         Assert.Equal(ServiceLifetime.Singleton, registration.Lifetime);
         Assert.Equal(typeof(MemoryCacheService), registration.ImplementationType);
     }
