@@ -12,7 +12,7 @@ static string Option(string[] args, string key, string? fallback = null)
 try
 {
     if (args.Length == 0)
-        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi (see workflow for options)");
+        throw new GovernanceException("Usage: audit|layout|verify|sql-corpus|stage-profile|admin-openapi|perf-compare|code-delta (see workflow for options)");
 
     var options = new JsonSerializerOptions(JsonSerializerDefaults.Web) { WriteIndented = true };
     switch (args[0])
@@ -72,6 +72,25 @@ try
         {
             var count = AdminOpenApiProof.Verify(Option(args, "--file"));
             Console.WriteLine($"Verified {count} Admin REST operations, typed contracts and credential metadata.");
+            break;
+        }
+        case "perf-compare":
+        {
+            var folder = Option(args, "--directory");
+            var report = SqlCorePerfComparison.Compare(folder);
+            Console.WriteLine($"Verified six-provider, 48-workload three-pair benchmark baseline: {folder}");
+            break;
+        }
+        case "code-delta":
+        {
+            var repo = Option(args, "--repo");
+            var baseline = Option(args, "--base");
+            var candidate = Option(args, "--head");
+            var target = Option(args, "--output");
+            var result = SqlCoreCodeDelta.Summarize(repo, baseline, candidate);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(target))!);
+            File.WriteAllText(target, JsonSerializer.Serialize(result, options) + "\n");
+            Console.WriteLine(SqlCoreCodeDelta.Markdown(result));
             break;
         }
         default:
