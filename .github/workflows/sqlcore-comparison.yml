@@ -31,7 +31,6 @@ jobs:
         run: |
           python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_perf_comparison.py
           python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_code_delta.py
-          python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_stage_profile.py
       - name: Use identical benchmark workload against both compiler revisions
         shell: bash
         run: |
@@ -59,7 +58,7 @@ jobs:
         shell: bash
         run: |
           dotnet run -c Release --no-build --project head/backend/benchmarks/HsSqlAgent.SqlCore.Benchmarks -- --stage-profile --iterations 5 --warmup 3 --output artifacts/stage-profile.json
-          python3 head/.github/scripts/verify_sqlcore_stage_profile.py artifacts/stage-profile.json
+          dotnet run --project head/backend/tools/HsSqlAgent.TestGovernance -- stage-profile --file artifacts/stage-profile.json
       - name: Run three interleaved pairs on the same runner and runtime
         shell: bash
         env:
