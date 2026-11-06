@@ -27,10 +27,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify comparator and code-delta classification contracts
-        run: |
-          python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_perf_comparison.py
-          python3 -m unittest discover -s head/.github/scripts -p test_sqlcore_code_delta.py
+      - name: Verify native SQL proof/comparator and code-delta contracts
+        working-directory: head
+        run: dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj --filter 'FullyQualifiedName~SqlCoreProofToolTests|FullyQualifiedName~SqlCoreComparatorProofTests'
       - name: Use identical benchmark workload against both compiler revisions
         shell: bash
         run: |
@@ -53,7 +52,7 @@ jobs:
           # Checkout defaults to shallow HEAD; fetch only the exact baseline,
           # never the full repository history, and compare committed content.
           git -C head fetch --no-tags --depth=1 origin "$base_sha"
-          python3 head/.github/scripts/sqlcore_code_delta.py head "$base_sha" "$head_sha" artifacts/code-delta.json | tee -a "$GITHUB_STEP_SUMMARY"
+          dotnet run --project head/backend/tools/HsSqlAgent.TestGovernance -- code-delta --repo head --base "$base_sha" --head "$head_sha" --output artifacts/code-delta.json | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Profile the existing six-provider SQL corpus by compiler stage
         shell: bash
         run: |
@@ -401,7 +400,7 @@ jobs:
               output.write(report)
           PY
       - name: Enforce full corpus, output parity and broad regression ceilings
-        run: python3 head/.github/scripts/compare-sqlcore-perf.py artifacts
+        run: dotnet run --project head/backend/tools/HsSqlAgent.TestGovernance -- perf-compare --directory artifacts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
