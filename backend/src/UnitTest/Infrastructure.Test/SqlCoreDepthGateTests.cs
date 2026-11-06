@@ -70,6 +70,16 @@ public sealed class SqlCoreDepthGateTests
         Assert.Contains(message, error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ObservationalReports_StillRequireActualCountersAndWorkerIdentities()
+    {
+        using var f = new ProbeFixture("small-stack", 2);
+        f.Break("missing-aggregate");
+        var error = Assert.Throws<GovernanceException>(
+            () => SqlCoreDepthProbeGate.Verify("small-stack", f.Path));
+        Assert.Contains("resource rejection", error.Message);
+    }
+
     private sealed class ProbeFixture : IDisposable
     {
         private readonly JsonObject _root;
@@ -104,6 +114,7 @@ public sealed class SqlCoreDepthGateTests
                 ["failures"] = 0,
                 ["crashesOrTimeouts"] = 0,
                 ["resourceRejections"] = 0,
+                ["unexpectedFailures"] = 0,
                 ["observations"] = observations,
             };
             Save();
@@ -118,6 +129,7 @@ public sealed class SqlCoreDepthGateTests
             switch (mutation)
             {
                 case "resourceRejections": _root["resourceRejections"] = 1; break;
+                case "missing-aggregate": _root.Remove("unexpectedFailures"); break;
                 case "worker-failed": worker["success"] = false; break;
                 case "missing-type":
                     for (var i = phases.Count - 1; i >= 0; i--)
