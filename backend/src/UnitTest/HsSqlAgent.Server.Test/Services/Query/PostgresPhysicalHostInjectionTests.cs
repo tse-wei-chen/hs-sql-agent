@@ -186,6 +186,37 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
     }
 
     [Fact]
+    public async Task WhitelistedBuiltin_ResolvesToPgCatalogEvenWhenSearchPathShadowsLower()
+    {
+        await WithSchemaAsync(async schema =>
+        {
+            // If this unqualified name resolved through the caller's search_path,
+            // the same SELECT would disclose the excluded table.
+            await ExecuteAsync("CREATE FUNCTION " + schema +
+                ".lower(text) RETURNS text LANGUAGE sql STABLE AS 'SELECT secret FROM " +
+                schema + ".secrets WHERE id=1'");
+            var shadowedConnection = fixture.ConnectionString +
+                ";Search Path=" + schema + ",pg_catalog,public";
+            await using (var direct = new NpgsqlConnection(shadowedConnection))
+            {
+                await direct.OpenAsync(TestContext.Current.CancellationToken);
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT lower(name) FROM " + schema + ".users WHERE id=1", direct);
+                Assert.Equal("SENTINEL_PRIVATE_VALUE",
+                    await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            }
+
+            var before = await SnapshotAsync(schema);
+            var result = await Tool(schema, shadowedConnection).ExecuteQuerySql(
+                "SELECT lower(name) AS normalized FROM " + schema + ".users WHERE id=1",
+                TestContext.Current.CancellationToken);
+            Assert.True(result.Success, result.Error?.Message);
+            Assert.Equal("alice", Assert.Single(result.Rows)["normalized"]?.ToString());
+            Assert.Equal(before, await SnapshotAsync(schema));
+        });
+    }
+
+    [Fact]
     public async Task BoundInjectionShapedLiteral_IsQueryableWithoutExecutingPayload()
     {
         await WithSchemaAsync(async schema =>
@@ -237,11 +268,11 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
         QueryTimeoutSeconds = 10
     };
 
-    private SqlAgentTool Tool(string schema)
+    private SqlAgentTool Tool(string schema, string? overrideConnectionString = null)
     {
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
-        context.Items[McpContextItemKeys.SqlConnectionString] = fixture.ConnectionString;
+        context.Items[McpContextItemKeys.SqlConnectionString] = overrideConnectionString ?? fixture.ConnectionString;
         context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
         context.Items[McpContextItemKeys.TableWhitelist] = schema + ".users";
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
