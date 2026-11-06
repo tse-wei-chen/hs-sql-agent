@@ -53,7 +53,7 @@ class EvidenceValidationTests(unittest.TestCase):
             path = Path(name)
             fake_evidence(path)
             next(path.rglob("coverage.cobertura.xml")).unlink()
-            with self.assertRaisesRegex(EvidenceError, "coverage.cobertura.xml"):
+            with self.assertRaisesRegex(EvidenceError, "coverage.cobertura"):
                 validate_evidence(path, "Common.Test")
 
     def test_empty_or_skipped_only_test_suites_fail_closed(self):
@@ -67,6 +67,15 @@ class EvidenceValidationTests(unittest.TestCase):
                 fake_evidence(path, **kwargs)
                 with self.assertRaisesRegex(EvidenceError, "empty or failed"):
                     validate_evidence(path, "Common.Test")
+
+    def test_timestamped_mtp_cobertura_report_is_valid(self):
+        with tempfile.TemporaryDirectory() as name:
+            path = Path(name)
+            fake_evidence(path)
+            original = next(path.rglob("coverage.cobertura.xml"))
+            original.rename(original.with_name("coverage.cobertura.061126123456789.xml"))
+            report = validate_evidence(path, "Common.Test")
+            self.assertEqual(report["lineCoveragePercent"], 50.0)
 
     def test_uninstrumented_production_code_is_not_a_valid_coverage_report(self):
         with tempfile.TemporaryDirectory() as name:
