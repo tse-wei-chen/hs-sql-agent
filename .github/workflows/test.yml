@@ -50,6 +50,19 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Enforce Python-free tracked files and GitHub Actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git ls-files -- '*.py')" ]; then
+            echo "Python source files are not allowed in the repository:" >&2
+            git ls-files -- '*.py' >&2
+            exit 1
+          fi
+          if grep -RnE 'python[0-9]*[[:space:]]|<<.PY.' .github/workflows; then
+            echo "Inline Python or Python interpreter invocations are not allowed in CI." >&2
+            exit 1
+          fi
       - name: Audit test project ownership and evidence contracts
         run: |
           dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
