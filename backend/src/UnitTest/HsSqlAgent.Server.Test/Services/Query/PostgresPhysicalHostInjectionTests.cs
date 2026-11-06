@@ -216,6 +216,48 @@ public sealed class PostgresPhysicalHostInjectionTests(PostgresPhysicalQueryFixt
         });
     }
 
+    // PostgreSQL resolves overloaded operators using search_path as well as functions.
+    // A read-only transaction and qualified safe functions do not make "=" safe
+    // when an attacker-controlled schema precedes pg_catalog in the connection.
+    [Fact]
+    public async Task ShadowedEqualityOperator_CannotLeakExcludedTableThroughApprovedQuery()
+    {
+        await WithSchemaAsync(async schema =>
+        {
+            await ExecuteAsync("CREATE FUNCTION " + schema +
+                ".leak_eq(integer, integer) RETURNS boolean LANGUAGE sql STABLE AS " +
+                "'SELECT count(*) > 0 FROM " + schema + ".secrets'");
+            await ExecuteAsync("CREATE OPERATOR " + schema +
+                ".= (LEFTARG = integer, RIGHTARG = integer, FUNCTION = " +
+                schema + ".leak_eq)");
+
+            var shadowedConnection = fixture.ConnectionString +
+                ";Search Path=" + schema + ",pg_catalog,public";
+            await using (var direct = new NpgsqlConnection(shadowedConnection))
+            {
+                await direct.OpenAsync(TestContext.Current.CancellationToken);
+                await using var cmd = new NpgsqlCommand(
+                    "SELECT 1::integer = 2::integer", direct);
+                Assert.True(Convert.ToBoolean(
+                    await cmd.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+            }
+
+            // Real bound int4 columns avoid a test-only literal type mismatch.
+            // The ordinary PostgreSQL operator must return FALSE for different ids.
+            var query = "SELECT a.id = b.id AS secret_bit FROM " + schema +
+                ".users a JOIN " + schema +
+                ".users b ON a.name <> b.name LIMIT 1";
+            var before = await SnapshotAsync(schema);
+            var result = await Tool(schema, shadowedConnection).ExecuteQuerySql(
+                query, TestContext.Current.CancellationToken);
+
+            Assert.True(result.Success, result.Error?.Message);
+            Assert.False(Convert.ToBoolean(Assert.Single(result.Rows)["secret_bit"]),
+                "Query resolved an attacker-owned equality operator that read excluded secrets.");
+            Assert.Equal(before, await SnapshotAsync(schema));
+        });
+    }
+
     [Fact]
     public async Task BoundInjectionShapedLiteral_IsQueryableWithoutExecutingPayload()
     {
