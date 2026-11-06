@@ -68,6 +68,7 @@ public sealed class SqlCoreComparatorProofTests
         using var f = new GitFixture();
         f.Write("backend/src/UnitTest/SqlAgent.Test/Moved.cs", "one\ntwo\n");
         var before = f.Commit();
+        Directory.CreateDirectory(Path.Combine(f.Directory, "backend/src/Modules/HsSqlAgent.SqlCore"));
         f.Git("mv", "backend/src/UnitTest/SqlAgent.Test/Moved.cs",
             "backend/src/Modules/HsSqlAgent.SqlCore/Moved.cs");
         var after = f.Commit();
