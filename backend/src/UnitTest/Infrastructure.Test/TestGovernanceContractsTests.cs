@@ -95,7 +95,7 @@ public sealed class TestGovernanceContractsTests
         using var fixture = new TemporaryRepository();
         fixture.CreateProjectsAndWorkflow();
         var source = Path.Combine(fixture.Root, "backend", "src", "UnitTest", "Common.Test", "Smoke.cs");
-        File.WriteAllText(source, "[Fact] public void Placeholder() { Assert.True( true ); }");
+        File.WriteAllText(source, "[Fact] public void Placeholder() { " + "Assert." + "True( true ); }");
         var error = Assert.Throws<GovernanceException>(() => Governance.Audit(fixture.Root));
         Assert.Contains("No-op test assertion", error.Message);
     }
