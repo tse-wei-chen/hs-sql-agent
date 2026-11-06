@@ -36,7 +36,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [3.0.0] - 2026-10-25
+## [3.0.0] - Unreleased
 
 ### G10/Q02 — FIRST_VALUE/LAST_VALUE IGNORE/RESPECT NULLS with explicit frame parity (develop only)
 
