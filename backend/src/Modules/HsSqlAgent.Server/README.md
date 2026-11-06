@@ -5,6 +5,37 @@ Secret protection now requires independent Base64-encoded random 32-byte keys fo
 
 Embeddable MCP SQL Agent components for ASP.NET Core. New applications compose capabilities explicitly; each capability owns only the options it needs. The aggregate `AddHsSqlAgent()` / `UseHsSqlAgent()` pair remains as a compatibility path for existing consumers.
 
+## PostgreSQL Query execution: transaction-enforced read-only
+
+`execute_query_sql` is a read-only MCP tool, but a PostgreSQL `SELECT` alone is not a
+write-prevention boundary: a `VOLATILE` function can update tables or advance a sequence.
+When the selected provider is PostgreSQL, Host now wraps the **compiled** Query command
+in a real database transaction and runs `SET TRANSACTION READ ONLY` before executing
+the command on that same transaction. The result set is fully buffered before rolling
+back. The database, rather than a function-name blacklist, enforces persistent
+write restrictions. Read-only transaction failures surface as failed Query operations,
+not as successful empty results.
+
+For PostgreSQL Query compilation with a nonempty table whitelist, the F# Query
+policy also restricts function calls to reviewed pg_catalog built-ins (plus
+non-overloadable SQL expressions such as COALESCE). Allowed functions are rendered
+as explicitly pg_catalog-qualified calls, so a custom UDF cannot shadow LOWER,
+COUNT and similar names through search_path or overload selection. Unknown,
+quoted and non-catalog functions are rejected at the Query policy stage, rather
+than trying to detect dangerous function names with a blacklist. This restriction
+applies only to whitelisted PostgreSQL Query compilation, not to the six-dialect
+Parser or DML/DDL tools. It may reject previously accepted unproven native
+functions; those require an explicit security capability decision.
+
+The F# SqlCore compiler stays driver-free and retains the original SQL authorization
+and single-statement gates. DML/DDL and other five providers are unaffected by
+this provider-specific Host enforcement. Read-only transactions are not an all-purpose
+sandbox for locks, resource exhaustion, or arbitrary external function effects;
+limit database privileges and retain timeout/concurrency/audit controls.
+The real PostgreSQL 16 Host/UDF/sequence/no-side-effect tests are documented in
+`backend/src/UnitTest/HsSqlAgent.Server.Test/Services/Query/PHYSICAL-INJECTION.md`.
+
+
 ## Install
 
 ```bash

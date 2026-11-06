@@ -156,6 +156,36 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         }
     }
 
+    // PostgreSQL SELECT is not intrinsically read-only: VOLATILE functions can write
+    // relations or advance sequences. The server enforces an actual transaction fence,
+    // including inside user-defined functions; compiler function lists are not authority.
+    // Other providers keep their current execution path until independently proven.
+    private static async Task<QueryExecutionResult> ExecuteVerifiedQueryAsync(
+        ISqlProvider provider,
+        CompiledSqlCommand command,
+        DbConnection connection,
+        int timeoutSeconds,
+        CancellationToken cancellationToken)
+    {
+        if (provider.Type != SqlAgentToolType.Postgres)
+            return await QueryExecutor.ExecuteQueryAsync(
+                command, connection, timeoutSeconds, cancellationToken);
+
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var fence = connection.CreateCommand())
+        {
+            fence.Transaction = transaction;
+            fence.CommandText = "SET TRANSACTION READ ONLY";
+            fence.CommandTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
+            await fence.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var execution = await QueryExecutor.ExecuteQueryInTransactionAsync(
+            command, connection, timeoutSeconds, transaction, cancellationToken);
+        await transaction.RollbackAsync(cancellationToken);
+        return execution;
+    }
+
     public async Task<QueryExecutionResult> ExecuteAsync(
         ISqlProvider provider,
         string connectionString,
@@ -195,7 +225,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
 
         try
         {
-            return await QueryExecutor.ExecuteQueryAsync(
+            return await ExecuteVerifiedQueryAsync(
+                provider,
                 command,
                 connection,
                 policy.QueryTimeoutSeconds,
@@ -250,7 +281,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
 
         try
         {
-            var execution = await QueryExecutor.ExecuteQueryAsync(
+            var execution = await ExecuteVerifiedQueryAsync(
+                provider,
                 compilation.Command,
                 connection,
                 policy.QueryTimeoutSeconds,

@@ -47,8 +47,8 @@ module internal RewriteQueryPipeline =
     let internal validate validateCanonical (CanonicalQuery canonical) =
         validateCanonical canonical |> fromValidated
 
-    let internal authorize (rowCap: RowCap) (ValidatedQuery validated) =
-        AuthorizedQuery(RewriteQueryPolicy.apply rowCap validated)
+    let internal authorize (rowCap: RowCap) (requirePostgresFunctionProof: bool) (ValidatedQuery validated) =
+        AuthorizedQuery(RewriteQueryPolicy.apply rowCap requirePostgresFunctionProof validated)
 
     /// The renderer receives a token produced only by this family's policy.
     let internal render renderAuthorized (AuthorizedQuery executable) =
