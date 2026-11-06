@@ -50,8 +50,9 @@ public static class SqlCorpusLedger
             var expected = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var provider in Providers)
             {
+                var count = -1;
                 Require(declared.TryGetProperty(provider, out var value) && value.ValueKind == JsonValueKind.Number
-                        && value.TryGetInt32(out var count) && count >= 0,
+                        && value.TryGetInt32(out count) && count >= 0,
                     $"{id}: expectedByProvider must enumerate all six providers");
                 expected[provider] = count;
             }
