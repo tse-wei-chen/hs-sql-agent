@@ -1,7 +1,10 @@
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Admin.Service.Models;
+using HsSqlAgent.Server.Services;
+using SqlAgent.Service.Core.Execution;
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Provider.Sqlite;
 using Microsoft.Data.Sqlite;
@@ -80,6 +83,46 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         Assert.Equal(audit.EventId, query.Items.Single().EventId);
     }
 
+
+    [Fact]
+    public async Task LostCommitAcknowledgement_OneTimeChallengeCannotReplayAfterPhysicalCommit()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var provider = new AcknowledgementDroppingSqliteProvider();
+        var runtime = new TypedDmlRuntime();
+        const string sql =
+            "INSERT INTO main.items (id, note) VALUES (100, 'sensitive_note');" +
+            "INSERT INTO main.items (id, note) VALUES (101, 'second_value')";
+        var parsed = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+            provider, fixture.TargetConnectionString, sql, SqlAgentToolType.Sqlite,
+            TestContext.Current.CancellationToken);
+        var policy = new SecurityPolicyModel { DmlMaxAffectedRows = 16 };
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "main.items" };
+        var actor = new DmlApprovalExecutionContext(
+            "mcp-key:7", "db-management:42", SqlAgentToolType.Sqlite, "main");
+        var session = await runtime.PreviewTransactionAsync(
+            provider, fixture.TargetConnectionString, parsed, policy, tables, actor,
+            TestContext.Current.CancellationToken);
+
+        provider.Mode = LostAcknowledgementMode.Commit;
+        var unknown = await Assert.ThrowsAsync<DmlCommitOutcomeUnknownException>(
+            () => runtime.CommitTransactionAsync(
+                provider, fixture.TargetConnectionString, session, policy, tables, actor,
+                TestContext.Current.CancellationToken));
+        Assert.IsType<IOException>(unknown.InnerException);
+        Assert.Equal(2L, await fixture.CountRowsAsync());
+
+        // A transport retry with the identical previously-approved session
+        // is always denied, even though native SQLite already committed.
+        provider.Mode = LostAcknowledgementMode.None;
+        var replay = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => runtime.CommitTransactionAsync(
+                provider, fixture.TargetConnectionString, session, policy, tables, actor,
+                TestContext.Current.CancellationToken));
+        Assert.Contains("consumed", replay.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2L, await fixture.CountRowsAsync());
+    }
+
     private sealed class CallbackApprovalProvider(Func<Task> beforeApproval) : IDmlApprovalProvider
     {
         public DmlApprovalRequest? LastRequest { get; private set; }
@@ -112,10 +155,11 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
     private sealed class DroppedAckConnection(
         SqliteConnection inner, LostAcknowledgementMode mode) : DbConnection
     {
+        [AllowNull]
         public override string ConnectionString
         {
             get => inner.ConnectionString;
-            set => inner.ConnectionString = value;
+            set => inner.ConnectionString = value ?? string.Empty;
         }
         internal SqliteConnection Inner => inner;
         public override string Database => inner.Database;
@@ -185,10 +229,11 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
 
     private sealed class DroppedAckCommand(DroppedAckConnection owner, SqliteCommand inner) : DbCommand
     {
+        [AllowNull]
         public override string CommandText
         {
             get => inner.CommandText;
-            set => inner.CommandText = value;
+            set => inner.CommandText = value ?? string.Empty;
         }
         public override int CommandTimeout
         {
@@ -244,9 +289,9 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         protected override DbParameter CreateDbParameter() => inner.CreateParameter();
         protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) =>
             inner.ExecuteReader(behavior);
-        protected override Task<DbDataReader> ExecuteDbDataReaderAsync(
+        protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(
             CommandBehavior behavior, CancellationToken cancellationToken) =>
-            inner.ExecuteReaderAsync(behavior, cancellationToken);
+            await inner.ExecuteReaderAsync(behavior, cancellationToken);
         protected override void Dispose(bool disposing)
         {
             if (disposing) inner.Dispose();
