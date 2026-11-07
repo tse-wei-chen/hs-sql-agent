@@ -73,8 +73,10 @@ public class CustomToolProxyTests
             _typedQueryRuntimeMock.Object);
     }
 
-    [Fact]
-    public async Task Execute_QueryTool_UntrustedProviderException_IsRedactedAtMcpBoundary()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Execute_QueryTool_UntrustedProviderException_IsRedactedAtMcpBoundary(bool auditUnavailable)
     {
         const string secret = "Password=super-secret; SQL=SELECT * FROM internal.payments";
         _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
@@ -86,6 +88,11 @@ public class CustomToolProxyTests
                 SqlTemplate = "SELECT id FROM public.users"
             });
         SetupPostgresProvider();
+        if (auditUnavailable)
+            _auditServiceMock.Setup(x => x.WriteEventAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Audit persistence failure: " + secret));
         _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>()
             .Setup(x => x.ExecuteWithFactsAsync(
                 It.IsAny<ISqlProvider>(), It.IsAny<string>(), It.IsAny<string>(),
