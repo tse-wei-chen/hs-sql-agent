@@ -72,6 +72,10 @@ internal static class McpErrorResponsePolicy
                     "MCP tool authorization context is missing.",
                 "MCP table authorization context is missing." =>
                     "MCP table authorization context is missing.",
+                "DML approval requires a stable MCP access-key identity." =>
+                    "DML approval requires a stable MCP access-key identity.",
+                "DML approval requires a stable target database identity." =>
+                    "DML approval requires a stable target database identity.",
                 _ when error.Message.StartsWith("API key does not have permission", StringComparison.Ordinal) =>
                     "API key does not have permission to use this tool.",
                 _ => "Access denied by MCP authorization policy."
