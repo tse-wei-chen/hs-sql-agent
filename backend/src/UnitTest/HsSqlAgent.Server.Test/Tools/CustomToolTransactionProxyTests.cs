@@ -62,14 +62,16 @@ public sealed class CustomToolTransactionProxyTests
         policyState.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel
         {
             DmlMaxAffectedRows = 10,
+            MaxConcurrentSql = 1,
             RequireWhereForUpdate = true,
             RequireWhereForDelete = true
         });
-        var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();
-        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Mock.Of<IAsyncDisposable>());
+        var limiter = new SqlExecutionConcurrencyLimiter(policyState.Object);
 
-        var approval = new CapturingDecliningApprovalProvider();
+        // Neither profile verification nor preview can own a connection slot
+        // while a human/external approval provider is asked to decide.
+        var approval = new CapturingDecliningApprovalProvider(
+            () => Assert.Equal(0, limiter.ActiveCount));
         var proxy = new CustomToolProxy(
             "archive_order",
             toolService.Object,
@@ -78,7 +80,7 @@ public sealed class CustomToolTransactionProxyTests
             Mock.Of<IAuditService>(),
             Mock.Of<IQueryValueParserService>(),
             policyState.Object,
-            limiter.Object,
+            limiter,
             dmlApprovalProvider: approval);
 
         var result = await proxy.Execute(
@@ -101,7 +103,7 @@ public sealed class CustomToolTransactionProxyTests
         metadata.VerifyNoOtherCalls();
     }
 
-    private sealed class CapturingDecliningApprovalProvider : IDmlApprovalProvider
+    private sealed class CapturingDecliningApprovalProvider(Action beforeReply) : IDmlApprovalProvider
     {
         public int RequestCount { get; private set; }
         public DmlApprovalRequest? LastRequest { get; private set; }
@@ -110,6 +112,7 @@ public sealed class CustomToolTransactionProxyTests
             DmlApprovalRequest request,
             CancellationToken cancellationToken = default)
         {
+            beforeReply();
             RequestCount++;
             LastRequest = request;
             return ValueTask.FromResult(DmlApprovalResult.Reject(
