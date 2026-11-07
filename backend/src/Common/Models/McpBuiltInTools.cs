@@ -41,4 +41,19 @@ public static class McpBuiltInTools
         .Where(tool => tool.DefaultSelected)
         .Select(tool => tool.Name)
         .ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
+    // A missing/blank tool selection must not become a wildcard grant when a key
+    // is first issued or explicitly edited. Existing legacy null grants remain
+    // backward-compatible until the administrator elects to change them.
+    public static string DefaultAllowedToolsCsv { get; } =
+        string.Join(',', Catalog.Where(tool => tool.DefaultSelected).Select(tool => tool.Name));
+
+    public static string NormalizeExplicitAllowedTools(string? selectedTools)
+    {
+        var names = selectedTools?.Split(',',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return names is { Length: > 0 }
+            ? string.Join(',', names)
+            : DefaultAllowedToolsCsv;
+    }
 }
