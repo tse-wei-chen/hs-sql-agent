@@ -74,6 +74,39 @@ public class CustomToolProxyTests
     }
 
     [Fact]
+    public async Task Execute_QueryTool_UntrustedProviderException_IsRedactedAtMcpBoundary()
+    {
+        const string secret = "Password=super-secret; SQL=SELECT * FROM internal.payments";
+        _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
+                "test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomSqlTool
+            {
+                Name = "test_tool",
+                Type = "Query",
+                SqlTemplate = "SELECT id FROM public.users"
+            });
+        SetupPostgresProvider();
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
+                It.IsAny<ISqlProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(), It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(secret));
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("execution.failed", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("super-secret", result);
+        Assert.DoesNotContain("payments", result);
+        Assert.DoesNotContain("execute_dml_sql", result, StringComparison.OrdinalIgnoreCase);
+        _auditServiceMock.Verify(x => x.WriteEventAsync(
+            "mcp.test_tool.executed", "test_tool", "failed",
+            It.IsAny<AuditEventContext>(), secret, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Execute_ShouldReturnError_WhenToolNotFound()
     {
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))

@@ -13,6 +13,50 @@ namespace HsSqlAgent.Server.Test.Tools;
 
 public class SqlAgentToolMetadataTests
 {
+    [Theory]
+    [InlineData("schemas")]
+    [InlineData("tables")]
+    [InlineData("columns")]
+    public async Task MetadataProviderFailure_IsNotExposedInStructuredMcpResponse(string target)
+    {
+        const string secret = "Password=super-secret; SQL=SELECT * FROM internal.payments";
+        var (tool, metadata, _, _) = CreateTool(tableWhitelist: string.Empty);
+        switch (target)
+        {
+            case "schemas":
+                metadata.Setup(x => x.GetSchemasAsync(
+                    It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new IOException(secret));
+                var schemas = await tool.GetSchemas(TestContext.Current.CancellationToken);
+                Assert.False(schemas.Success);
+                Assert.Equal("metadata.failed", schemas.Error?.Code);
+                Assert.DoesNotContain("super-secret", schemas.Error!.Message);
+                Assert.DoesNotContain("payments", schemas.Error.Message);
+                break;
+            case "tables":
+                metadata.Setup(x => x.GetTablesAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new IOException(secret));
+                var tables = await tool.GetTables("public", TestContext.Current.CancellationToken);
+                Assert.False(tables.Success);
+                Assert.Equal("metadata.failed", tables.Error?.Code);
+                Assert.DoesNotContain("super-secret", tables.Error!.Message);
+                Assert.DoesNotContain("payments", tables.Error.Message);
+                break;
+            default:
+                metadata.Setup(x => x.GetColumnsAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                    .ThrowsAsync(new IOException(secret));
+                var columns = await tool.GetColumns("public", "users", TestContext.Current.CancellationToken);
+                Assert.False(columns.Success);
+                Assert.Equal("metadata.failed", columns.Error?.Code);
+                Assert.DoesNotContain("super-secret", columns.Error!.Message);
+                Assert.DoesNotContain("payments", columns.Error.Message);
+                break;
+        }
+    }
+
     [Fact]
     public async Task GetSchemas_ReturnsStructuredProviderAndSchemaList()
     {

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Host MCP error-egress safety
+
+- Fix a confirmed external error-disclosure path: structured Query and Metadata MCP errors, and Custom Query/DML Tool failures, could return raw provider/driver exception messages, including SQL text and potentially connection details. Newly classified responses emit stable codes, bounded stages and safe fixed messages; compiler decision codes and stage context remain available.
+- Apply the same egress boundary to built-in DML failure and unknown COMMIT/ROLLBACK reporting. The physical transaction outcome remains unchanged: confirmed commits stay committed, and unconfirmed outcomes retain distinct non-retryable error codes and approval request correlation, with explicit reconciliation instructions.
+- Keep raw exception context in controlled Audit/diagnostics (subject to existing redaction/access controls); no sensitive provider text is included in MCP error messages. Custom Tool parameter conversion now enters the same guarded error boundary. This does not imply server-side Audit retention, redaction or access controls are a substitute for database least-privilege.
+- Query/Metadata/Custom failure-injection tests and typed SQL diagnostic tests confirm that opaque exception messages are not echoed. No new MCP tools, new SQL dialect capability or public CLR result shape introduced.
+
+
 ### Query safety — provider-native function identities under table whitelists
 
 - Correct the unproven function-effects boundary for restricted Query compilation on MySQL, SQL Server, Oracle, SQLite and Firebird. A schema/package-qualified or quoted native function identifier is now policy-denied when a table whitelist is present, because its definition can read additional relations or have provider-specific effects invisible to outer Query Facts. This applies throughout CTEs and nested expressions and does not remove syntax from unrestricted Query compilation.

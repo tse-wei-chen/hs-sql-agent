@@ -71,11 +71,6 @@ public class CustomToolProxy(
         int? queryReturnedRows = null;
         int? dmlAffectedRows = null;
         var parameters = new Dictionary<string, object?>();
-        if (arguments.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var prop in arguments.EnumerateObject())
-                parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
-        }
 
         CustomSqlTool? tool = null;
         QueryFacts? auditQueryFacts = null;
@@ -84,6 +79,14 @@ public class CustomToolProxy(
         string renderedSql = string.Empty;
         try
         {
+            // Parameter conversion is an untrusted-input boundary too. Do not
+            // let a value-parser exception bypass the sanitized MCP response.
+            if (arguments.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in arguments.EnumerateObject())
+                    parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
+            }
+
             ValidateToolAccess();
             var sqlConfig = ResolveSqlConfig();
             var dbManagementId = ResolveDbManagementId();
@@ -250,7 +253,13 @@ public class CustomToolProxy(
                         },
                         result,
                         cancellationToken);
-                    return result;
+                    if (dmlExecution.ApprovalDecision is DmlApprovalDecision.Pending or DmlApprovalDecision.Rejected)
+                        return result;
+                    if (dmlExecution.ErrorCode == "approval.unavailable")
+                        return "Error: This MCP client does not support the required interactive DML approval.";
+                    var dmlError = McpErrorResponsePolicy.ForDmlFlowFailure(
+                        dmlExecution.ErrorCode, dmlExecution.ErrorStage, dmlExecution.Retryable);
+                    return $"Error: {dmlError.Code} ({dmlError.Stage}): {dmlError.Message}";
                 }
             }
             else
@@ -307,11 +316,12 @@ public class CustomToolProxy(
                 },
                 ex.Message,
                 cancellationToken);
-            var toolType = tool?.Type ?? "Unknown";
-            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase)
-                ? "execute_query_sql"
-                : "execute_dml_sql";
-            return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
+            var surface = string.Equals(tool?.Type, "DML", StringComparison.OrdinalIgnoreCase)
+                ? McpErrorSurface.Dml : McpErrorSurface.Query;
+            var external = McpErrorResponsePolicy.Classify(ex, surface);
+            // Never suggest replaying a Custom DML operation just because the
+            // secondary MCP call observed an error. Reconcile approval/audit first.
+            return $"Error: {external.Code} ({external.Stage}): {external.Message}";
         }
     }
 

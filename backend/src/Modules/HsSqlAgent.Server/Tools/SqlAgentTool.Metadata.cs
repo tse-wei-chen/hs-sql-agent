@@ -309,28 +309,8 @@ public partial class SqlAgentTool
     private static McpToolError InvalidConfigurationError() =>
         new("configuration.invalid", InvalidSqlConfigurationMessage, "Configuration");
 
-    private static McpToolError DescribeMetadataError(Exception error) => error switch
-    {
-        UnauthorizedAccessException => new McpToolError(
-            "authorization.denied",
-            error.Message,
-            "Authorization"),
-        TimeoutException => new McpToolError(
-            "metadata.timeout",
-            error.Message,
-            "Metadata",
-            true),
-        InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
-            new McpToolError(
-                "server.busy",
-                error.Message,
-                "Metadata",
-                true),
-        _ => new McpToolError(
-            "metadata.failed",
-            error.Message,
-            "Metadata")
-    };
+    private static McpToolError DescribeMetadataError(Exception error) =>
+        McpErrorResponsePolicy.Classify(error, McpErrorSurface.Metadata);
 
     private static bool SameIdentifier(string? left, string? right) =>
         string.Equals(left ?? string.Empty, right ?? string.Empty, StringComparison.OrdinalIgnoreCase);

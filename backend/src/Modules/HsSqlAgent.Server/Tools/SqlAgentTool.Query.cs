@@ -133,43 +133,8 @@ public partial class SqlAgentTool
         }
     }
 
-    private static McpToolError DescribeQueryError(Exception error)
-    {
-        for (Exception? current = error; current is not null; current = current.InnerException)
-        {
-            var evidence = SqlCompileEvidence.TryGetFromException(current);
-            if (evidence is not null)
-            {
-                return new McpToolError(
-                    evidence.DecisionCode,
-                    error.Message,
-                    evidence.DecisionBoundary.ToString());
-            }
-        }
-
-        return error switch
-        {
-            UnauthorizedAccessException => new McpToolError(
-                "authorization.denied",
-                error.Message,
-                "Authorization"),
-            TimeoutException => new McpToolError(
-                "execution.timeout",
-                error.Message,
-                "Execution",
-                true),
-            InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
-                new McpToolError(
-                    "server.busy",
-                    error.Message,
-                    "Execution",
-                    true),
-            _ => new McpToolError(
-                "execution.failed",
-                error.Message,
-                "Execution")
-        };
-    }
+    private static McpToolError DescribeQueryError(Exception error) =>
+        McpErrorResponsePolicy.Classify(error, McpErrorSurface.Query);
 
     private static string AuditTarget(QueryFacts? facts) =>
         facts?.ReferencedTables.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
