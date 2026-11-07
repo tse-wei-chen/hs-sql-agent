@@ -9,6 +9,31 @@ module internal RewriteQueryPolicy =
 
     let private deny code span message : 'T = RewritePolicy.deny code span message
 
+    /// A whitelist authorizes tables visible in Query Facts; it cannot inspect the
+    /// body of a provider-native opaque function. Keep native function policy typed
+    /// so the default unrestricted grammar cannot be mistaken for an effect proof.
+    type QueryFunctionSafety =
+        | UnrestrictedFunctions
+        | ProvenPostgresFunctions
+        | RejectOpaqueNativeFunctions of SqlAgentToolType
+
+    let private rejectUnprovenNativeFunctions (span: Span) provider query =
+        let mapExpr expression =
+            match expression with
+            | FunctionCall call when FunctionName.requiresNativeIdentifierSemantics call.Name ->
+                deny
+                    "SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN"
+                    span
+                    ("Query with a table whitelist cannot authorize provider-native function '"
+                     + FunctionName.value call.Name
+                     + "' for " + string provider
+                     + ": its function effects and hidden relation access are not proven. "
+                     + "Use a modeled unqualified built-in or a database role limited to authorized data.")
+            | _ -> expression
+
+        RewriteAstTraversal.mapQueryGraphPostOrder
+            ignore mapExpr ignore id query
+
     let private clampQueryLimit span (rowCap: RowCap) (query: Query) =
         match rowCap with
         | Unlimited -> query
@@ -98,13 +123,18 @@ module internal RewriteQueryPolicy =
         RewriteAstTraversal.mapQueryGraphPostOrder
             ignore mapExpr ignore id query
 
-    let apply (rowCap: RowCap) requirePostgresFunctionProof (validated: RewriteStages.ValidatedSql) =
+    let apply (rowCap: RowCap) functionSafety (validated: RewriteStages.ValidatedSql) =
         RewriteResourceBudget.checkpoint ()
         let document = RewriteStages.Validated.value validated
         match document.Statement with
         | QueryStatement query ->
             let bounded = clampQueryLimit document.Span rowCap query
-            let guarded = if requirePostgresFunctionProof then provePostgresFunctions document.Span bounded else bounded
+            let guarded =
+                match functionSafety with
+                | UnrestrictedFunctions -> bounded
+                | ProvenPostgresFunctions -> provePostgresFunctions document.Span bounded
+                | RejectOpaqueNativeFunctions provider ->
+                    rejectUnprovenNativeFunctions document.Span provider bounded
             QueryStatement guarded
             |> RewritePolicy.Executable.create validated
         | _ -> invalidOp "Query policy cannot authorize a mutation statement."
