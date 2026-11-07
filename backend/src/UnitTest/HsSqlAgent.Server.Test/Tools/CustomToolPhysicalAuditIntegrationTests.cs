@@ -22,7 +22,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 /// Independent physical target and Audit Store. Do not treat a mock result
 /// or a successful HTTP/MCP response as proof of a committed mutation.
 /// </summary>
-public sealed class CustomToolPhysicalAuditIntegrationTests
+public sealed partial class CustomToolPhysicalAuditIntegrationTests
 {
     [Fact]
     public async Task ApprovedMultiStatementDml_PersistsMatchingApprovalIdAndPhysicalRows()
@@ -199,8 +199,11 @@ public sealed class CustomToolPhysicalAuditIntegrationTests
 
         public AdminContext OpenAuditContext() => OpenAuditContext(_auditPath);
 
+        public string TargetConnectionString => _targetConnectionString;
+
         public CustomToolProxy CreateProxy(
-            IDmlApprovalProvider approvalProvider, IAuditService? auditService = null)
+            IDmlApprovalProvider approvalProvider, IAuditService? auditService = null,
+            SqliteProvider? targetProvider = null)
         {
             var publishedTools = new Mock<ICustomSqlToolService>();
             publishedTools.Setup(x => x.GetPublishedToolByNameAsync(
@@ -211,7 +214,7 @@ public sealed class CustomToolPhysicalAuditIntegrationTests
                 });
             var providerFactory = new Mock<ISqlProviderFactory>();
             providerFactory.Setup(x => x.GetProvider(SqlAgentToolType.Sqlite))
-                .Returns(_sqlProvider);
+                .Returns(targetProvider ?? _sqlProvider);
             var policy = new SecurityPolicyRuntimeState();
             policy.SetCurrent(new SecurityPolicyModel
             {
