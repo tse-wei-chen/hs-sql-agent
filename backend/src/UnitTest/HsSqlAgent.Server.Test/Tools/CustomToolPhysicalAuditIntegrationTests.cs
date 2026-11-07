@@ -177,7 +177,9 @@ public sealed class CustomToolPhysicalAuditIntegrationTests
             httpContext.Items[Common.Models.McpContextItemKeys.DatabaseName] = "main";
             httpContext.Items[Common.Models.McpContextItemKeys.AllowedTools] = "archive_order";
             httpContext.Items[Common.Models.McpContextItemKeys.TableWhitelist] = "main.items";
-            var accessor = new HttpContextAccessor { HttpContext = httpContext };
+            var accessorMock = new Mock<IHttpContextAccessor>();
+            accessorMock.SetupGet(x => x.HttpContext).Returns(httpContext);
+            var accessor = accessorMock.Object;
             return new Fixture(targetPath, auditPath, auditContext, target, accessor);
         }
 
