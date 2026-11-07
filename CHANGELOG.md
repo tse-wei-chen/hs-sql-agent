@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### DML runtime-profile connection budget
+
+- Close a SQL concurrency-budget gap: built-in `execute_dml_sql`, published Custom DML tools and durable DML completion now acquire an existing SQL execution lease **before** opening a provider connection to verify the runtime dialect/profile. A saturated budget rejects the request without creating a target database connection.
+- Preflight leases release on success, cancellation and database connection errors. Preview and commit still use separate leases; no SQL lease is held while waiting for interactive or external approval.
+- Add negative saturation tests for built-in and Custom DML and direct preflight cancellation/release tests; the positive multi-statement Custom DML test now asserts no lease remains held when requesting approval.
+- No SQL dialect capability or transaction-approval semantics changed; the runtime-profile proof remains mandatory and uses the same provider connection as before.
+
+
 ### Host MCP error-egress safety
 
 - Fix a confirmed external error-disclosure path: structured Query and Metadata MCP errors, and Custom Query/DML Tool failures, could return raw provider/driver exception messages, including SQL text and potentially connection details. Newly classified responses emit stable codes, bounded stages and safe fixed messages; compiler decision codes and stage context remain available.
