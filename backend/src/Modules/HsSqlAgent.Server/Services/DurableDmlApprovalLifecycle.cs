@@ -491,11 +491,12 @@ internal sealed class DurableDmlApprovalLifecycle(
                 "never execute the legacy approval without target admission.");
 
         var current = await ResolveCurrentExecutionAsync(context, state, payload, secret, cancellationToken);
-        var parsedBatch = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+        var parsedBatch = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileUnderLeaseAsync(
             current.Provider,
             current.ConnectionString,
             payload.Sql,
             payload.SourceDialect,
+            concurrencyLimiter,
             cancellationToken);
         foreach (var statement in parsedBatch.Statements)
             TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
