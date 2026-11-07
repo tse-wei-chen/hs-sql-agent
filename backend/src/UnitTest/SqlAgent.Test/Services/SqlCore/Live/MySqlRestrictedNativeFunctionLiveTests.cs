@@ -73,7 +73,7 @@ public sealed class MySqlRestrictedNativeFunctionLiveTests
                         SqlAgentToolType.MySQL,
                         SqlAgentToolType.MySQL,
                         context,
-                        new SqlExecutionPlanPolicy(10)));
+                        new SqlExecutionPlanPolicy(10), token));
                 Assert.Contains("not proven", error.Message, StringComparison.OrdinalIgnoreCase);
                 var diagnostic = Assert.IsType<SqlDiagnostic>(
                     error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
@@ -83,7 +83,7 @@ public sealed class MySqlRestrictedNativeFunctionLiveTests
                 Assert.NotEmpty(SqlCoreFacade.CompileQuery(
                     "SELECT ABS(id) AS safe_id FROM test_db.users",
                     SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
-                    context, new SqlExecutionPlanPolicy(10)).Sql);
+                    context, new SqlExecutionPlanPolicy(10), token).Sql);
             }
             finally
             {
