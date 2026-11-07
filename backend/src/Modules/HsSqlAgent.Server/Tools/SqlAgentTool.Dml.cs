@@ -69,8 +69,8 @@ public partial class SqlAgentTool
                                  ?? throw new UnauthorizedAccessException("DML approval requires a stable target database identity.");
 
             var provider = _sqlProviderFactory.GetProvider(dbType);
-            parsedBatch = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
-                provider, sqlConfig.ConnectionString, sql, dbType, cancellationToken);
+            parsedBatch = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileUnderLeaseAsync(
+                provider, sqlConfig.ConnectionString, sql, dbType, _sqlConcurrencyLimiter, cancellationToken);
             foreach (var statement in parsedBatch.Statements)
                 TypedDmlRuntime.EnsureSupportedStatement(statement.Statement);
 
