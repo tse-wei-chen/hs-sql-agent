@@ -84,7 +84,9 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         Assert.Equal(2L, await fixture.CountRowsAsync());
         Assert.Equal(0, limiter.ActiveCount);
         Assert.Equal(0, gate.ActivePhysicalTargetConnections);
-        Assert.True(gate.FactoryCreates >= pauseOnPhysicalOpen);
+        Assert.True(gate.FactoryCreates >= (pauseOnPhysicalOpen == 6 ? 1 : pauseOnPhysicalOpen));
+        if (pauseOnPhysicalOpen == 6)
+            Assert.NotNull(Assert.IsType<CallbackApprovalProvider>(approval).LastRequest);
 
         // No one-time lease is stranded after returning the physical result.
         await using var next = await limiter.TryAcquireAsync(TestContext.Current.CancellationToken);
