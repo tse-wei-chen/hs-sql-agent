@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Custom DML physical/Audit approval reconciliation (PR #581)
+
+- Verify published Custom DML through the real SQLite provider with two-statement atomic mutations and a separate persisted SQLite Admin Audit Store. Confirm physical committed rows, rejected-approval zero writes, and an acknowledged COMMIT remaining successful when the Audit Store fails afterward.
+- Include the one-time DML approval request ID in the Audit event's structured `Definition`, while retaining the incoming HTTP `RequestId` for transport tracing. Existing Audit keyword search can find the approval ID through `Definition`; no new column, database migration, tool, or public response shape.
+- Do not persist raw SQL statement values in the structured Audit definition. This SQLite proof is not yet an independent six-provider unknown-COMMIT/ROLLBACK fault-injection guarantee; the broader 3.1.0 release gate remains blocked.
+
 ### Host HTTP, DDL and secondary-Audit error egress (PR #580)
 
 - Stop reflecting untrusted exception messages and stack traces from the global HTTP error handler. Preserve 400/401/404/409/500 status semantics, trace IDs and existing JSON field shape; DML COMMIT/ROLLBACK uncertainty keeps separate machine-readable non-retryable codes and a fixed reconciliation message.
