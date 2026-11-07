@@ -177,6 +177,9 @@ public class BootstrapProvisioningTests
 
         var appBuilder = new ApplicationBuilder(services.BuildServiceProvider());
         appBuilder.UseHsSqlAgent();
+        // A second bootstrap with the same unspecified tools must not
+        // accidentally turn the newly defaulted key into a legacy wildcard.
+        appBuilder.UseHsSqlAgent();
         await using (var initialContext = new AdminContext(adminDbOptions))
         {
             var newKey = await initialContext.McpAccessKeys.SingleAsync(TestContext.Current.CancellationToken);
