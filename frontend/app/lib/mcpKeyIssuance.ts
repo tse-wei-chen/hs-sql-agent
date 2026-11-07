@@ -57,19 +57,28 @@ export function resolveMcpAccessPosture(
   restrictTables = false,
   selectedTableCount = 0,
   unclassifiedToolCount = 0,
+  legacyUnrestricted = false,
 ): McpAccessPosture {
   const dataScope = restrictTables
     ? `${selectedTableCount} table${selectedTableCount === 1 ? "" : "s"}`
     : "All tables";
 
   if (allowedTools.length === 0) {
-    return {
-      level: "unrestricted",
-      title: "Unrestricted tool access",
-      description:
-        "All built-in and published tools for this database are allowed, including DML.",
-      dataScope,
-    };
+    return legacyUnrestricted
+      ? {
+          level: "unrestricted",
+          title: "Legacy unrestricted tool access",
+          description:
+            "Existing unrestricted key: all built-in and published tools for this database are allowed, including DML.",
+          dataScope,
+        }
+      : {
+          level: "review",
+          title: "Select allowed tools",
+          description:
+            "Select at least one tool. Empty selections cannot create unrestricted MCP keys.",
+          dataScope,
+        };
   }
 
   if (unclassifiedToolCount > 0) {
@@ -147,17 +156,23 @@ export function serializeTableWhitelist(
   return selectedTables.join(",");
 }
 
-export function formatAllowedToolsLabel(selectedTools: string[]): string {
+export function formatAllowedToolsLabel(
+  selectedTools: string[],
+  legacyUnrestricted = false,
+): string {
   return selectedTools.length === 0
-    ? "Global (no restriction)"
+    ? legacyUnrestricted
+      ? "Legacy unrestricted (existing key)"
+      : "Select at least one tool"
     : `${selectedTools.length} tools selected`;
 }
 
 export function allowedToolsRequireElicitation(
   allowedTools: string[],
   dmlToolNames: Iterable<string> = [],
+  legacyUnrestricted = false,
 ): boolean {
-  if (allowedTools.length === 0) return true;
+  if (allowedTools.length === 0) return legacyUnrestricted;
   const dmlTools = new Set(
     Array.from(dmlToolNames, (name) => name.toLocaleLowerCase()),
   );
