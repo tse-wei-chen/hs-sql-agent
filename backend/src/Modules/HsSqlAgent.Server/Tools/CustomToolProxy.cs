@@ -71,11 +71,6 @@ public class CustomToolProxy(
         int? queryReturnedRows = null;
         int? dmlAffectedRows = null;
         var parameters = new Dictionary<string, object?>();
-        if (arguments.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var prop in arguments.EnumerateObject())
-                parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
-        }
 
         CustomSqlTool? tool = null;
         QueryFacts? auditQueryFacts = null;
@@ -84,6 +79,14 @@ public class CustomToolProxy(
         string renderedSql = string.Empty;
         try
         {
+            // Parameter conversion is an untrusted-input boundary too. Do not
+            // let a value-parser exception bypass the sanitized MCP response.
+            if (arguments.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var prop in arguments.EnumerateObject())
+                    parameters[prop.Name] = _queryValueParserService.UnwrapJsonElement(prop.Value);
+            }
+
             ValidateToolAccess();
             var sqlConfig = ResolveSqlConfig();
             var dbManagementId = ResolveDbManagementId();
