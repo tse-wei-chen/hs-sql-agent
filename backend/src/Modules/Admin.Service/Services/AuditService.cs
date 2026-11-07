@@ -155,7 +155,7 @@ public class AuditService(
                 (x.Target != null && x.Target.Contains(filter.Keyword)) ||
                 (x.Detail != null && x.Detail.Contains(filter.Keyword)) ||
                 (x.ActorId != null && x.ActorId.Contains(filter.Keyword)) ||
-                (x.Definition != null && x.Definition.Contains(filter.Keyword)));
+            (x.Definition != null && x.Definition.Contains(filter.Keyword)));
         }
         if (filter.From.HasValue)
             query = query.Where(x => x.CreatedAt >= filter.From.Value);
