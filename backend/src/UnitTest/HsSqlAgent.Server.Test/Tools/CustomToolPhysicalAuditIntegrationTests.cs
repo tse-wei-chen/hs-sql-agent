@@ -203,7 +203,8 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
 
         public CustomToolProxy CreateProxy(
             IDmlApprovalProvider approvalProvider, IAuditService? auditService = null,
-            SqliteProvider? targetProvider = null)
+            SqliteProvider? targetProvider = null,
+            ISqlExecutionConcurrencyLimiter? concurrencyLimiter = null)
         {
             var publishedTools = new Mock<ICustomSqlToolService>();
             publishedTools.Setup(x => x.GetPublishedToolByNameAsync(
@@ -231,7 +232,7 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
                 auditService ?? new AuditService(_auditContext, _accessor),
                 Mock.Of<IQueryValueParserService>(),
                 policy,
-                new SqlExecutionConcurrencyLimiter(policy),
+                concurrencyLimiter ?? new SqlExecutionConcurrencyLimiter(policy),
                 dmlApprovalProvider: approvalProvider);
         }
 
