@@ -1,4 +1,5 @@
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Models;
 using MySql.Data.MySqlClient;
@@ -63,6 +64,10 @@ public sealed class MySqlRestrictedNativeFunctionLiveTests(MySqlFixture fixture)
                         context,
                         new SqlExecutionPlanPolicy(10)));
                 Assert.Contains("not proven", error.Message, StringComparison.OrdinalIgnoreCase);
+                var diagnostic = Assert.IsType<SqlDiagnostic>(
+                    error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+                Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+                Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
                 Assert.DoesNotContain(leakedValue, error.Message);
                 Assert.NotEmpty(SqlCoreFacade.CompileQuery(
                     "SELECT ABS(id) AS safe_id FROM test_db.users",
