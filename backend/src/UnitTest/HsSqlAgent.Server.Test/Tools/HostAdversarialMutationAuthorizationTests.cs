@@ -52,7 +52,7 @@ public sealed class HostAdversarialMutationAuthorizationTests
         var fixture = CreateTool("execute_dml_sql");
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
-        var physicalConnections = new Mock<SqlAgent.Service.Interfaces.IDbConnectionFactory>(MockBehavior.Strict);
+        var physicalConnections = new Mock<HsSqlAgent.Provider.Abstractions.IDbConnectionFactory>(MockBehavior.Strict);
         provider.SetupGet(x => x.Connections).Returns(physicalConnections.Object);
         fixture.Providers.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         fixture.Limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
