@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Host security — MCP key explicit read-only defaults (PR #576)
+
+- Correct a verified least-privilege default gap: when API callers omitted or cleared `AllowedTools`, newly issued keys inherited the historical unrestricted custom-tool authorization. New issuance and explicit key edits now persist the four canonical read/query tools (`get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`) instead of a wildcard. Built-in DML/DDL already required explicit grants; this change does not claim they were bypassed.
+- Newly provisioned bootstrap keys with omitted tool configuration receive the same default and retain it on subsequent startup reconciliation. Existing legacy keys with null/empty grants are not automatically migrated or revoked; historical unrestricted grants remain visible as legacy, and rotation/clone preserve the source key's established scope. Administrators should inventory these keys and explicitly edit their tool grants.
+- Frontend issuance/edit now requires at least one selected tool, describes zero selection as invalid rather than unrestricted, and distinguishes old wildcard keys. No new MCP tool or SQL compiler functionality is introduced.
+
+
 ### 3.1.0 release scope (candidate)
 
 - **Query safety:** PostgreSQL execution uses physical read-only transaction and built-in function/operator fences for specifically attested shapes. This is not a blanket claim that all SQL functions or other providers have no side effects.
