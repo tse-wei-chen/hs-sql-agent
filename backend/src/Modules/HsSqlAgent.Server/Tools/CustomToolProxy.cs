@@ -161,11 +161,12 @@ public class CustomToolProxy(
             {
                 var accessKeyId = ResolveAccessKeyId()
                                   ?? throw new UnauthorizedAccessException("DML approval requires a stable MCP access-key identity.");
-                var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+                var parsedDml = await _typedDmlRuntime.ParseDmlBatchWithVerifiedRuntimeProfileUnderLeaseAsync(
                     provider,
                     sqlConfig.ConnectionString,
                     renderedSql,
                     dbType,
+                    _sqlConcurrencyLimiter,
                     cancellationToken);
                 auditDml = parsedDml;
                 foreach (var statement in parsedDml.Statements)
