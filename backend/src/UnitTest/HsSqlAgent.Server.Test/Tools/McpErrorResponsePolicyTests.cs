@@ -43,6 +43,25 @@ public sealed class McpErrorResponsePolicyTests
     }
 
     [Theory]
+    [InlineData("DML approval requires a stable MCP access-key identity.")]
+    [InlineData("DML approval requires a stable target database identity.")]
+    public void ExactOwnedIdentityErrors_StayActionableWithoutEchoingUntrustedSuffix(string knownMessage)
+    {
+        var safe = McpErrorResponsePolicy.Classify(
+            new UnauthorizedAccessException(knownMessage), McpErrorSurface.Dml);
+        Assert.Equal("authorization.denied", safe.Code);
+        Assert.Equal(knownMessage, safe.Message);
+
+        // A forged lookalike is not an owned error and must not be reflected.
+        var forged = McpErrorResponsePolicy.Classify(
+            new UnauthorizedAccessException(knownMessage + " Password=super-secret"),
+            McpErrorSurface.Dml);
+        Assert.Equal("authorization.denied", forged.Code);
+        Assert.Equal("Access denied by MCP authorization policy.", forged.Message);
+        Assert.DoesNotContain("super-secret", forged.Message);
+    }
+
+    [Theory]
     [InlineData("Query", "execution.timeout", "Execution")]
     [InlineData("Metadata", "metadata.timeout", "Metadata")]
     [InlineData("Dml", "execution.timeout", "Execution")]
@@ -66,7 +85,7 @@ public sealed class McpErrorResponsePolicyTests
                 SqlAgentToolType.Postgres,
                 SqlAgentToolType.Postgres,
                 new SqlPlanValidationContext("mcp-error-egress"),
-                new SqlExecutionPlanPolicy(10)));
+                new SqlExecutionPlanPolicy(10), TestContext.Current.CancellationToken));
         Assert.NotNull(exception);
         var evidence = SqlCompileEvidence.TryGetFromException(exception);
         Assert.NotNull(evidence);
