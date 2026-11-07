@@ -14,13 +14,16 @@ namespace HsSqlAgent.Server.Test.Tools;
 public class SqlAgentToolMetadataTests
 {
     [Theory]
-    [InlineData("schemas")]
-    [InlineData("tables")]
-    [InlineData("columns")]
-    public async Task MetadataProviderFailure_IsNotExposedInStructuredMcpResponse(string target)
+    [InlineData("schemas", false)]
+    [InlineData("tables", false)]
+    [InlineData("columns", false)]
+    [InlineData("schemas", true)]
+    [InlineData("tables", true)]
+    [InlineData("columns", true)]
+    public async Task MetadataProviderFailure_IsNotExposedInStructuredMcpResponse(string target, bool auditUnavailable)
     {
         const string secret = "Password=super-secret; SQL=SELECT * FROM internal.payments";
-        var (tool, metadata, _, _) = CreateTool(tableWhitelist: string.Empty);
+        var (tool, metadata, _, _) = CreateTool(tableWhitelist: string.Empty, auditUnavailable: auditUnavailable);
         switch (target)
         {
             case "schemas":
@@ -221,11 +224,16 @@ public class SqlAgentToolMetadataTests
         SqlAgentTool Tool,
         Mock<IProviderMetadataReader> Metadata,
         Mock<IDbSemanticService> SemanticService,
-        DefaultHttpContext Context) CreateTool(string tableWhitelist)
+        DefaultHttpContext Context) CreateTool(string tableWhitelist, bool auditUnavailable = false)
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
         var providerFactory = new Mock<ISqlProviderFactory>();
         var auditService = new Mock<IAuditService>();
+        if (auditUnavailable)
+            auditService.Setup(x => x.WriteLogAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Audit persistence failure: Password=super-secret"));
         var semanticService = new Mock<IDbSemanticService>();
         var securityPolicyState = new Mock<ISecurityPolicyRuntimeState>();
         var concurrencyLimiter = new Mock<ISqlExecutionConcurrencyLimiter>();

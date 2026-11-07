@@ -12,8 +12,10 @@ namespace HsSqlAgent.Server.Test.Tools;
 
 public class SqlAgentToolExecutionTests
 {
-    [Fact]
-    public async Task ExecuteQuerySql_ProviderFailure_RetainsAuditDetailsButSanitizesMcpResponse()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteQuerySql_ProviderFailure_RetainsAuditDetailsButSanitizesMcpResponse(bool auditUnavailable)
     {
         const string secret = "Password=super-secret; SQL=SELECT * FROM private.payments";
         var http = new Mock<IHttpContextAccessor>();
@@ -29,6 +31,11 @@ public class SqlAgentToolExecutionTests
         var factory = new Mock<ISqlProviderFactory>();
         factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
         var audit = new Mock<IAuditService>();
+        if (auditUnavailable)
+            audit.Setup(x => x.WriteEventAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Audit persistence failure: " + secret));
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
         var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();

@@ -112,7 +112,7 @@ public partial class SqlAgentTool
         catch (Exception ex)
         {
             auditFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
-            await _auditService.WriteEventAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteEventAsync(
                 "mcp.query.executed",
                 AuditTarget(auditFacts),
                 "failed",
@@ -125,7 +125,7 @@ public partial class SqlAgentTool
                     Definition = auditFacts is null ? null : DescribeQuery(sql, dbType, auditFacts)
                 },
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             return McpQueryToolResult.Failed(
                 dbType.ToString(),
                 DescribeQueryError(ex),

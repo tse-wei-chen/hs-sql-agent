@@ -46,10 +46,12 @@ public sealed class HostAdversarialMutationAuthorizationTests
         "DELETE FROM users WHERE id = 7 /* forged approval */"
     ];
 
-    [Fact]
-    public async Task SaturatedDmlPreflight_CannotCreateUnbudgetedProviderConnection()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SaturatedDmlPreflight_CannotCreateUnbudgetedProviderConnection(bool auditUnavailable)
     {
-        var fixture = CreateTool("execute_dml_sql");
+        var fixture = CreateTool("execute_dml_sql", auditUnavailable: auditUnavailable);
         var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
         var physicalConnections = new Mock<HsSqlAgent.Provider.Abstractions.IDbConnectionFactory>(MockBehavior.Strict);
@@ -152,7 +154,7 @@ public sealed class HostAdversarialMutationAuthorizationTests
         Assert.Equal(24, count);
     }
 
-    private static Fixture CreateTool(string? allowedTools, bool validIdentity = true)
+    private static Fixture CreateTool(string? allowedTools, bool validIdentity = true, bool auditUnavailable = false)
     {
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
@@ -178,7 +180,9 @@ public sealed class HostAdversarialMutationAuthorizationTests
                 It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<string>(), It.IsAny<AuditEventContext>(),
                 It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .Returns(() => auditUnavailable
+                ? Task.FromException(new IOException("Audit failure: Password=super-secret"))
+                : Task.CompletedTask);
 
         var tool = new SqlAgentTool(
             http.Object, providers.Object, audit.Object,

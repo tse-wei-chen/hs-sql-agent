@@ -295,7 +295,7 @@ public class CustomToolProxy(
         catch (Exception ex)
         {
             auditQueryFacts ??= SqlCoreInspection.TryGetQueryFactsFromException(ex);
-            await _auditService.WriteEventAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteEventAsync(
                 $"mcp.{_name}.executed",
                 _name,
                 "failed",
@@ -316,7 +316,7 @@ public class CustomToolProxy(
                         : auditDml == null ? null : DescribeDml(auditDml)
                 },
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             var surface = string.Equals(tool?.Type, "DML", StringComparison.OrdinalIgnoreCase)
                 ? McpErrorSurface.Dml : McpErrorSurface.Query;
             var external = McpErrorResponsePolicy.Classify(ex, surface);
