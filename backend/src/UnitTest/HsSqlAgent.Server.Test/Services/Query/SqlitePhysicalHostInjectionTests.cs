@@ -7,6 +7,7 @@ using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Moq;
+using SqlAgent.Service.Interfaces;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Services;
@@ -98,6 +99,52 @@ public sealed class SqlitePhysicalHostInjectionTests
     }
 
     [Fact]
+    public async Task RegisteredSqliteFunction_CanReadExcludedRealTable_ButMcpQueryRejectsCall()
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            const string secretSentinel = "SENTINEL_PRIVATE_VALUE";
+            var before = await PhysicalSnapshotAsync(connectionString);
+
+            // Real SQLite function registered by the embedding host, not a mocked
+            // executor. It executes another SELECT against the excluded table.
+            // Without a native-function proof, the visible Query tables are not
+            // enough to enforce the MCP key's whitelist.
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("leak_secret", () =>
+            {
+                using var inner = new SqliteConnection(connectionString);
+                inner.Open();
+                using var cmd = inner.CreateCommand();
+                cmd.CommandText = "SELECT secret FROM main.secrets WHERE id = 1";
+                return cmd.ExecuteScalar()?.ToString();
+            });
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using (var control = connection.CreateCommand())
+            {
+                control.CommandText = "SELECT leak_secret()";
+                Assert.Equal(secretSentinel,
+                    (await control.ExecuteScalarAsync(TestContext.Current.CancellationToken))?.ToString());
+            }
+
+            var connections = new Mock<IDbConnectionFactory>();
+            connections.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+            var result = await CreateTool(connectionString, provider.Object).ExecuteQuerySql(
+                "SELECT \"leak_secret\"() AS leaked FROM main.users WHERE id = 1",
+                TestContext.Current.CancellationToken);
+
+            Assert.False(result.Success, "Opaque SQLite functions must not bypass the table whitelist.");
+            Assert.Empty(result.Rows);
+            Assert.DoesNotContain(secretSentinel, result.ToString());
+            Assert.Equal(before, await PhysicalSnapshotAsync(connectionString));
+        });
+    }
+
+    [Fact]
     public async Task InjectionShapedString_IsBoundAsOneLiteralAndRemainsQueryable()
     {
         await WithDatabaseAsync(async connectionString =>
@@ -160,7 +207,7 @@ public sealed class SqlitePhysicalHostInjectionTests
         QueryTimeoutSeconds = 10
     };
 
-    private static SqlAgentTool CreateTool(string connectionString)
+    private static SqlAgentTool CreateTool(string connectionString, ISqlProvider? overrideProvider = null)
     {
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Sqlite";
@@ -175,7 +222,7 @@ public sealed class SqlitePhysicalHostInjectionTests
         http.SetupGet(x => x.HttpContext).Returns(context);
         var providers = new Mock<ISqlProviderFactory>(MockBehavior.Strict);
         providers.Setup(x => x.GetProvider(SqlAgentToolType.Sqlite))
-            .Returns(new SqliteProvider());
+            .Returns(overrideProvider ?? new SqliteProvider());
         var audit = new Mock<IAuditService>();
         audit.Setup(x => x.WriteEventAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
