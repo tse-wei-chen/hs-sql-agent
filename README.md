@@ -75,6 +75,8 @@ Set `MCP_PUBLIC_ENDPOINT` to the externally reachable MCP URL, including `/mcp`,
 
 Then open **Runtime → MCP Keys** in the Admin UI and issue a key. The one-time **Save and connect** dialog generates ready-to-paste configuration for **Claude Desktop, Cursor, Visual Studio Code, and generic Streamable HTTP clients**.
 
+New API-issued MCP keys default to the four read/query tools (`get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`); DML, DDL and published Custom Tools must be explicitly selected. Existing legacy keys with empty tool grants can still have unrestricted Custom Tool access until an administrator edits them. Audit and restrict such keys during upgrades.
+
 The plaintext secret is shown only once. See [MCP Client Onboarding](https://sql-agent.net/en/docs/mcp/client-onboarding) for client setup, compatibility, and DML Elicitation requirements.
 
 ## Automate the Admin API

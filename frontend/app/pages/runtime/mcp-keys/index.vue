@@ -165,8 +165,13 @@ const lifecycleToolOptions = computed(() => toToolOptions(lifecycleTools.value))
 const selectedToolLabel = computed(() =>
   formatAllowedToolsLabel(detail.value.allowedTools),
 );
+const lifecycleLegacyUnrestricted = computed(() =>
+  lifecycleMode.value === "edit" &&
+  !lifecycleKey.value?.allowedTools?.trim() &&
+  lifecycleAllowedTools.value.length === 0,
+);
 const lifecycleSelectedToolLabel = computed(() =>
-  formatAllowedToolsLabel(lifecycleAllowedTools.value),
+  formatAllowedToolsLabel(lifecycleAllowedTools.value, lifecycleLegacyUnrestricted.value),
 );
 
 const dmlToolNames = computed(
@@ -191,6 +196,7 @@ const lifecycleRequiresElicitation = computed(() =>
   allowedToolsRequireElicitation(
     lifecycleAllowedTools.value,
     lifecycleDmlToolNames.value,
+    lifecycleLegacyUnrestricted.value,
   ),
 );
 
@@ -216,6 +222,8 @@ const lifecycleAccessPosture = computed(() =>
     lifecycleDmlToolNames.value,
     lifecycleTableCount.value > 0,
     lifecycleTableCount.value,
+    0,
+    lifecycleLegacyUnrestricted.value,
   ),
 );
 
@@ -422,6 +430,9 @@ const issue = async () => {
     if (!toolCatalogReady.value) {
       throw new Error("The MCP tool catalog must load before a key can be issued.");
     }
+    if (detail.value.allowedTools.length === 0) {
+      throw new Error("Select at least one tool. Empty selections cannot issue unrestricted MCP keys.");
+    }
 
     const expiresAt = resolveMcpKeyExpiry(
       detail.value.expiresAt,
@@ -435,10 +446,7 @@ const issue = async () => {
     const result = await issueMcpKey({
       name: values.name.trim(),
       expiresAt,
-      allowedTools:
-        detail.value.allowedTools.length > 0
-          ? detail.value.allowedTools.join(",")
-          : null,
+      allowedTools: detail.value.allowedTools.join(","),
       corsAllowedOrigins: detail.value.corsAllowedOrigins?.trim() || null,
       dbManagementId: detail.value.dbManagementId || 0,
       tableWhitelist,
@@ -546,6 +554,7 @@ const resolveStoredKeyAccessPosture = (key: McpKeyItem) => {
     tableWhitelist.length > 0,
     tableWhitelist.length,
     unclassifiedToolCount,
+    !key.allowedTools?.trim(),
   );
 };
 
@@ -584,6 +593,10 @@ const openLifecycle = (
 
 const saveLifecycle = async () => {
   if (!lifecycleKey.value || !lifecycleMode.value) return;
+  if (lifecycleMode.value === "edit" && lifecycleAllowedTools.value.length === 0) {
+    toast.error("Select at least one tool. Blank edits cannot grant unrestricted access.");
+    return;
+  }
   lifecycleSaving.value = true;
   try {
     let result;
@@ -591,10 +604,7 @@ const saveLifecycle = async () => {
       result = await updateMcpKey(lifecycleKey.value.id, {
         name: lifecycleName.value.trim(),
         expiresAt: lifecycleExpiry(),
-        allowedTools:
-          lifecycleAllowedTools.value.length > 0
-            ? lifecycleAllowedTools.value.join(",")
-            : null,
+        allowedTools: lifecycleAllowedTools.value.join(","),
         corsAllowedOrigins: lifecycleCors.value.trim() || null,
         dbManagementId: lifecycleDbManagementId.value,
         tableWhitelist: lifecycleTableWhitelist.value.trim() || null,
@@ -857,7 +867,7 @@ onMounted(load);
                 </template>
               </MultiSelect>
               <p v-if="toolCatalogReady" class="mt-2 text-xs text-muted-foreground">
-                New keys start with the four safe read/query tools selected. DML is opt-in.
+                New keys start with four safe read/query tools. At least one tool must remain selected; DML and DDL are opt-in.
               </p>
               <div
                 v-if="toolCatalogReady"
@@ -875,7 +885,7 @@ onMounted(load);
                 v-if="toolCatalogReady && issueRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"
               >
-                This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused. An unrestricted tool list also includes DML.
+                This key can invoke DML. Its MCP client must support form Elicitation so a human can approve each commit; unsupported clients will be refused.
               </div>
             </Field>
             <Field class="md:col-span-2">
@@ -1033,7 +1043,7 @@ onMounted(load);
             </div>
 
             <div class="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
-              <span>Tools: {{ key.allowedTools || "All current tools" }}</span>
+              <span>Tools: {{ key.allowedTools || "Legacy unrestricted (all current tools)" }}</span>
               <span>Expires: {{ key.expiresAt || "never" }}</span>
               <span>CORS: {{ key.corsAllowedOrigins || "none" }}</span>
             </div>
@@ -1128,7 +1138,7 @@ onMounted(load);
                 v-if="lifecycleRequiresElicitation"
                 class="mt-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
               >
-                DML is enabled (an empty list means all tools). The client must support MCP form Elicitation.
+                DML is enabled on this selection or historical unrestricted key. The client must support MCP form Elicitation. To edit a legacy key, select explicit tools first.
               </div>
             </Field>
             <Field>
