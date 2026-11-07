@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Query safety — provider-native function identities under table whitelists
+
+- Correct the unproven function-effects boundary for restricted Query compilation on MySQL, SQL Server, Oracle, SQLite and Firebird. A schema/package-qualified or quoted native function identifier is now policy-denied when a table whitelist is present, because its definition can read additional relations or have provider-specific effects invisible to outer Query Facts. This applies throughout CTEs and nested expressions and does not remove syntax from unrestricted Query compilation.
+- Retain modeled, ordinary unqualified Query functions and PostgreSQL's existing function proof/physical read-only fence. Native functions are not categorically unsafe: the denial reflects the missing *effect and relation-scope proof*, not a demonstration that every provider allows physical writes.
+- Add five-provider positive/negative compiler test cases and physical negative tests for MySQL stored-function hidden-table reads and a host-registered SQLite function. These prove only the tested shapes; SQL Server, Oracle and Firebird still require independent physical provider evidence before the broader 3.1.0 release gate can close. DB roles must also restrict database-visible objects and privileges.
+
+
 ### Host security — MCP key explicit read-only defaults (PR #576)
 
 - Correct a verified least-privilege default gap: when API callers omitted or cleared `AllowedTools`, newly issued keys inherited the historical unrestricted custom-tool authorization. New issuance and explicit key edits now persist the four canonical read/query tools (`get_schemas`, `get_tables`, `get_columns`, `execute_query_sql`) instead of a wildcard. Built-in DML/DDL already required explicit grants; this change does not claim they were bypassed.
