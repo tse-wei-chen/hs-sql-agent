@@ -47,6 +47,30 @@ public sealed class HostAdversarialMutationAuthorizationTests
     ];
 
     [Fact]
+    public async Task SaturatedDmlPreflight_CannotCreateUnbudgetedProviderConnection()
+    {
+        var fixture = CreateTool("execute_dml_sql");
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        var physicalConnections = new Mock<SqlAgent.Service.Interfaces.IDbConnectionFactory>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Connections).Returns(physicalConnections.Object);
+        fixture.Providers.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        fixture.Limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IAsyncDisposable?)null);
+
+        var result = await fixture.Tool.ExecuteDmlSql(
+            "INSERT INTO public.users (id) VALUES (7)", null!,
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Committed);
+        Assert.Equal("failed", result.Status);
+        Assert.Equal("server.busy", result.Error?.Code);
+        Assert.True(result.Error?.Retryable);
+        physicalConnections.VerifyNoOtherCalls();
+        fixture.Limiter.Verify(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ForgedOrMissingDmlGrant_NeverReachesProviderOrApproval()
     {
         var count = 0;
