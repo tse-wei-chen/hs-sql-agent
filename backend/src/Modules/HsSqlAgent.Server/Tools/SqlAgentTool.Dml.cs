@@ -125,7 +125,9 @@ public partial class SqlAgentTool
                 }
                 return McpDmlToolResult.OutcomeUnknown(
                     providerName, parsedBatch.Count, approvalWaitDurationMs,
-                    execution.ApprovalRequestId, execution.Result, execution.ErrorCode);
+                    execution.ApprovalRequestId,
+                    McpErrorResponsePolicy.SafeDmlUnknownOutcomeMessage,
+                    execution.ErrorCode);
             }
 
             if (!execution.Committed)
@@ -166,12 +168,10 @@ public partial class SqlAgentTool
                     _ => McpDmlToolResult.Failed(
                         providerName,
                         parsedBatch.Count,
-                        execution.Result,
-                        new McpToolError(
-                            execution.ErrorCode ?? "dml.execution_failed",
-                            execution.Result,
-                            execution.ErrorStage ?? "Execution",
-                            execution.Retryable),
+                        McpErrorResponsePolicy.ForDmlFlowFailure(
+                            execution.ErrorCode, execution.ErrorStage, execution.Retryable).Message,
+                        McpErrorResponsePolicy.ForDmlFlowFailure(
+                            execution.ErrorCode, execution.ErrorStage, execution.Retryable),
                         execution.AffectedRows,
                         execution.ApprovalWaitDurationMs,
                         ApprovalDecisionText(execution.ApprovalDecision),
@@ -236,7 +236,7 @@ public partial class SqlAgentTool
                 parsedBatch?.Count ?? 0,
                 approvalWaitDurationMs,
                 null,
-                ex.Message,
+                McpErrorResponsePolicy.SafeDmlUnknownOutcomeMessage,
                 outcomeErrorCode);
         }
         catch (Exception ex)
@@ -258,11 +258,12 @@ public partial class SqlAgentTool
                 },
                 ex.Message,
                 cancellationToken);
+            var external = DescribeDmlError(ex);
             return McpDmlToolResult.Failed(
                 providerName,
                 parsedBatch?.Count ?? 0,
-                $"Error executing DML: {ex.Message}",
-                DescribeDmlError(ex),
+                external.Message,
+                external,
                 affectedRowCount,
                 approvalWaitDurationMs);
         }
@@ -339,62 +340,8 @@ public partial class SqlAgentTool
             cancellationToken);
     }
 
-    private static McpToolError DescribeDmlError(Exception error)
-    {
-        for (Exception? current = error; current is not null; current = current.InnerException)
-        {
-            var evidence = SqlCompileEvidence.TryGetFromException(current);
-            if (evidence is not null)
-            {
-                return new McpToolError(
-                    evidence.DecisionCode,
-                    error.Message,
-                    evidence.DecisionBoundary.ToString());
-            }
-        }
-
-        return error switch
-        {
-            DmlCommitOutcomeUnknownException => new McpToolError(
-                "dml.commit_outcome_unknown",
-                error.Message,
-                "Commit",
-                false),
-            DmlRollbackOutcomeUnknownException => new McpToolError(
-                "dml.rollback_outcome_unknown",
-                error.Message,
-                "Rollback",
-                false),
-            UnauthorizedAccessException => new McpToolError(
-                "authorization.denied",
-                error.Message,
-                "Authorization"),
-            TimeoutException => new McpToolError(
-                "execution.timeout",
-                error.Message,
-                "Execution",
-                true),
-            NotSupportedException => new McpToolError(
-                "dml.unsupported_statement",
-                error.Message,
-                "Capability"),
-            InvalidOperationException when error.Message.StartsWith("Server busy:", StringComparison.Ordinal) =>
-                new McpToolError(
-                    "server.busy",
-                    error.Message,
-                    "Execution",
-                    true),
-            InvalidOperationException when error.Message.Contains("durable approval lifecycle", StringComparison.OrdinalIgnoreCase) =>
-                new McpToolError(
-                    "approval.lifecycle_unavailable",
-                    error.Message,
-                    "Approval"),
-            _ => new McpToolError(
-                "dml.execution_failed",
-                error.Message,
-                "Execution")
-        };
-    }
+    private static McpToolError DescribeDmlError(Exception error) =>
+        McpErrorResponsePolicy.Classify(error, McpErrorSurface.Dml);
 
     private static string? ApprovalDecisionText(DmlApprovalDecision? decision) => decision switch
     {
