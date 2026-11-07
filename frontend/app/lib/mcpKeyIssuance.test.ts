@@ -60,7 +60,8 @@ describe("MCP key issuance helpers", () => {
   });
 
   it("describes the actual allowed-tools selection", () => {
-    expect(formatAllowedToolsLabel([])).toBe("Global (no restriction)");
+    expect(formatAllowedToolsLabel([])).toBe("Select at least one tool");
+    expect(formatAllowedToolsLabel([], true)).toBe("Legacy unrestricted (existing key)");
     expect(formatAllowedToolsLabel(["get_tables", "execute_query_sql"])).toBe(
       "2 tools selected",
     );
@@ -121,13 +122,19 @@ describe("MCP key issuance helpers", () => {
     expect(posture.dataScope).toBe("2 tables");
   });
 
-  it("makes the empty-selection unrestricted posture explicit", () => {
+  it("never treats new key forms with empty selection as unrestricted", () => {
     const posture = resolveMcpAccessPosture([], ["execute_dml_sql"], true, 1);
 
-    expect(posture.level).toBe("unrestricted");
-    expect(posture.title).toBe("Unrestricted tool access");
-    expect(posture.description).toContain("including DML");
+    expect(posture.level).toBe("review");
+    expect(posture.title).toBe("Select allowed tools");
+    expect(posture.description).toContain("cannot create unrestricted");
     expect(posture.dataScope).toBe("1 table");
+  });
+
+  it("identifies historical unrestricted keys without granting new ones implicit wildcard", () => {
+    const legacy = resolveMcpAccessPosture([], ["execute_dml_sql"], true, 1, 0, true);
+    expect(legacy.level).toBe("unrestricted");
+    expect(legacy.description).toContain("including DML");
   });
 
   it("flags saved tools that are no longer classifiable by the published catalog", () => {
@@ -170,7 +177,8 @@ describe("MCP key issuance helpers", () => {
 
   it("requires Elicitation for unrestricted or selected DML tools", () => {
     const dmlTools = ["execute_dml_sql", "archive_customer"];
-    expect(allowedToolsRequireElicitation([], dmlTools)).toBe(true);
+    expect(allowedToolsRequireElicitation([], dmlTools)).toBe(false);
+    expect(allowedToolsRequireElicitation([], dmlTools, true)).toBe(true);
     expect(allowedToolsRequireElicitation(["execute_dml_sql"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["EXECUTE_DML_SQL"], dmlTools)).toBe(true);
     expect(allowedToolsRequireElicitation(["archive_customer"], dmlTools)).toBe(true);
