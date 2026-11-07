@@ -113,8 +113,10 @@ public class CustomToolProxyTests
             It.IsAny<AuditEventContext>(), secret, It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact]
-    public async Task SaturatedCustomDmlPreflight_CannotOpenUnbudgetedProviderConnection()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SaturatedCustomDmlPreflight_CannotOpenUnbudgetedProviderConnection(bool auditUnavailable)
     {
         _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
                 "test_tool", 42, It.IsAny<CancellationToken>()))
@@ -132,6 +134,11 @@ public class CustomToolProxyTests
             .Returns(provider.Object);
         _sqlConcurrencyLimiterMock.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((IAsyncDisposable?)null);
+        if (auditUnavailable)
+            _auditServiceMock.Setup(x => x.WriteEventAsync(
+                    It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Audit failure: Password=super-secret"));
 
         var result = await _proxy.Execute(
             JsonSerializer.SerializeToElement(new { }),
