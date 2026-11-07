@@ -107,6 +107,36 @@ public class CustomToolProxyTests
     }
 
     [Fact]
+    public async Task SaturatedCustomDmlPreflight_CannotOpenUnbudgetedProviderConnection()
+    {
+        _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
+                "test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomSqlTool
+            {
+                Name = "test_tool",
+                Type = "DML",
+                SqlTemplate = "INSERT INTO public.users (id) VALUES (7)"
+            });
+        var physicalConnections = new Mock<IDbConnectionFactory>(MockBehavior.Strict);
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        provider.SetupGet(x => x.Connections).Returns(physicalConnections.Object);
+        _providerFactoryMock.Setup(x => x.GetProvider(SqlAgentToolType.Postgres))
+            .Returns(provider.Object);
+        _sqlConcurrencyLimiterMock.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IAsyncDisposable?)null);
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Contains("server.busy", result, StringComparison.Ordinal);
+        physicalConnections.VerifyNoOtherCalls();
+        _sqlConcurrencyLimiterMock.Verify(
+            x => x.TryAcquireAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Execute_ShouldReturnError_WhenToolNotFound()
     {
         _toolServiceMock.Setup(t => t.GetPublishedToolByNameAsync("test_tool", 42, It.IsAny<CancellationToken>()))
