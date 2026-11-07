@@ -3,7 +3,7 @@ using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
 using HsSqlAgent.SqlCore.Models;
 using MySql.Data.MySqlClient;
-using SqlAgent.Test.Strategies;
+using Testcontainers.MySql;
 using Xunit;
 
 namespace SqlAgent.Test.Services;
@@ -13,13 +13,22 @@ namespace SqlAgent.Test.Services;
 /// restricted F# compiler policy. Direct DBA-side execution is a control:
 /// the compiler must reject the same name before it reaches MySQL.
 /// </summary>
-public sealed class MySqlRestrictedNativeFunctionLiveTests(MySqlFixture fixture)
-    : IClassFixture<MySqlFixture>
+public sealed class MySqlRestrictedNativeFunctionLiveTests
 {
     [Fact]
     public async Task StoredFunction_CanReadExcludedPhysicalTable_ButWhitelistedQueryCannotCallIt()
     {
         var token = TestContext.Current.CancellationToken;
+
+        // Separate physical MySQL database. Binlog's strict function-creator
+        // privilege is disabled only inside this disposable test container,
+        // not on any application connection or shared test database.
+        await using var container = new MySqlBuilder("mysql:8.0")
+            .WithDatabase("test_db")
+            .WithPassword("TestPass123!")
+            .WithCommand("--log-bin-trust-function-creators=1", "--sql-mode=STRICT_ALL_TABLES")
+            .Build();
+        await container.StartAsync(token);
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var secretTable = "hsql_secret_" + suffix;
         var functionName = "hsql_leak_" + suffix;
@@ -27,7 +36,7 @@ public sealed class MySqlRestrictedNativeFunctionLiveTests(MySqlFixture fixture)
         var secretName = "`" + database + "`.`" + secretTable + "`";
         var qualifiedFunction = "`" + database + "`.`" + functionName + "`";
         var leakedValue = "HSQL_PRIVATE_SENTINEL_" + suffix;
-        await using var connection = new MySqlConnection(fixture.ConnectionString);
+        await using var connection = new MySqlConnection(container.GetConnectionString());
         await connection.OpenAsync(token);
 
         async Task ExecuteAsync(string sql)
@@ -36,6 +45,8 @@ public sealed class MySqlRestrictedNativeFunctionLiveTests(MySqlFixture fixture)
             await command.ExecuteNonQueryAsync(token);
         }
 
+        await ExecuteAsync("CREATE TABLE test_db.users (id INT PRIMARY KEY)");
+        await ExecuteAsync("INSERT INTO test_db.users VALUES (1)");
         await ExecuteAsync($"CREATE TABLE {secretName} (id INT PRIMARY KEY, secret VARCHAR(100) NOT NULL)");
         try
         {
