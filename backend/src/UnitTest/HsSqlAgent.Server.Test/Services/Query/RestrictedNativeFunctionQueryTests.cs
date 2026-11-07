@@ -1,6 +1,7 @@
 using Admin.Service.Models;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.SqlCore;
+using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
 using SqlAgent.Service.Interfaces;
 using Moq;
@@ -44,6 +45,10 @@ public sealed class RestrictedNativeFunctionQueryTests
 
         Assert.Contains("not proven", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("function", error.Message, StringComparison.OrdinalIgnoreCase);
+        var diagnostic = Assert.IsType<SqlDiagnostic>(
+            error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+        Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
     }
 
     [Theory]
