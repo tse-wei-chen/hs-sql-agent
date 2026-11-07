@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Admin.Service.Interfaces;
+using HsSqlAgent.Approvals;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using HsSqlAgent.Provider.Sqlite;
@@ -26,14 +27,21 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         int pauseOnPhysicalOpen)
     {
         await using var fixture = await Fixture.CreateAsync();
-        var gate = new TargetConnectionGate(pauseOnPhysicalOpen);
+        var gate = new TargetConnectionGate(pauseOnPhysicalOpen == 6 ? 0 : pauseOnPhysicalOpen);
         var provider = new GatedSqliteProvider(gate);
         var state = new SecurityPolicyRuntimeState();
         state.SetCurrent(new SecurityPolicyModel { MaxConcurrentSql = 1 });
         var limiter = new SqlExecutionConcurrencyLimiter(state);
 
+        IDmlApprovalProvider approval = pauseOnPhysicalOpen == 6
+            ? new CallbackApprovalProvider(() =>
+            {
+                gate.ArmForNextOpen();
+                return Task.CompletedTask;
+            })
+            : new DecisionProvider(approve: true);
         var accepted = fixture.CreateProxy(
-            new DecisionProvider(approve: true), targetProvider: provider,
+            approval, targetProvider: provider,
             concurrencyLimiter: limiter);
         var refused = fixture.CreateProxy(
             new DecisionProvider(approve: false),
@@ -92,15 +100,22 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         int pauseOnPhysicalOpen)
     {
         await using var fixture = await Fixture.CreateAsync();
-        var gate = new TargetConnectionGate(pauseOnPhysicalOpen);
+        var gate = new TargetConnectionGate(pauseOnPhysicalOpen == 6 ? 0 : pauseOnPhysicalOpen);
         var provider = new GatedSqliteProvider(gate);
         var state = new SecurityPolicyRuntimeState();
         state.SetCurrent(new SecurityPolicyModel { MaxConcurrentSql = 1 });
         var limiter = new SqlExecutionConcurrencyLimiter(state);
         using var cancelled = new CancellationTokenSource();
+        IDmlApprovalProvider approval = pauseOnPhysicalOpen == 6
+            ? new CallbackApprovalProvider(() =>
+            {
+                gate.ArmForNextOpen();
+                return Task.CompletedTask;
+            })
+            : new DecisionProvider(approve: true);
 
         var proxy = fixture.CreateProxy(
-            new DecisionProvider(approve: true),
+            approval,
             auditService: Mock.Of<IAuditService>(),
             targetProvider: provider,
             concurrencyLimiter: limiter);
@@ -147,6 +162,7 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         private int _created;
         private int _open;
         private int _peak;
+        private int _pauseNextOpen;
 
         public TaskCompletionSource<bool> HeldOpen { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -155,8 +171,9 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         public int PeakPhysicalTargetConnections => Volatile.Read(ref _peak);
 
         public int NextConnectionOrdinal() => Interlocked.Increment(ref _created);
+        public void ArmForNextOpen() => Interlocked.Exchange(ref _pauseNextOpen, 1);
 
-        public async Task OnOpenedAsync(int ordinal, CancellationToken token)
+        private void RecordPhysicalOpen()
         {
             var count = Interlocked.Increment(ref _open);
             var previousPeak = Volatile.Read(ref _peak);
@@ -167,7 +184,13 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
                 previousPeak = observed;
             }
 
-            if (ordinal == pauseOnPhysicalOpen)
+        }
+
+        public void OnOpenedSync() => RecordPhysicalOpen();
+
+        public async Task OnOpenedAsync(int ordinal, CancellationToken token)
+        {
+            if (ordinal == pauseOnPhysicalOpen || Interlocked.Exchange(ref _pauseNextOpen, 0) == 1)
             {
                 HeldOpen.TrySetResult(true);
                 await _resume.Task.WaitAsync(token);
@@ -201,12 +224,14 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         {
             inner.Open();
             MarkOpen();
+            gate.OnOpenedSync();
         }
 
         public override async Task OpenAsync(CancellationToken cancellationToken)
         {
             await inner.OpenAsync(cancellationToken);
             MarkOpen();
+            gate.OnOpenedSync();
             await gate.OnOpenedAsync(ordinal, cancellationToken);
         }
 
