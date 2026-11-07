@@ -444,9 +444,14 @@ public static class HsSqlAgentApplicationExtensions
                 // Historical bootstrap keys retain their configured grant, including
                 // legacy null/wildcard semantics. Only newly provisioned keys gain
                 // the explicit read-only default when tool selection is omitted.
-                managedKey.AllowedTools = isNew
-                    ? McpBuiltInTools.NormalizeExplicitAllowedTools(keyConfig.AllowedTools)
-                    : Normalize(keyConfig.AllowedTools);
+                var declaredTools = Normalize(keyConfig.AllowedTools);
+                if (isNew)
+                    managedKey.AllowedTools = McpBuiltInTools.NormalizeExplicitAllowedTools(declaredTools);
+                else if (declaredTools is not null)
+                    managedKey.AllowedTools = declaredTools;
+                // An omitted grant on subsequent bootstrap runs preserves the
+                // stored authorization: legacy wildcard stays legacy, while a
+                // newly defaulted key never silently broadens to wildcard.
                 managedKey.IsActive = true;
                 managedKey.RevokedAt = null;
                 managedKey.RevokedBy = null;
