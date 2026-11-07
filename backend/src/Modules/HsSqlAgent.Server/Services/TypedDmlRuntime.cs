@@ -82,6 +82,27 @@ public sealed class TypedDmlRuntime(
             : CoreDmlBatchTextParser.ParseDmlBatch(sql, sourceDialect);
     }
 
+    /// <summary>
+    /// Runtime-profile verification opens a physical connection. Budget that
+    /// connection separately from the preview and commit leases: the lease is
+    /// released before asynchronous approval/provider wait time begins.
+    /// </summary>
+    internal async Task<ParsedDmlBatch> ParseDmlBatchWithVerifiedRuntimeProfileUnderLeaseAsync(
+        ISqlProvider provider,
+        string connectionString,
+        string sql,
+        SqlAgentToolType sourceDialect,
+        ISqlExecutionConcurrencyLimiter concurrencyLimiter,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(concurrencyLimiter);
+        await using var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
+        if (lease is null)
+            throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+        return await ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+            provider, connectionString, sql, sourceDialect, cancellationToken);
+    }
+
     public async Task<TypedDmlApprovalSession> PreviewAsync(
         ISqlProvider provider,
         string connectionString,
