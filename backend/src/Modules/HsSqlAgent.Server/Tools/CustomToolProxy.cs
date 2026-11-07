@@ -250,7 +250,13 @@ public class CustomToolProxy(
                         },
                         result,
                         cancellationToken);
-                    return result;
+                    if (dmlExecution.ApprovalDecision is DmlApprovalDecision.Pending or DmlApprovalDecision.Rejected)
+                        return result;
+                    if (dmlExecution.ErrorCode == "approval.unavailable")
+                        return "Error: This MCP client does not support the required interactive DML approval.";
+                    var dmlError = McpErrorResponsePolicy.ForDmlFlowFailure(
+                        dmlExecution.ErrorCode, dmlExecution.ErrorStage, dmlExecution.Retryable);
+                    return $"Error: {dmlError.Code} ({dmlError.Stage}): {dmlError.Message}";
                 }
             }
             else
@@ -307,11 +313,12 @@ public class CustomToolProxy(
                 },
                 ex.Message,
                 cancellationToken);
-            var toolType = tool?.Type ?? "Unknown";
-            var suggestedTool = string.Equals(toolType, "Query", StringComparison.OrdinalIgnoreCase)
-                ? "execute_query_sql"
-                : "execute_dml_sql";
-            return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
+            var surface = string.Equals(tool?.Type, "DML", StringComparison.OrdinalIgnoreCase)
+                ? McpErrorSurface.Dml : McpErrorSurface.Query;
+            var external = McpErrorResponsePolicy.Classify(ex, surface);
+            // Never suggest replaying a Custom DML operation just because the
+            // secondary MCP call observed an error. Reconcile approval/audit first.
+            return $"Error: {external.Code} ({external.Stage}): {external.Message}";
         }
     }
 
