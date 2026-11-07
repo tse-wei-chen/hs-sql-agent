@@ -11,12 +11,13 @@ public sealed class McpErrorResponsePolicyTests
     private const string Secret = "Password=super-secret; SQL=SELECT private FROM payments";
 
     [Theory]
-    [InlineData(McpErrorSurface.Query, "execution.failed", "Execution")]
-    [InlineData(McpErrorSurface.Metadata, "metadata.failed", "Metadata")]
-    [InlineData(McpErrorSurface.Dml, "dml.execution_failed", "Execution")]
+    [InlineData("Query", "execution.failed", "Execution")]
+    [InlineData("Metadata", "metadata.failed", "Metadata")]
+    [InlineData("Dml", "dml.execution_failed", "Execution")]
     public void RawProviderException_NeverEscapesToMcp(
-        McpErrorSurface surface, string code, string stage)
+        string surfaceName, string code, string stage)
     {
+        var surface = Enum.Parse<McpErrorSurface>(surfaceName);
         var error = McpErrorResponsePolicy.Classify(
             new IOException(Secret), surface);
         Assert.Equal(code, error.Code);
@@ -28,11 +29,12 @@ public sealed class McpErrorResponsePolicyTests
     }
 
     [Theory]
-    [InlineData(McpErrorSurface.Query)]
-    [InlineData(McpErrorSurface.Metadata)]
-    [InlineData(McpErrorSurface.Dml)]
-    public void UnauthorizedError_NeverEchoesUntrustedExceptionText(McpErrorSurface surface)
+    [InlineData("Query")]
+    [InlineData("Metadata")]
+    [InlineData("Dml")]
+    public void UnauthorizedError_NeverEchoesUntrustedExceptionText(string surfaceName)
     {
+        var surface = Enum.Parse<McpErrorSurface>(surfaceName);
         var error = McpErrorResponsePolicy.Classify(
             new UnauthorizedAccessException(Secret), surface);
         Assert.Equal("authorization.denied", error.Code);
@@ -41,12 +43,13 @@ public sealed class McpErrorResponsePolicyTests
     }
 
     [Theory]
-    [InlineData(McpErrorSurface.Query, "execution.timeout", "Execution")]
-    [InlineData(McpErrorSurface.Metadata, "metadata.timeout", "Metadata")]
-    [InlineData(McpErrorSurface.Dml, "execution.timeout", "Execution")]
+    [InlineData("Query", "execution.timeout", "Execution")]
+    [InlineData("Metadata", "metadata.timeout", "Metadata")]
+    [InlineData("Dml", "execution.timeout", "Execution")]
     public void TimeoutRetainsRetryableCode_WithoutDriverDetails(
-        McpErrorSurface surface, string code, string stage)
+        string surfaceName, string code, string stage)
     {
+        var surface = Enum.Parse<McpErrorSurface>(surfaceName);
         var error = McpErrorResponsePolicy.Classify(new TimeoutException(Secret), surface);
         Assert.Equal(code, error.Code);
         Assert.Equal(stage, error.Stage);
