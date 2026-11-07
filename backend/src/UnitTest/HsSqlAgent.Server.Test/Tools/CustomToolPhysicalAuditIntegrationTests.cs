@@ -57,6 +57,15 @@ public sealed class CustomToolPhysicalAuditIntegrationTests
             definition.RootElement.GetProperty("ApprovalRequestId").GetString());
         Assert.DoesNotContain("sensitive_note", audit.Definition, StringComparison.Ordinal);
         Assert.DoesNotContain("second_value", audit.Definition, StringComparison.Ordinal);
+        var searchable = await new AuditService(
+                persisted, Mock.Of<IHttpContextAccessor>())
+            .QueryAsync(new AuditLogFilter
+            {
+                Action = "mcp.archive_order.executed",
+                Keyword = approval.LastRequest.RequestId
+            }, TestContext.Current.CancellationToken);
+        Assert.Single(searchable.Items);
+        Assert.Equal(audit.EventId, searchable.Items.Single().EventId);
     }
 
     [Fact]
