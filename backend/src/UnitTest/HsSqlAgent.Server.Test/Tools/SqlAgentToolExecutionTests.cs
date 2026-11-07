@@ -13,6 +13,54 @@ namespace HsSqlAgent.Server.Test.Tools;
 public class SqlAgentToolExecutionTests
 {
     [Fact]
+    public async Task ExecuteQuerySql_ProviderFailure_RetainsAuditDetailsButSanitizesMcpResponse()
+    {
+        const string secret = "Password=super-secret; SQL=SELECT * FROM private.payments";
+        var http = new Mock<IHttpContextAccessor>();
+        var context = new DefaultHttpContext();
+        context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
+        context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
+        context.Items[McpContextItemKeys.TableWhitelist] = string.Empty;
+        http.SetupGet(x => x.HttpContext).Returns(context);
+
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        var factory = new Mock<ISqlProviderFactory>();
+        factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        var audit = new Mock<IAuditService>();
+        var policy = new Mock<ISecurityPolicyRuntimeState>();
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Mock.Of<IAsyncDisposable>());
+        var runtime = new Mock<ITypedQueryRuntime>();
+        runtime.As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
+                It.IsAny<ISqlProvider>(),
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(),
+                It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException(secret));
+
+        var tool = new SqlAgentTool(http.Object, factory.Object, audit.Object,
+            Mock.Of<IDbSemanticService>(), policy.Object, limiter.Object, runtime.Object);
+        var result = await tool.ExecuteQuerySql("SELECT id FROM public.users", TestContext.Current.CancellationToken);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Equal("execution.failed", result.Error.Code);
+        Assert.Equal("Execution", result.Error.Stage);
+        Assert.DoesNotContain("super-secret", result.Error.Message);
+        Assert.DoesNotContain("payments", result.Error.Message);
+        audit.Verify(x => x.WriteEventAsync(
+            "mcp.query.executed", "query", "failed",
+            It.IsAny<AuditEventContext>(), secret, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecuteQuerySql_UsesParserNativeTypedRuntime()
     {
         var httpContextAccessor = new Mock<IHttpContextAccessor>();
@@ -145,7 +193,8 @@ public class SqlAgentToolExecutionTests
         Assert.NotNull(result.Error);
         Assert.Equal("authorization.denied", result.Error.Code);
         Assert.Equal("Authorization", result.Error.Stage);
-        Assert.Contains("table denied", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("denied", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("table denied", result.Error.Message, StringComparison.OrdinalIgnoreCase);
         auditService.Verify(x => x.WriteEventAsync(
             "mcp.query.executed",
             "query",
