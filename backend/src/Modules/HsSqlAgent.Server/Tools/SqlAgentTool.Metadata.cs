@@ -96,11 +96,11 @@ public partial class SqlAgentTool
                     relationships);
             }).ToArray();
 
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.get_columns",
                 $"{schemaName}.{tableName}",
                 "success",
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken));
             return new McpColumnsToolResult(true, providerName, schemaName, tableName, columns, null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -146,11 +146,11 @@ public partial class SqlAgentTool
                 schemas = await provider.Metadata.GetSchemasAsync(sqlConfig.ConnectionString, cancellationToken);
             }
 
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.get_schemas",
                 "database",
                 "success",
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken));
             return new McpSchemasToolResult(true, providerName, schemas.ToArray(), null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -229,11 +229,11 @@ public partial class SqlAgentTool
                     metrics);
             }).ToArray();
 
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.get_tables",
                 schemaName,
                 "success",
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken));
             return new McpTablesToolResult(true, providerName, schemaName, tableItems, null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -297,12 +297,12 @@ public partial class SqlAgentTool
         }
         catch (Exception ex)
         {
-            await _auditService.WriteLogAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteLogAsync(
                 "mcp.update_semantic_layer",
                 "semantic_layer",
                 "failed",
-                ex.Message);
-            return $"Error updating semantic layer: {ex.Message}";
+                ex.Message));
+            return "Error updating semantic layer: request failed. Check server diagnostics.";
         }
     }
 
