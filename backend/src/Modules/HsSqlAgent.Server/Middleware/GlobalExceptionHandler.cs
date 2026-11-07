@@ -24,10 +24,21 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         httpContext.Response.StatusCode = statusCode;
         httpContext.Response.ContentType = "application/json";
 
-        var isDev = httpContext.RequestServices.GetRequiredService<IWebHostEnvironment>().IsDevelopment();
-        // Preserve the legacy JSON shape for ordinary errors. Both physically
-        // uncertain outcomes must instead carry the machine-readable no-retry
-        // contract; an unconfirmed ROLLBACK is not an ordinary HTTP conflict.
+        // Provider and application exceptions may contain credentials, raw SQL,
+        // parameters and connection paths. Keep those details in server logs only.
+        // Preserve the HTTP status and legacy JSON field shape, not exception.Message.
+        var safeMessage = exception switch
+        {
+            DmlCommitOutcomeUnknownException =>
+                "The DML transaction may already have committed. Do not retry; reconcile database state.",
+            DmlRollbackOutcomeUnknownException =>
+                "The DML transaction could not be confirmed rolled back. Do not retry; reconcile database state.",
+            UnauthorizedAccessException => "Access denied.",
+            ArgumentException => "Invalid request.",
+            KeyNotFoundException => "Requested resource was not found.",
+            InvalidOperationException => "Request cannot be completed in its current state.",
+            _ => "Internal server error. Check server diagnostics."
+        };
         var unknownCode = exception switch
         {
             DmlCommitOutcomeUnknownException => "dml.commit_outcome_unknown",
@@ -37,21 +48,21 @@ public class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger) : IE
         object response = unknownCode is not null
             ? new
             {
-                error = exception.Message,
+                error = safeMessage,
                 type = exception.GetType().Name,
                 code = unknownCode,
                 status = "outcome_unknown",
                 committed = (bool?)null,
                 retryable = false,
                 traceId = Activity.Current?.Id ?? httpContext.TraceIdentifier,
-                detail = isDev ? exception.StackTrace : null
+                detail = (string?)null
             }
             : new
             {
-                error = exception.Message,
+                error = safeMessage,
                 type = exception.GetType().Name,
                 traceId = Activity.Current?.Id ?? httpContext.TraceIdentifier,
-                detail = isDev ? exception.StackTrace : null
+                detail = (string?)null
             };
 
         await httpContext.Response.WriteAsJsonAsync(response, cancellationToken);

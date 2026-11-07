@@ -18,6 +18,21 @@ internal enum McpErrorSurface
 /// </summary>
 internal static class McpErrorResponsePolicy
 {
+    // A secondary Audit write must not turn a classified MCP failure into an
+    // unhandled provider/Audit exception. The original error remains in the
+    // best-effort Audit request; transport responses stay policy-classified.
+    internal static async Task TryAuditFailureAsync(Func<Task> writeAudit)
+    {
+        try
+        {
+            await writeAudit();
+        }
+        catch (Exception)
+        {
+            // Do not mask the primary error or leak audit storage details.
+        }
+    }
+
     internal const string SafeDmlUnknownOutcomeMessage =
         "Target transaction outcome is unconfirmed. Do not retry the mutation; " +
         "reconcile database state using the approval request ID.";

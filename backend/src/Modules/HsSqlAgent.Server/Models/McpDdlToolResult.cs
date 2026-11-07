@@ -15,6 +15,34 @@ public sealed record McpDdlToolResult(
     string Message,
     McpToolError? Error)
 {
+    // The runtime may retain compiler diagnostics or provider exceptions in its
+    // internal Message for Audit. Only fixed status text and bounded, typed DDL
+    // codes are permitted at the MCP transport boundary.
+    private static string SafeRuntimeMessage(DdlRuntimeStatus status, string internalMessage) =>
+        status switch
+        {
+            DdlRuntimeStatus.Rejected => "DDL request was rejected; review the DDL policy and audit code.",
+            DdlRuntimeStatus.Failed => "DDL execution failed; inspect audit and physical schema state.",
+            DdlRuntimeStatus.OutcomeUnknown =>
+                "DDL outcome is unconfirmed. Do not retry; reconcile physical schema and approval request.",
+            _ => internalMessage
+        };
+
+    private static McpToolError? SafeRuntimeError(DdlRuntimeStatus status, string? code)
+    {
+        if (status is not (DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
+            or DdlRuntimeStatus.OutcomeUnknown))
+            return null;
+
+        var safeCode = status == DdlRuntimeStatus.OutcomeUnknown
+            ? "ddl.outcome_unknown"
+            : code is { Length: > 4 and <= 100 }
+                && code.StartsWith("ddl.", StringComparison.Ordinal)
+                && code.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '.' or '_' or '-')
+                ? code : "ddl.denied";
+        return new McpToolError(safeCode, SafeRuntimeMessage(status, string.Empty), "DdlExecution");
+    }
+
     /// <summary>One PostgreSQL atomic batch preview (not authorization).</summary>
     public IReadOnlyList<string>? BatchStatements { get; init; }
     public string? BatchPlanFingerprint { get; init; }
@@ -45,11 +73,8 @@ public sealed record McpDdlToolResult(
             null,
             preview?.ExpectedColumns,
             preview?.RequestId,
-            result.Message,
-            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
-                or DdlRuntimeStatus.OutcomeUnknown
-                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
-                : null)
+            SafeRuntimeMessage(result.Status, result.Message),
+            SafeRuntimeError(result.Status, result.ErrorCode))
         {
             // sqlite_schema.sql can contain private DEFAULT literals.
             // Host binds its full bytes into the approval fingerprint, but
@@ -80,11 +105,8 @@ public sealed record McpDdlToolResult(
             null,
             preview?.ExpectedColumns,
             preview?.RequestId,
-            result.Message,
-            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
-                or DdlRuntimeStatus.OutcomeUnknown
-                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
-                : null)
+            SafeRuntimeMessage(result.Status, result.Message),
+            SafeRuntimeError(result.Status, result.ErrorCode))
         {
             SqlServerBefore = preview?.Before
         };
@@ -109,11 +131,8 @@ public sealed record McpDdlToolResult(
             null,
             preview?.ExpectedColumns,
             preview?.RequestId,
-            result.Message,
-            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
-                or DdlRuntimeStatus.OutcomeUnknown
-                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
-                : null)
+            SafeRuntimeMessage(result.Status, result.Message),
+            SafeRuntimeError(result.Status, result.ErrorCode))
         {
             FirebirdBefore = preview?.Before
         };
@@ -131,12 +150,8 @@ public sealed record McpDdlToolResult(
             result.CommitConfirmed, "MySQL",
             preview?.StaticPreview.PlanFingerprint,
             preview?.StaticPreview.Plan.Command.Sql,
-            null, preview?.ExpectedColumns, preview?.RequestId, result.Message,
-            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
-                or DdlRuntimeStatus.OutcomeUnknown
-                ? new McpToolError(result.ErrorCode ?? "ddl.denied",
-                    result.Message, "DdlExecution")
-                : null)
+            null, preview?.ExpectedColumns, preview?.RequestId, SafeRuntimeMessage(result.Status, result.Message),
+            SafeRuntimeError(result.Status, result.ErrorCode))
         {
             MySqlBefore = preview?.Before
         };
@@ -154,12 +169,8 @@ public sealed record McpDdlToolResult(
             result.CommitConfirmed, "Oracle",
             preview?.StaticPreview.PlanFingerprint,
             preview?.StaticPreview.Plan.Command.Sql,
-            null, preview?.ExpectedColumns, preview?.RequestId, result.Message,
-            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
-                or DdlRuntimeStatus.OutcomeUnknown
-                ? new McpToolError(result.ErrorCode ?? "ddl.denied",
-                    result.Message, "DdlExecution")
-                : null)
+            null, preview?.ExpectedColumns, preview?.RequestId, SafeRuntimeMessage(result.Status, result.Message),
+            SafeRuntimeError(result.Status, result.ErrorCode))
         {
             OracleBefore = preview?.Before
         };
@@ -181,11 +192,8 @@ public sealed record McpDdlToolResult(
             preview?.Before,
             preview?.ExpectedColumns,
             preview?.RequestId,
-            result.Message,
-            result.Status is DdlRuntimeStatus.Failed or DdlRuntimeStatus.Rejected
-                or DdlRuntimeStatus.OutcomeUnknown
-                ? new McpToolError(result.ErrorCode ?? "ddl.denied", result.Message, "DdlExecution")
-                : null)
+            SafeRuntimeMessage(result.Status, result.Message),
+            SafeRuntimeError(result.Status, result.ErrorCode))
         {
             Risk = preview?.StaticPreview.Plan.Risk.ToString(),
             MayLoseData = preview?.StaticPreview.Plan.Impact.MayLoseData ?? false,

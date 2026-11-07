@@ -242,7 +242,7 @@ public partial class SqlAgentTool
         catch (Exception ex)
         {
             var descriptor = parsedBatch is null ? null : DescribeBatch(parsedBatch);
-            await _auditService.WriteEventAsync(
+            await McpErrorResponsePolicy.TryAuditFailureAsync(() => _auditService.WriteEventAsync(
                 "mcp.dml.executed",
                 descriptor?.Resource ?? "unknown",
                 "failed",
@@ -257,7 +257,7 @@ public partial class SqlAgentTool
                     Definition = parsedBatch is null ? null : DescribeDmlBatch(parsedBatch)
                 },
                 ex.Message,
-                cancellationToken);
+                cancellationToken));
             var external = DescribeDmlError(ex);
             return McpDmlToolResult.Failed(
                 providerName,

@@ -142,10 +142,11 @@ public partial class SqlAgentTool
                 null, null, "DDL request cancelled; no execution was authorized.",
                 new McpToolError("ddl.cancelled", "DDL request cancelled.", "Approval"));
         }
-        catch (UnauthorizedAccessException ex)
+        catch (UnauthorizedAccessException)
         {
+            const string denied = "DDL request denied by Host authorization policy.";
             return new McpDdlToolResult("rejected", false, null, null, null, null,
-                null, null, ex.Message, new McpToolError("ddl.permission_denied", ex.Message, "Authorization"));
+                null, null, denied, new McpToolError("ddl.permission_denied", denied, "Authorization"));
         }
         catch (Exception)
         {
