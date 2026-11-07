@@ -197,6 +197,36 @@ public class CustomToolProxy(
                 approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
                 dmlAffectedRows = dmlExecution.AffectedRows;
 
+                // A confirmed COMMIT and an unconfirmed COMMIT/ROLLBACK are terminal
+                // physical outcomes. Audit I/O must never turn either into a retryable
+                // failure or lose the one-time approval correlation.
+                var outcomeUnknown = !dmlExecution.Committed
+                    && dmlExecution.ErrorCode is ("dml.commit_outcome_unknown" or "dml.rollback_outcome_unknown");
+                if (dmlExecution.Committed || outcomeUnknown)
+                {
+                    return await CompleteTerminalDmlOutcomeAsync(
+                        dmlExecution,
+                        () => _auditService.WriteEventAsync(
+                            $"mcp.{_name}.executed",
+                            _name,
+                            outcomeUnknown ? "outcome_unknown" : "success",
+                            new AuditEventContext
+                            {
+                                ToolName = _name,
+                                Operation = DmlOperationName(parsedDml),
+                                DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
+                                AffectedRows = outcomeUnknown ? null : dmlAffectedRows,
+                                ApprovalStatus = "approved",
+                                ErrorCategory = outcomeUnknown
+                                    ? (dmlExecution.ErrorCode == "dml.rollback_outcome_unknown"
+                                        ? "DmlRollbackOutcomeUnknown" : "DmlCommitOutcomeUnknown")
+                                    : null,
+                                Definition = DescribeDml(parsedDml)
+                            },
+                            outcomeUnknown ? dmlExecution.Result : $"Type: {tool.Type}",
+                            CancellationToken.None));
+                }
+
                 if (!dmlExecution.Committed)
                 {
                     var (auditResult, approvalStatus) = dmlExecution.ApprovalDecision switch
@@ -283,6 +313,41 @@ public class CustomToolProxy(
                 : "execute_dml_sql";
             return $"Error: {ex.Message}\nPlease fix the parameters or SQL template and use '{suggestedTool}' to try again.";
         }
+    }
+
+    // This boundary is reached only after the approval flow has returned a terminal
+    // database outcome. Secondary telemetry must not change the physical result.
+    internal static async Task<string> CompleteTerminalDmlOutcomeAsync(
+        TypedDmlExecutionTiming execution,
+        Func<Task> writeAudit)
+    {
+        ArgumentNullException.ThrowIfNull(writeAudit);
+        var outcomeUnknown = !execution.Committed
+            && execution.ErrorCode is ("dml.commit_outcome_unknown" or "dml.rollback_outcome_unknown");
+        if (!execution.Committed && !outcomeUnknown)
+            throw new ArgumentException(
+                "Only a confirmed commit or an unknown physical outcome may cross this boundary.",
+                nameof(execution));
+
+        try
+        {
+            await writeAudit();
+        }
+        catch (Exception)
+        {
+            // Even cancellation of the original MCP request cannot undo a COMMIT,
+            // confirm a ROLLBACK, or make a consumed approval safe to replay.
+        }
+
+        if (execution.Committed)
+            return execution.Result;
+
+        // The Custom Tool transport returns a string. Preserve machine-readable
+        // correlation without exposing raw driver errors in the MCP response.
+        return $"status=outcome_unknown; errorCode={execution.ErrorCode}; retryable=false; " +
+               $"approvalRequestId={execution.ApprovalRequestId ?? "unavailable"}; " +
+               "The database transaction outcome is unconfirmed. Do not retry; " +
+               "reconcile database state before any further mutation.";
     }
 
     private static long ProcessingDuration(Stopwatch stopwatch, long approvalWaitDurationMs) =>
