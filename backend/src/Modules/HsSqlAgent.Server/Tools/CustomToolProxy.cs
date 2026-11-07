@@ -76,6 +76,7 @@ public class CustomToolProxy(
         QueryFacts? auditQueryFacts = null;
         SqlAgentToolType? auditQueryDialect = null;
         ParsedDmlBatch? auditDml = null;
+        string? auditApprovalRequestId = null;
         string renderedSql = string.Empty;
         try
         {
@@ -200,6 +201,7 @@ public class CustomToolProxy(
                 result = dmlExecution.Result;
                 approvalWaitDurationMs += dmlExecution.ApprovalWaitDurationMs;
                 dmlAffectedRows = dmlExecution.AffectedRows;
+                auditApprovalRequestId = dmlExecution.ApprovalRequestId;
 
                 // A confirmed COMMIT and an unconfirmed COMMIT/ROLLBACK are terminal
                 // physical outcomes. Audit I/O must never turn either into a retryable
@@ -225,7 +227,7 @@ public class CustomToolProxy(
                                     ? (dmlExecution.ErrorCode == "dml.rollback_outcome_unknown"
                                         ? "DmlRollbackOutcomeUnknown" : "DmlCommitOutcomeUnknown")
                                     : null,
-                                Definition = DescribeDml(parsedDml)
+                                Definition = DescribeDml(parsedDml, auditApprovalRequestId)
                             },
                             outcomeUnknown ? dmlExecution.Result : $"Type: {tool.Type}",
                             CancellationToken.None));
@@ -250,7 +252,7 @@ public class CustomToolProxy(
                             DurationMs = ProcessingDuration(stopwatch, approvalWaitDurationMs),
                             AffectedRows = dmlAffectedRows,
                             ApprovalStatus = approvalStatus,
-                            Definition = DescribeDml(parsedDml)
+                            Definition = DescribeDml(parsedDml, auditApprovalRequestId)
                         },
                         result,
                         cancellationToken);
@@ -286,7 +288,7 @@ public class CustomToolProxy(
                     ApprovalStatus = isDml ? "approved" : null,
                     Definition = isQuery && auditQueryFacts != null
                         ? DescribeQuery(renderedSql, dbType, auditQueryFacts)
-                        : auditDml == null ? null : DescribeDml(auditDml)
+                        : auditDml == null ? null : DescribeDml(auditDml, auditApprovalRequestId)
                 },
                 $"Type: {tool.Type}",
                 cancellationToken);
@@ -313,7 +315,7 @@ public class CustomToolProxy(
                     ErrorCategory = ex.GetType().Name,
                     Definition = auditQueryFacts != null && auditQueryDialect.HasValue
                         ? DescribeQuery(renderedSql, auditQueryDialect.Value, auditQueryFacts)
-                        : auditDml == null ? null : DescribeDml(auditDml)
+                        : auditDml == null ? null : DescribeDml(auditDml, auditApprovalRequestId)
                 },
                 ex.Message,
                 cancellationToken));
@@ -374,10 +376,11 @@ public class CustomToolProxy(
             facts.ContainsSubquery
         });
 
-    private static string DescribeDml(ParsedDmlBatch parsedDml) =>
+    private static string DescribeDml(ParsedDmlBatch parsedDml, string? approvalRequestId) =>
         JsonSerializer.Serialize(new
         {
             StatementCount = parsedDml.Count,
+            ApprovalRequestId = approvalRequestId,
             Statements = parsedDml.Statements.Select((statement, index) =>
             {
                 var table = statement.Statement switch
