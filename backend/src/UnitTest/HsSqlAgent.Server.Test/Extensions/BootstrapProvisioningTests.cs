@@ -177,6 +177,11 @@ public class BootstrapProvisioningTests
 
         var appBuilder = new ApplicationBuilder(services.BuildServiceProvider());
         appBuilder.UseHsSqlAgent();
+        await using (var initialContext = new AdminContext(adminDbOptions))
+        {
+            var newKey = await initialContext.McpAccessKeys.SingleAsync(TestContext.Current.CancellationToken);
+            Assert.Equal("get_schemas,get_tables,get_columns,execute_query_sql", newKey.AllowedTools);
+        }
         bootstrap.Databases[0].Name = "Renamed DB";
         bootstrap.Databases[0].Host = "db.internal";
         bootstrap.Databases[0].McpKeys[0].Name = "Renamed Key";
