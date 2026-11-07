@@ -376,7 +376,7 @@ public class CustomToolProxy(
             facts.ContainsSubquery
         });
 
-    private static string DescribeDml(ParsedDmlBatch parsedDml, string? approvalRequestId = null) =>
+    private static string DescribeDml(ParsedDmlBatch parsedDml, string? approvalRequestId) =>
         JsonSerializer.Serialize(new
         {
             StatementCount = parsedDml.Count,
