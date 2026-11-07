@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Host HTTP, DDL and secondary-Audit error egress (PR #580)
+
+- Stop reflecting untrusted exception messages and stack traces from the global HTTP error handler. Preserve 400/401/404/409/500 status semantics, trace IDs and existing JSON field shape; DML COMMIT/ROLLBACK uncertainty keeps separate machine-readable non-retryable codes and a fixed reconciliation message.
+- Keep six-provider DDL runtime diagnostics in server-side audit; MCP failed/rejected/outcome-unknown results return bounded DDL error codes and fixed safe descriptions. The physical outcome and approval request correlation remain unchanged; DDL unknown outcomes explicitly prohibit automatic retry.
+- Secondary Audit I/O errors during Query, Metadata, Custom and built-in DML exception handling no longer replace the original classified failure or disclose Audit storage credentials. DDL's request Audit still fails closed **before** any possible schema mutation. Legacy CLR-only semantic update failures no longer echo raw exceptions.
+- Regression tests cover all six DDL providers, HTTP error status families, and Query/Metadata/Custom failure-injection with unavailable Audit. No SQL compiler, capability, permission, public DTO signature or database transaction strategy changed.
+
 ### DML runtime-profile connection budget
 
 - Close a SQL concurrency-budget gap: built-in `execute_dml_sql`, published Custom DML tools and durable DML completion now acquire an existing SQL execution lease **before** opening a provider connection to verify the runtime dialect/profile. A saturated budget rejects the request without creating a target database connection.
