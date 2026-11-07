@@ -177,12 +177,17 @@ module internal RewritePipeline =
         let validated = RewriteQueryPipeline.validate (validate options) canonical
         let authorized =
             RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
-                let requirePostgresFunctionProof =
-                    Option.isSome options.AllowedTables
-                    && (match VerifiedTarget.runtime options.Target with
-                        | TargetRuntime.PostgreSqlRuntime -> true
-                        | _ -> false)
-                RewriteQueryPipeline.authorize options.Policy.QueryRows requirePostgresFunctionProof validated)
+                let functionSafety =
+                    if Option.isNone options.AllowedTables then
+                        RewriteQueryPolicy.UnrestrictedFunctions
+                    else
+                        match VerifiedTarget.runtime options.Target with
+                        | TargetRuntime.PostgreSqlRuntime -> RewriteQueryPolicy.ProvenPostgresFunctions
+                        | runtime ->
+                            // Other providers have no PostgreSQL-style physical read-only
+                            // fence and no proof of native UDF hidden table effects.
+                            RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider runtime)
+                RewriteQueryPipeline.authorize options.Policy.QueryRows functionSafety validated)
         RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
             RewriteQueryPipeline.render renderWithDiagnostic authorized)
 
