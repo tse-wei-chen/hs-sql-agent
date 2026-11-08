@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### SQL Server 2022 unbounded Query principal privilege fence (#575)
+
+- SQL Server does not support a provider-neutral `SET TRANSACTION READ ONLY`. Require live, same-connection effective privilege proof before executing SQL Server Query when the MCP key has **no Table Whitelist**; elevated SQL logins or accounts with schema, object, column-level DML/DDL or native routine EXECUTE grants fail closed. A dedicated reader login with `SELECT` on intended tables plus database `VIEW DEFINITION` continues to execute ordinary compiled SELECT. A table-whitelisted Query keeps its established F# native-function restrictions.
+- Add mandatory real SQL Server 2022 RED→GREEN tests using `sa` versus a disposable constrained SQL login, independent physical SELECT and inaccessible-table controls, temporary `GRANT UPDATE` and `GRANT EXECUTE` followed by `REVOKE`, and an `EXECUTE AS OWNER` scalar UDF that bypasses the caller's table SELECT privilege. No new SQL tools, compiler grammar expansion or DML semantics changes.
+- This check is **bounded effective-permission attestation**, not a SQL Server engine read-only transaction, not a universal guard against external SQL CLR effects, cross-database chaining, permission changes between check/execution, or automatically established least privilege for other providers. Query-only accounts should use dedicated minimally permitted DB credentials. Release gate #575 remains open.
+
 ### MySQL 8.4 Query-only physical read-only transaction fence (#575)
 
 - Execute compiled MySQL Query using a real next-transaction `SET TRANSACTION READ ONLY` fence on the same native connection and transaction-bound executor, including API keys granted only `execute_query_sql` with no Table Whitelist. Fail closed on fence/transaction setup errors; no session-global transaction setting and no change to SQL grammar or F# SqlCore.
