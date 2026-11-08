@@ -227,32 +227,6 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         if (provider.Type == SqlAgentToolType.Sqlite)
             await VerifySqliteBuiltInFunctionIdentityAsync(connection, cancellationToken);
 
-        // A MySQL SELECT can call an effectful stored function even for a
-        // Query-only MCP key with no table whitelist. SET TRANSACTION READ ONLY
-        // is intentionally next-transaction scope (not SESSION scope): apply
-        // it before BeginTransactionAsync on the exact execution connection.
-        // There is no unfenced fallback if either the fence or begin fails.
-        //
-        // This blocks writes to normal tables, not temporary tables or
-        // arbitrary external effects of UDFs; least-privilege DB roles remain
-        // necessary. The compiled query runs against the native transaction.
-        if (provider.Type == SqlAgentToolType.MySQL)
-        {
-            await using (var fence = connection.CreateCommand())
-            {
-                fence.CommandText = "SET TRANSACTION READ ONLY";
-                fence.CommandTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
-                await fence.ExecuteNonQueryAsync(cancellationToken);
-            }
-
-            await using var readOnlyTransaction =
-                await connection.BeginTransactionAsync(cancellationToken);
-            var result = await QueryExecutor.ExecuteQueryInTransactionAsync(
-                command, connection, timeoutSeconds, readOnlyTransaction, cancellationToken);
-            await readOnlyTransaction.RollbackAsync(cancellationToken);
-            return result;
-        }
-
         if (provider.Type != SqlAgentToolType.Postgres)
             return await QueryExecutor.ExecuteQueryAsync(
                 command, connection, timeoutSeconds, cancellationToken);
