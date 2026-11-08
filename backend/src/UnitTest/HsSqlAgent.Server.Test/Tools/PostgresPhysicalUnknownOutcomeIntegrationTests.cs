@@ -14,7 +14,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 /// #575: real PostgreSQL 16 transactions; simulated ACK is dropped only
 /// *after* native Npgsql CommitAsync or RollbackAsync finishes.
 /// </summary>
-public sealed class PostgresPhysicalUnknownOutcomeIntegrationTests
+public sealed partial class PostgresPhysicalUnknownOutcomeIntegrationTests
 {
     private static readonly SecurityPolicyModel Policy = new()
     {
