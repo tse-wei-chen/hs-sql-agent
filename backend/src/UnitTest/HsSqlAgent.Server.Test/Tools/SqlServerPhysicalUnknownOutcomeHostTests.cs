@@ -19,7 +19,7 @@ using Xunit;
 namespace HsSqlAgent.Server.Test.Tools;
 
 /// <summary>
-/// Real SQL Server 16 target + independent persistent SQLite Admin Audit.
+/// Real SQL Server 2022 target + independent persistent SQLite Admin Audit.
 /// The published Custom MCP proxy, approval, compiler and executor are real.
 /// </summary>
 public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
@@ -30,14 +30,14 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
     public async Task PublishedCustomMcpTool_PersistsNonretryableSqlServerUncertainOutcome(
         bool loseCommitAck, string errorCode, string auditCategory, long expectedCount)
     {
-        var source = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");
+        var source = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(source))
         {
             if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
-                    "SQL Server 16 Custom MCP proof requires TEST_POSTGRES_CONNECTION.");
-            Assert.Skip("Requires real SQL Server 16.");
+                    "SQL Server 2022 Custom MCP proof requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("Requires real SQL Server 2022.");
         }
 
         var ct = TestContext.Current.CancellationToken;
@@ -54,8 +54,8 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
         }
         try
         {
-            await ExecAsync(targetAdmin, "CREATE TABLE " + schema
-                + ".items (id INTEGER PRIMARY KEY, note NVARCHAR(64) NOT NULL)", ct);
+            await ExecAsync(targetAdmin, "CREATE TABLE dbo." + table
+                + " (id INTEGER PRIMARY KEY, note NVARCHAR(64) NOT NULL)", ct);
 
             await using var audit = OpenAuditContext(auditPath);
             await audit.Database.EnsureCreatedAsync(ct);
@@ -70,13 +70,13 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             context.Items[McpContextItemKeys.DbManagementId] = 42;
             context.Items[McpContextItemKeys.DatabaseName] = targetAdmin.Database;
             context.Items[McpContextItemKeys.AllowedTools] = "archive_order";
-            context.Items[McpContextItemKeys.TableWhitelist] = "dbo." + table + "";
+            context.Items[McpContextItemKeys.TableWhitelist] = "dbo." + table;
             var http = new Mock<IHttpContextAccessor>();
             http.SetupGet(x => x.HttpContext).Returns(context);
 
-            var toolSql = "INSERT INTO " + "dbo." + table + "(id,note)"
+            var toolSql = "INSERT INTO dbo." + table + "(id,note)"
                 + " VALUES(100,'sensitive_note');"
-                + "INSERT INTO " + "dbo." + table + "(id,note)"
+                + "INSERT INTO dbo." + table + "(id,note)"
                 + " VALUES(101,'second_value')";
             var published = new Mock<ICustomSqlToolService>();
             published.Setup(x => x.GetPublishedToolByNameAsync(
@@ -104,8 +104,8 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             {
                 if (!loseCommitAck)
                     await ExecAsync(targetAdmin,
-                        "INSERT INTO " + schema
-                        + ".items(id,note) VALUES(101,'racing-row')", ct);
+                        "INSERT INTO dbo." + table
+                        + "(id,note) VALUES(101,'racing-row')", ct);
 
                 // Deliberately alter only the transaction execution connection,
                 // after runtime profile verification and preview have completed.
@@ -160,7 +160,7 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             await using var witness = new SqlConnection(target);
             await witness.OpenAsync(ct);
             Assert.Equal(expectedCount, Convert.ToInt64(await ScalarAsync(witness,
-                "SELECT count(*) FROM " + "dbo." + table + "", ct)));
+                "SELECT count(*) FROM " + "dbo." + table, ct)));
             Assert.Equal(loseCommitAck ? 1L : 0L,
                 Convert.ToInt64(await ScalarAsync(witness,
                     "SELECT count(*) FROM " + "dbo." + table + " WHERE id=100", ct)));
