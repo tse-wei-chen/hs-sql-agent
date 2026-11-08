@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### MySQL 8.4 physical Custom DML lost-acknowledgement proof (PR #589)
+
+- Add real MySQL 8.4 InnoDB transactional tests: two separately approved inserts physically COMMIT before the acknowledgement is discarded, and a competing primary key forces the second statement to fail and a native ROLLBACK before its acknowledgement is lost. Independent target connections verify either two committed rows or only the outside racing row.
+- The native MySql.Data transaction/command is used throughout. Direct `TypedDmlRuntime` tests check distinct commit/rollback `outcome_unknown` exceptions and one-time aggregate approval no-replay. Published Custom MCP tests assert non-retryable result codes, exact approval request correlation, redaction and independently persisted Admin SQLite Audit status/category/searchability.
+- Explicit mandatory-live MySQL 8.4 CI test step in `sqlagent-test`, with generic `server-test` exclusion to avoid treating missing databases as a silent pass. No compiler, SQL grammar, runtime or MCP API changes. These simulated post-native-driver acknowledgement losses do not establish true network-disconnect handling, crash recovery, distributed limiting or remaining SQL Server/Oracle/Firebird evidence; #575 remains open.
+
 ### PostgreSQL 16 physical Custom DML acknowledgement-loss proof (PR #588)
 
 - Add first non-SQLite real-provider tests for two-statement approved PostgreSQL DML: native COMMIT completes before its acknowledgement is deliberately lost, leaving both physical rows committed; native ROLLBACK completes before its acknowledgement is lost after a conflicting concurrent insert, leaving only the independent row.

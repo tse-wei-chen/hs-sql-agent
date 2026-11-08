@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~MySqlPhysicalUnknownOutcomeIntegrationTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -560,6 +560,12 @@ jobs:
           --filter 'FullyQualifiedName~PostgresPhysicalUnknownOutcomeIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
+      - name: Verify MySQL 8.4 real physical DML lost COMMIT ROLLBACK acknowledgements and Custom MCP Audit
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~MySqlPhysicalUnknownOutcomeIntegrationTests'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Verify MySQL 8.4 implicit-commit DDL Host against real database
         run: >
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
