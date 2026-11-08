@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -627,6 +627,12 @@ jobs:
           --filter 'FullyQualifiedName~SqlCoreSqlServerDdlHostLiveTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
+      - name: Verify SQL Server physical native-function Query whitelist fence
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~QueryNativeFunctionLiveTests.SqlServer_'
+        env:
+          TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify real SQL Server DML fencing and DDL Catalog differential parity
         # Dedicated service job to keep the regular SQL test shards lightweight.
         # Missing/unready SQL Server is a hard failure in CI, never a skip.
@@ -725,6 +731,12 @@ jobs:
           --filter 'FullyQualifiedName~FirebirdDdlLiveTests'
         env:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
+      - name: Verify Firebird 5 physical native-function Query whitelist fence
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~QueryNativeFunctionLiveTests.Firebird_'
+        env:
+          TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
       - name: Verify live Firebird 5 Catalog against modeled DDL
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
@@ -762,6 +774,12 @@ jobs:
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
           TEST_ORACLE_ADMIN_CONNECTION: "User Id=sys;Password=Strong_Password_123!;DBA Privilege=SYSDBA;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify Oracle 26ai physical native-function Query whitelist fence
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~QueryNativeFunctionLiveTests.Oracle_'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify G10 LAG LEAD IGNORE NULLS on real Oracle
         run: >
           dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj
