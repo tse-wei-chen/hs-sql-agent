@@ -19,7 +19,7 @@ using Xunit;
 namespace HsSqlAgent.Server.Test.Tools;
 
 /// <summary>
-/// Real MySQL 16 target + independent persistent SQLite Admin Audit.
+/// Real MySQL 8.4 target + independent persistent SQLite Admin Audit.
 /// The published Custom MCP proxy, approval, compiler and executor are real.
 /// </summary>
 public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
@@ -36,8 +36,8 @@ public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
             if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
-                    "MySQL 16 Custom MCP proof requires TEST_MYSQL_CONNECTION.");
-            Assert.Skip("Requires real MySQL 16.");
+                    "MySQL 8.4 Custom MCP proof requires TEST_MYSQL_CONNECTION.");
+            Assert.Skip("Requires real MySQL 8.4.");
         }
 
         var ct = TestContext.Current.CancellationToken;
@@ -64,9 +64,9 @@ public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
 
             var context = new DefaultHttpContext
             {
-                TraceIdentifier = "incoming-postgres-mcp-request"
+                TraceIdentifier = "incoming-mysql-mcp-request"
             };
-            context.Items[McpContextItemKeys.SqlProvider] = "MySql";
+            context.Items[McpContextItemKeys.SqlProvider] = "MySQL";
             context.Items[McpContextItemKeys.SqlConnectionString] = target;
             context.Items[McpContextItemKeys.AccessKeyId] = 7;
             context.Items[McpContextItemKeys.DbManagementId] = 42;
@@ -143,7 +143,7 @@ public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
             Assert.Equal(auditCategory, record.ErrorCategory);
             Assert.Equal("approved", record.ApprovalStatus);
             Assert.Null(record.AffectedRows);
-            Assert.Equal("incoming-postgres-mcp-request", record.RequestId);
+            Assert.Equal("incoming-mysql-mcp-request", record.RequestId);
             using var definition = JsonDocument.Parse(Assert.IsType<string>(record.Definition));
             Assert.Equal(approval.LastRequest.RequestId,
                 definition.RootElement.GetProperty("ApprovalRequestId").GetString());
@@ -194,7 +194,7 @@ public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
         {
             LastRequest = request;
             await beforeApproval();
-            return DmlApprovalResult.Approve(request, "postgres-physical-reviewer");
+            return DmlApprovalResult.Approve(request, "mysql-physical-reviewer");
         }
     }
 }

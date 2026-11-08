@@ -2,7 +2,7 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using Admin.Service.Models;
-using HsSqlAgent.Provider.PostgreSql;
+using HsSqlAgent.Provider.MySql;
 using HsSqlAgent.Server.Services;
 using MySql.Data.MySqlClient;
 using SqlAgent.Service.Core.Execution;
@@ -11,7 +11,7 @@ using Xunit;
 namespace HsSqlAgent.Server.Test.Tools;
 
 /// <summary>
-/// #575: real MySQL 16 transactions; simulated ACK is dropped only
+/// #575: real MySQL 8.4 transactions; simulated ACK is dropped only
 /// *after* native MySql CommitAsync or RollbackAsync finishes.
 /// </summary>
 public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
@@ -35,8 +35,8 @@ public sealed partial class MySqlPhysicalUnknownOutcomeIntegrationTests
             if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
-                    "Real MySQL 16 lost ACK proof requires TEST_MYSQL_CONNECTION.");
-            Assert.Skip("Requires a real MySQL 16 service.");
+                    "Real MySQL 8.4 lost ACK proof requires TEST_MYSQL_CONNECTION.");
+            Assert.Skip("Requires a real MySQL 8.4 service.");
         }
 
         var token = TestContext.Current.CancellationToken;
