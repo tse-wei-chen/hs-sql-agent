@@ -57,6 +57,10 @@ public sealed partial class OraclePhysicalUnknownOutcomeIntegrationTests
             await ExecAsync(targetAdmin, "CREATE TABLE SQLCORE." + table
                 + " (id NUMBER(10,0) PRIMARY KEY, note VARCHAR2(64) NOT NULL)", ct);
 
+            var physicalDatabase = (await ScalarAsync(targetAdmin,
+                "SELECT SYS_CONTEXT('USERENV','CON_NAME') FROM DUAL", ct))?.ToString();
+            Assert.False(string.IsNullOrWhiteSpace(physicalDatabase));
+
             await using var audit = OpenAuditContext(auditPath);
             await audit.Database.EnsureCreatedAsync(ct);
 
@@ -68,7 +72,7 @@ public sealed partial class OraclePhysicalUnknownOutcomeIntegrationTests
             context.Items[McpContextItemKeys.SqlConnectionString] = target;
             context.Items[McpContextItemKeys.AccessKeyId] = 7;
             context.Items[McpContextItemKeys.DbManagementId] = 42;
-            context.Items[McpContextItemKeys.DatabaseName] = targetAdmin.Database;
+            context.Items[McpContextItemKeys.DatabaseName] = physicalDatabase;
             context.Items[McpContextItemKeys.AllowedTools] = "archive_order";
             context.Items[McpContextItemKeys.TableWhitelist] = "SQLCORE." + table;
             var http = new Mock<IHttpContextAccessor>();
