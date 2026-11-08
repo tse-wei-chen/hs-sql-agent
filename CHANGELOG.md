@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### PostgreSQL 16 physical Custom DML acknowledgement-loss proof (PR #588)
+
+- Add first non-SQLite real-provider tests for two-statement approved PostgreSQL DML: native COMMIT completes before its acknowledgement is deliberately lost, leaving both physical rows committed; native ROLLBACK completes before its acknowledgement is lost after a conflicting concurrent insert, leaving only the independent row.
+- The same scenarios now traverse the published Custom MCP Tool, F# SQL compiler, transaction preview/approval and real Npgsql executor. MCP returns distinct non-retryable commit/rollback outcome-unknown codes with the original approval request ID; an independently persisted Admin SQLite Audit Store records corresponding status, category and searchable approval correlation. Direct runtime tests additionally prove the consumed approval session cannot be replayed.
+- Physical database state is read using a separate PostgreSQL connection, not inferred from thrown exceptions. This is bounded PostgreSQL evidence only; other four non-SQLite providers, live distributed limiting, and provider-specific connection pools remain open in #575.
+
+
 ### Real Oracle/MySQL unqualified function-resolution safety evidence (PR #587)
 
 - Add differential live Oracle 26ai and MySQL 8.4 tests of native ABS versus same-named application-owned ABS functions. Direct unqualified calls resolve to native numeric ABS; explicit schema-qualified calls physically return an excluded table secret. MCP Query preserves normal builtin SQL and denies the qualified hidden-table calls, with unchanged physical target counts.
