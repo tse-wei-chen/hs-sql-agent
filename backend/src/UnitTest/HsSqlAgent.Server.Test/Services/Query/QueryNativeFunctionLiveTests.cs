@@ -168,6 +168,33 @@ public sealed class QueryNativeFunctionLiveTests
                 "A database login granted only SELECT on dbo.allowed read the secret table.");
             Assert.Empty(denied.Rows);
 
+            // SQL Server T-SQL UDFs cannot normally mutate database state,
+            // but EXECUTE AS OWNER can still read tables inaccessible to the
+            // caller. An opaque module grant is not the caller's SELECT proof.
+            await ExecuteAsync(setup, """
+                CREATE FUNCTION dbo.owner_secret_reader() RETURNS INT
+                WITH EXECUTE AS OWNER AS
+                BEGIN
+                    DECLARE @value INT;
+                    SELECT @value = id FROM dbo.secret;
+                    RETURN @value;
+                END
+                """, ct);
+            await ExecuteAsync(setup,
+                "GRANT EXECUTE ON OBJECT::dbo.owner_secret_reader TO [" + login + "]", ct);
+            await using (var ownerControl = new SqlConnection(reader))
+            {
+                await ownerControl.OpenAsync(ct);
+                Assert.Equal(7, Convert.ToInt32(await ScalarAsync(
+                    ownerControl, "SELECT dbo.owner_secret_reader()", ct)));
+            }
+            var nativeGrant = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.False(nativeGrant.Success,
+                "An owner-context UDF EXECUTE grant bypassed SQL Server Query-only least privilege.");
+            Assert.Empty(nativeGrant.Rows);
+            await ExecuteAsync(setup,
+                "REVOKE EXECUTE ON OBJECT::dbo.owner_secret_reader FROM [" + login + "]", ct);
+
             // Object-scoped DML permissions are not visible from checks of
             // DATABASE-level permissions alone. They must fail the same guard.
             await ExecuteAsync(setup,
