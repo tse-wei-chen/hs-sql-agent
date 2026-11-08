@@ -281,7 +281,8 @@ public sealed class QueryNativeFunctionLiveTests
 
             // Direct privileged-control SELECT really persists a separate
             // table write. A compiler-only rejection would not prove the fence.
-            var unsafeSql = "SELECT write_during_select(id) AS result FROM "
+            var unsafeSql = "SELECT " + database
+                + ".write_during_select(id) AS result FROM "
                 + database + ".visible_users";
             Assert.Equal(7, Convert.ToInt32(await ScalarAsync(setup, unsafeSql, ct)));
             Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
