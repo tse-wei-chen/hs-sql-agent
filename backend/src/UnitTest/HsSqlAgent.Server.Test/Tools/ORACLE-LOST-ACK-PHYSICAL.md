@@ -11,6 +11,10 @@ version-pinned Oracle 26ai service and supplies
 `server-test` shard and selected in a mandatory live-provider step: a
 missing connection in CI is an error, not a skip.
 
+The approval identity comes from the live session\'s
+`SYS_CONTEXT('USERENV','CON_NAME')`, rather than `OracleConnection.Database`
+(which may be blank); this preserves the required nonempty physical PDB binding.
+
 A fresh `SQLCORE` table with a real `NUMBER(10,0)` primary key and
 `VARCHAR2` note is used in each scenario. The F# SqlCore typed DML
 compiler parses an approved two-statement INSERT batch. A test-only
