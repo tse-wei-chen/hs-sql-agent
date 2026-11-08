@@ -207,6 +207,60 @@ public sealed class SqlitePhysicalHostInjectionTests
     }
 
     [Fact]
+    public async Task NonCollidingSqliteExtension_DoesNotDisableOrdinaryBuiltInQuery()
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("unrelated_custom_function", () => 21L);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+            var connections = new Mock<IDbConnectionFactory>();
+            connections.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+            var result = await CreateTool(connectionString, provider.Object)
+                .ExecuteQuerySql("SELECT ABS(id) AS amount FROM main.users WHERE id = 1",
+                    TestContext.Current.CancellationToken);
+            Assert.True(result.Success, result.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(result.Rows)["amount"]));
+        });
+    }
+
+    [Fact]
+    public async Task AbsentTableWhitelist_DoesNotPermitSqliteBuiltinIdentityOverride()
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("abs", (long _) => 1234L);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+            await using (var control = connection.CreateCommand())
+            {
+                control.CommandText = "SELECT ABS(id) FROM main.users WHERE id = 1";
+                Assert.Equal(1234L, Convert.ToInt64(
+                    await control.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+            }
+
+            var connections = new Mock<IDbConnectionFactory>();
+            connections.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider.Object, connectionString,
+                    "SELECT ABS(id) FROM main.users WHERE id = 1",
+                    SqlAgentToolType.Sqlite, ReadPolicy(), allowedTables: null,
+                    cancellationToken: TestContext.Current.CancellationToken));
+        });
+    }
+
+    [Fact]
     public async Task InjectionShapedString_IsBoundAsOneLiteralAndRemainsQueryable()
     {
         await WithDatabaseAsync(async connectionString =>

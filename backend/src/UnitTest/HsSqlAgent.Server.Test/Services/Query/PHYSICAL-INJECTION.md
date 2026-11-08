@@ -114,3 +114,34 @@ ordinary unqualified function shadowing, opaque side effects from unwhitelisted
 Query-only grants, or physically enforced read-only database roles across
 providers. PostgreSQL, MySQL and SQLite physical evidence is tracked separately.
 The broader #575 3.1.0 release blocker remains open.
+
+## SQLite: built-in function shadowing on the physical Query connection (#586)
+
+SQLite permits embedded hosts and loadable extensions to override a built-in
+function with `CreateFunction`, even when the F# SQL plan uses an unqualified,
+canonical built-in such as `ABS(id)`. An approved table whitelist cannot see
+relations accessed inside the callback. A real on-disk SQLite RED test proves
+that `ABS` can retrieve an excluded `main.secrets` sentinel and that the
+published MCP `execute_query_sql` previously returned it.
+
+Host Query now reads `PRAGMA function_list` on the **same open SQLite connection**
+before executing compiled SQL, compares native and application-defined function
+names and overlapping calling arities in managed code, and fails closed if any
+built-in identity is shadowed. This guard is applied **regardless of whether
+the query carries a table whitelist**, since Query-only keys without a whitelist
+are still not authorization to execute arbitrary callbacks.
+
+The check deliberately rejects the entire Query on a connection with a
+colliding built-in signature: the compiler cannot prove which nested SQL,
+operator or view might dispatch an overriden callback. This conservative
+behavior impacts only host connections with a registered built-in override.
+Separate real SQLite regression controls retain working `ABS` on the default
+provider, permit an unrelated noncolliding custom function registration,
+and require no-whitelist Query to fail closed.
+
+**Boundary:** the attestation catches registered same-name/same-arity SQLite
+built-in overrides on the active connection. It does **not** prove arbitrary
+non-built-in callbacks, virtual tables, secondary connections opened by
+callbacks, dynamic registrations after attestation, or read-only database-role
+semantics. It is not a six-provider physical read-only guarantee; #575 remains
+a release blocker.
