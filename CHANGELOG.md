@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### SQL Server 2022 physical Custom DML lost-ACK security regression (#575)
+
+- Add mandatory real SQL Server 2022 service tests for two approved atomic INSERT statements: drop the acknowledgement only after native COMMIT/ROLLBACK completes; independently witness the committed rows or the rollback plus competing primary-key row.
+- Exercise both the direct typed DML runtime (including one-time approval no-replay) and the published Custom MCP path with distinct non-retryable unknown-outcome error codes, exact approval-request correlation, secret redaction and independently persisted SQLite Admin Audit.
+- CI isolates the real-provider class in the existing SQL Server 2022 service job. This tests post-native-driver ACK-loss injection only; not real network loss, server crash/failover, distributed approval or the remaining Oracle/Firebird providers. #575 remains open.
+
 ### MySQL 8.4 physical Custom DML lost-acknowledgement proof (PR #589)
 
 - Add real MySQL 8.4 InnoDB transactional tests: two separately approved inserts physically COMMIT before the acknowledgement is discarded, and a competing primary key forces the second statement to fail and a native ROLLBACK before its acknowledgement is lost. Independent target connections verify either two committed rows or only the outside racing row.
