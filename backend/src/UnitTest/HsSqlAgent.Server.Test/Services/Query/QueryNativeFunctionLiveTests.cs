@@ -11,6 +11,7 @@ using HsSqlAgent.Server.Tools;
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Compilation;
 using HsSqlAgent.SqlCore.Enums;
+using HsSqlAgent.SqlCore.Models;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Moq;
@@ -243,6 +244,87 @@ public sealed class QueryNativeFunctionLiveTests
         finally
         {
             await ExecuteAsync(admin, "DROP DATABASE " + dbName, CancellationToken.None);
+        }
+    }
+
+    // A query-only MCP key with no table whitelist is not a database-level
+    // read-only grant. This real stored function changes an unrelated InnoDB
+    // table even though the outer command is a single SELECT. The direct
+    // MySQL connection is a positive attack control, not a mocked function.
+    [Fact]
+    public async Task MySql_QueryOnlyKeyWithoutWhitelist_CannotPersistFunctionSideEffects()
+    {
+        var source = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var database = "hsqlro_" + Guid.NewGuid().ToString("N")[..12];
+        await using var admin = new MySqlConnection(source);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + database, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(source)
+            {
+                Database = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE visible_users (id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE side_effects (id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup, "INSERT INTO visible_users VALUES(7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION write_during_select(p_id INT) RETURNS INT " +
+                "DETERMINISTIC MODIFIES SQL DATA " +
+                "BEGIN INSERT INTO side_effects(id) VALUES (p_id); RETURN p_id; END", ct);
+
+            // Direct privileged-control SELECT really persists a separate
+            // table write. A compiler-only rejection would not prove the fence.
+            var unsafeSql = "SELECT " + database
+                + ".write_during_select(id) AS result FROM "
+                + database + ".visible_users";
+            Assert.Equal(7, Convert.ToInt32(await ScalarAsync(setup, unsafeSql, ct)));
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+            await ExecuteAsync(setup, "DELETE FROM side_effects", ct);
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
+            // Empty TableWhitelist is deliberate: tests the default
+            // Query-only key boundary, not the F# whitelist policy.
+            var provider = new MySqlProvider();
+            var compiled = new TypedQueryRuntime().Compile(provider, unsafeSql,
+                SqlAgentToolType.MySQL, Policy(), allowedTables: null);
+            Assert.Equal(SqlStatementKind.Select, compiled.Kind);
+            var tool = Tool(provider, SqlAgentToolType.MySQL, target, "");
+            var blocked = await tool.ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(blocked.Success,
+                "A Query-only key executed an effectful stored function without a table whitelist.");
+            Assert.Empty(blocked.Rows);
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
+            // The direct runtime ExecuteAsync fallback uses the same physical
+            // fence as the compiler-facts path used by published MCP.
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                new TypedQueryRuntime().ExecuteAsync(provider, target, unsafeSql,
+                    SqlAgentToolType.MySQL, Policy(), allowedTables: null, ct));
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
+            // Non-effectful Query with ordinary built-in functions must keep
+            // working on the same real InnoDB target with the same MCP key.
+            var safe = await tool.ExecuteQuerySql(
+                "SELECT ABS(id) AS safe_value FROM " + database + ".visible_users", ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(7, Convert.ToInt32(Assert.Single(safe.Rows)["safe_value"]));
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+        }
+        finally
+        {
+            await ExecuteAsync(admin, "DROP DATABASE " + database, CancellationToken.None);
         }
     }
 
