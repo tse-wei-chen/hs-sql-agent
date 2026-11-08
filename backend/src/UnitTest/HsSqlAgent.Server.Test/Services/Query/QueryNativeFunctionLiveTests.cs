@@ -304,6 +304,14 @@ public sealed class QueryNativeFunctionLiveTests
             Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
                 setup, "SELECT COUNT(*) FROM side_effects", ct)));
 
+            // The direct runtime ExecuteAsync fallback uses the same physical
+            // fence as the compiler-facts path used by published MCP.
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                new TypedQueryRuntime().ExecuteAsync(provider, target, unsafeSql,
+                    SqlAgentToolType.MySQL, Policy(), allowedTables: null, ct));
+            Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM side_effects", ct)));
+
             // Non-effectful Query with ordinary built-in functions must keep
             // working on the same real InnoDB target with the same MCP key.
             var safe = await tool.ExecuteQuerySql(
