@@ -137,6 +137,69 @@ public sealed class QueryNativeFunctionLiveTests
         }
     }
 
+    // #575: An unqualified modeled SQL built-in is only secure if the physical
+    // Oracle resolver cannot redirect it to an application-owned function.
+    [Fact]
+    public async Task Oracle_UnqualifiedAbsBuiltinShadow_MustNotLeakExcludedRelation()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QUSR_" + suffix;
+        var secrets = "QSEC_" + suffix;
+        await using var setup = new OracleConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var stage = 0;
+        try
+        {
+            await ExecuteAsync(setup, "CREATE TABLE " + users + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            stage = 1;
+            await ExecuteAsync(setup, "CREATE TABLE " + secrets
+                + " (ID NUMBER(10) PRIMARY KEY, SECRET VARCHAR2(64))", ct);
+            stage = 2;
+            await ExecuteAsync(setup, "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO " + secrets + " VALUES (1, '" + Secret + "')", ct);
+
+            // The shadow function has precisely the same name/signature as
+            // the ordinary modeled ABS(NUMBER) built-in and internally reads
+            // the excluded table, without any forbidden relation in Query SQL.
+            await ExecuteAsync(setup, "CREATE FUNCTION ABS(P_ID NUMBER) RETURN VARCHAR2 IS "
+                + "V_SECRET VARCHAR2(64); BEGIN SELECT SECRET INTO V_SECRET FROM "
+                + secrets + " WHERE ID=P_ID; RETURN V_SECRET; END;", ct);
+            stage = 3;
+
+            var table = "SQLCORE." + users;
+            var sql = "SELECT ABS(ID) AS LEAKED FROM " + table;
+            // Independent positive control proves whether Oracle resolves
+            // this particular name to a user-defined function, rather than
+            // trusting a statement-shape-only theoretical counterexample.
+            Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
+
+            var provider = new OracleProvider();
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table };
+            var compiled = new TypedQueryRuntime().Compile(
+                provider, sql, SqlAgentToolType.Oracle, Policy(), allowed);
+            Assert.Contains("ABS(", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+
+            var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            var result = await Tool(provider, SqlAgentToolType.Oracle,
+                    connectionString, table).ExecuteQuerySql(sql, ct);
+            Assert.False(result.Success, "Canonical ABS cannot be trusted when Oracle resolves a schema UDF.");
+            Assert.Empty(result.Rows);
+            Assert.DoesNotContain(Secret, result.ToString());
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+        }
+        finally
+        {
+            if (stage >= 3)
+                await ExecuteAsync(setup, "DROP FUNCTION ABS", CancellationToken.None);
+            if (stage >= 2)
+                await ExecuteAsync(setup, "DROP TABLE " + secrets + " PURGE", CancellationToken.None);
+            if (stage >= 1)
+                await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
     [Fact]
     public async Task Firebird_QuotedUdfReadsExcludedPhysicalTableButMcpRejects()
     {
