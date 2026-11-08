@@ -12,7 +12,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 
 /// <summary>
 /// #575: real Firebird 5 transactions; simulated ACK is dropped only
-/// *after* native native Firebird client CommitAsync or RollbackAsync finishes.
+/// *after* native Firebird client CommitAsync or RollbackAsync finishes.
 /// </summary>
 public sealed partial class FirebirdPhysicalUnknownOutcomeIntegrationTests
 {
