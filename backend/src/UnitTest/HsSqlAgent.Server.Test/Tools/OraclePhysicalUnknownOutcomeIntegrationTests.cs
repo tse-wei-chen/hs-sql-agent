@@ -56,11 +56,14 @@ public sealed partial class OraclePhysicalUnknownOutcomeIntegrationTests
         {
             await ExecAsync(independent,
                 "CREATE TABLE SQLCORE." + table + "(id NUMBER(10,0) PRIMARY KEY,note VARCHAR2(64) NOT NULL)", token);
+            var physicalDatabase = (await ScalarAsync(independent,
+                "SELECT SYS_CONTEXT('USERENV','CON_NAME') FROM DUAL", token))?.ToString();
+            Assert.False(string.IsNullOrWhiteSpace(physicalDatabase));
             var provider = new AcknowledgementDroppingOracleProvider();
             var runtime = new TypedDmlRuntime();
             var actor = new DmlApprovalExecutionContext(
                 "mcp-key:7", "db-management:42", SqlAgentToolType.Oracle,
-                independent.Database);
+                physicalDatabase!);
             var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SQLCORE." + table };
             var sql = "INSERT INTO SQLCORE." + table + "(id,note) VALUES(100,'sensitive_note');"
                       + "INSERT INTO SQLCORE." + table + "(id,note) VALUES(101,'second_value')";
