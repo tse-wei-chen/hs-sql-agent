@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Live SQL Server, Oracle and Firebird Query UDF whitelist evidence (PR #585)
+
+- Add independently measured SQL Server 2022, Oracle 26ai and Firebird 5 native-function hidden-relation read controls: the physical database UDF can return a secret from a table excluded by MCP Query whitelist, but typed Policy and the published MCP Host deny the corresponding qualified/quoted invocation. Each case also preserves normal allowed SELECT execution and unchanged physical target counts.
+- Wire all three real-provider scenarios to their existing versioned CI services with explicit missing-connection failures. This narrows the physical evidence gap from #575 but does not establish unqualified function shadowing safety, physical read-only enforcement for unrestricted Query-only keys or closure of the 3.1.0 release gate.
+
+
 ### Prevent 3.1.0 publication before security release gate #575 closes (PR #584)
 
 - Add a fail-closed publication guard to both NuGet and Docker release workflows. While security issue #575 is open, a v3.1.0 release cannot pack/push public artifacts; missing Issues permissions, API failure, and malformed status also block publication.

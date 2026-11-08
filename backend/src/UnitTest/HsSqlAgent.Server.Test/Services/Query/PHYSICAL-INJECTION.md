@@ -85,3 +85,32 @@ operators with no pg_catalog equivalent, SQL inside functions, malicious
 SECURITY DEFINER code, out-of-band effects or relations hidden by an explicitly
 chosen schema path. Enforce least-privilege physical DB credentials and
 CREATE restrictions on schemas that Query sessions can resolve.
+
+## SQL Server 2022, Oracle 26ai, Firebird 5: real native Query-function identity proof (#585)
+
+`QueryNativeFunctionLiveTests.cs` runs against the existing, versioned SQL Server,
+Oracle, and Firebird CI services. Each case creates two **physical** relations:
+a users table authorized by the MCP table whitelist and a secrets table that
+is not authorized. The test registers a native SQL/PSQL scalar function whose
+body reads the excluded secrets relation.
+
+1. An independent direct provider command **must** return the sentinel through
+   the function. This positive unsafe control proves a real hidden table read
+   is physically possible, not a mock/query-text assumption.
+2. The typed F# compiler must reject the qualified/quoted native function with
+   `SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN` at the Policy stage.
+3. The published MCP `ExecuteQuerySql` Host path must return failure and no
+   secret-bearing rows; a normal SELECT over the allowed users relation must
+   still execute, and independently measured physical user/secret counts must
+   be unchanged.
+4. Each test is explicitly selected in its dedicated provider CI Job. Missing
+   live connection configuration **fails** in CI. The general Server Job excludes
+   these external-service tests; their absence from that generic job does not
+   count as physical proof.
+
+**Proof boundary:** these three experiments cover specifically **qualified /
+quoted** UDF identities under an explicit table whitelist. They do not prove
+ordinary unqualified function shadowing, opaque side effects from unwhitelisted
+Query-only grants, or physically enforced read-only database roles across
+providers. PostgreSQL, MySQL and SQLite physical evidence is tracked separately.
+The broader #575 3.1.0 release blocker remains open.
