@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### MySQL 8.4 Query-only physical read-only transaction fence (#575)
+
+- Execute compiled MySQL Query using a real next-transaction `SET TRANSACTION READ ONLY` fence on the same native connection and transaction-bound executor, including API keys granted only `execute_query_sql` with no Table Whitelist. Fail closed on fence/transaction setup errors; no session-global transaction setting and no change to SQL grammar or F# SqlCore.
+- Add a mandatory-live MySQL 8.4 physical negative control: an actual stored function declared `MODIFIES SQL DATA` persists an unrelated InnoDB write when called directly by SELECT, but the published Query-only MCP path and direct typed runtime must not persist the effect. Ordinary `ABS` SELECT remains available.
+- This bounds **ordinary permanent-table writes only**. MySQL still permits temporary-table writes under READ ONLY transactions and the fence does not attest arbitrary external UDF effects, process/network effects, privileges to read excluded tables, or other database providers. Use least-privilege DB accounts; #575 remains open.
+
 ### Firebird 5 physical Custom DML lost-acknowledgement proof (#575)
 
 - Add mandatory real Firebird 5 two-statement DML transaction tests using the existing version-pinned service. Native `FbTransaction.CommitAsync` or `RollbackAsync` completes before a test-only wrapper loses the acknowledgement, and an independent `FbConnection` proves committed rows or the rollback plus independently committed competing key.
