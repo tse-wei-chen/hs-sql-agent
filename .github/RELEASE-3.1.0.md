@@ -15,6 +15,7 @@ This is a release-candidate checklist, not a release announcement. Only merge fe
 
 - [ ] Confirm `backend/Directory.Build.props` `VersionPrefix=3.1.0`, first `CHANGELOG.md` heading is 3.1.0, and release notes accurately describe limitations. Set the release date in the changelog when actually publishing.
 - [ ] Manually promote reviewed `develop` into `main` using the project's chosen release process. Do not auto-merge or cherry-pick blindly.
+- [ ] **Release blocker #575:** verify the issue is closed only after all required multi-provider physical security evidence, skipped-case accounting, dependency/CVE review and exact-head CI have been accepted. NuGet and Docker publication both query GitHub Issues before any registry credential/push; an open or unreadable issue fails closed. NuGet `workflow_dispatch` prerelease suffixes cannot bypass the 3.1.0 blocker.
 - [ ] Create/publish `v3.1.0` only from that verified commit. The NuGet and Docker publisher workflows run the shared version gate *before* packaging/pushing and reject mismatched tags. Untagged manual stable NuGet publishing is blocked; a manual pre-release must include a `version_suffix`.
 - [ ] Check published NuGet package IDs/versions and .NET Hosting consumer smoke, Docker image digest/signature, deployment configuration, schema migrations and the website. Roll out in stages and monitor denied SQL, approval challenges, audit evidence and outcome-unknown recoveries.
 - [ ] If any release gate fails: stop publication and investigate; do not rename a release tag to conceal a mismatch.
