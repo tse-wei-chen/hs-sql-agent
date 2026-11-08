@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
       packages: write
       # This is used to complete the identity challenge
       # with sigstore/fulcio.
@@ -42,6 +43,12 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- release-version --root . --tag "$RELEASE_TAG"
+
+      - name: Enforce security release gate 575 before registry login or push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: bash .github/scripts/verify-release-security-gate.sh "$RELEASE_TAG"
 
       # Install the cosign tool
       # https://github.com/sigstore/cosign-installer

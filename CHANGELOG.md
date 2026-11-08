@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Prevent 3.1.0 publication before security release gate #575 closes (PR #584)
+
+- Add a fail-closed publication guard to both NuGet and Docker release workflows. While security issue #575 is open, a v3.1.0 release cannot pack/push public artifacts; missing Issues permissions, API failure, and malformed status also block publication.
+- Apply the same guard to manually dispatched 3.1.0 prerelease NuGet packages so `--version-suffix` cannot bypass the blocker. Add offline open/closed/failure/identity regression tests to the normal Tests workflow. The guard does **not** satisfy the still-open physical multi-provider security tests or replace the release checklist.
+
+
 ### Custom DML physical/Audit approval reconciliation (PR #581)
 
 - Verify published Custom DML through the real SQLite provider with two-statement atomic mutations and a separate persisted SQLite Admin Audit Store. Confirm physical committed rows, rejected-approval zero writes, and an acknowledged COMMIT remaining successful when the Audit Store fails afterward.

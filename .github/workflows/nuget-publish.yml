@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: read
       id-token: write
 
     steps:
@@ -40,6 +41,19 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- release-version --root . --tag "$RELEASE_TAG"
+
+      - name: Enforce security release gate 575 before packing or registry credentials
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            package_version="$RELEASE_TAG"
+          else
+            # Manual prereleases still use VersionPrefix=3.1.0; a suffix is no bypass.
+            package_version="$(dotnet msbuild backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj -getProperty:VersionPrefix -nologo)"
+          fi
+          bash .github/scripts/verify-release-security-gate.sh "$package_version"
 
       - name: Block untagged stable package publication
         if: github.event_name == 'workflow_dispatch' && inputs.version_suffix == ''
