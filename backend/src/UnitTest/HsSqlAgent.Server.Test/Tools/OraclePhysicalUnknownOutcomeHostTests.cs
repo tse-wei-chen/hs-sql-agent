@@ -65,7 +65,7 @@ public sealed partial class OraclePhysicalUnknownOutcomeIntegrationTests
                 TraceIdentifier = "incoming-oracle-mcp-request"
             };
             context.Items[McpContextItemKeys.SqlProvider] = "MsOracle";
-            context.Items[McpContextItemKeys.OracleConnectionString] = target;
+            context.Items[McpContextItemKeys.SqlConnectionString] = target;
             context.Items[McpContextItemKeys.AccessKeyId] = 7;
             context.Items[McpContextItemKeys.DbManagementId] = 42;
             context.Items[McpContextItemKeys.DatabaseName] = targetAdmin.Database;
