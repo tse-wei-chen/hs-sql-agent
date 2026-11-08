@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~MySqlPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalUnknownOutcomeIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~MySqlPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~OraclePhysicalUnknownOutcomeIntegrationTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -798,6 +798,12 @@ jobs:
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
           TEST_ORACLE_ADMIN_CONNECTION: "User Id=sys;Password=Strong_Password_123!;DBA Privilege=SYSDBA;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
+      - name: Verify Oracle 26ai physical Custom DML lost COMMIT ROLLBACK ACK and persisted Audit
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~OraclePhysicalUnknownOutcomeIntegrationTests'
+        env:
+          TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify Oracle 26ai physical native-function Query whitelist fence
         run: >
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
