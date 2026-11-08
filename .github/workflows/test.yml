@@ -560,6 +560,12 @@ jobs:
           --filter 'FullyQualifiedName~MySqlDdlLiveTests'
         env:
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
+      - name: Verify MySQL 8.4 physical native builtin-versus-UDF function resolution
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~QueryNativeFunctionLiveTests.MySql_'
+        env:
+          TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Run remaining SQL service tests
         run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
         env:
