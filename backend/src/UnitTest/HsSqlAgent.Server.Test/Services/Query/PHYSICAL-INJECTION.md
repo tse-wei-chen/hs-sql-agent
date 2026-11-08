@@ -145,3 +145,34 @@ non-built-in callbacks, virtual tables, secondary connections opened by
 callbacks, dynamic registrations after attestation, or read-only database-role
 semantics. It is not a six-provider physical read-only guarantee; #575 remains
 a release blocker.
+
+## Oracle 26ai / MySQL 8.4 unqualified built-in versus schema-owned UDF (#587)
+
+The independent physical test-first hypothesis on Oracle 26ai was initially
+**falsified**: a stored SQLCORE.ABS(NUMBER) function reading an excluded
+relation existed, but real unqualified SQL ABS(ID) evaluated to native
+numeric 1, not to the excluded sentinel (initial CI run 42463244597).
+This result is *not* a vulnerable RED result and required **no** runtime
+or compiler rejection of ordinary Oracle ABS.
+
+The corrected real-provider differential tests on **Oracle 26ai** and
+**MySQL 8.4** each build two relations: approved users and excluded secrets,
+plus a same-name native/stored ABS function that physically selects the
+secret. On the **same real database and connection**:
+
+- Direct unqualified ABS(ID) resolves to the intrinsic built-in and returns
+  numeric 1. The published MCP Query path must still execute this permitted
+  SQL when the table whitelist allows users.
+- Direct explicitly qualified SQLCORE.ABS(ID) (Oracle) or
+  database.ABS(ID) (MySQL) returns the excluded secret from the
+  user-defined function. The typed F# Policy and published MCP Query must
+  reject that same qualified function, returning no secret-bearing rows.
+- Independent physical user/secret counts remain constant before and after
+  MCP calls. The Oracle and MySQL tests live in their dedicated versioned
+  CI service jobs. Missing database configuration fails in those jobs.
+
+**Proof boundary:** this establishes only the tested ABS name and argument
+signature on two engine versions; it cannot be extrapolated to every builtin,
+unqualified procedure, package, synonym, security-definer function, all six
+providers, or general Query-only side-effect safety. The #575 release gate
+remains open until those independent boundaries and DML evidence are closed.

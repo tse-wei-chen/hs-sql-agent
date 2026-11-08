@@ -14,6 +14,8 @@ using HsSqlAgent.SqlCore.Enums;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.SqlClient;
 using Moq;
+using MySql.Data.MySqlClient;
+using HsSqlAgent.Provider.MySql;
 using Oracle.ManagedDataAccess.Client;
 using SqlAgent.Service.Interfaces;
 using Xunit;
@@ -134,6 +136,113 @@ public sealed class QueryNativeFunctionLiveTests
                 await ExecuteAsync(setup, "DROP TABLE " + secrets + " PURGE", CancellationToken.None);
             if (created >= 1)
                 await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
+    // Oracle resolves unqualified ABS as its built-in despite a schema UDF
+    // named ABS. The explicitly qualified UDF does reach excluded data and
+    // must remain rejected by F# Policy and published MCP Query.
+    [Fact]
+    public async Task Oracle_UnqualifiedAbsUsesNativeBuiltin_QualifiedUdfDenied()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QUSR_" + suffix;
+        var secrets = "QSEC_" + suffix;
+        await using var setup = new OracleConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var stage = 0;
+        try
+        {
+            await ExecuteAsync(setup, "CREATE TABLE " + users + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            stage = 1;
+            await ExecuteAsync(setup, "CREATE TABLE " + secrets
+                + " (ID NUMBER(10) PRIMARY KEY, SECRET VARCHAR2(64))", ct);
+            stage = 2;
+            await ExecuteAsync(setup, "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO " + secrets + " VALUES (1, '" + Secret + "')", ct);
+            await ExecuteAsync(setup, "CREATE FUNCTION ABS(P_ID NUMBER) RETURN VARCHAR2 IS "
+                + "V_SECRET VARCHAR2(64); BEGIN SELECT SECRET INTO V_SECRET FROM "
+                + secrets + " WHERE ID=P_ID; RETURN V_SECRET; END;", ct);
+            stage = 3;
+
+            var table = "SQLCORE." + users;
+            var nativeSql = "SELECT ABS(ID) AS AMOUNT FROM " + table;
+            var nativeUdfSql = "SELECT SQLCORE.ABS(ID) AS LEAKED FROM " + table;
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(setup, nativeSql, ct)));
+            Assert.Equal(Secret, (await ScalarAsync(setup, nativeUdfSql, ct))?.ToString());
+
+            var provider = new OracleProvider();
+            var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table };
+            var compiled = new TypedQueryRuntime().Compile(
+                provider, nativeSql, SqlAgentToolType.Oracle, Policy(), tables);
+            Assert.Contains("ABS(", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            var normal = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, table).ExecuteQuerySql(nativeSql, ct);
+            Assert.True(normal.Success, normal.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(normal.Rows)["AMOUNT"]));
+            await AssertMcpDeniesAsync(provider, SqlAgentToolType.Oracle,
+                connectionString, table, nativeUdfSql, "SELECT ID FROM " + table, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+        }
+        finally
+        {
+            if (stage >= 3) await ExecuteAsync(setup, "DROP FUNCTION ABS", CancellationToken.None);
+            if (stage >= 2) await ExecuteAsync(setup, "DROP TABLE " + secrets + " PURGE", CancellationToken.None);
+            if (stage >= 1) await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
+    // MySQL 8.4 resolves the built-in name unqualified. A schema-qualified
+    // stored function with the same name can still read excluded relations.
+    [Fact]
+    public async Task MySql_UnqualifiedAbsUsesNativeBuiltin_QualifiedUdfDenied()
+    {
+        var connectionString = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var dbName = "hsqlq_" + Guid.NewGuid().ToString("N")[..14];
+        await using var admin = new MySqlConnection(connectionString);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + dbName, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(connectionString)
+            {
+                Database = dbName,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup, "CREATE TABLE users (ID INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "CREATE TABLE secrets (ID INT PRIMARY KEY, SECRET VARCHAR(64))", ct);
+            await ExecuteAsync(setup, "INSERT INTO users VALUES (1)", ct);
+            await ExecuteAsync(setup, "INSERT INTO secrets VALUES (1, '" + Secret + "')", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION `ABS`(P_ID INT) RETURNS VARCHAR(64) "
+                + "DETERMINISTIC READS SQL DATA "
+                + "RETURN (SELECT SECRET FROM secrets WHERE ID=P_ID)", ct);
+
+            var table = dbName + ".users";
+            var nativeSql = "SELECT ABS(ID) AS AMOUNT FROM " + table;
+            var nativeUdfSql = "SELECT " + dbName + ".ABS(ID) AS LEAKED FROM " + table;
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(setup, nativeSql, ct)));
+            Assert.Equal(Secret, (await ScalarAsync(setup, nativeUdfSql, ct))?.ToString());
+
+            var provider = new MySqlProvider();
+            var before = await PhysicalCountAsync(setup, "users", "secrets", ct);
+            var normal = await Tool(provider, SqlAgentToolType.MySQL, target, table)
+                .ExecuteQuerySql(nativeSql, ct);
+            Assert.True(normal.Success, normal.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(normal.Rows)["AMOUNT"]));
+            await AssertMcpDeniesAsync(provider, SqlAgentToolType.MySQL,
+                target, table, nativeUdfSql, "SELECT ID FROM " + table, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, "users", "secrets", ct));
+        }
+        finally
+        {
+            await ExecuteAsync(admin, "DROP DATABASE " + dbName, CancellationToken.None);
         }
     }
 

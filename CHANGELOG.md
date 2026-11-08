@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Real Oracle/MySQL unqualified function-resolution safety evidence (PR #587)
+
+- Add differential live Oracle 26ai and MySQL 8.4 tests of native ABS versus same-named application-owned ABS functions. Direct unqualified calls resolve to native numeric ABS; explicit schema-qualified calls physically return an excluded table secret. MCP Query preserves normal builtin SQL and denies the qualified hidden-table calls, with unchanged physical target counts.
+- Initial Oracle test hypothesis was falsified by the live engine (native ABS returned numeric 1); no runtime/compiler restriction or fabricated RED is claimed. The follow-up tests document the demonstrated provider-specific boundary, without extending this result to all UDFs, functions or the 3.1.0 security release gate.
+
+
 ### SQLite Query runtime guards against shadowed built-in functions (PR #586)
 
 - Reject execution of F#-compiled Query on an SQLite connection whose actual function registry includes an application-defined implementation colliding with a native built-in name and calling arity. The query is refused before the statement executes, even if its SQL source contains only a canonical `ABS` expression; applies with and without a table whitelist.
