@@ -222,8 +222,18 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         CompiledSqlCommand command,
         DbConnection connection,
         int timeoutSeconds,
+        bool requiresSqlServerPrincipalProof,
         CancellationToken cancellationToken)
     {
+        // An absent table whitelist cannot serve as physical SQL Server
+        // least-privilege evidence. Verify the effective connected principal
+        // on this same open database connection before executing the SELECT.
+        // This is deliberately not an application-level SQL text blacklist.
+        if (provider.Type == SqlAgentToolType.MsSqlServer
+            && requiresSqlServerPrincipalProof)
+            await SqlServerQueryPrincipalGuard.VerifyAsync(
+                connection, timeoutSeconds, cancellationToken);
+
         if (provider.Type == SqlAgentToolType.Sqlite)
             await VerifySqliteBuiltInFunctionIdentityAsync(connection, cancellationToken);
 
@@ -332,6 +342,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
                 command,
                 connection,
                 policy.QueryTimeoutSeconds,
+                requiresSqlServerPrincipalProof: allowedTables is null,
                 cancellationToken);
         }
         catch (OperationCanceledException)
@@ -388,6 +399,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
                 compilation.Command,
                 connection,
                 policy.QueryTimeoutSeconds,
+                requiresSqlServerPrincipalProof: allowedTables is null,
                 cancellationToken);
             return new QueryExecutionWithFacts(execution, compilation.Facts);
         }

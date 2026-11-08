@@ -87,6 +87,153 @@ public sealed class QueryNativeFunctionLiveTests
         }
     }
 
+    // SQL Server has no MySQL-style transaction READ ONLY fence. A Query-only
+    // key without a table whitelist must not silently treat sa / db_owner or
+    // object-specific write grants as a read-only physical database principal.
+    // The restricted-login control is a real connection, not a mocked role.
+    [Fact]
+    public async Task SqlServer_QueryOnlyNoWhitelist_RequiresPhysicallyReadOnlyPrincipal()
+    {
+        var source = RequireConnection("TEST_SQLSERVER_CONNECTION", "SQL Server 2022");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var database = "hsqlro_" + suffix;
+        var login = "hsqlread_" + suffix;
+        const string password = "HsqlOnlyRead_Aa2026!";
+        await using var admin = new SqlConnection(source);
+        for (var retry = 0; ; retry++)
+        {
+            try { await admin.OpenAsync(ct); break; }
+            catch (SqlException) when (retry < 24 && !ct.IsCancellationRequested)
+            { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+        }
+
+        await ExecuteAsync(admin, "CREATE DATABASE [" + database + "]", ct);
+        var loginCreated = false;
+        try
+        {
+            await ExecuteAsync(admin,
+                "CREATE LOGIN [" + login + "] WITH PASSWORD = '" + password
+                + "', CHECK_POLICY = OFF, CHECK_EXPIRATION = OFF", ct);
+            loginCreated = true;
+            var elevated = new SqlConnectionStringBuilder(source)
+            {
+                InitialCatalog = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new SqlConnection(elevated);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup, "CREATE TABLE dbo.allowed (id INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "CREATE TABLE dbo.secret (id INT PRIMARY KEY)", ct);
+            await ExecuteAsync(setup, "INSERT INTO dbo.allowed VALUES (3)", ct);
+            await ExecuteAsync(setup, "INSERT INTO dbo.secret VALUES (7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE USER [" + login + "] FOR LOGIN [" + login + "]", ct);
+            await ExecuteAsync(setup,
+                "GRANT VIEW DEFINITION TO [" + login + "]", ct);
+            await ExecuteAsync(setup,
+                "GRANT SELECT ON OBJECT::dbo.allowed TO [" + login + "]", ct);
+
+            var reader = new SqlConnectionStringBuilder(elevated)
+            {
+                UserID = login,
+                Password = password,
+                Pooling = false
+            }.ConnectionString;
+            await using (var witness = new SqlConnection(reader))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(3, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT id FROM dbo.allowed", ct)));
+            }
+
+            const string safeQuery = "SELECT id FROM dbo.allowed";
+            var provider = new MsSqlServerProvider();
+
+            // RED against the historical Host: the query compiles and SA is
+            // allowed to execute it despite possessing unrestricted DML powers.
+            var elevatedQuery = await Tool(provider, SqlAgentToolType.MsSqlServer,
+                elevated, "").ExecuteQuerySql(safeQuery, ct);
+            Assert.False(elevatedQuery.Success,
+                "Query-only SQL Server key accepted a sysadmin connection with no table whitelist.");
+            Assert.Empty(elevatedQuery.Rows);
+
+            var limitedTool = Tool(provider, SqlAgentToolType.MsSqlServer, reader, "");
+            var allowed = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.True(allowed.Success, allowed.Error?.Message);
+            Assert.Equal(3, Convert.ToInt32(Assert.Single(allowed.Rows)["id"]));
+            var denied = await limitedTool.ExecuteQuerySql(
+                "SELECT id FROM dbo.secret", ct);
+            Assert.False(denied.Success,
+                "A database login granted only SELECT on dbo.allowed read the secret table.");
+            Assert.Empty(denied.Rows);
+
+            // SQL Server T-SQL UDFs cannot normally mutate database state,
+            // but EXECUTE AS OWNER can still read tables inaccessible to the
+            // caller. An opaque module grant is not the caller's SELECT proof.
+            await ExecuteAsync(setup, """
+                CREATE FUNCTION dbo.owner_secret_reader() RETURNS INT
+                WITH EXECUTE AS OWNER AS
+                BEGIN
+                    DECLARE @value INT;
+                    SELECT @value = id FROM dbo.secret;
+                    RETURN @value;
+                END
+                """, ct);
+            await ExecuteAsync(setup,
+                "GRANT EXECUTE ON OBJECT::dbo.owner_secret_reader TO [" + login + "]", ct);
+            await using (var ownerControl = new SqlConnection(reader))
+            {
+                await ownerControl.OpenAsync(ct);
+                Assert.Equal(7, Convert.ToInt32(await ScalarAsync(
+                    ownerControl, "SELECT dbo.owner_secret_reader()", ct)));
+            }
+            var nativeGrant = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.False(nativeGrant.Success,
+                "An owner-context UDF EXECUTE grant bypassed SQL Server Query-only least privilege.");
+            Assert.Empty(nativeGrant.Rows);
+            await ExecuteAsync(setup,
+                "REVOKE EXECUTE ON OBJECT::dbo.owner_secret_reader FROM [" + login + "]", ct);
+
+            // Object-scoped DML permissions are not visible from checks of
+            // DATABASE-level permissions alone. They must fail the same guard.
+            await ExecuteAsync(setup,
+                "GRANT UPDATE ON OBJECT::dbo.allowed TO [" + login + "]", ct);
+            var nowWritable = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.False(nowWritable.Success,
+                "Object-scoped UPDATE permission bypassed SQL Server Query-only privilege proof.");
+            Assert.Empty(nowWritable.Rows);
+            await ExecuteAsync(setup,
+                "REVOKE UPDATE ON OBJECT::dbo.allowed FROM [" + login + "]", ct);
+            var restored = await limitedTool.ExecuteQuerySql(safeQuery, ct);
+            Assert.True(restored.Success, restored.Error?.Message);
+            Assert.Single(restored.Rows);
+
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM dbo.allowed", ct)));
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM dbo.secret", ct)));
+        }
+        finally
+        {
+            try
+            {
+                await ExecuteAsync(admin,
+                    "ALTER DATABASE [" + database
+                    + "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE",
+                    CancellationToken.None);
+                await ExecuteAsync(admin,
+                    "DROP DATABASE [" + database + "]", CancellationToken.None);
+            }
+            finally
+            {
+                if (loginCreated)
+                    await ExecuteAsync(admin,
+                        "DROP LOGIN [" + login + "]", CancellationToken.None);
+            }
+        }
+    }
+
     [Fact]
     public async Task Oracle_QualifiedUdfReadsExcludedPhysicalTableButMcpRejects()
     {
