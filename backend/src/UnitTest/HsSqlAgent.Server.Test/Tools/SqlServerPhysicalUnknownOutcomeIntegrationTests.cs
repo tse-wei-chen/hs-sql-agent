@@ -11,8 +11,8 @@ using Xunit;
 namespace HsSqlAgent.Server.Test.Tools;
 
 /// <summary>
-/// #575: real SQL Server 16 transactions; simulated ACK is dropped only
-/// *after* native Sql CommitAsync or RollbackAsync finishes.
+/// #575: real SQL Server 2022 transactions; simulated ACK is dropped only
+/// *after* native SqlClient CommitAsync or RollbackAsync finishes.
 /// </summary>
 public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
 {
@@ -29,14 +29,14 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
     public async Task LostSqlServerTransactionAck_PhysicalOutcomeAndConsumedApproval(
         bool dropCommitAcknowledgement)
     {
-        var source = Environment.GetEnvironmentVariable("TEST_POSTGRES_CONNECTION");
+        var source = Environment.GetEnvironmentVariable("TEST_SQLSERVER_CONNECTION");
         if (string.IsNullOrWhiteSpace(source))
         {
             if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
-                    "Real SQL Server 16 lost ACK proof requires TEST_POSTGRES_CONNECTION.");
-            Assert.Skip("Requires a real SQL Server 16 service.");
+                    "Real SQL Server 2022 lost ACK proof requires TEST_SQLSERVER_CONNECTION.");
+            Assert.Skip("Requires a real SQL Server 2022 service.");
         }
 
         var token = TestContext.Current.CancellationToken;
@@ -55,7 +55,7 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
         try
         {
             await ExecAsync(independent,
-                "CREATE TABLE " + "dbo." + table + "(id INTEGER PRIMARY KEY,note NVARCHAR(64) NOT NULL)", token);
+                "CREATE TABLE dbo." + table + "(id INTEGER PRIMARY KEY,note NVARCHAR(64) NOT NULL)", token);
             var provider = new AcknowledgementDroppingMsSqlServerProvider();
             var snapshot = new NativeDmlSchemaSnapshotService();
             var runtime = new TypedDmlRuntime(
@@ -63,9 +63,9 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             var actor = new DmlApprovalExecutionContext(
                 "mcp-key:7", "db-management:42", SqlAgentToolType.MsSqlServer,
                 independent.Database);
-            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo." + table + "" };
-            var sql = "INSERT INTO " + "dbo." + table + "(id,note) VALUES(100,'sensitive_note');"
-                      + "INSERT INTO " + "dbo." + table + "(id,note) VALUES(101,'second_value')";
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "dbo." + table };
+            var sql = "INSERT INTO dbo." + table + "(id,note) VALUES(100,'sensitive_note');"
+                      + "INSERT INTO dbo." + table + "(id,note) VALUES(101,'second_value')";
             var parsed = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
                 provider, connectionString, sql, SqlAgentToolType.MsSqlServer, token);
             var session = await runtime.PreviewTransactionAsync(
@@ -76,7 +76,7 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             // after statement one has executed inside a real transaction.
             if (!dropCommitAcknowledgement)
                 await ExecAsync(independent,
-                    "INSERT INTO " + "dbo." + table + "(id,note) VALUES(101,'racing-row')",
+                    "INSERT INTO dbo." + table + "(id,note) VALUES(101,'racing-row')",
                     token);
             provider.Mode = dropCommitAcknowledgement
                 ? LostAcknowledgementMode.Commit
@@ -103,7 +103,7 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
                 await witness.OpenAsync(token);
                 Assert.Equal(dropCommitAcknowledgement ? 2L : 1L,
                     Convert.ToInt64(await ScalarAsync(witness,
-                        "SELECT count(*) FROM " + "dbo." + table + "", token)));
+                        "SELECT count(*) FROM " + "dbo." + table, token)));
                 Assert.Equal(dropCommitAcknowledgement ? 1L : 0L,
                     Convert.ToInt64(await ScalarAsync(witness,
                         "SELECT count(*) FROM " + "dbo." + table + " WHERE id=100", token)));
@@ -121,7 +121,7 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             Assert.Contains("consumed", replay.Message, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(dropCommitAcknowledgement ? 2L : 1L,
                 Convert.ToInt64(await ScalarAsync(independent,
-                    "SELECT count(*) FROM " + "dbo." + table + "", token)));
+                    "SELECT count(*) FROM " + "dbo." + table, token)));
         }
         finally
         {
@@ -279,7 +279,7 @@ public sealed partial class SqlServerPhysicalUnknownOutcomeIntegrationTests
             set => inner.Transaction = value switch
             {
                 DroppedAckTransaction wrapped => wrapped.Inner,
-                SqlTransaction sqlite => sqlite,
+                SqlTransaction direct => direct,
                 null => null,
                 _ => throw new InvalidOperationException("Unexpected transaction provider.")
             };
