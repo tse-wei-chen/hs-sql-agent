@@ -66,6 +66,8 @@ jobs:
       - name: Audit test project ownership and evidence contracts
         run: |
           dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- audit --root .
+      - name: TDD: block 3.1.0 publication while security issue #575 is open
+        run: bash .github/scripts/test-release-security-gate.sh
       - name: Run Infrastructure.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
