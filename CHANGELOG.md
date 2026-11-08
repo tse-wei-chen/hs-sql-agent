@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### SQLite Query runtime guards against shadowed built-in functions (PR #586)
+
+- Reject execution of F#-compiled Query on an SQLite connection whose actual function registry includes an application-defined implementation colliding with a native built-in name and calling arity. The query is refused before the statement executes, even if its SQL source contains only a canonical `ABS` expression; applies with and without a table whitelist.
+- Real file-backed SQLite RED→GREEN tests prove a host-registered `ABS` can read an excluded relation while the MCP Query previously exposed it. Additional controls preserve native `ABS` queries and benign unrelated custom registrations. The check uses same-connection `PRAGMA function_list` metadata, not SQL-text regexes or a global ban on modeled built-ins.
+- Other providers, arbitrary non-built-in functions, out-of-band callback effects and unproven privilege/connection role boundaries are not attested by this change; 3.1.0 security release issue #575 stays open.
+
+
 ### Live SQL Server, Oracle and Firebird Query UDF whitelist evidence (PR #585)
 
 - Add independently measured SQL Server 2022, Oracle 26ai and Firebird 5 native-function hidden-relation read controls: the physical database UDF can return a secret from a table excluded by MCP Query whitelist, but typed Policy and the published MCP Host deny the corresponding qualified/quoted invocation. Each case also preserves normal allowed SELECT execution and unchanged physical target counts.

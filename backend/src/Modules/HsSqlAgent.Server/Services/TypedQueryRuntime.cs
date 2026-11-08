@@ -156,6 +156,63 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         }
     }
 
+    // SQLite functions are connection-local. An embedding host can replace a
+    // built-in such as ABS with an arbitrary callback (including a hidden table
+    // read). F# canonical function grammar does not prove that the open physical
+    // connection still resolves the function to the original SQLite built-in.
+    //
+    // PRAGMA function_list is read from the *same connection* as execution.
+    // Inspect rows in CLR code, not SQL joins/functions that might themselves be
+    // overridden. No user SQL is parsed or interpolated into this attestation.
+    private static async Task VerifySqliteBuiltInFunctionIdentityAsync(
+        DbConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var registry = connection.CreateCommand();
+        registry.CommandText = "PRAGMA function_list";
+        registry.CommandTimeout = 30;
+        await using var reader = await registry.ExecuteReaderAsync(cancellationToken);
+
+        if (reader.FieldCount < 5)
+            throw new InvalidOperationException(
+                "SQLite Query cannot verify the physical function registry.");
+
+        var builtIns = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
+        var callbacks = new List<(string Name, int Arguments)>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var name = reader.GetString(0);
+            var native = Convert.ToInt32(reader.GetValue(1)) != 0;
+            var arity = Convert.ToInt32(reader.GetValue(4));
+
+            if (native)
+            {
+                if (!builtIns.TryGetValue(name, out var signatures))
+                    builtIns[name] = signatures = new HashSet<int>();
+                signatures.Add(arity);
+            }
+            else
+            {
+                callbacks.Add((name, arity));
+            }
+        }
+
+        if (builtIns.Count == 0)
+            throw new InvalidOperationException(
+                "SQLite Query cannot verify the physical built-in function registry.");
+
+        foreach (var (name, arity) in callbacks)
+        {
+            if (builtIns.TryGetValue(name, out var nativeSignatures)
+                && nativeSignatures.Any(nativeArity =>
+                    nativeArity == arity || nativeArity == -1 || arity == -1))
+                throw new UnauthorizedAccessException(
+                    "SQLite Query cannot attest a built-in function identity because "
+                    + "the active connection registers a colliding application-defined function. "
+                    + "Use a connection without built-in function overrides.");
+        }
+    }
+
     // PostgreSQL SELECT is not intrinsically read-only: VOLATILE functions can write
     // relations or advance sequences. The server enforces an actual transaction fence,
     // including inside user-defined functions; compiler function lists are not authority.
@@ -167,6 +224,9 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         int timeoutSeconds,
         CancellationToken cancellationToken)
     {
+        if (provider.Type == SqlAgentToolType.Sqlite)
+            await VerifySqliteBuiltInFunctionIdentityAsync(connection, cancellationToken);
+
         if (provider.Type != SqlAgentToolType.Postgres)
             return await QueryExecutor.ExecuteQueryAsync(
                 command, connection, timeoutSeconds, cancellationToken);

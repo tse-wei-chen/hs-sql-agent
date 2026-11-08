@@ -144,6 +144,122 @@ public sealed class SqlitePhysicalHostInjectionTests
         });
     }
 
+    // #575 RED: SQLite allows host functions to replace ordinary built-ins.
+    // The F# AST sees a safe, modeled ABS call but the physical callback reads
+    // a table that is absent from the MCP key's approved Query facts.
+    [Fact]
+    public async Task OverriddenBuiltInAbs_CannotReadHiddenRelationThroughPublishedQuery()
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            const string sql =
+                "SELECT ABS(id) AS leaked FROM main.users WHERE id = 1";
+            const string sentinel = "SENTINEL_PRIVATE_VALUE";
+            var before = await PhysicalSnapshotAsync(connectionString);
+
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("abs", (long _) =>
+            {
+                using var secret = new SqliteConnection(connectionString);
+                secret.Open();
+                using var command = secret.CreateCommand();
+                command.CommandText = "SELECT secret FROM main.secrets WHERE id = 1";
+                return command.ExecuteScalar()?.ToString();
+            });
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+            // Independent unsafe physical control: registered ABS really reads
+            // the relation excluded by the MCP Query table whitelist.
+            await using (var control = connection.CreateCommand())
+            {
+                control.CommandText = sql;
+                Assert.Equal(sentinel,
+                    (await control.ExecuteScalarAsync(TestContext.Current.CancellationToken))
+                        ?.ToString());
+            }
+
+            var connections = new Mock<IDbConnectionFactory>();
+            connections.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+            // Compile may accept ABS as a legitimate canonical built-in. The
+            // runtime must not equate canonical grammar with physical identity.
+            var compiled = new TypedQueryRuntime().Compile(provider.Object,
+                sql, SqlAgentToolType.Sqlite, ReadPolicy(), AllowedTables());
+            Assert.Contains("ABS(", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+
+            var response = await CreateTool(connectionString, provider.Object)
+                .ExecuteQuerySql(sql, TestContext.Current.CancellationToken);
+            Assert.False(response.Success,
+                "MCP Query must not execute a connection-registered ABS override.");
+            Assert.Empty(response.Rows);
+            Assert.DoesNotContain(sentinel, response.ToString());
+            Assert.Equal(before, await PhysicalSnapshotAsync(connectionString));
+
+            // A connection with no override must retain ordinary ABS capability.
+            var regular = await CreateTool(connectionString).ExecuteQuerySql(
+                sql, TestContext.Current.CancellationToken);
+            Assert.True(regular.Success, regular.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(regular.Rows)["leaked"]));
+        });
+    }
+
+    [Fact]
+    public async Task NonCollidingSqliteExtension_DoesNotDisableOrdinaryBuiltInQuery()
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("unrelated_custom_function", () => 21L);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+            var connections = new Mock<IDbConnectionFactory>();
+            connections.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+            var result = await CreateTool(connectionString, provider.Object)
+                .ExecuteQuerySql("SELECT ABS(id) AS amount FROM main.users WHERE id = 1",
+                    TestContext.Current.CancellationToken);
+            Assert.True(result.Success, result.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(result.Rows)["amount"]));
+        });
+    }
+
+    [Fact]
+    public async Task AbsentTableWhitelist_DoesNotPermitSqliteBuiltinIdentityOverride()
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("abs", (long _) => 1234L);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+            await using (var control = connection.CreateCommand())
+            {
+                control.CommandText = "SELECT ABS(id) FROM main.users WHERE id = 1";
+                Assert.Equal(1234L, Convert.ToInt64(
+                    await control.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+            }
+
+            var connections = new Mock<IDbConnectionFactory>();
+            connections.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(connections.Object);
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider.Object, connectionString,
+                    "SELECT ABS(id) FROM main.users WHERE id = 1",
+                    SqlAgentToolType.Sqlite, ReadPolicy(), allowedTables: null,
+                    cancellationToken: TestContext.Current.CancellationToken));
+        });
+    }
+
     [Fact]
     public async Task InjectionShapedString_IsBoundAsOneLiteralAndRemainsQueryable()
     {
