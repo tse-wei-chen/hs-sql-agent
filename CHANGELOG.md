@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Firebird 5 physical Custom DML lost-acknowledgement proof (#575)
+
+- Add mandatory real Firebird 5 two-statement DML transaction tests using the existing version-pinned service. Native `FbTransaction.CommitAsync` or `RollbackAsync` completes before a test-only wrapper loses the acknowledgement, and an independent `FbConnection` proves committed rows or the rollback plus independently committed competing key.
+- Direct typed runtime tests require the correct distinct `outcome_unknown` exception and consumed-session no-replay; published Custom MCP tests require non-retryable distinct codes, exact approval ID, redaction and persisted independently searchable SQLite Admin Audit.
+- Database identity is obtained from real `MON$DATABASE.MON$GUID`; no physical Firebird evidence is inferred from a simulated transaction. No production code changes. This does not prove real TCP loss, crash recovery, distributed admission or unrestricted Query UDF effects. #575 remains blocked pending its other release gates.
+
 ### Oracle 26ai physical Custom DML lost-acknowledgement proof (#575)
 
 - Add mandatory real Oracle 26ai DML transaction tests in the existing Oracle service job. A test-only native `OracleTransaction` decorator drops the acknowledgement after successful COMMIT or ROLLBACK; independent `OracleConnection` witnesses verify two committed INSERTs, or only the competing committed primary-key row after a rollback.
