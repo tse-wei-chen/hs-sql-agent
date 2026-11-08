@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Oracle 26ai physical Custom DML lost-acknowledgement proof (#575)
+
+- Add mandatory real Oracle 26ai DML transaction tests in the existing Oracle service job. A test-only native `OracleTransaction` decorator drops the acknowledgement after successful COMMIT or ROLLBACK; independent `OracleConnection` witnesses verify two committed INSERTs, or only the competing committed primary-key row after a rollback.
+- Direct typed DML runtime verifies distinct unknown-outcome exceptions and consumed one-use approval sessions. Published Custom MCP tests verify `retryable=false`, the exact originating approval request ID, redacted SQL values and searchable independently persisted SQLite Admin Audit status/category/correlation.
+- No production SQL compiler or runtime changes. Oracle DML transactional proof does **not** imply Oracle DDL atomic rollback; the synthetic acknowledgement loss is not a real TCP disconnect, server crash, failover or distributed consent proof. #575 remains open for Firebird and other release gates.
+
 ### SQL Server 2022 physical Custom DML lost-ACK security regression (#575)
 
 - Add mandatory real SQL Server 2022 service tests for two approved atomic INSERT statements: drop the acknowledgement only after native COMMIT/ROLLBACK completes; independently witness the committed rows or the rollback plus competing primary-key row.
