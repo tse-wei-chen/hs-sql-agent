@@ -276,7 +276,7 @@ public sealed class QueryNativeFunctionLiveTests
             await ExecuteAsync(setup, "INSERT INTO visible_users VALUES(7)", ct);
             await ExecuteAsync(setup,
                 "CREATE FUNCTION write_during_select(p_id INT) RETURNS INT " +
-                "NOT DETERMINISTIC MODIFIES SQL DATA " +
+                "DETERMINISTIC MODIFIES SQL DATA " +
                 "BEGIN INSERT INTO side_effects(id) VALUES (p_id); RETURN p_id; END", ct);
 
             // Direct privileged-control SELECT really persists a separate
