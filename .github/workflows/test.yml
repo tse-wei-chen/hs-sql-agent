@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -554,6 +554,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Verify PostgreSQL 16 physical DML lost COMMIT ROLLBACK acknowledgements and no replay
+        run: >
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          --filter 'FullyQualifiedName~PostgresPhysicalUnknownOutcomeIntegrationTests'
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify MySQL 8.4 implicit-commit DDL Host against real database
         run: >
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
