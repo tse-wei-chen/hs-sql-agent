@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### MySQL 8.4 InnoDB Custom DML physical concurrency and cancellation proof (#596)
+
+- Add mandatory-live real MySQL 8.4 tests for the published Custom MCP two-statement DML path with a native InnoDB table and isolated throwaway target database. The tests instrument real target `MySqlConnection` opens and dispose/close, not just admission semaphore counts.
+- Three interception phases (runtime-profile preflight, first preview/metadata physical connection, first post-approval atomic commit connection) each hold one admitted operation at `MaxConcurrentSql=1` while 24 additional competing Custom MCP requests must all report `server.busy`, with no new target provider connection factory calls and instrumented native target peak <=1. Independent MySQL readback confirms two committed rows for the admitted request, followed by zero held leases/connections.
+- Cancellation at each of the same three phases must leave zero physical inserted rows (witnessed from an independent MySQL connection), no instrumented target connections, and an immediately reusable SQL admission lease. Setup/cleanup DDL is outside the approved transaction because MySQL DDL implicitly commits; Admin Audit uses separate file-backed SQLite.
+- This verifies only the bounded published-Tool MySQL/InnoDB operation paths, not a global connection-pool maximum, real network/failover behavior, cross-instance Redis distribution, nontransactional engines or SQL Server/Oracle/Firebird physical load. #575 remains open and 3.1.0 stays gated.
+
 ### PostgreSQL 16 physical Custom DML SQL lease, load and cancellation proof (#595)
 
 - Add mandatory-live PostgreSQL 16 physical admission tests through the **published Custom MCP two-statement DML path**. Measure actual target connection opens (not inferred from semaphore counts) during runtime-profile preflight, preview/metadata and the first post-approval commit connection with `MaxConcurrentSql=1`.
