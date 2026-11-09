@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### SQL Server 2022 Custom DML physical SQL lease and cancellation proof (#597)
+
+- Add mandatory-live SQL Server 2022 tests for the published Custom MCP two-statement DML tool. An instrumented native `Microsoft.Data.SqlClient` connection/command/transaction decorator measures actual target physical opens and closes at runtime-profile preflight, preview/metadata and first post-approval execution connection.
+- With `MaxConcurrentSql=1`, 24 competing MCP invocations at each held-open phase must return `server.busy` without creating any additional instrumented target connection, and peak target concurrency must remain <=1. Successful admission commits two actual SQL Server rows, checked from an independent SqlClient connection; all target connections and leases are released.
+- Cancellation at the same three phases must result in no physical DML rows, no leaked target connection/lease and immediate lease reacquisition. Each case uses a uniquely named physical `dbo` table and a separate file-backed SQLite Admin Audit Store. This is a measured single-process Custom MCP operation bound, not a global pool/distributed admission, failover or other-provider guarantee; #575 and the 3.1.0 release block remain open.
+
 ### MySQL 8.4 InnoDB Custom DML physical concurrency and cancellation proof (#596)
 
 - Add mandatory-live real MySQL 8.4 tests for the published Custom MCP two-statement DML path with a native InnoDB table and isolated throwaway target database. The tests instrument real target `MySqlConnection` opens and dispose/close, not just admission semaphore counts.
