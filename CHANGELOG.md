@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Oracle 26ai physical Custom DML SQL lease/load and cancellation proof (#598)
+
+- Add mandatory-live real Oracle 26ai tests for the published Custom MCP two-statement DML tool. Instrument native ODP.NET target connection factory creations and opens/closes at runtime-profile verification, preview/metadata and the first connection opened after external approval.
+- With `MaxConcurrentSql=1`, 24 competing MCP invocations at each paused phase must all receive `server.busy` and create no additional instrumented provider target connections; observed target concurrency must remain <=1. The admitted two-statement transaction commits two Oracle rows, independently read through another ODP.NET physical connection, then releases all measured target connections and its admission lease.
+- Three cancellation cases at those same physical-open points must leave zero physical target rows, no leaked target connections/SQL leases and immediately reusable admission. Disposable `SQLCORE.OL_*` tables are created and purged outside DML because Oracle DDL implicitly commits; Admin Audit remains a separate persisted SQLite file. This is bounded one-process target-path evidence, not a global Oracle pool, distributed semaphore, real network failure or cross-provider proof; #575 stays open.
+
 ### SQL Server 2022 Custom DML physical SQL lease and cancellation proof (#597)
 
 - Add mandatory-live SQL Server 2022 tests for the published Custom MCP two-statement DML tool. An instrumented native `Microsoft.Data.SqlClient` connection/command/transaction decorator measures actual target physical opens and closes at runtime-profile preflight, preview/metadata and first post-approval execution connection.
