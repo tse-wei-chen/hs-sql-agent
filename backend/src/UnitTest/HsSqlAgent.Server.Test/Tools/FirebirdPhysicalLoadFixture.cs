@@ -43,13 +43,13 @@ public sealed partial class FirebirdPhysicalLoadIntegrationTests
 
         public static async Task<Fixture> CreateAsync()
         {
-            var source = Environment.GetEnvironmentVariable("TEST_ORACLE_CONNECTION");
+            var source = Environment.GetEnvironmentVariable("TEST_FIREBIRD_CONNECTION");
             if (string.IsNullOrWhiteSpace(source))
             {
                 if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true",
                     StringComparison.OrdinalIgnoreCase))
                     throw new InvalidOperationException(
-                        "Real Firebird 5 DML load proof requires TEST_ORACLE_CONNECTION.");
+                        "Real Firebird 5 DML load proof requires TEST_FIREBIRD_CONNECTION.");
                 Assert.Skip("Requires a real Firebird 5 database.");
             }
 
