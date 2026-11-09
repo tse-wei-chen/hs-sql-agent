@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Firebird 5 physical Custom DML SQL lease/load and cancellation proof (#599)
+
+- Add mandatory-live Firebird 5 SQL admission/physical-open tests through the published Custom MCP two-statement DML route, backed by real native `FirebirdSql.Data.FirebirdClient` transactions. Instrument the runtime-profile preflight, first preview/metadata open and the first target connection opened after external DML approval.
+- With `MaxConcurrentSql=1`, at each physical-open gate 24 competing published MCP calls must return `server.busy` without extra instrumented provider factory creations; peak target physical opens <=1. Once released, the approved two-statement transaction writes two real rows confirmed with an independent Firebird connection, and releases all instrumented target connections and SQL admission leases.
+- Cancellation at those three native-open gates must leave zero real committed rows, no reported success, no instrumented target connection or lease leaks and allow immediate readmission. The setup uses randomly named physical `FL_*` tables in pinned Firebird 5, with independent SQLite Admin Audit. This is bounded single-process instrumented-target evidence, not proof of global connection pools, cross-instance limiting, real disconnect/crash/failover or Query function effect safety; #575 remains OPEN and 3.1.0 publication blocked.
+
 ### Oracle 26ai physical Custom DML SQL lease/load and cancellation proof (#598)
 
 - Add mandatory-live real Oracle 26ai tests for the published Custom MCP two-statement DML tool. Instrument native ODP.NET target connection factory creations and opens/closes at runtime-profile verification, preview/metadata and the first connection opened after external approval.
