@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### PostgreSQL 16 physical Custom DML SQL lease, load and cancellation proof (#595)
+
+- Add mandatory-live PostgreSQL 16 physical admission tests through the **published Custom MCP two-statement DML path**. Measure actual target connection opens (not inferred from semaphore counts) during runtime-profile preflight, preview/metadata and the first post-approval commit connection with `MaxConcurrentSql=1`.
+- For each of three phases, 24 competing MCP tool invocations must receive `server.busy` and open no additional target connection while the accepted request holds the SQL lease; observed instrumented target peak is <=1, the accepted batch commits two real rows, and all leases/target connections are subsequently released.
+- Repeat cancellation at all three physical-open phases: a real PostgreSQL witness connection must see zero mutations and the lease must be immediately reusable. Separate Admin Audit storage and independent verification connections are intentionally **not** included in target instrumented-connection counts; this does not establish a universal pool-size or distributed admission bound.
+
 ### SQL Server 2022 unbounded Query principal privilege fence (#575)
 
 - SQL Server does not support a provider-neutral `SET TRANSACTION READ ONLY`. Require live, same-connection effective privilege proof before executing SQL Server Query when the MCP key has **no Table Whitelist**; elevated SQL logins or accounts with schema, object, column-level DML/DDL or native routine EXECUTE grants fail closed. A dedicated reader login with `SELECT` on intended tables plus database `VIEW DEFINITION` continues to execute ordinary compiled SELECT. A table-whitelisted Query keeps its established F# native-function restrictions.
