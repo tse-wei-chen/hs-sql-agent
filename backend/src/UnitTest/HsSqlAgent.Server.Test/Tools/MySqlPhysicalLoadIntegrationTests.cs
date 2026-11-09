@@ -6,7 +6,7 @@ using Admin.Service.Interfaces;
 using HsSqlAgent.Approvals;
 using Admin.Service.Models;
 using Admin.Service.Services;
-using HsSqlAgent.Provider.PostgreSql;
+using HsSqlAgent.Provider.MySql;
 using HsSqlAgent.Server.Services;
 using MySql.Data.MySqlClient;
 using Moq;

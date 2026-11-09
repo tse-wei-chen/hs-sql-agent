@@ -4,7 +4,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using HsSqlAgent.Approvals;
-using HsSqlAgent.Provider.PostgreSql;
+using HsSqlAgent.Provider.MySql;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
