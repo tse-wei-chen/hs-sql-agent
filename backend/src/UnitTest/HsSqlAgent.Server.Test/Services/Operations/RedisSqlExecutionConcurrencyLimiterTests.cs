@@ -85,6 +85,68 @@ public class RedisSqlExecutionConcurrencyLimiterTests
             await lease.DisposeAsync();
     }
 
+
+    [Fact]
+    public async Task TryAcquireAsync_CancelledDuringSuccessfulRedisReply_ReleasesTokenAndThrows()
+    {
+        using var cancelled = new CancellationTokenSource();
+        var redisEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var redisReply = new TaskCompletionSource<RedisResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseTokens = new List<string>();
+        var database = new Mock<IDatabase>();
+        database
+            .Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns((string script, RedisKey[] _, RedisValue[] args, CommandFlags _) =>
+            {
+                if (script.Contains("ZREMRANGEBYSCORE", StringComparison.Ordinal))
+                {
+                    redisEntered.TrySetResult();
+                    return redisReply.Task;
+                }
+
+                Assert.Contains("ZREM", script, StringComparison.Ordinal);
+                releaseTokens.Add(args[0].ToString());
+                return Task.FromResult(RedisResult.Create((RedisValue)1));
+            });
+        var limiter = CreateLimiter(database.Object, RateLimiterFailureMode.FailClosed);
+
+        var pending = limiter.TryAcquireAsync(cancelled.Token).AsTask();
+        await redisEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        cancelled.Cancel();
+        redisReply.SetResult(RedisResult.Create((RedisValue)1));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Single(releaseTokens);
+    }
+
+    [Fact]
+    public async Task TryAcquireAsync_CancelledDuringDeniedRedisReply_ThrowsCancellation()
+    {
+        using var cancelled = new CancellationTokenSource();
+        var redisEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var redisReply = new TaskCompletionSource<RedisResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var database = new Mock<IDatabase>();
+        database
+            .Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns(() =>
+            {
+                redisEntered.TrySetResult();
+                return redisReply.Task;
+            });
+        var limiter = CreateLimiter(database.Object, RateLimiterFailureMode.FailClosed);
+
+        var pending = limiter.TryAcquireAsync(cancelled.Token).AsTask();
+        await redisEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        cancelled.Cancel();
+        redisReply.SetResult(RedisResult.Create((RedisValue)0));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
     private static RedisSqlExecutionConcurrencyLimiter CreateLimiter(
         IDatabase database,
         RateLimiterFailureMode failureMode)
