@@ -53,6 +53,10 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                     ErrorCode: "server.busy",
                     ErrorStage: "Execution",
                     Retryable: true);
+            // Preview is non-commit work: discard any evidence if Redis
+            // admission is lost, including a late success from the driver.
+            using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
             session = await runtime.PreviewTransactionAsync(
                 provider,
                 connectionString,
@@ -60,7 +64,8 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 previewPolicy,
                 previewAllowedTables,
                 approvalContext,
-                cancellationToken);
+                leaseCancellation.Token);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
         }
 
         var approvalRequest = DmlApprovalRequestFactory.Create(approvalTitle, approvalContext, session);
