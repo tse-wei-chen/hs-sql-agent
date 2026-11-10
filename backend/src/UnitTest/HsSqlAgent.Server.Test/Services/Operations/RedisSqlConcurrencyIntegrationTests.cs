@@ -93,8 +93,8 @@ public sealed class RedisSqlConcurrencyIntegrationTests
                 // sorted-set member remains: Redis does not prune by score
                 // unless the acquisition script executes.
                 var expiredAt = DateTimeOffset.UtcNow.AddSeconds(-10).ToUnixTimeMilliseconds();
-                Assert.True(await redis.SortedSetAddAsync(key, token, expiredAt,
-                    When.Always));
+                await redis.SortedSetAddAsync(key, token, expiredAt, When.Always);
+                Assert.Equal((double)expiredAt, await redis.SortedSetScoreAsync(key, token));
                 await Task.Delay(TimeSpan.FromMilliseconds(1600), ct);
 
                 var score = await redis.SortedSetScoreAsync(key, token);
