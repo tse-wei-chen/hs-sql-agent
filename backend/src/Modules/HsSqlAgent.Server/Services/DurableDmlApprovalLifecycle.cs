@@ -512,6 +512,10 @@ internal sealed class DurableDmlApprovalLifecycle(
         {
             if (lease is null)
                 throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+            // Durable completion must not promote stale re-preview evidence
+            // after its Redis admission is revoked.
+            using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
             freshSession = await runtime.PreviewTransactionAsync(
                 current.Provider,
                 current.ConnectionString,
@@ -519,7 +523,8 @@ internal sealed class DurableDmlApprovalLifecycle(
                 previewPolicy,
                 current.AllowedTables,
                 approvalContext,
-                cancellationToken);
+                leaseCancellation.Token);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
         }
 
         var freshEvidence = DmlApprovalRequestFactory.ComputeEvidenceFingerprint(freshSession);
@@ -535,6 +540,11 @@ internal sealed class DurableDmlApprovalLifecycle(
         if (commitLease is null)
             throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
 
+        // This worker has durably claimed Executing. If its Redis admission
+        // is already revoked, do not start the target COMMIT or replay the
+        // external approval. Existing unknown-outcome handling still owns
+        // errors arising AFTER the native COMMIT boundary is crossed.
+        SqlDmlCommitLeaseAdmission.ThrowIfRevoked(commitLease);
         var commit = await runtime.CommitTransactionAsync(
             commitCurrent.Provider,
             commitCurrent.ConnectionString,
