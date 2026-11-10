@@ -105,10 +105,11 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
 
             return new RedisLease(this, token, _options.LeaseDuration);
         }
-        catch (Exception exception) when (
-            (exception is RedisException or TimeoutException) &&
-            !cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (exception is RedisException or TimeoutException)
         {
+            // Redis failure modes apply only to active requests. Cancellation
+            // must not be converted into FailOpen admission (or a Redis error).
+            cancellationToken.ThrowIfCancellationRequested();
             _logger.LogError(exception, "Redis SQL concurrency limiter is unavailable.");
             return _options.FailureMode == RateLimiterFailureMode.FailOpen
                 ? NoOpLease.Instance
