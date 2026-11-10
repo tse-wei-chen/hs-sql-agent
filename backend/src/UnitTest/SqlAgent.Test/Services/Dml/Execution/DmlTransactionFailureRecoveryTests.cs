@@ -156,6 +156,62 @@ public sealed class DmlTransactionFailureRecoveryTests
         Assert.Contains("outcome is unknown", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task NativeRollbackIgnoresCancellation_ReportsUnconfirmedInsteadOfHangingForever()
+    {
+        // A real provider can remain stuck waiting for its ROLLBACK network
+        // response even after the cleanup token is cancelled. The original
+        // SQL failure must not become a permanently blocked request or an
+        // incorrectly acknowledged rollback.
+        var sqlFailure = new IOException("Target connection lost during a DML mutation.");
+        var transaction = new UnresponsiveRollbackTransaction();
+        try
+        {
+            await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(
+                    transaction, sqlFailure)
+                .WaitAsync(TimeSpan.FromSeconds(14),
+                    TestContext.Current.CancellationToken);
+
+            var unknown = Assert.Throws<DmlRollbackOutcomeUnknownException>(() =>
+                DmlTransactionFailureRecovery.ThrowIfRollbackUnconfirmed(sqlFailure));
+            Assert.Same(sqlFailure, unknown.InnerException);
+            Assert.IsAssignableFrom<OperationCanceledException>(unknown.RollbackFailure);
+            Assert.Equal(1, transaction.RollbackAttempts);
+            Assert.True(transaction.RollbackCancellationToken.IsCancellationRequested);
+        }
+        finally
+        {
+            // The test-owned provider call stays in flight on RED. Unblock it
+            // after the assertion so CI never leaks an orphaned task.
+            transaction.AcknowledgeRollback();
+        }
+    }
+
+    private sealed class UnresponsiveRollbackTransaction : DbTransaction
+    {
+        private readonly TaskCompletionSource _reply =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RollbackAttempts { get; private set; }
+        public CancellationToken RollbackCancellationToken { get; private set; }
+        public override IsolationLevel IsolationLevel => IsolationLevel.Serializable;
+        protected override DbConnection DbConnection =>
+            throw new NotSupportedException("Rollback-only test transaction.");
+
+        public override void Commit() => throw new NotSupportedException();
+        public override void Rollback() => throw new NotSupportedException();
+
+        public override Task RollbackAsync(CancellationToken cancellationToken = default)
+        {
+            RollbackAttempts++;
+            RollbackCancellationToken = cancellationToken;
+            // Intentionally ignores cancellation, like a stalled native driver.
+            return _reply.Task;
+        }
+
+        public void AcknowledgeRollback() => _reply.TrySetResult();
+    }
+
     private sealed class CommitThenDropAcknowledgementTransaction(DbTransaction inner)
         : DbTransaction
     {
