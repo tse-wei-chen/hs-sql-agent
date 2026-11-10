@@ -47,6 +47,15 @@ Existing `QueryNativeFunctionLiveTests.Oracle_...` and
 - The existing qualified/quoted native-function policy blocks hidden-table
   reads, and independent physical row counts remain unchanged.
 
+**Oracle DDL snapshot constraint:** Oracle may return `ORA-01466` when a
+`SET TRANSACTION READ ONLY` snapshot reads a table just created/altered in
+the same live test. The Oracle fixture first uses an independent, bounded
+read-only compiled Query to establish post-DDL snapshot visibility; it
+retries **only** that specific error (up to 30 attempts, 1 second apart).
+The Host does **not** retry arbitrary user SQL, run outside a read-only
+transaction, or claim that reads racing with physical DDL always succeed.
+The production path remains fail-closed on `ORA-01466`.
+
 The existing real-provider CI service steps select tests by
 `QueryNativeFunctionLiveTests.Oracle_` and
 `QueryNativeFunctionLiveTests.Firebird_`. Missing live-provider connections
