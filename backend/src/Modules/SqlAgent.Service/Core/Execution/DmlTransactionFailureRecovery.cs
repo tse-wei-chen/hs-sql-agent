@@ -88,7 +88,12 @@ internal static class DmlTransactionFailureRecovery
             // The request token may already be cancelled (or cancelled after
             // COMMIT). Cleanup needs its own bounded window, not that token.
             using var cleanup = new CancellationTokenSource(RollbackCleanupTimeout);
-            await transaction.RollbackAsync(cleanup.Token);
+            // Some database drivers do not honor cancellation while a native
+            // ROLLBACK reply is missing. Bound OUR wait as well as passing the
+            // native token; abandonment is NOT proof the database rolled back.
+            // The catch below records the unconfirmed cleanup so callers
+            // produce DmlRollbackOutcomeUnknownException instead of hanging.
+            await transaction.RollbackAsync(cleanup.Token).WaitAsync(cleanup.Token);
         }
         catch (Exception rollbackFailure)
         {
