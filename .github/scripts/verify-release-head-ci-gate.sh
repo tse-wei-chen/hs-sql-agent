@@ -50,4 +50,36 @@ if ! jq -e '
     exit 1
 fi
 
-echo "Verified release SHA $sha against main and all 18 Tests jobs (run $run_id)."
+# The benchmark comparison must also attest THIS promoted main commit.
+# A successful PR run or a workflow_dispatch self-comparison does not prove
+# that the actual release SHA passed the baseline on main.
+if ! baseline_runs="$(gh api "repos/$repo/actions/workflows/sqlcore-comparison.yml/runs?head_sha=$sha&branch=main&event=push&status=success&per_page=100")"; then
+    echo '::error::Cannot read the exact-commit SqlCore comparison evidence.' >&2
+    exit 1
+fi
+if ! baseline_run_id="$(jq -er --arg sha "$sha" '
+    if (.workflow_runs | type) == "array" then
+      [.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main"
+        and .event == "push" and .status == "completed" and .conclusion == "success")
+        | .id | select(type == "number")] | first // empty
+    else empty end' <<< "$baseline_runs")"; then
+    echo '::error::No successful main push SqlCore comparison for this release SHA.' >&2
+    exit 1
+fi
+if ! baseline_jobs="$(gh api "repos/$repo/actions/runs/$baseline_run_id/jobs?per_page=100")"; then
+    echo '::error::Cannot read the exact-commit SqlCore comparison job.' >&2
+    exit 1
+fi
+if ! jq -e '
+    .total_count == 1
+    and (.jobs | type) == "array"
+    and (.jobs | length) == 1
+    and (.jobs[0].name == "sqlcore-baseline-comparison")
+    and (.jobs[0].status == "completed")
+    and (.jobs[0].conclusion == "success")
+  ' <<< "$baseline_jobs" >/dev/null; then
+    echo '::error::The exact-main SqlCore baseline comparison is missing or unsuccessful.' >&2
+    exit 1
+fi
+
+echo "Verified release SHA $sha against main, all 18 Tests jobs (run $run_id) and SqlCore baseline (run $baseline_run_id)."
