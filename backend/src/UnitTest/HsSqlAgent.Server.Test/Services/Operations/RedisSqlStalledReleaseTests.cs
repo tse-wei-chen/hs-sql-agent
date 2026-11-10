@@ -95,4 +95,69 @@ public sealed class RedisSqlStalledReleaseTests
                     TestContext.Current.CancellationToken);
         }
     }
+
+    [Fact]
+    public async Task CanceledLateAcquire_StalledRedisReleaseCannotMaskOriginalCancellation()
+    {
+        using var canceled = new CancellationTokenSource();
+        var acquireIssued = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var acquireReply = new TaskCompletionSource<RedisResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseIssued = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReply = new TaskCompletionSource<RedisResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var redis = new Mock<IDatabase>();
+        redis.Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns((string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags) =>
+            {
+                if (script.Contains("ZREMRANGEBYSCORE", StringComparison.Ordinal))
+                {
+                    acquireIssued.TrySetResult();
+                    return acquireReply.Task;
+                }
+
+                Assert.StartsWith("return redis.call('ZREM'", script, StringComparison.Ordinal);
+                releaseIssued.TrySetResult();
+                return releaseReply.Task;
+            });
+
+        var state = new Mock<ISecurityPolicyRuntimeState>();
+        state.Setup(x => x.GetCurrent()).Returns(
+            new SecurityPolicyModel { MaxConcurrentSql = 1 });
+        await using var limiter = new RedisSqlExecutionConcurrencyLimiter(
+            state.Object,
+            new RedisSqlConcurrencyOptions("localhost:6379", "test:late-acquire-zrem",
+                TimeSpan.FromSeconds(2), RateLimiterFailureMode.FailClosed),
+            NullLogger<RedisSqlExecutionConcurrencyLimiter>.Instance, redis.Object);
+
+        var pending = limiter.TryAcquireAsync(canceled.Token).AsTask();
+        try
+        {
+            await acquireIssued.Task.WaitAsync(TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken);
+            canceled.Cancel();
+            // Redis may have admitted the request despite caller cancellation.
+            acquireReply.TrySetResult(RedisResult.Create((RedisValue)1));
+            await releaseIssued.Task.WaitAsync(TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken);
+
+            // The original cancellation must win over missing Redis cleanup
+            // acknowledgement. No lease is ever returned to the caller.
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await pending.WaitAsync(TimeSpan.FromSeconds(4),
+                    TestContext.Current.CancellationToken));
+            Assert.False(releaseReply.Task.IsCompleted);
+        }
+        finally
+        {
+            releaseReply.TrySetResult(RedisResult.Create((RedisValue)1));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await pending.WaitAsync(TimeSpan.FromSeconds(5),
+                    TestContext.Current.CancellationToken));
+        }
+    }
 }
