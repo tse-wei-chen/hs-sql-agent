@@ -101,6 +101,9 @@ public sealed class RedisSqlConcurrencyIntegrationTests
                 Assert.True(score is null || score <=
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     "An already expired Redis admission must not be resurrected by background renewal.");
+                var revocable = Assert.IsAssignableFrom<IRevocableSqlExecutionLease>(lease);
+                Assert.True(revocable.RevocationToken.IsCancellationRequested,
+                    "Live Query must be notified when physical Redis rejects its expired token.");
             }
         }
         finally
