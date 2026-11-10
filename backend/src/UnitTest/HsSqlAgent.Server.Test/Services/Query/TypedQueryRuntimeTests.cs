@@ -244,6 +244,48 @@ public class TypedQueryRuntimeTests
         errors.VerifyNoOtherCalls();
     }
 
+    // Both Query entrypoints must use the native read-only transaction source on
+    // the exact execution connection. A fail-fast factory provides a deterministic
+    // RED control without a fake database executor accidentally masking the bypass.
+    [Theory]
+    [InlineData(SqlAgentToolType.Oracle, "26.0", false)]
+    [InlineData(SqlAgentToolType.Oracle, "26.0", true)]
+    [InlineData(SqlAgentToolType.Firebird, "5.0", false)]
+    [InlineData(SqlAgentToolType.Firebird, "5.0", true)]
+    public async Task ExecuteQuery_OracleAndFirebird_RequiresNativeReadOnlyTransaction(
+        SqlAgentToolType dialect, string serverVersion, bool withFacts)
+    {
+        var connection = CreateOpenConnection();
+        connection.SetupGet(x => x.ServerVersion).Returns(serverVersion);
+        var connections = new Mock<IDbConnectionFactory>();
+        connections.Setup(x => x.Create("connection")).Returns(connection.Object);
+
+        var marker = new InvalidOperationException("read-only transaction factory reached");
+        var preview = new Mock<IDmlPreviewTransactionFactory>(MockBehavior.Strict);
+        preview.Setup(x => x.BeginAsync(
+                connection.Object, dialect, IsolationLevel.ReadCommitted,
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(marker);
+
+        var provider = new Mock<ISqlProvider>(MockBehavior.Strict);
+        provider.SetupGet(x => x.Type).Returns(dialect);
+        provider.SetupGet(x => x.Connections).Returns(connections.Object);
+        provider.As<IProviderDmlPreviewTransactionSource>()
+            .SetupGet(x => x.PreviewTransactions).Returns(preview.Object);
+
+        var runtime = new TypedQueryRuntime();
+        var ct = TestContext.Current.CancellationToken;
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => withFacts
+            ? runtime.ExecuteWithFactsAsync(provider.Object, "connection", "SELECT 1",
+                dialect, CreatePolicy(), null, ct)
+            : runtime.ExecuteAsync(provider.Object, "connection", "SELECT 1",
+                dialect, CreatePolicy(), null, ct));
+        Assert.Same(marker, thrown);
+        preview.Verify(x => x.BeginAsync(
+                connection.Object, dialect, IsolationLevel.ReadCommitted,
+                It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static Mock<DbConnection> CreateOpenConnection()
     {
         var connection = new Mock<DbConnection>();
