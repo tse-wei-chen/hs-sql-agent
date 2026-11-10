@@ -540,6 +540,11 @@ internal sealed class DurableDmlApprovalLifecycle(
         if (commitLease is null)
             throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
 
+        // This worker has durably claimed Executing. If its Redis admission
+        // is already revoked, do not start the target COMMIT or replay the
+        // external approval. Existing unknown-outcome handling still owns
+        // errors arising AFTER the native COMMIT boundary is crossed.
+        SqlDmlCommitLeaseAdmission.ThrowIfRevoked(commitLease);
         var commit = await runtime.CommitTransactionAsync(
             commitCurrent.Provider,
             commitCurrent.ConnectionString,
