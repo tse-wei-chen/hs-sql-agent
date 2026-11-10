@@ -259,7 +259,12 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
             using var timer = new PeriodicTimer(interval);
             while (await timer.WaitForNextTickAsync(_stopping.Token))
             {
-                var remaining = await _owner.RenewAsync(_token);
+                // StackExchange.Redis cannot cancel the already-issued Lua call.
+                // Cancel only OUR wait on disposal: Redis's atomic ZSCORE guard
+                // ensures a late renewal cannot resurrect a token removed by
+                // the token-specific ReleaseScript. Otherwise a hung ACK would
+                // block disposal (and a confirmed DML outcome) indefinitely.
+                var remaining = await _owner.RenewAsync(_token).WaitAsync(_stopping.Token);
                 if (remaining is null)
                 {
                     // Missing, expired, or unverified due to Redis outage:
