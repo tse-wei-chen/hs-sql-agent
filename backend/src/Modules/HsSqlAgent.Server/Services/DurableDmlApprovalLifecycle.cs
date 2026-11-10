@@ -512,6 +512,10 @@ internal sealed class DurableDmlApprovalLifecycle(
         {
             if (lease is null)
                 throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+            // Durable completion must not promote stale re-preview evidence
+            // after its Redis admission is revoked.
+            using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
             freshSession = await runtime.PreviewTransactionAsync(
                 current.Provider,
                 current.ConnectionString,
@@ -519,7 +523,8 @@ internal sealed class DurableDmlApprovalLifecycle(
                 previewPolicy,
                 current.AllowedTables,
                 approvalContext,
-                cancellationToken);
+                leaseCancellation.Token);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
         }
 
         var freshEvidence = DmlApprovalRequestFactory.ComputeEvidenceFingerprint(freshSession);
