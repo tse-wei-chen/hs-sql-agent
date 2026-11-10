@@ -56,8 +56,7 @@ jobs:
           fi
           bash .github/scripts/verify-release-security-gate.sh "$package_version"
 
-      - name: Require exact-main successful Tests before GitHub Release publication
-        if: github.event_name == 'release'
+      - name: Require exact-main successful Tests before any NuGet package publication
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/verify-release-head-ci-gate.sh

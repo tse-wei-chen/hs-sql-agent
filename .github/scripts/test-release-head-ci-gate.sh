@@ -99,4 +99,4 @@ expect_deny 'other repo'
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
 export GITHUB_SHA=invalid
 expect_deny 'invalid SHA'
-echo 'Exact release-head Tests gate: 14 scenarios passed.'
+echo 'Exact release-head Tests gate: 15 scenarios passed.'
