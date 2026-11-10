@@ -1,4 +1,6 @@
+using System.Data;
 using System.Data.Common;
+using HsSqlAgent.Provider.Abstractions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
@@ -275,6 +277,18 @@ public sealed class QueryNativeFunctionLiveTests
                 new OracleProvider(), SqlAgentToolType.Oracle,
                 connectionString, table, sql, "SELECT ID FROM " + table, ct);
             Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+
+            // A read-only transaction is a physical engine property, not an
+            // inference from the SELECT AST or the MCP tool descriptor.
+            var provider = new OracleProvider();
+            await AssertPhysicalReadOnlyRejectsInsertAsync(
+                provider, connectionString, "INSERT INTO " + users + " VALUES (2)", ct);
+            var noWhitelist = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ID FROM " + table, ct);
+            Assert.True(noWhitelist.Success, noWhitelist.Error?.Message);
+            Assert.Single(noWhitelist.Rows);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
         }
         finally
         {
@@ -515,6 +529,16 @@ public sealed class QueryNativeFunctionLiveTests
                 new FirebirdProvider(), SqlAgentToolType.Firebird,
                 connectionString, users, sql, "SELECT ID FROM " + users, ct);
             Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+
+            var provider = new FirebirdProvider();
+            await AssertPhysicalReadOnlyRejectsInsertAsync(
+                provider, connectionString, "INSERT INTO " + users + " VALUES (2)", ct);
+            var noWhitelist = await Tool(provider, SqlAgentToolType.Firebird,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ID FROM " + users, ct);
+            Assert.True(noWhitelist.Success, noWhitelist.Error?.Message);
+            Assert.Single(noWhitelist.Rows);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
         }
         finally
         {
@@ -525,6 +549,21 @@ public sealed class QueryNativeFunctionLiveTests
             if (created >= 1)
                 await ExecuteAsync(setup, "DROP TABLE " + users, CancellationToken.None);
         }
+    }
+
+    private static async Task AssertPhysicalReadOnlyRejectsInsertAsync(
+        ISqlProvider provider, string connectionString, string insertSql, CancellationToken ct)
+    {
+        var nativeSource = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+        await using var connection = provider.Connections.Create(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = await nativeSource.PreviewTransactions.BeginAsync(
+            connection, provider.Type, IsolationLevel.ReadCommitted, ct);
+        await using var write = connection.CreateCommand();
+        write.Transaction = transaction;
+        write.CommandText = insertSql;
+        await Assert.ThrowsAnyAsync<DbException>(() => write.ExecuteNonQueryAsync(ct));
+        await transaction.RollbackAsync(ct);
     }
 
     private static async Task AssertMcpDeniesAsync(
@@ -558,13 +597,14 @@ public sealed class QueryNativeFunctionLiveTests
 
     private static SqlAgentTool Tool(
         ISqlProvider provider, SqlAgentToolType dialect,
-        string connectionString, string allowedTable)
+        string connectionString, string? allowedTable)
     {
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = dialect.ToString();
         context.Items[McpContextItemKeys.SqlConnectionString] = connectionString;
         context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
-        context.Items[McpContextItemKeys.TableWhitelist] = allowedTable;
+        if (allowedTable is not null)
+            context.Items[McpContextItemKeys.TableWhitelist] = allowedTable;
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
         context.Items[McpContextItemKeys.DbManagementId] = 11;
         context.Items[McpContextItemKeys.DatabaseName] = "native-function-live-test";
