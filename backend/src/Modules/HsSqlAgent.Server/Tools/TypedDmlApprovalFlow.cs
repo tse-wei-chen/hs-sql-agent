@@ -47,8 +47,14 @@ internal sealed class TypedDmlApprovalFlow(
                     ErrorCode: "server.busy",
                     ErrorStage: "Execution",
                     Retryable: true);
+            // Preview and approval evidence must never survive a revoked
+            // distributed admission. This scope ends before human approval.
+            using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
             session = await runtime.PreviewAsync(
-                provider, connectionString, parsedMutation, previewPolicy, previewAllowedTables, approvalContext, cancellationToken);
+                provider, connectionString, parsedMutation, previewPolicy, previewAllowedTables,
+                approvalContext, leaseCancellation.Token);
+            leaseCancellation.Token.ThrowIfCancellationRequested();
         }
 
         var approvalRequest = DmlApprovalRequestFactory.Create(approvalTitle, approvalContext, session);
