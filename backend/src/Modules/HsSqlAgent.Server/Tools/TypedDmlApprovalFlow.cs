@@ -97,6 +97,19 @@ internal sealed class TypedDmlApprovalFlow(
                 ErrorCode: "server.busy",
                 ErrorStage: "Execution",
                 Retryable: true);
+        // Redis admission may expire between approval and the first native
+        // COMMIT operation. Reject before consuming the challenge or touching
+        // the target DB; a fresh human approval is required.
+        if (SqlDmlCommitLeaseAdmission.IsRevoked(commitLease))
+            return new TypedDmlExecutionTiming(
+                SqlDmlCommitLeaseAdmission.RefusalMessage,
+                approvalWaitDurationMs,
+                session.Preview.AffectedRows,
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: SqlDmlCommitLeaseAdmission.ErrorCode,
+                ErrorStage: "Admission");
         DmlCommitResult commit;
         try
         {
