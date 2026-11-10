@@ -13,7 +13,7 @@ namespace HsSqlAgent.Server.Test.Services;
 /// connections, shared admission key, and actual lease renewals after TTL.
 /// This does not claim protection during Redis partition/renewal loss.
 /// </summary>
-public sealed class RedisSqlConcurrencyIntegrationTests
+public sealed partial class RedisSqlConcurrencyIntegrationTests
 {
     [Fact]
     public async Task IndependentInstances_RenewOneAdmissionAndReject24Competitors()
