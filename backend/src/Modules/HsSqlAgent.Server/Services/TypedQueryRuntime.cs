@@ -1,6 +1,8 @@
 using HsSqlAgent.SqlCore;
 using HsSqlAgent.SqlCore.Core.Binding;
+using System.Data;
 using System.Data.Common;
+using HsSqlAgent.Provider.Abstractions;
 using System.Security.Cryptography;
 using System.Text;
 using Admin.Service.Models;
@@ -256,6 +258,27 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
 
             await using var readOnlyTransaction =
                 await connection.BeginTransactionAsync(cancellationToken);
+            var result = await QueryExecutor.ExecuteQueryInTransactionAsync(
+                command, connection, timeoutSeconds, readOnlyTransaction, cancellationToken);
+            await readOnlyTransaction.RollbackAsync(cancellationToken);
+            return result;
+        }
+
+        // Oracle and Firebird already expose an audited provider-native read-only
+        // transaction for DML preview. Reuse that exact native mechanism for
+        // Query; a compiled SELECT cannot substitute for physical write fencing.
+        // Fail closed if an embedding provider does not offer the contract.
+        //
+        // Oracle/Firebird autonomous transactions and external function effects
+        // remain outside this transaction fence; use a restricted DB principal.
+        if (provider.Type is SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+        {
+            if (provider is not IProviderDmlPreviewTransactionSource readOnlySource)
+                throw new InvalidOperationException(
+                    "Oracle and Firebird Query require a provider-native read-only transaction source.");
+
+            await using var readOnlyTransaction = await readOnlySource.PreviewTransactions.BeginAsync(
+                connection, provider.Type, IsolationLevel.ReadCommitted, cancellationToken);
             var result = await QueryExecutor.ExecuteQueryInTransactionAsync(
                 command, connection, timeoutSeconds, readOnlyTransaction, cancellationToken);
             await readOnlyTransaction.RollbackAsync(cancellationToken);

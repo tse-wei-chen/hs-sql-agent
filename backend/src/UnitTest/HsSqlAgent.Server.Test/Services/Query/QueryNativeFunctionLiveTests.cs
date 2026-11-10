@@ -1,4 +1,6 @@
+using System.Data;
 using System.Data.Common;
+using HsSqlAgent.Provider.Abstractions;
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Common.Models;
@@ -268,12 +270,38 @@ public sealed class QueryNativeFunctionLiveTests
             created = 3;
 
             var table = "SQLCORE." + users;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
             var sql = "SELECT SQLCORE." + function + "() AS LEAKED FROM " + table;
             Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
             var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            try
+            {
+                var direct = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    new OracleProvider(), connectionString, "SELECT ID FROM " + table,
+                    SqlAgentToolType.Oracle, Policy(),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table }, ct);
+                Assert.Single(direct.Execution.Rows);
+            }
+            catch (ProviderExecutionException exception)
+            {
+                Assert.Fail("Oracle read-only compiled table Query failed: "
+                    + exception.Code + " / " + exception.InnerException?.GetType().Name);
+            }
             await AssertMcpDeniesAsync(
                 new OracleProvider(), SqlAgentToolType.Oracle,
                 connectionString, table, sql, "SELECT ID FROM " + table, ct);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+
+            // A read-only transaction is a physical engine property, not an
+            // inference from the SELECT AST or the MCP tool descriptor.
+            var provider = new OracleProvider();
+            await AssertPhysicalReadOnlyRejectsInsertAsync(
+                provider, connectionString, "INSERT INTO " + users + " VALUES (2)", ct);
+            var noWhitelist = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ID FROM " + table, ct);
+            Assert.True(noWhitelist.Success, noWhitelist.Error?.Message);
+            Assert.Single(noWhitelist.Rows);
             Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
         }
         finally
@@ -284,6 +312,39 @@ public sealed class QueryNativeFunctionLiveTests
                 await ExecuteAsync(setup, "DROP TABLE " + secrets + " PURGE", CancellationToken.None);
             if (created >= 1)
                 await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Oracle_PhysicalReadOnlyQueryTransaction_AllowsSelect()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var provider = new OracleProvider();
+        await using var connection = provider.Connections.Create(connectionString);
+        await connection.OpenAsync(ct);
+        var source = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+        await using var transaction = await source.PreviewTransactions.BeginAsync(
+            connection, SqlAgentToolType.Oracle, IsolationLevel.ReadCommitted, ct);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM DUAL";
+        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+        await transaction.RollbackAsync(ct);
+
+        // Separately exercise the same native transaction through the
+        // production Dapper/compiled-Query path, not just a raw DbCommand.
+        try
+        {
+            var execution = await new TypedQueryRuntime().ExecuteAsync(
+                provider, connectionString, "SELECT 1 AS ID FROM DUAL",
+                SqlAgentToolType.Oracle, Policy(), allowedTables: null, ct);
+            Assert.Single(execution.Rows);
+        }
+        catch (ProviderExecutionException exception)
+        {
+            Assert.Fail("Oracle compiled Query native transaction failed: "
+                + exception.Code + " / " + exception.InnerException?.GetType().Name);
         }
     }
 
@@ -316,6 +377,7 @@ public sealed class QueryNativeFunctionLiveTests
             stage = 3;
 
             var table = "SQLCORE." + users;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
             var nativeSql = "SELECT ABS(ID) AS AMOUNT FROM " + table;
             var nativeUdfSql = "SELECT SQLCORE.ABS(ID) AS LEAKED FROM " + table;
             Assert.Equal(1, Convert.ToInt32(await ScalarAsync(setup, nativeSql, ct)));
@@ -515,6 +577,16 @@ public sealed class QueryNativeFunctionLiveTests
                 new FirebirdProvider(), SqlAgentToolType.Firebird,
                 connectionString, users, sql, "SELECT ID FROM " + users, ct);
             Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
+
+            var provider = new FirebirdProvider();
+            await AssertPhysicalReadOnlyRejectsInsertAsync(
+                provider, connectionString, "INSERT INTO " + users + " VALUES (2)", ct);
+            var noWhitelist = await Tool(provider, SqlAgentToolType.Firebird,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ID FROM " + users, ct);
+            Assert.True(noWhitelist.Success, noWhitelist.Error?.Message);
+            Assert.Single(noWhitelist.Rows);
+            Assert.Equal(before, await PhysicalCountAsync(setup, users, secrets, ct));
         }
         finally
         {
@@ -525,6 +597,49 @@ public sealed class QueryNativeFunctionLiveTests
             if (created >= 1)
                 await ExecuteAsync(setup, "DROP TABLE " + users, CancellationToken.None);
         }
+    }
+
+    // Oracle can report ORA-01466 for a freshly created/altered table in a
+    // read-only snapshot, even though a normal SELECT already sees the table.
+    // Synchronize the *test fixture* with physical DDL visibility; this is not
+    // a production retry or an unfenced fallback. Retry only Oracle's precise
+    // schema-snapshot error and remain bounded/fail-closed on other failures.
+    private static async Task AwaitOracleReadOnlyDdlVisibilityAsync(
+        string connectionString, string table, CancellationToken ct)
+    {
+        var provider = new OracleProvider();
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                var ready = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, connectionString, "SELECT ID FROM " + table,
+                    SqlAgentToolType.Oracle, Policy(),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table }, ct);
+                Assert.Single(ready.Execution.Rows);
+                return;
+            }
+            catch (ProviderExecutionException ex)
+                when (ex.Code == "ORA-01466" && attempt < 29)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            }
+        }
+    }
+
+    private static async Task AssertPhysicalReadOnlyRejectsInsertAsync(
+        ISqlProvider provider, string connectionString, string insertSql, CancellationToken ct)
+    {
+        var nativeSource = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+        await using var connection = provider.Connections.Create(connectionString);
+        await connection.OpenAsync(ct);
+        await using var transaction = await nativeSource.PreviewTransactions.BeginAsync(
+            connection, provider.Type, IsolationLevel.ReadCommitted, ct);
+        await using var write = connection.CreateCommand();
+        write.Transaction = transaction;
+        write.CommandText = insertSql;
+        await Assert.ThrowsAnyAsync<DbException>(() => write.ExecuteNonQueryAsync(ct));
+        await transaction.RollbackAsync(ct);
     }
 
     private static async Task AssertMcpDeniesAsync(
@@ -558,13 +673,15 @@ public sealed class QueryNativeFunctionLiveTests
 
     private static SqlAgentTool Tool(
         ISqlProvider provider, SqlAgentToolType dialect,
-        string connectionString, string allowedTable)
+        string connectionString, string? allowedTable)
     {
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = dialect.ToString();
         context.Items[McpContextItemKeys.SqlConnectionString] = connectionString;
         context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
-        context.Items[McpContextItemKeys.TableWhitelist] = allowedTable;
+        // An explicitly empty whitelist is unrestricted; a missing context key is
+        // an authorization error, even in the test harness.
+        context.Items[McpContextItemKeys.TableWhitelist] = allowedTable ?? string.Empty;
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
         context.Items[McpContextItemKeys.DbManagementId] = 11;
         context.Items[McpContextItemKeys.DatabaseName] = "native-function-live-test";
