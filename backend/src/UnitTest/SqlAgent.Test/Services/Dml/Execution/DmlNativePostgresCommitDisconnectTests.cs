@@ -66,7 +66,7 @@ public sealed class DmlNativePostgresCommitDisconnectTests
                 await insert.ExecuteNonQueryAsync(ct);
 
             long backendPid;
-            await using (var pid = new NpgsqlCommand("SELECT pg_backend_pid()", worker, transaction))
+            await using (var pid = new NpgsqlCommand("SELECT pg_backend_pid()", worker, (NpgsqlTransaction)transaction))
                 backendPid = Convert.ToInt64(await pid.ExecuteScalarAsync(ct));
 
             var pendingCommit = DmlTransactionFailureRecovery.CommitAsync(transaction, ct);
