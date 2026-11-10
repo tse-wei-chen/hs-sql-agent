@@ -112,6 +112,90 @@ public sealed class RedisSqlConcurrencyIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task PhysicalRedis_LateRenewAckAfterLeaseDisposal_NeverResurrectsReleasedToken()
+    {
+        var endpoint = RequireRedis();
+        var ct = TestContext.Current.CancellationToken;
+        var key = "hs-sql-agent:delayed-renew-release:" + Guid.NewGuid().ToString("N");
+        var renewPhysicallyExecuted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayedAck = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var witness = await ConnectionMultiplexer.ConnectAsync(endpoint);
+        var physical = witness.GetDatabase();
+        var delayedClient = new Mock<IDatabase>();
+        delayedClient.Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns((string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags) =>
+                script.Contains("ZSCORE", StringComparison.Ordinal)
+                    ? DelayRenewAcknowledgementAsync(script, keys, args, flags)
+                    : physical.ScriptEvaluateAsync(script, keys, args, flags));
+        var state = new Mock<ISecurityPolicyRuntimeState>();
+        state.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel { MaxConcurrentSql = 1 });
+        await using var limiter = new RedisSqlExecutionConcurrencyLimiter(
+            state.Object,
+            new RedisSqlConcurrencyOptions(endpoint, key, TimeSpan.FromSeconds(2),
+                RateLimiterFailureMode.FailClosed),
+            NullLogger<RedisSqlExecutionConcurrencyLimiter>.Instance,
+            delayedClient.Object);
+        await using var otherInstance = Limiter(endpoint, key);
+
+        async Task<RedisResult> DelayRenewAcknowledgementAsync(
+            string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags)
+        {
+            // REAL Redis 7 executes Lua and updates the score; only its
+            // acknowledgement is withheld from the application.
+            var result = await physical.ScriptEvaluateAsync(script, keys, args, flags);
+            renewPhysicallyExecuted.TrySetResult();
+            await delayedAck.Task;
+            return result;
+        }
+
+        try
+        {
+            var lease = await limiter.TryAcquireAsync(ct);
+            Assert.NotNull(lease);
+            Task? disposing = null;
+            try
+            {
+                var token = Assert.Single(await physical.SortedSetRangeByRankAsync(key));
+                await renewPhysicallyExecuted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+                Assert.Equal(1, await physical.SortedSetLengthAsync(key));
+                disposing = lease.DisposeAsync().AsTask();
+                // Disposal must release its token without awaiting the
+                // unbounded Redis renewal reply.
+                await disposing.WaitAsync(TimeSpan.FromSeconds(1), ct);
+                Assert.False(delayedAck.Task.IsCompleted);
+                Assert.Empty(await physical.SortedSetRangeByRankAsync(key));
+
+                await using var admittedAgain = await otherInstance.TryAcquireAsync(ct);
+                Assert.NotNull(admittedAgain);
+                var differentToken = Assert.Single(
+                    await physical.SortedSetRangeByRankAsync(key));
+                Assert.NotEqual(token, differentToken);
+            }
+            finally
+            {
+                delayedAck.TrySetResult();
+                if (disposing is null)
+                    await lease.DisposeAsync();
+                else
+                    await disposing.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            }
+
+            // A late response for a previously executed renewal must not
+            // resurrect the released owner or remove another owner's token.
+            Assert.Empty(await physical.SortedSetRangeByRankAsync(key));
+        }
+        finally
+        {
+            await physical.KeyDeleteAsync(key);
+        }
+    }
+
     private static RedisSqlExecutionConcurrencyLimiter Limiter(string endpoint, string key)
     {
         var state = new Mock<ISecurityPolicyRuntimeState>();
