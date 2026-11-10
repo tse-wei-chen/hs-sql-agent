@@ -83,8 +83,10 @@ public sealed class DmlLeaseRevocationPrecommitTests
         approval.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task ApprovedSqliteDml_CommitLeaseAlreadyRevoked_RejectsWithoutPhysicalWrite()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApprovedSqliteDml_CommitLeaseAlreadyRevoked_RejectsWithoutPhysicalWrite(bool batch)
     {
         var databaseFile = Path.Combine(Path.GetTempPath(),
             $"hsa-dml-commit-revocation-{Guid.NewGuid():N}.db");
@@ -107,17 +109,22 @@ public sealed class DmlLeaseRevocationPrecommitTests
             state.Setup(x => x.GetCurrent())
                 .Returns(new SecurityPolicyModel { DmlMaxAffectedRows = 2 });
             var approver = new ApprovingProvider();
-            var flow = new TypedDmlTransactionApprovalFlow(
-                new TypedDmlRuntime(), state.Object, limiter, () => null);
+            var runtime = new TypedDmlRuntime();
             var parsed = CoreDmlBatchTextParser.ParseDmlBatch(
                 "INSERT INTO main.users (id, name) VALUES (7, 'Alice')",
                 SqlAgentToolType.Sqlite);
-
-            var outcome = await flow.ExecuteAsync(
-                new SqliteProvider(), connectionString, parsed,
-                new DmlApprovalExecutionContext(
-                    "mcp-key:7", "db-management:11", SqlAgentToolType.Sqlite, "main"),
-                approver, "Approve insert", TestContext.Current.CancellationToken);
+            var provider = new SqliteProvider();
+            var approvalContext = new DmlApprovalExecutionContext(
+                "mcp-key:7", "db-management:11", SqlAgentToolType.Sqlite, "main");
+            var outcome = batch
+                ? await new TypedDmlTransactionApprovalFlow(
+                    runtime, state.Object, limiter, () => null).ExecuteAsync(
+                    provider, connectionString, parsed, approvalContext,
+                    approver, "Approve batch", TestContext.Current.CancellationToken)
+                : await new TypedDmlApprovalFlow(
+                    runtime, state.Object, limiter, () => null).ExecuteAsync(
+                    provider, connectionString, parsed.Statements[0], approvalContext,
+                    approver, "Approve insert", TestContext.Current.CancellationToken);
 
             Assert.Equal(1, approver.CallCount);
             Assert.Equal(2, limiter.Acquisitions);
