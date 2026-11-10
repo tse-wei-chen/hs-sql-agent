@@ -13,7 +13,7 @@ namespace HsSqlAgent.Server.Test.Services;
 /// process's admission, irrespective of whether ZREM executes before or
 /// after an unresponsive release acknowledgement.
 /// </summary>
-public sealed class RedisSqlStalledReleaseIntegrationTests
+public sealed partial class RedisSqlConcurrencyIntegrationTests
 {
     [Theory]
     [InlineData(false)]
