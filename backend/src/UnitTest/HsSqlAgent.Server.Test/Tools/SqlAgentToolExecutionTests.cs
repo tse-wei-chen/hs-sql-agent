@@ -12,6 +12,71 @@ namespace HsSqlAgent.Server.Test.Tools;
 
 public class SqlAgentToolExecutionTests
 {
+    [Fact]
+    public async Task ExecuteQuerySql_RevokedRedisLease_RejectsRuntimeThatIgnoresCancellation()
+    {
+        using var revocation = new CancellationTokenSource();
+        var http = new Mock<IHttpContextAccessor>();
+        var context = new DefaultHttpContext();
+        context.Items[McpContextItemKeys.SqlProvider] = "Postgres";
+        context.Items[McpContextItemKeys.SqlConnectionString] = "Host=localhost;Database=testdb";
+        context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
+        context.Items[McpContextItemKeys.TableWhitelist] = string.Empty;
+        http.SetupGet(x => x.HttpContext).Returns(context);
+
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Postgres);
+        var factory = new Mock<ISqlProviderFactory>();
+        factory.Setup(x => x.GetProvider(SqlAgentToolType.Postgres)).Returns(provider.Object);
+        var audit = new Mock<IAuditService>();
+        var policy = new Mock<ISecurityPolicyRuntimeState>();
+        policy.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel());
+        var limiter = new Mock<ISqlExecutionConcurrencyLimiter>();
+        limiter.Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FakeRevocableLease(revocation.Token));
+
+        CancellationToken sqlToken = default;
+        const string sql = "SELECT id FROM public.users";
+        var runtime = new Mock<ITypedQueryRuntime>();
+        runtime.As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
+                It.IsAny<ISqlProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(), It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(), It.IsAny<CancellationToken>()))
+            .Returns((ISqlProvider p, string connection, string query,
+                SqlAgentToolType dialect, SecurityPolicyModel current,
+                IReadOnlySet<string>? allowed, CancellationToken token) =>
+            {
+                // Simulate a driver completing successfully while its
+                // distributed admission expires. Result must be suppressed.
+                sqlToken = token;
+                revocation.Cancel();
+                return Task.FromResult(new QueryExecutionWithFacts(
+                    new QueryExecutionResult(
+                        [new Dictionary<string, object?> { ["id"] = 7 }],
+                        1, TimeSpan.Zero, []),
+                    SqlCoreInspection.GetQueryFacts(sql, SqlAgentToolType.Postgres)));
+            });
+
+        var tool = new SqlAgentTool(http.Object, factory.Object, audit.Object,
+            Mock.Of<IDbSemanticService>(), policy.Object, limiter.Object, runtime.Object);
+        var result = await tool.ExecuteQuerySql(sql, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Success);
+        Assert.True(sqlToken.CanBeCanceled);
+        Assert.True(sqlToken.IsCancellationRequested);
+        audit.Verify(x => x.WriteEventAsync(
+            "mcp.query.executed",
+            It.IsAny<string>(), "success", It.IsAny<AuditEventContext>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private sealed class FakeRevocableLease(CancellationToken revoked) : IRevocableSqlExecutionLease
+    {
+        public CancellationToken RevocationToken => revoked;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
