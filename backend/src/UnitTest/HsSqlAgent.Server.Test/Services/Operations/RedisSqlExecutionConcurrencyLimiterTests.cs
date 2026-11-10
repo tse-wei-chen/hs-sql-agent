@@ -147,6 +147,32 @@ public class RedisSqlExecutionConcurrencyLimiterTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
     }
 
+    [Fact]
+    public async Task TryAcquireAsync_CancelledDuringRedisFailure_DoesNotUseFailureMode()
+    {
+        using var cancelled = new CancellationTokenSource();
+        var redisEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var redisReply = new TaskCompletionSource<RedisResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var database = new Mock<IDatabase>();
+        database
+            .Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns(() =>
+            {
+                redisEntered.TrySetResult();
+                return redisReply.Task;
+            });
+        var limiter = CreateLimiter(database.Object, RateLimiterFailureMode.FailOpen);
+        var pending = limiter.TryAcquireAsync(cancelled.Token).AsTask();
+
+        await redisEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        cancelled.Cancel();
+        redisReply.SetException(new RedisException("simulated Redis interruption"));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
     private static RedisSqlExecutionConcurrencyLimiter CreateLimiter(
         IDatabase database,
         RateLimiterFailureMode failureMode)
