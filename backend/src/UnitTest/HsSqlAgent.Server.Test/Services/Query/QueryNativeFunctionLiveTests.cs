@@ -317,6 +317,21 @@ public sealed class QueryNativeFunctionLiveTests
         command.CommandText = "SELECT 1 FROM DUAL";
         Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
         await transaction.RollbackAsync(ct);
+
+        // Separately exercise the same native transaction through the
+        // production Dapper/compiled-Query path, not just a raw DbCommand.
+        try
+        {
+            var execution = await new TypedQueryRuntime().ExecuteAsync(
+                provider, connectionString, "SELECT 1 AS ID FROM DUAL",
+                SqlAgentToolType.Oracle, Policy(), allowedTables: null, ct);
+            Assert.Single(execution.Rows);
+        }
+        catch (ProviderExecutionException exception)
+        {
+            Assert.Fail("Oracle compiled Query native transaction failed: "
+                + exception.Code + " / " + exception.InnerException?.GetType().Name);
+        }
     }
 
     // Oracle resolves unqualified ABS as its built-in despite a schema UDF
