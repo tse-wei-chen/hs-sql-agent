@@ -270,6 +270,7 @@ public sealed class QueryNativeFunctionLiveTests
             created = 3;
 
             var table = "SQLCORE." + users;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
             var sql = "SELECT SQLCORE." + function + "() AS LEAKED FROM " + table;
             Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
             var before = await PhysicalCountAsync(setup, users, secrets, ct);
@@ -376,6 +377,7 @@ public sealed class QueryNativeFunctionLiveTests
             stage = 3;
 
             var table = "SQLCORE." + users;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
             var nativeSql = "SELECT ABS(ID) AS AMOUNT FROM " + table;
             var nativeUdfSql = "SELECT SQLCORE.ABS(ID) AS LEAKED FROM " + table;
             Assert.Equal(1, Convert.ToInt32(await ScalarAsync(setup, nativeSql, ct)));
@@ -594,6 +596,34 @@ public sealed class QueryNativeFunctionLiveTests
                 await ExecuteAsync(setup, "DROP TABLE " + secrets, CancellationToken.None);
             if (created >= 1)
                 await ExecuteAsync(setup, "DROP TABLE " + users, CancellationToken.None);
+        }
+    }
+
+    // Oracle can report ORA-01466 for a freshly created/altered table in a
+    // read-only snapshot, even though a normal SELECT already sees the table.
+    // Synchronize the *test fixture* with physical DDL visibility; this is not
+    // a production retry or an unfenced fallback. Retry only Oracle's precise
+    // schema-snapshot error and remain bounded/fail-closed on other failures.
+    private static async Task AwaitOracleReadOnlyDdlVisibilityAsync(
+        string connectionString, string table, CancellationToken ct)
+    {
+        var provider = new OracleProvider();
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                var ready = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, connectionString, "SELECT ID FROM " + table,
+                    SqlAgentToolType.Oracle, Policy(),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table }, ct);
+                Assert.Single(ready.Execution.Rows);
+                return;
+            }
+            catch (ProviderExecutionException ex)
+                when (ex.Code == "ORA-01466" && attempt < 29)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), ct);
+            }
         }
     }
 
