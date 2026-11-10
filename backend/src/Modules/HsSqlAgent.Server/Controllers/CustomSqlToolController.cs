@@ -360,6 +360,7 @@ public class CustomSqlToolController(
             string result;
             if (isQuery)
             {
+                using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
                 var execution = await typedQueryRuntime.ExecuteAsync(
                     provider,
                     connectionString,
@@ -367,7 +368,8 @@ public class CustomSqlToolController(
                     dbType,
                     runtimePolicy,
                     allowedTables: null,
-                    cancellationToken);
+                    leaseCancellation.Token);
+                leaseCancellation.Token.ThrowIfCancellationRequested();
                 result = JsonSerializer.Serialize(execution.Rows);
             }
             else
