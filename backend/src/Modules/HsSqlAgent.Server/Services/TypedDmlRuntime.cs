@@ -99,8 +99,15 @@ public sealed class TypedDmlRuntime(
         await using var lease = await concurrencyLimiter.TryAcquireAsync(cancellationToken);
         if (lease is null)
             throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
-        return await ParseDmlBatchWithVerifiedRuntimeProfileAsync(
-            provider, connectionString, sql, sourceDialect, cancellationToken);
+        // Runtime-profile discovery performs physical I/O. An expired Redis
+        // admission must not authorize that I/O or return a verified plan.
+        using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
+        leaseCancellation.Token.ThrowIfCancellationRequested();
+        var parsed = await ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+            provider, connectionString, sql, sourceDialect, leaseCancellation.Token);
+        // A provider may ignore cancellation and return after revocation.
+        leaseCancellation.Token.ThrowIfCancellationRequested();
+        return parsed;
     }
 
     public async Task<TypedDmlApprovalSession> PreviewAsync(
