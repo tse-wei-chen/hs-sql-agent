@@ -98,7 +98,7 @@ public class RedisSqlExecutionConcurrencyLimiterTests
             .Setup(x => x.ScriptEvaluateAsync(
                 It.IsAny<string>(), It.IsAny<RedisKey[]>(),
                 It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
-            .Returns((string script, RedisKey[] _, RedisValue[] args, CommandFlags _) =>
+            .Returns((string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags) =>
             {
                 if (script.Contains("ZREMRANGEBYSCORE", StringComparison.Ordinal))
                 {
