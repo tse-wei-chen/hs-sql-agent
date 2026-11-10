@@ -43,7 +43,15 @@ if ! jq -e '
     .total_count == 18
     and (.jobs | type) == "array"
     and (.jobs | length) == 18
-    and (.jobs | map(.name) | unique | length) == 18
+    and ([.jobs[].name] | sort) == ([
+      "admin-api-openapi", "admin-test", "auth-test", "common-test",
+      "frontend-lint", "frontend-test", "infrastructure-test",
+      "redis-approval-integration", "server-test", "sql-syntax-parity",
+      "sqlagent-capability-stack", "sqlagent-fence-sqlserver",
+      "sqlagent-firebird-ddl-parity", "sqlagent-oracle-ddl-parity",
+      "sqlagent-package-smoke", "sqlagent-syntax-matrix",
+      "sqlagent-test", "sqlagent-test-rest"
+    ] | sort)
     and (.jobs | all(.[]; .status == "completed" and .conclusion == "success"))
   ' <<< "$jobs" >/dev/null; then
     echo '::error::Release requires exactly 18 completed, successful Tests jobs on the exact main SHA.' >&2
