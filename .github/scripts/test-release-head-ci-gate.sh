@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline negative/positive evidence for release SHA and all Tests jobs.
+# Offline negative/positive evidence for release SHA and all required Tests jobs.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 gate="$root/.github/scripts/verify-release-head-ci-gate.sh"
@@ -41,12 +41,22 @@ case "$2" in
   repos/tse-wei-chen/hs-sql-agent/actions/runs/987/jobs?per_page=100)
     [[ "${MOCK_JOBS_API_FAIL:-0}" != 1 ]] || exit 33
     count="${MOCK_JOB_COUNT:-18}"
+    names=(
+      admin-api-openapi admin-test auth-test common-test frontend-lint
+      frontend-test infrastructure-test redis-approval-integration
+      server-test sql-syntax-parity sqlagent-capability-stack
+      sqlagent-fence-sqlserver sqlagent-firebird-ddl-parity
+      sqlagent-oracle-ddl-parity sqlagent-package-smoke
+      sqlagent-syntax-matrix sqlagent-test sqlagent-test-rest
+    )
     printf '{"total_count":%d,"jobs":[' "$count"
     for ((i=1;i<=count;i++)); do
       (( i == 1 )) || printf ','
       conclusion=success
+      name="${names[i-1]:-unexpected-job}"
       if (( i == 1 )) && [[ "${MOCK_FAIL_JOB:-0}" == 1 ]]; then conclusion=failure; fi
-      printf '{"name":"job-%d","status":"completed","conclusion":"%s"}' "$i" "$conclusion"
+      if (( i == 1 )) && [[ "${MOCK_WRONG_TEST_JOB:-0}" == 1 ]]; then name=impostor-job; fi
+      printf '{"name":"%s","status":"completed","conclusion":"%s"}' "$name" "$conclusion"
     done
     printf ']}\n'
     ;;
@@ -132,6 +142,9 @@ unset MOCK_JOB_COUNT
 export MOCK_FAIL_JOB=1
 expect_deny 'failed job'
 unset MOCK_FAIL_JOB
+export MOCK_WRONG_TEST_JOB=1
+expect_deny 'unrelated jobs cannot substitute for required Tests jobs'
+unset MOCK_WRONG_TEST_JOB
 export MOCK_JOBS_API_FAIL=1
 expect_deny 'jobs API failure'
 unset MOCK_JOBS_API_FAIL
@@ -143,4 +156,4 @@ expect_deny 'other repo'
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
 export GITHUB_SHA=invalid
 expect_deny 'invalid SHA'
-echo 'Exact release-head Tests gate: 25 scenarios passed.'
+echo 'Exact release-head Tests gate: 26 scenarios passed.'
