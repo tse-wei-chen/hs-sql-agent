@@ -26,14 +26,21 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         """;
 
     private const string RenewScript = """
-        if redis.call('ZSCORE', KEYS[1], ARGV[2]) then
-            local time = redis.call('TIME')
-            local now = (time[1] * 1000) + math.floor(time[2] / 1000)
-            redis.call('ZADD', KEYS[1], 'XX', now + tonumber(ARGV[1]), ARGV[2])
-            redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[1]) * 2)
-            return 1
+        local score = redis.call('ZSCORE', KEYS[1], ARGV[2])
+        if not score then
+            return 0
         end
-        return 0
+        local time = redis.call('TIME')
+        local now = (time[1] * 1000) + math.floor(time[2] / 1000)
+        -- A stale member remains in the sorted set until the next acquire.
+        -- Its existence is not proof of a valid lease: never revive it.
+        if tonumber(score) <= now then
+            redis.call('ZREM', KEYS[1], ARGV[2])
+            return 0
+        end
+        redis.call('ZADD', KEYS[1], 'XX', now + tonumber(ARGV[1]), ARGV[2])
+        redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[1]) * 2)
+        return 1
         """;
 
     private const string ReleaseScript = """
@@ -177,13 +184,17 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         }
     }
 
-    private sealed class RedisLease : IAsyncDisposable
+    private sealed class RedisLease : IRevocableSqlExecutionLease
     {
         private readonly RedisSqlExecutionConcurrencyLimiter _owner;
         private readonly string _token;
+        private readonly TimeSpan _leaseDuration;
         private readonly CancellationTokenSource _stopping = new();
+        private readonly CancellationTokenSource _revoked = new();
         private readonly Task _renewalTask;
         private int _disposed;
+
+        public CancellationToken RevocationToken => _revoked.Token;
 
         public RedisLease(
             RedisSqlExecutionConcurrencyLimiter owner,
@@ -192,6 +203,10 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         {
             _owner = owner;
             _token = token;
+            _leaseDuration = leaseDuration;
+            // A pending Redis call must never keep an unverified lease alive
+            // beyond its local deadline. The watchdog also covers lost replies.
+            _revoked.CancelAfter(leaseDuration);
             _renewalTask = RenewUntilDisposedAsync(
                 TimeSpan.FromMilliseconds(Math.Max(500, leaseDuration.TotalMilliseconds / 2)));
         }
@@ -206,11 +221,15 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
             {
                 await _renewalTask;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
             {
             }
-            _stopping.Dispose();
-            await _owner.ReleaseAsync(_token);
+            finally
+            {
+                _stopping.Dispose();
+                _revoked.Dispose();
+                await _owner.ReleaseAsync(_token);
+            }
         }
 
         private async Task RenewUntilDisposedAsync(TimeSpan interval)
@@ -219,7 +238,16 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
             while (await timer.WaitForNextTickAsync(_stopping.Token))
             {
                 if (!await _owner.RenewAsync(_token))
+                {
+                    // Missing, expired, or unverified due to Redis outage:
+                    // request cancellation of any still-running SQL Query.
+                    _revoked.Cancel();
                     return;
+                }
+
+                // CancelAfter never un-cancels a token. A late response
+                // cannot restore a local deadline that already elapsed.
+                _revoked.CancelAfter(_leaseDuration);
             }
         }
     }
