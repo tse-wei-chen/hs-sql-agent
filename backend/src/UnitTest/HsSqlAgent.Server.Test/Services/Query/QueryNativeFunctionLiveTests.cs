@@ -273,6 +273,19 @@ public sealed class QueryNativeFunctionLiveTests
             var sql = "SELECT SQLCORE." + function + "() AS LEAKED FROM " + table;
             Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
             var before = await PhysicalCountAsync(setup, users, secrets, ct);
+            try
+            {
+                var direct = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    new OracleProvider(), connectionString, "SELECT ID FROM " + table,
+                    SqlAgentToolType.Oracle, Policy(),
+                    new HashSet<string>(StringComparer.OrdinalIgnoreCase) { table }, ct);
+                Assert.Single(direct.Execution.Rows);
+            }
+            catch (ProviderExecutionException exception)
+            {
+                Assert.Fail("Oracle read-only compiled table Query failed: "
+                    + exception.Code + " / " + exception.InnerException?.GetType().Name);
+            }
             await AssertMcpDeniesAsync(
                 new OracleProvider(), SqlAgentToolType.Oracle,
                 connectionString, table, sql, "SELECT ID FROM " + table, ct);
