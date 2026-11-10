@@ -125,6 +125,19 @@ internal sealed class TypedDmlTransactionApprovalFlow(
                 ErrorStage: "Execution",
                 Retryable: true);
 
+        // Do not cross into target COMMIT when the newly acquired distributed
+        // admission is already revoked. No approval challenge is consumed.
+        if (SqlDmlCommitLeaseAdmission.IsRevoked(commitLease))
+            return new TypedDmlExecutionTiming(
+                SqlDmlCommitLeaseAdmission.RefusalMessage,
+                approvalWaitDurationMs,
+                session.Challenge.AffectedRows,
+                false,
+                DmlApprovalDecision.Approved,
+                approvalRequest.RequestId,
+                ErrorCode: SqlDmlCommitLeaseAdmission.ErrorCode,
+                ErrorStage: "Admission");
+
         DmlCommitResult commit;
         try
         {
