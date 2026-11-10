@@ -64,3 +64,20 @@ No public CLR limiter API, SQL dialect capability, F# compiler, MCP
 tool name or DML approval schema changed. Do not publish v3.1.0 on this
 isolated fix. Merge only on exact-HEAD **18/18 Tests Jobs**, **real Redis 7
 with zero skipped tests**, and **SqlCore baseline** success.
+
+## Operational interpretation of an unacknowledged release
+
+Do not convert the warning into a successful Redis release metric or a
+successful *new* admission. The old owner is no longer executing SQL when
+post-operation disposal begins, but its Redis slot might remain until the
+server score expires. A separate instance must continue to use the normal
+atomic acquisition script and may be denied transiently; it must never
+infer capacity from the timed-out `ZREM` locally.
+
+The real Redis regression lives in the existing
+`RedisSqlConcurrencyIntegrationTests` **partial class** because the
+current CI Redis job uses a class-name filter. Moving it to a distinct
+`*IntegrationTests` class without changing that filter would silently
+run it under the ordinary Server test job and mark it skipped. Every
+required Redis execution-order case is counted by the dedicated Redis
+7 job on each final PR HEAD.
