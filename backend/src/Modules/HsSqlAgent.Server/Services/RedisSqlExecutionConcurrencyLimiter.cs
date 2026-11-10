@@ -48,6 +48,11 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         return redis.call('ZREM', KEYS[1], ARGV[1])
         """;
 
+    // Lease release is cleanup, not a native SQL or DML commit gate. A
+    // Redis ZREM ACK may never arrive even if the Lua already executed.
+    // Bound local waiting; never infer that a timed-out release succeeded.
+    private static readonly TimeSpan ReleaseAcknowledgementBudget = TimeSpan.FromSeconds(2);
+
     private readonly ISecurityPolicyRuntimeState _runtimeState;
     private readonly RedisSqlConcurrencyOptions _options;
     private readonly ILogger<RedisSqlExecutionConcurrencyLimiter> _logger;
@@ -191,13 +196,26 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
 
     private async Task ReleaseAsync(string token)
     {
+        // StackExchange.Redis does not accept cancellation for ScriptEvaluateAsync.
+        // Cancel only this local wait, not the Lua already sent to Redis. The
+        // script removes our unique token, never another owner's lease. When
+        // Redis has not executed it, the stored score/TTL still bounds reclaim.
+        using var cleanup = new CancellationTokenSource(ReleaseAcknowledgementBudget);
         try
         {
-            var database = await GetDatabaseAsync();
+            var database = await GetDatabaseAsync(cleanup.Token);
             await database.ScriptEvaluateAsync(
                 ReleaseScript,
                 [_options.Key],
-                [token]);
+                [token]).WaitAsync(cleanup.Token);
+        }
+        catch (OperationCanceledException) when (cleanup.IsCancellationRequested)
+        {
+            // The ACK is unknown, *not* confirmation of a released slot.
+            // Do not prevent a positively acknowledged native COMMIT from
+            // returning solely because best-effort Redis cleanup stalled.
+            _logger.LogWarning(
+                "Redis SQL concurrency lease release acknowledgement did not arrive before the cleanup deadline; the slot will remain guarded by its Redis expiry if still present.");
         }
         catch (Exception exception)
         {
