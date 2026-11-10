@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
       - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~PostgresPhysicalLoadIntegrationTests&FullyQualifiedName!~MySqlPhysicalLoadIntegrationTests&FullyQualifiedName!~MySqlPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalLoadIntegrationTests&FullyQualifiedName!~OraclePhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~OraclePhysicalLoadIntegrationTests&FullyQualifiedName!~FirebirdPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~FirebirdPhysicalLoadIntegrationTests'
+        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~RedisSqlConcurrencyIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~PostgresPhysicalLoadIntegrationTests&FullyQualifiedName!~MySqlPhysicalLoadIntegrationTests&FullyQualifiedName!~MySqlPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalLoadIntegrationTests&FullyQualifiedName!~OraclePhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~OraclePhysicalLoadIntegrationTests&FullyQualifiedName!~FirebirdPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~FirebirdPhysicalLoadIntegrationTests'
 
   redis-approval-integration:
     runs-on: ubuntu-latest
@@ -179,10 +179,10 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - name: Verify real Redis and run cross-instance approval races
+      - name: Verify Redis 7 approval and cross-instance SQL concurrency races
         run: |
           test -n "${HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION:?Redis service is required}"
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests'
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName~RedisDmlApprovalIntegrationTests|FullyQualifiedName~RedisSqlConcurrencyIntegrationTests'
         env:
           HS_SQL_AGENT_REDIS_INTEGRATION_CONNECTION: "localhost:6379,abortConnect=true,connectTimeout=5000"
 

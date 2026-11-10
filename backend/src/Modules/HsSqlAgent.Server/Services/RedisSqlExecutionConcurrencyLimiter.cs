@@ -87,15 +87,29 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
                 AcquireScript,
                 [_options.Key],
                 [maximum, leaseMilliseconds, token]);
-            if ((long)result != 1)
+            var acquired = (long)result == 1;
+
+            // The Redis command cannot take a CancellationToken. A request may
+            // be canceled while the Lua script is in flight, after it already
+            // reserved a distributed slot. Never return that late admission:
+            // atomically release this request's exact token first.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                if (acquired)
+                    await ReleaseAsync(token);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+
+            if (!acquired)
                 return null;
 
             return new RedisLease(this, token, _options.LeaseDuration);
         }
-        catch (Exception exception) when (
-            (exception is RedisException or TimeoutException) &&
-            !cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (exception is RedisException or TimeoutException)
         {
+            // Redis failure modes apply only to active requests. Cancellation
+            // must not be converted into FailOpen admission (or a Redis error).
+            cancellationToken.ThrowIfCancellationRequested();
             _logger.LogError(exception, "Redis SQL concurrency limiter is unavailable.");
             return _options.FailureMode == RateLimiterFailureMode.FailOpen
                 ? NoOpLease.Instance
