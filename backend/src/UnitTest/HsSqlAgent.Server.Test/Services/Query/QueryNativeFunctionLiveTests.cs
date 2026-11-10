@@ -301,6 +301,24 @@ public sealed class QueryNativeFunctionLiveTests
         }
     }
 
+    [Fact]
+    public async Task Oracle_PhysicalReadOnlyQueryTransaction_AllowsSelect()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var provider = new OracleProvider();
+        await using var connection = provider.Connections.Create(connectionString);
+        await connection.OpenAsync(ct);
+        var source = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+        await using var transaction = await source.PreviewTransactions.BeginAsync(
+            connection, SqlAgentToolType.Oracle, IsolationLevel.ReadCommitted, ct);
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM DUAL";
+        Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+        await transaction.RollbackAsync(ct);
+    }
+
     // Oracle resolves unqualified ABS as its built-in despite a schema UDF
     // named ABS. The explicitly qualified UDF does reach excluded data and
     // must remain rejected by F# Policy and published MCP Query.
