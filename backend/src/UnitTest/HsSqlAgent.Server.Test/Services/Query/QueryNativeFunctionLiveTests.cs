@@ -603,8 +603,9 @@ public sealed class QueryNativeFunctionLiveTests
         context.Items[McpContextItemKeys.SqlProvider] = dialect.ToString();
         context.Items[McpContextItemKeys.SqlConnectionString] = connectionString;
         context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
-        if (allowedTable is not null)
-            context.Items[McpContextItemKeys.TableWhitelist] = allowedTable;
+        // An explicitly empty whitelist is unrestricted; a missing context key is
+        // an authorization error, even in the test harness.
+        context.Items[McpContextItemKeys.TableWhitelist] = allowedTable ?? string.Empty;
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
         context.Items[McpContextItemKeys.DbManagementId] = 11;
         context.Items[McpContextItemKeys.DatabaseName] = "native-function-live-test";
