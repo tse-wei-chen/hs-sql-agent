@@ -112,12 +112,17 @@ public sealed class RedisSqlConcurrencyIntegrationTests
         }
     }
 
-    [Fact]
-    public async Task PhysicalRedis_LateRenewAckAfterLeaseDisposal_NeverResurrectsReleasedToken()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PhysicalRedis_LateRenewAckAfterLeaseDisposal_NeverResurrectsReleasedToken(
+        bool deferLuaExecution)
     {
         var endpoint = RequireRedis();
         var ct = TestContext.Current.CancellationToken;
         var key = "hs-sql-agent:delayed-renew-release:" + Guid.NewGuid().ToString("N");
+        var renewRequestIssued = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var renewPhysicallyExecuted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var delayedAck = new TaskCompletionSource(
@@ -146,11 +151,16 @@ public sealed class RedisSqlConcurrencyIntegrationTests
         async Task<RedisResult> DelayRenewAcknowledgementAsync(
             string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags)
         {
-            // REAL Redis 7 executes Lua and updates the score; only its
-            // acknowledgement is withheld from the application.
+            // Exercise both Redis processing orders: Lua executes before
+            // disposal but the ACK is lost, or Lua is queued until AFTER
+            // disposal. Both must leave the exact released token absent.
+            renewRequestIssued.TrySetResult();
+            if (deferLuaExecution)
+                await delayedAck.Task;
             var result = await physical.ScriptEvaluateAsync(script, keys, args, flags);
             renewPhysicallyExecuted.TrySetResult();
-            await delayedAck.Task;
+            if (!deferLuaExecution)
+                await delayedAck.Task;
             return result;
         }
 
@@ -162,7 +172,8 @@ public sealed class RedisSqlConcurrencyIntegrationTests
             try
             {
                 var token = Assert.Single(await physical.SortedSetRangeByRankAsync(key));
-                await renewPhysicallyExecuted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+                await (deferLuaExecution ? renewRequestIssued.Task : renewPhysicallyExecuted.Task)
+                    .WaitAsync(TimeSpan.FromSeconds(5), ct);
                 Assert.Equal(1, await physical.SortedSetLengthAsync(key));
                 disposing = lease.DisposeAsync().AsTask();
                 // Disposal must release its token without awaiting the
@@ -184,6 +195,8 @@ public sealed class RedisSqlConcurrencyIntegrationTests
                     await lease.DisposeAsync();
                 else
                     await disposing.WaitAsync(TimeSpan.FromSeconds(5), ct);
+                if (renewRequestIssued.Task.IsCompleted)
+                    await renewPhysicallyExecuted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             }
 
             // A late response for a previously executed renewal must not
