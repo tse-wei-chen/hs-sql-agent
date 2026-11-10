@@ -16,6 +16,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      actions: read
       id-token: write
 
     steps:
@@ -54,6 +55,11 @@ jobs:
             package_version="$(dotnet msbuild backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj -getProperty:VersionPrefix -nologo)"
           fi
           bash .github/scripts/verify-release-security-gate.sh "$package_version"
+
+      - name: Require exact-main successful Tests before any NuGet package publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/verify-release-head-ci-gate.sh
 
       - name: Block untagged stable package publication
         if: github.event_name == 'workflow_dispatch' && inputs.version_suffix == ''

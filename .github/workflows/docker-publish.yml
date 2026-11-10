@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: read
       issues: read
+      actions: read
       packages: write
       # This is used to complete the identity challenge
       # with sigstore/fulcio.
@@ -49,6 +50,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: bash .github/scripts/verify-release-security-gate.sh "$RELEASE_TAG"
+
+      - name: Require exact-main successful Tests before GitHub Release publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/verify-release-head-ci-gate.sh
 
       # Install the cosign tool
       # https://github.com/sigstore/cosign-installer
