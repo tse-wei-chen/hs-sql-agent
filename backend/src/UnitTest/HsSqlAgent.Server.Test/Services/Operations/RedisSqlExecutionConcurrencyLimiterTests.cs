@@ -257,6 +257,93 @@ public class RedisSqlExecutionConcurrencyLimiterTests
         }
     }
 
+    [Fact]
+    public async Task DisposeAsync_StalledRenewalAfterPhysicalSqliteCommit_StillReleasesLease()
+    {
+        var renewalEntered = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalReply = new TaskCompletionSource<RedisResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasedTokens = new List<string>();
+        string? acquiredToken = null;
+        var redis = new Mock<IDatabase>();
+        redis.Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns((string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags) =>
+            {
+                if (script.Contains("ZREMRANGEBYSCORE", StringComparison.Ordinal))
+                {
+                    acquiredToken = args[2].ToString();
+                    return Task.FromResult(RedisResult.Create((RedisValue)1));
+                }
+
+                if (script.Contains("ZSCORE", StringComparison.Ordinal))
+                {
+                    renewalEntered.TrySetResult();
+                    return renewalReply.Task;
+                }
+
+                Assert.Contains("ZREM", script, StringComparison.Ordinal);
+                releasedTokens.Add(args[0].ToString());
+                return Task.FromResult(RedisResult.Create((RedisValue)1));
+            });
+
+        await using var limiter = CreateLimiter(redis.Object, RateLimiterFailureMode.FailClosed);
+        var lease = await limiter.TryAcquireAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(lease);
+
+        // Commit a real SQLite transaction while Redis renewal has executed,
+        // but the client never receives its acknowledgement.
+        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var create = connection.CreateCommand())
+        {
+            create.CommandText = "CREATE TABLE committed (id INTEGER PRIMARY KEY)";
+            await create.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        await using (var tx = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken))
+        {
+            await using (var insert = connection.CreateCommand())
+            {
+                insert.Transaction = (Microsoft.Data.Sqlite.SqliteTransaction)tx;
+                insert.CommandText = "INSERT INTO committed(id) VALUES (7)";
+                await insert.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            await renewalEntered.Task.WaitAsync(TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken);
+            await tx.CommitAsync(TestContext.Current.CancellationToken);
+        }
+
+        Task? disposeTask = null;
+        try
+        {
+            disposeTask = lease.DisposeAsync().AsTask();
+            // Old implementation waits on the uncancelable Redis reply here,
+            // so a committed DML operation can never report its outcome.
+            await disposeTask.WaitAsync(TimeSpan.FromSeconds(1),
+                TestContext.Current.CancellationToken);
+            Assert.False(renewalReply.Task.IsCompleted);
+            Assert.Equal(acquiredToken, Assert.Single(releasedTokens));
+
+            await using var verify = connection.CreateCommand();
+            verify.CommandText = "SELECT COUNT(*) FROM committed WHERE id = 7";
+            Assert.Equal(1L, Convert.ToInt64(
+                await verify.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+        }
+        finally
+        {
+            // Unblock old code too, so a RED failure does not strand CI tasks.
+            renewalReply.TrySetResult(RedisResult.Create((RedisValue)1));
+            if (disposeTask is null)
+                await lease.DisposeAsync();
+            else
+                await disposeTask.WaitAsync(TimeSpan.FromSeconds(5),
+                    TestContext.Current.CancellationToken);
+        }
+    }
+
     private static RedisSqlExecutionConcurrencyLimiter CreateLimiter(
         IDatabase database,
         RateLimiterFailureMode failureMode)
