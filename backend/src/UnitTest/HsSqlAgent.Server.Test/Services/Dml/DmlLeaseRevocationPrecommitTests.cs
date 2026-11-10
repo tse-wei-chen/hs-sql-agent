@@ -1,9 +1,11 @@
 using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using HsSqlAgent.Approvals;
+using HsSqlAgent.Provider.Sqlite;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using HsSqlAgent.SqlCore.SqlParsing;
+using Microsoft.Data.Sqlite;
 using Moq;
 using SqlAgent.Service.Interfaces;
 using Xunit;
@@ -79,6 +81,96 @@ public sealed class DmlLeaseRevocationPrecommitTests
 
         connections.VerifyNoOtherCalls();
         approval.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ApprovedSqliteDml_CommitLeaseAlreadyRevoked_RejectsWithoutPhysicalWrite()
+    {
+        var databaseFile = Path.Combine(Path.GetTempPath(),
+            $"hsa-dml-commit-revocation-{Guid.NewGuid():N}.db");
+        var connectionString = $"Data Source={databaseFile};Pooling=False";
+        try
+        {
+            await using (var setup = new SqliteConnection(connectionString))
+            {
+                await setup.OpenAsync(TestContext.Current.CancellationToken);
+                await using var command = setup.CreateCommand();
+                command.CommandText =
+                    "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)";
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            using var revokedCommit = new CancellationTokenSource();
+            revokedCommit.Cancel();
+            var limiter = new PreviewThenRevokedCommitLimiter(revokedCommit.Token);
+            var state = new Mock<ISecurityPolicyRuntimeState>();
+            state.Setup(x => x.GetCurrent())
+                .Returns(new SecurityPolicyModel { DmlMaxAffectedRows = 2 });
+            var approver = new ApprovingProvider();
+            var flow = new TypedDmlTransactionApprovalFlow(
+                new TypedDmlRuntime(), state.Object, limiter, () => null);
+            var parsed = CoreDmlBatchTextParser.ParseDmlBatch(
+                "INSERT INTO main.users (id, name) VALUES (7, 'Alice')",
+                SqlAgentToolType.Sqlite);
+
+            var outcome = await flow.ExecuteAsync(
+                new SqliteProvider(), connectionString, parsed,
+                new DmlApprovalExecutionContext(
+                    "mcp-key:7", "db-management:11", SqlAgentToolType.Sqlite, "main"),
+                approver, "Approve insert", TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, approver.CallCount);
+            Assert.Equal(2, limiter.Acquisitions);
+            Assert.False(outcome.Committed);
+            Assert.Equal("dml.lease_revoked_before_commit", outcome.ErrorCode);
+            Assert.False(outcome.Retryable);
+            Assert.Equal(DmlApprovalDecision.Approved, outcome.ApprovalDecision);
+            await using var witness = new SqliteConnection(connectionString);
+            await witness.OpenAsync(TestContext.Current.CancellationToken);
+            await using var verify = witness.CreateCommand();
+            verify.CommandText = "SELECT COUNT(*) FROM users";
+            Assert.Equal(0L, Convert.ToInt64(
+                await verify.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+        }
+        finally
+        {
+            if (File.Exists(databaseFile))
+                File.Delete(databaseFile);
+        }
+    }
+
+    private sealed class PreviewThenRevokedCommitLimiter(CancellationToken commitRevoked)
+        : ISqlExecutionConcurrencyLimiter
+    {
+        public int Acquisitions { get; private set; }
+
+        public ValueTask<IAsyncDisposable?> TryAcquireAsync(
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Acquisitions++;
+            return ValueTask.FromResult<IAsyncDisposable?>(
+                Acquisitions == 1
+                    ? new PlainLease()
+                    : new RevocableTestLease(commitRevoked));
+        }
+    }
+
+    private sealed class PlainLease : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class ApprovingProvider : IDmlApprovalProvider
+    {
+        public int CallCount { get; private set; }
+
+        public ValueTask<DmlApprovalResult> RequestApprovalAsync(
+            DmlApprovalRequest request, CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return ValueTask.FromResult(DmlApprovalResult.Approve(request));
+        }
     }
 
     private static Mock<ISqlExecutionConcurrencyLimiter> RevokedLimiter(CancellationToken token)
