@@ -173,6 +173,90 @@ public class RedisSqlExecutionConcurrencyLimiterTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
     }
 
+    [Fact]
+    public async Task RenewalRefused_RevokesAlreadyAdmittedSqlExecution()
+    {
+        var renewalObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var database = new Mock<IDatabase>();
+        database.Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns((string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags) =>
+            {
+                if (script.Contains("ZREMRANGEBYSCORE", StringComparison.Ordinal))
+                    return Task.FromResult(RedisResult.Create((RedisValue)1));
+                if (script.Contains("ZSCORE", StringComparison.Ordinal))
+                {
+                    renewalObserved.TrySetResult();
+                    return Task.FromResult(RedisResult.Create((RedisValue)0));
+                }
+                return Task.FromResult(RedisResult.Create((RedisValue)1));
+            });
+
+        await using var limiter = CreateLimiter(database.Object, RateLimiterFailureMode.FailClosed);
+        await using var lease = await limiter.TryAcquireAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(lease);
+        var revocable = Assert.IsAssignableFrom<IRevocableSqlExecutionLease>(lease);
+
+        await renewalObserved.Task.WaitAsync(TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await Task.Delay(Timeout.InfiniteTimeSpan, revocable.RevocationToken)
+                .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task StalledRedisRenewal_LocalDeadlineRevokesSqlBeforeReply()
+    {
+        var renewalObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var renewalReply = new TaskCompletionSource<RedisResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var database = new Mock<IDatabase>();
+        database.Setup(x => x.ScriptEvaluateAsync(
+                It.IsAny<string>(), It.IsAny<RedisKey[]>(),
+                It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+            .Returns((string script, RedisKey[] keys, RedisValue[] args, CommandFlags flags) =>
+            {
+                if (script.Contains("ZREMRANGEBYSCORE", StringComparison.Ordinal))
+                    return Task.FromResult(RedisResult.Create((RedisValue)1));
+                if (script.Contains("ZSCORE", StringComparison.Ordinal))
+                {
+                    renewalObserved.TrySetResult();
+                    return renewalReply.Task;
+                }
+                return Task.FromResult(RedisResult.Create((RedisValue)1));
+            });
+        var state = new Mock<ISecurityPolicyRuntimeState>();
+        state.Setup(x => x.GetCurrent()).Returns(new SecurityPolicyModel
+        {
+            MaxConcurrentSql = 1
+        });
+        await using var limiter = new RedisSqlExecutionConcurrencyLimiter(
+            state.Object,
+            new RedisSqlConcurrencyOptions("localhost:6379", "test:watchdog",
+                TimeSpan.FromSeconds(1), RateLimiterFailureMode.FailClosed),
+            NullLogger<RedisSqlExecutionConcurrencyLimiter>.Instance,
+            database.Object);
+
+        var lease = await limiter.TryAcquireAsync(TestContext.Current.CancellationToken);
+        Assert.NotNull(lease);
+        var revocable = Assert.IsAssignableFrom<IRevocableSqlExecutionLease>(lease);
+        try
+        {
+            await renewalObserved.Task.WaitAsync(TimeSpan.FromSeconds(5),
+                TestContext.Current.CancellationToken);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+                await Task.Delay(Timeout.InfiniteTimeSpan, revocable.RevocationToken)
+                    .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            Assert.False(renewalReply.Task.IsCompleted);
+        }
+        finally
+        {
+            renewalReply.TrySetResult(RedisResult.Create((RedisValue)0));
+            await lease.DisposeAsync();
+        }
+    }
+
     private static RedisSqlExecutionConcurrencyLimiter CreateLimiter(
         IDatabase database,
         RateLimiterFailureMode failureMode)

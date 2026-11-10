@@ -136,6 +136,7 @@ public class CustomToolProxy(
                 {
                     if (lease is null)
                         throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                    using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
                     QueryExecutionResult execution;
                     var securityPolicy = _securityPolicyRuntimeState.GetCurrent();
                     var allowedTables = ResolveTableWhitelist();
@@ -143,7 +144,7 @@ public class CustomToolProxy(
                     {
                         var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
                             provider, sqlConfig.ConnectionString, renderedSql, dbType,
-                            securityPolicy, allowedTables, cancellationToken);
+                            securityPolicy, allowedTables, leaseCancellation.Token);
                         auditQueryFacts = compiledExecution.Facts;
                         execution = compiledExecution.Execution;
                     }
@@ -152,8 +153,9 @@ public class CustomToolProxy(
                         auditQueryFacts = SqlCoreInspection.GetQueryFacts(renderedSql, dbType);
                         execution = await _typedQueryRuntime.ExecuteAsync(
                             provider, sqlConfig.ConnectionString, renderedSql, dbType,
-                            securityPolicy, allowedTables, cancellationToken);
+                            securityPolicy, allowedTables, leaseCancellation.Token);
                     }
+                    leaseCancellation.Token.ThrowIfCancellationRequested();
                     queryReturnedRows = execution.RowCount;
                     result = JsonSerializer.Serialize(execution.Rows);
                 }

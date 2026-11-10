@@ -460,6 +460,58 @@ public class CustomToolProxyTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task Execute_QueryTool_RevokedLease_DiscardsLateProviderSuccess()
+    {
+        using var lostLease = new CancellationTokenSource();
+        _toolServiceMock.Setup(x => x.GetPublishedToolByNameAsync(
+                "test_tool", 42, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CustomSqlTool
+            {
+                Name = "test_tool",
+                Type = "Query",
+                SqlTemplate = "SELECT id FROM public.users"
+            });
+        SetupPostgresProvider();
+        _sqlConcurrencyLimiterMock
+            .Setup(x => x.TryAcquireAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RevocableTestLease(lostLease.Token));
+
+        _typedQueryRuntimeMock.As<ITypedQueryRuntimeFacts>()
+            .Setup(x => x.ExecuteWithFactsAsync(
+                It.IsAny<ISqlProvider>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<SqlAgentToolType>(), It.IsAny<SecurityPolicyModel>(),
+                It.IsAny<IReadOnlySet<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                // A provider may ignore the linked CancellationToken and still
+                // complete. A revoked admission must never release those rows.
+                lostLease.Cancel();
+                return new QueryExecutionWithFacts(
+                    new QueryExecutionResult(
+                        [new Dictionary<string, object?> { ["id"] = 98765 }],
+                        1, TimeSpan.Zero, []),
+                    SqlCoreInspection.GetQueryFacts("SELECT id FROM public.users", SqlAgentToolType.Postgres));
+            });
+
+        var result = await _proxy.Execute(
+            JsonSerializer.SerializeToElement(new { }),
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Error:", result);
+        Assert.DoesNotContain("98765", result);
+        _auditServiceMock.Verify(x => x.WriteEventAsync(
+            "mcp.test_tool.executed", "test_tool", "success",
+            It.IsAny<AuditEventContext>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    private sealed class RevocableTestLease(CancellationToken revoked) : IRevocableSqlExecutionLease
+    {
+        public CancellationToken RevocationToken => revoked;
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private void SetupPostgresProvider()
     {
         var verificationConnection = new Mock<DbConnection>();

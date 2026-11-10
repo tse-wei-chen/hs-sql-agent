@@ -1,4 +1,5 @@
 using Admin.Service.Interfaces;
+using System.Diagnostics;
 using StackExchange.Redis;
 
 namespace HsSqlAgent.Server.Services;
@@ -26,14 +27,21 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         """;
 
     private const string RenewScript = """
-        if redis.call('ZSCORE', KEYS[1], ARGV[2]) then
-            local time = redis.call('TIME')
-            local now = (time[1] * 1000) + math.floor(time[2] / 1000)
-            redis.call('ZADD', KEYS[1], 'XX', now + tonumber(ARGV[1]), ARGV[2])
-            redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[1]) * 2)
-            return 1
+        local score = redis.call('ZSCORE', KEYS[1], ARGV[2])
+        if not score then
+            return 0
         end
-        return 0
+        local time = redis.call('TIME')
+        local now = (time[1] * 1000) + math.floor(time[2] / 1000)
+        -- A stale member remains in the sorted set until the next acquire.
+        -- Its existence is not proof of a valid lease: never revive it.
+        if tonumber(score) <= now then
+            redis.call('ZREM', KEYS[1], ARGV[2])
+            return 0
+        end
+        redis.call('ZADD', KEYS[1], 'XX', now + tonumber(ARGV[1]), ARGV[2])
+        redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[1]) * 2)
+        return 1
         """;
 
     private const string ReleaseScript = """
@@ -79,10 +87,15 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
 
         var token = Guid.NewGuid().ToString("N");
         var leaseMilliseconds = Math.Max(1000L, (long)_options.LeaseDuration.TotalMilliseconds);
+        var duration = TimeSpan.FromMilliseconds(leaseMilliseconds);
 
         try
         {
             var database = await GetDatabaseAsync(cancellationToken);
+            // Redis grants the lease when its script executes, not when the
+            // client receives the ACK. Start the local safety budget BEFORE
+            // issuing the script so a delayed ACK never creates extra time.
+            var issuedAt = Stopwatch.GetTimestamp();
             var result = await database.ScriptEvaluateAsync(
                 AcquireScript,
                 [_options.Key],
@@ -103,7 +116,16 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
             if (!acquired)
                 return null;
 
-            return new RedisLease(this, token, _options.LeaseDuration);
+            var remaining = duration - Stopwatch.GetElapsedTime(issuedAt);
+            if (remaining <= TimeSpan.Zero)
+            {
+                // The ACK arrived after our conservative local deadline.
+                // Release only this admission token; never hand it to SQL.
+                await ReleaseAsync(token);
+                return null;
+            }
+
+            return new RedisLease(this, token, duration, remaining);
         }
         catch (Exception exception) when (exception is RedisException or TimeoutException)
         {
@@ -142,22 +164,28 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         return connection.GetDatabase();
     }
 
-    private async Task<bool> RenewAsync(string token)
+    private async Task<TimeSpan?> RenewAsync(string token)
     {
         try
         {
             var leaseMilliseconds = Math.Max(1000L, (long)_options.LeaseDuration.TotalMilliseconds);
             var database = await GetDatabaseAsync();
+            // The renewal TTL also begins at Redis execution, not ACK delivery.
+            var issuedAt = Stopwatch.GetTimestamp();
             var result = await database.ScriptEvaluateAsync(
                 RenewScript,
                 [_options.Key],
                 [leaseMilliseconds, token]);
-            return (long)result == 1;
+            if ((long)result != 1)
+                return null;
+            var remaining = TimeSpan.FromMilliseconds(leaseMilliseconds) -
+                Stopwatch.GetElapsedTime(issuedAt);
+            return remaining > TimeSpan.Zero ? remaining : null;
         }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Unable to renew a distributed SQL concurrency lease.");
-            return false;
+            return null;
         }
     }
 
@@ -177,21 +205,30 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         }
     }
 
-    private sealed class RedisLease : IAsyncDisposable
+    private sealed class RedisLease : IRevocableSqlExecutionLease
     {
         private readonly RedisSqlExecutionConcurrencyLimiter _owner;
         private readonly string _token;
+        private readonly TimeSpan _leaseDuration;
         private readonly CancellationTokenSource _stopping = new();
+        private readonly CancellationTokenSource _revoked = new();
         private readonly Task _renewalTask;
         private int _disposed;
+
+        public CancellationToken RevocationToken => _revoked.Token;
 
         public RedisLease(
             RedisSqlExecutionConcurrencyLimiter owner,
             string token,
-            TimeSpan leaseDuration)
+            TimeSpan leaseDuration,
+            TimeSpan initialRemaining)
         {
             _owner = owner;
             _token = token;
+            _leaseDuration = leaseDuration;
+            // The Redis admission may precede its delayed acknowledgement.
+            // Never restart a full TTL when the response reaches this process.
+            _revoked.CancelAfter(initialRemaining);
             _renewalTask = RenewUntilDisposedAsync(
                 TimeSpan.FromMilliseconds(Math.Max(500, leaseDuration.TotalMilliseconds / 2)));
         }
@@ -206,11 +243,15 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
             {
                 await _renewalTask;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
             {
             }
-            _stopping.Dispose();
-            await _owner.ReleaseAsync(_token);
+            finally
+            {
+                _stopping.Dispose();
+                _revoked.Dispose();
+                await _owner.ReleaseAsync(_token);
+            }
         }
 
         private async Task RenewUntilDisposedAsync(TimeSpan interval)
@@ -218,8 +259,20 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
             using var timer = new PeriodicTimer(interval);
             while (await timer.WaitForNextTickAsync(_stopping.Token))
             {
-                if (!await _owner.RenewAsync(_token))
+                var remaining = await _owner.RenewAsync(_token);
+                if (remaining is null)
+                {
+                    // Missing, expired, or unverified due to Redis outage:
+                    // request cancellation of any still-running SQL Query.
+                    _revoked.Cancel();
                     return;
+                }
+
+                // Preserve the server-side TTL budget across delayed ACKs.
+                // CancelAfter never un-cancels a token already revoked.
+                if (_revoked.IsCancellationRequested)
+                    return;
+                _revoked.CancelAfter(remaining.Value);
             }
         }
     }

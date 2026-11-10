@@ -72,6 +72,46 @@ public sealed class RedisSqlConcurrencyIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task ExpiredRedisLease_CannotBeResurrectedByLateRenewal()
+    {
+        var endpoint = RequireRedis();
+        var ct = TestContext.Current.CancellationToken;
+        var key = "hs-sql-agent:expired-renew:" + Guid.NewGuid().ToString("N");
+
+        await using var witness = await ConnectionMultiplexer.ConnectAsync(endpoint);
+        var redis = witness.GetDatabase();
+        await using var limiter = Limiter(endpoint, key);
+        try
+        {
+            var lease = await limiter.TryAcquireAsync(ct);
+            Assert.NotNull(lease);
+            await using (lease)
+            {
+                var token = Assert.Single(await redis.SortedSetRangeByRankAsync(key));
+                // Simulate a lease whose deadline has elapsed while its
+                // sorted-set member remains: Redis does not prune by score
+                // unless the acquisition script executes.
+                var expiredAt = DateTimeOffset.UtcNow.AddSeconds(-10).ToUnixTimeMilliseconds();
+                await redis.SortedSetAddAsync(key, token, expiredAt, When.Always);
+                Assert.Equal((double)expiredAt, await redis.SortedSetScoreAsync(key, token));
+                await Task.Delay(TimeSpan.FromMilliseconds(1600), ct);
+
+                var score = await redis.SortedSetScoreAsync(key, token);
+                Assert.True(score is null || score <=
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    "An already expired Redis admission must not be resurrected by background renewal.");
+                var revocable = Assert.IsAssignableFrom<IRevocableSqlExecutionLease>(lease);
+                Assert.True(revocable.RevocationToken.IsCancellationRequested,
+                    "Live Query must be notified when physical Redis rejects its expired token.");
+            }
+        }
+        finally
+        {
+            await redis.KeyDeleteAsync(key);
+        }
+    }
+
     private static RedisSqlExecutionConcurrencyLimiter Limiter(string endpoint, string key)
     {
         var state = new Mock<ISecurityPolicyRuntimeState>();

@@ -58,6 +58,7 @@ public partial class SqlAgentTool
             {
                 if (lease is null)
                     throw new InvalidOperationException("Server busy: maximum concurrent SQL operations reached.");
+                using var leaseCancellation = new SqlExecutionLeaseCancellation(lease, cancellationToken);
                 if (_typedQueryRuntime is ITypedQueryRuntimeFacts factsRuntime)
                 {
                     var compiledExecution = await factsRuntime.ExecuteWithFactsAsync(
@@ -67,7 +68,7 @@ public partial class SqlAgentTool
                         dbType,
                         securityPolicy,
                         allowedTables,
-                        cancellationToken);
+                        leaseCancellation.Token);
                     auditFacts = compiledExecution.Facts;
                     execution = compiledExecution.Execution;
                 }
@@ -81,8 +82,11 @@ public partial class SqlAgentTool
                         dbType,
                         securityPolicy,
                         allowedTables,
-                        cancellationToken);
+                        leaseCancellation.Token);
                 }
+                // A native driver may complete despite CancellationToken.
+                // Never publish results after losing the distributed lease.
+                leaseCancellation.Token.ThrowIfCancellationRequested();
             }
 
             await _auditService.WriteEventAsync(
