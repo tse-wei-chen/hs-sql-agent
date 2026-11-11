@@ -176,3 +176,44 @@ signature on two engine versions; it cannot be extrapolated to every builtin,
 unqualified procedure, package, synonym, security-definer function, all six
 providers, or general Query-only side-effect safety. The #575 release gate
 remains open until those independent boundaries and DML evidence are closed.
+
+
+## SQLite: Query-only callback writes on the same native connection (#575 / #614)
+
+The built-in identity guard above does not prevent a **non-colliding** application
+function from performing SQL writes. With `allowedTables = null`, the F# compiler
+intentionally preserves quoted native function syntax. This was not permission
+to assume that the resulting `SELECT` physically could not mutate the database.
+
+`QueryOnlyWithoutWhitelist_CannotWriteThroughSameConnectionSqliteCallback`
+tests a real isolated, on-disk SQLite connection with a host-registered
+`write_from_query()` callback. The callback executes a physical
+`INSERT INTO main.users` **on that same already-open connection**.
+The test's native `SELECT write_from_query()` control actually inserts a row,
+which an independent SQLite connection witnesses; the test removes it before
+testing the protected runtime.
+
+The first test-only RED CI run ([Tests #42977981184](https://github.com/tse-wei-chen/hs-sql-agent/actions/runs/42977981184))
+had **two behaviorally failed** Server cases on the original runtime:
+`ExecuteAsync` and `ExecuteWithFactsAsync` both returned success for the
+write-bearing SELECT instead of failing. That is a real physical side effect,
+not a parser failure or mock SQL executor.
+
+The SQLite Query runtime now reads and checks `PRAGMA query_only` on the exact
+execution connection, temporarily sets and verifies it as ON, executes the
+typed F# compiled Query, and restores the original connection-local value
+with independent bounded cleanup even on cancellation/failure. Failure to
+read/enable/verify the setting denies execution. An independent SQLite witness
+must observe **zero new rows** after each rejected write attempt. The suite also
+exercises the published MCP `execute_query_sql` path with a Query-only key and
+**no Table Whitelist**, both typed CLR Query entrypoints, and a normal native
+`ABS` SELECT that still succeeds. All tests run as part of mandatory
+`server-test` CI rather than being silently skipped.
+
+**Bounded proof, not a UDF sandbox:** `PRAGMA query_only` is connection-local.
+A function deliberately changing this setting, opening another writable
+SQLite connection, executing host I/O or a virtual-table/extension effect
+is **not** contained by this fence. Proper host function registration policy
+and SQLite file permissions remain necessary; the test does not prove
+cross-connection or six-provider read-only behavior. #575 and the 3.1.0
+publication blocker remain open.
