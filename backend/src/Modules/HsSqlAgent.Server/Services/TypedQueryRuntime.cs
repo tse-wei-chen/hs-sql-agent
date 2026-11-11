@@ -78,7 +78,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             policy.QueryMaxRows,
             requireProvenMySqlNativeFunctions:
                 provider.Type == SqlAgentToolType.MySQL
-                && allowedTables is null or { Count: 0 });
+                && (allowedTables is null or { Count: 0 }));
 
         if (targetProfile is not null
             && sourceDialect == provider.Type)
@@ -121,7 +121,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             policy.QueryMaxRows,
             requireProvenMySqlNativeFunctions:
                 provider.Type == SqlAgentToolType.MySQL
-                && allowedTables is null or { Count: 0 });
+                && (allowedTables is null or { Count: 0 }));
         var sourceProfile = targetProfile is not null && sourceDialect == provider.Type
             ? targetProfile
             : null;
