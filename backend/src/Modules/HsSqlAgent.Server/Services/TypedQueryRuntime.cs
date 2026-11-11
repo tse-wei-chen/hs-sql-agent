@@ -74,7 +74,10 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
-        var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
+        var executionPolicy = new SqlExecutionPlanPolicy(
+            policy.QueryMaxRows,
+            requireProvenMySqlNativeFunctions:
+                provider.Type == SqlAgentToolType.MySQL && allowedTables is null);
 
         if (targetProfile is not null
             && sourceDialect == provider.Type)
@@ -113,7 +116,10 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         var validationContext = new SqlPlanValidationContext(
             ComputePolicyVersion(policy, allowedTables),
             allowedTables);
-        var executionPolicy = new SqlExecutionPlanPolicy(policy.QueryMaxRows);
+        var executionPolicy = new SqlExecutionPlanPolicy(
+            policy.QueryMaxRows,
+            requireProvenMySqlNativeFunctions:
+                provider.Type == SqlAgentToolType.MySQL && allowedTables is null);
         var sourceProfile = targetProfile is not null && sourceDialect == provider.Type
             ? targetProfile
             : null;
