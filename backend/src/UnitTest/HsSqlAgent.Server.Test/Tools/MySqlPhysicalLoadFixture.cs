@@ -4,6 +4,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using HsSqlAgent.Approvals;
+using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Provider.MySql;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
@@ -19,7 +20,7 @@ namespace HsSqlAgent.Server.Test.Tools;
 
 public sealed partial class MySqlPhysicalLoadIntegrationTests
 {
-    private sealed class Fixture : IAsyncDisposable
+    private sealed class Fixture : IPhysicalLoadFixture
     {
         private readonly string _schema;
         private readonly string _connection;
@@ -146,6 +147,18 @@ public sealed partial class MySqlPhysicalLoadIntegrationTests
                 dmlApprovalProvider: approvalProvider);
         }
 
+        // Only the shared physical load harness uses the provider-neutral
+        // view. Keep this native fixture's public provider-specific method and
+        // setup/teardown semantics unchanged.
+        CustomToolProxy IPhysicalLoadFixture.CreateProxy(
+            IDmlApprovalProvider approvalProvider,
+            IAuditService? auditService,
+            ISqlProvider? targetProvider,
+            ISqlExecutionConcurrencyLimiter? concurrencyLimiter) =>
+            CreateProxy(
+                approvalProvider, auditService, (MySqlProvider?)targetProvider,
+                concurrencyLimiter);
+
         public async Task<long> CountRowsAsync()
         {
             await using var independent = new MySqlConnection(_connection);
@@ -177,26 +190,5 @@ public sealed partial class MySqlPhysicalLoadIntegrationTests
         }
     }
 
-    private sealed class DecisionProvider(bool approve) : IDmlApprovalProvider
-    {
-        public ValueTask<DmlApprovalResult> RequestApprovalAsync(
-            DmlApprovalRequest request, CancellationToken cancellationToken = default) =>
-            ValueTask.FromResult(approve
-                ? DmlApprovalResult.Approve(request, "mysql-load-prover")
-                : DmlApprovalResult.Reject(request, "Load test rejected."));
-    }
 
-    private sealed class CallbackApprovalProvider(Func<Task> beforeApproval)
-        : IDmlApprovalProvider
-    {
-        public DmlApprovalRequest? LastRequest { get; private set; }
-
-        public async ValueTask<DmlApprovalResult> RequestApprovalAsync(
-            DmlApprovalRequest request, CancellationToken cancellationToken = default)
-        {
-            LastRequest = request;
-            await beforeApproval();
-            return DmlApprovalResult.Approve(request, "mysql-load-prover");
-        }
-    }
 }
