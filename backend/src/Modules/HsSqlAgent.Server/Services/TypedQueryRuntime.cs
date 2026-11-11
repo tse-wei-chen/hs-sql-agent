@@ -71,14 +71,11 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         ArgumentException.ThrowIfNullOrWhiteSpace(sql);
         ArgumentNullException.ThrowIfNull(policy);
 
+        var effectiveTables = NormalizeAllowedTables(allowedTables);
         var validationContext = new SqlPlanValidationContext(
-            ComputePolicyVersion(policy, allowedTables),
-            allowedTables);
-        var executionPolicy = new SqlExecutionPlanPolicy(
-            policy.QueryMaxRows,
-            requireProvenMySqlNativeFunctions:
-                provider.Type == SqlAgentToolType.MySQL
-                && (allowedTables is null or { Count: 0 }));
+            ComputePolicyVersion(policy, effectiveTables),
+            effectiveTables);
+        var executionPolicy = CreateQueryPolicy(provider.Type, policy, effectiveTables);
 
         if (targetProfile is not null
             && sourceDialect == provider.Type)
@@ -114,14 +111,11 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         ArgumentException.ThrowIfNullOrWhiteSpace(sql);
         ArgumentNullException.ThrowIfNull(policy);
 
+        var effectiveTables = NormalizeAllowedTables(allowedTables);
         var validationContext = new SqlPlanValidationContext(
-            ComputePolicyVersion(policy, allowedTables),
-            allowedTables);
-        var executionPolicy = new SqlExecutionPlanPolicy(
-            policy.QueryMaxRows,
-            requireProvenMySqlNativeFunctions:
-                provider.Type == SqlAgentToolType.MySQL
-                && (allowedTables is null or { Count: 0 }));
+            ComputePolicyVersion(policy, effectiveTables),
+            effectiveTables);
+        var executionPolicy = CreateQueryPolicy(provider.Type, policy, effectiveTables);
         var sourceProfile = targetProfile is not null && sourceDialect == provider.Type
             ? targetProfile
             : null;
@@ -135,6 +129,24 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             sourceProfile,
             targetProfile));
     }
+
+    // One semantic scope for the public CLR Host, compiler facade, policy
+    // fingerprint, and physical provider proof. A supplied empty set is
+    // equivalent to no whitelist; it must NEVER disable an unbounded-Query
+    // safety guard after the F# facade normalizes it to None.
+    private static IReadOnlySet<string>? NormalizeAllowedTables(
+        IReadOnlySet<string>? allowedTables) =>
+        allowedTables is { Count: > 0 } ? allowedTables : null;
+
+    private static SqlExecutionPlanPolicy CreateQueryPolicy(
+        SqlAgentToolType provider,
+        SecurityPolicyModel securityPolicy,
+        IReadOnlySet<string>? effectiveTables) =>
+        new(
+            securityPolicy.QueryMaxRows,
+            provider == SqlAgentToolType.MySQL && effectiveTables is null
+                ? SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted
+                : SqlQueryNativeFunctionPolicy.PreserveCompilerGrammar);
 
     private CompiledQueryWithFacts ObserveCompileWithFacts(Func<CompiledQueryWithFacts> compile)
     {
@@ -420,52 +432,10 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(provider);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-
-        await using var connection = provider.Connections.Create(connectionString);
-        try
-        {
-            await connection.OpenAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (DbException exception)
-        {
-            throw provider.Errors.Map(exception, "query");
-        }
-
-        var verifiedProfile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
-        var command = Compile(
-            provider,
-            sql,
-            sourceDialect,
-            policy,
-            allowedTables,
-            verifiedProfile.TargetProfile);
-
-        try
-        {
-            return await ExecuteVerifiedQueryAsync(
-                provider,
-                command,
-                connection,
-                policy.QueryTimeoutSeconds,
-                requiresSqlServerPrincipalProof: allowedTables is null,
-                cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (DbException exception)
-        {
-            throw provider.Errors.Map(exception, "query");
-        }
+        var (execution, _) = await ExecuteCoreAsync(
+            provider, connectionString, sql, sourceDialect, policy,
+            allowedTables, includeFacts: false, cancellationToken);
+        return execution;
     }
 
     public async Task<QueryExecutionWithFacts> ExecuteWithFactsAsync(
@@ -477,11 +447,33 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         IReadOnlySet<string>? allowedTables,
         CancellationToken cancellationToken = default)
     {
+        var (execution, facts) = await ExecuteCoreAsync(
+            provider, connectionString, sql, sourceDialect, policy,
+            allowedTables, includeFacts: true, cancellationToken);
+        return new QueryExecutionWithFacts(
+            execution, facts ?? throw new InvalidOperationException(
+                "Query Facts were not returned from the verified compiler pass."));
+    }
+
+    // Both public Query entrypoints share exactly the same physical connection,
+    // permission normalization, verified runtime profile, provider fence and
+    // error behavior. The no-facts path does not incur Query Facts inspection.
+    private async Task<(QueryExecutionResult Execution, QueryFacts? Facts)> ExecuteCoreAsync(
+        ISqlProvider provider,
+        string connectionString,
+        string sql,
+        SqlAgentToolType sourceDialect,
+        SecurityPolicyModel policy,
+        IReadOnlySet<string>? allowedTables,
+        bool includeFacts,
+        CancellationToken cancellationToken)
+    {
         ArgumentNullException.ThrowIfNull(provider);
         ArgumentException.ThrowIfNullOrWhiteSpace(sql);
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        var effectiveTables = NormalizeAllowedTables(allowedTables);
         await using var connection = provider.Connections.Create(connectionString);
         try
         {
@@ -497,24 +489,30 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         }
 
         var verifiedProfile = RuntimeServerProfileVerifier.Capture(provider.Type, connection);
-        var compilation = CompileWithFacts(
-            provider,
-            sql,
-            sourceDialect,
-            policy,
-            allowedTables,
-            verifiedProfile.TargetProfile);
+        CompiledSqlCommand command;
+        QueryFacts? facts = null;
+        if (includeFacts)
+        {
+            var compiled = CompileWithFacts(
+                provider, sql, sourceDialect, policy, effectiveTables,
+                verifiedProfile.TargetProfile);
+            command = compiled.Command;
+            facts = compiled.Facts;
+        }
+        else
+        {
+            command = Compile(
+                provider, sql, sourceDialect, policy, effectiveTables,
+                verifiedProfile.TargetProfile);
+        }
 
         try
         {
             var execution = await ExecuteVerifiedQueryAsync(
-                provider,
-                compilation.Command,
-                connection,
-                policy.QueryTimeoutSeconds,
-                requiresSqlServerPrincipalProof: allowedTables is null,
+                provider, command, connection, policy.QueryTimeoutSeconds,
+                requiresSqlServerPrincipalProof: effectiveTables is null,
                 cancellationToken);
-            return new QueryExecutionWithFacts(execution, compilation.Facts);
+            return (execution, facts);
         }
         catch (OperationCanceledException)
         {

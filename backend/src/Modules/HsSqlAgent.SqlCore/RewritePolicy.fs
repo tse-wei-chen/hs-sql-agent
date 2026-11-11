@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Rewrite.CoreModel
 open HsSqlAgent.SqlCore.Rewrite.Typestate
@@ -25,12 +26,12 @@ module internal RewritePolicy =
         { UpdateSafety: MutationSafety
           DeleteSafety: MutationSafety
           QueryRows: RowCap
-          RequireProvenMySqlNativeFunctions: bool }
+          NativeFunctionPolicy: SqlQueryNativeFunctionPolicy }
         member this.AllowUnboundedUpdate = this.UpdateSafety = AllowAllRows
         member this.AllowUnboundedDelete = this.DeleteSafety = AllowAllRows
         member this.QueryMaxRows = match this.QueryRows with Unlimited -> 0 | MaxRows count -> PositiveRowCount.value count
 
-    let safeDefaults = { UpdateSafety = RequirePredicate; DeleteSafety = RequirePredicate; QueryRows = Unlimited; RequireProvenMySqlNativeFunctions = false }
+    let safeDefaults = { UpdateSafety = RequirePredicate; DeleteSafety = RequirePredicate; QueryRows = Unlimited; NativeFunctionPolicy = SqlQueryNativeFunctionPolicy.PreserveCompilerGrammar }
 
     let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
 

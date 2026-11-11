@@ -593,7 +593,7 @@ module internal RewriteFacadeAdapter =
             else RowCap.MaxRows(PositiveRowCount.create policy.QueryMaxRows)
         { RewritePolicy.safeDefaults with
             QueryRows = queryRows
-            RequireProvenMySqlNativeFunctions = policy.RequireProvenMySqlNativeFunctions }
+            NativeFunctionPolicy = policy.NativeFunctionPolicy }
 
     let private mutationSafety requireWhere allowFullTable =
         if not requireWhere && allowFullTable then MutationSafety.AllowAllRows

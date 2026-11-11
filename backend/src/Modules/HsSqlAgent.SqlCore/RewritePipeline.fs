@@ -1,6 +1,7 @@
 namespace HsSqlAgent.SqlCore.Rewrite
 
 open System
+open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Core.Compilation
 open HsSqlAgent.SqlCore.Core.Pipeline
 open HsSqlAgent.SqlCore.Enums
@@ -179,23 +180,18 @@ module internal RewritePipeline =
             RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
                 let functionSafety =
                     let runtime = VerifiedTarget.runtime options.Target
-                    match options.AllowedTables, runtime with
-                    | None, TargetRuntime.MySqlRuntime when options.Policy.RequireProvenMySqlNativeFunctions ->
-                        // Only the physical Host Query-only boundary opts in;
-                        // standalone SqlCore compilation keeps native grammar.
-                        // MySQL READ ONLY transactions still permit writes to
-                        // session-local TEMPORARY tables. A native stored function
-                        // can mutate a pooled session without a table whitelist;
-                        // unlike ordinary built-ins its effects are not proven.
-                        RewriteQueryPolicy.RejectOpaqueNativeFunctions SqlAgentToolType.MySQL
-                    | None, _ ->
-                        RewriteQueryPolicy.UnrestrictedFunctions
-                    | Some _, TargetRuntime.PostgreSqlRuntime ->
+                    match options.AllowedTables, runtime, options.Policy.NativeFunctionPolicy with
+                    | Some _, TargetRuntime.PostgreSqlRuntime, _ ->
                         RewriteQueryPolicy.ProvenPostgresFunctions
-                    | Some _, other ->
-                        // A table whitelist only sees declared query relations,
-                        // not opaque provider-native function bodies.
+                    | Some _, other, _ ->
+                        // A whitelist cannot inspect opaque native function bodies.
                         RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider other)
+                    | None, other, SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted ->
+                        // Opt-in narrow restriction; generic compiler grammar
+                        // remains available. No claim about unqualified UDFs.
+                        RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider other)
+                    | None, _, _ ->
+                        RewriteQueryPolicy.UnrestrictedFunctions
                 RewriteQueryPipeline.authorize options.Policy.QueryRows functionSafety validated)
         RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
             RewriteQueryPipeline.render renderWithDiagnostic authorized)
