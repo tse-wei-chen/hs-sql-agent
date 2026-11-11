@@ -114,11 +114,14 @@ public static class Governance
         var failed = IntAttribute(counters, "failed");
         var notExecuted = IntAttribute(counters, "notExecuted", required: false);
 
-        if (!(total > 0 && executed > 0 && passed > 0 && failed == 0
-              && total >= executed && executed >= passed && notExecuted >= 0))
+        // These four mandatory measured offline CI suites must run every case.
+        // A green job with skipped, dropped or unaccounted TRX results is not
+        // complete release evidence, even when the reported failures are zero.
+        if (total <= 0 || executed != total || passed != executed
+            || failed != 0 || notExecuted != 0)
         {
             throw new GovernanceException(
-                $"{suite}: empty or failed test run (total={total}, executed={executed}, passed={passed}, failed={failed})");
+                $"{suite}: incomplete or failed test run (total={total}, executed={executed}, passed={passed}, failed={failed}, notExecuted={notExecuted})");
         }
 
         var coverage = XDocument.Load(ExactlyOne(directory,
