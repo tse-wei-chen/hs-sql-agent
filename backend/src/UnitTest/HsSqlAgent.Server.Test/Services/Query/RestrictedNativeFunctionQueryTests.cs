@@ -107,6 +107,23 @@ public sealed class RestrictedNativeFunctionQueryTests
     }
 
     [Fact]
+    public void MySqlQueryWithEmptyAllowset_AlsoEnforcesNativeFunctionEffects()
+    {
+        // The F# facade deliberately normalizes an empty allowset to 'no
+        // whitelist'. Physical Host policy must not treat it differently
+        // from null when deciding whether to trust a native stored function.
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MySQL);
+        var empty = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().Compile(
+                provider.Object,
+                "SELECT app.temp_side_effect(id) FROM app.users",
+                SqlAgentToolType.MySQL, Policy, empty));
+    }
+
+    [Fact]
     public void StandaloneSqlCore_MySqlNativeFunctionGrammarRetainsDefaultCompatibility()
     {
         const string sql = "SELECT app.temp_side_effect(id) AS affected FROM app.users";
