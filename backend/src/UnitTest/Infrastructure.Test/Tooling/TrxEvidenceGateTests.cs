@@ -16,7 +16,7 @@ public sealed class TrxEvidenceGateTests
         var folder = WriteEvidence(total, executed, passed, failed, notExecuted);
         try
         {
-            Assert.Throws<GovernanceException>(() => Governance.Verify(folder, "RequiredOfflineSuite"));
+            Assert.Throws<GovernanceException>(() => Governance.Verify(folder, "RequiredOfflineSuite", requireComplete: true));
         }
         finally
         {
@@ -30,7 +30,7 @@ public sealed class TrxEvidenceGateTests
         var folder = WriteEvidence(total: 2, executed: 2, passed: 2, failed: 0, notExecuted: 0);
         try
         {
-            var report = Governance.Verify(folder, "RequiredOfflineSuite");
+            var report = Governance.Verify(folder, "RequiredOfflineSuite", requireComplete: true);
 
             Assert.Equal(2, report.Total);
             Assert.Equal(2, report.Passed);
