@@ -537,6 +537,92 @@ public sealed class QueryNativeFunctionLiveTests
         }
     }
 
+    // #575 MySQL 8.4: READ ONLY transactions still permit temporary-table
+    // writes. A single SELECT may invoke an opaque native stored function.
+    // This control physically proves a temporary MEMORY-table mutation from
+    // a stored function in an actual native READ ONLY transaction.
+    [Fact]
+    public async Task MySql_QueryOnlyNoWhitelist_CannotInvokeTempTableWritingFunction()
+    {
+        var source = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var database = "hsqltmp_" + Guid.NewGuid().ToString("N")[..12];
+        await using var admin = new MySqlConnection(source);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + database, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(source)
+            {
+                Database = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE visible_users(id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup, "INSERT INTO visible_users VALUES(7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION temp_side_effect(p_id INT) RETURNS INT " +
+                "DETERMINISTIC MODIFIES SQL DATA " +
+                "BEGIN " +
+                "CREATE TEMPORARY TABLE IF NOT EXISTS tmp_query_side_effects " +
+                "(id INT PRIMARY KEY) ENGINE=MEMORY; " +
+                "INSERT INTO tmp_query_side_effects(id) VALUES(p_id); " +
+                "RETURN (SELECT COUNT(*) FROM tmp_query_side_effects); " +
+                "END", ct);
+
+            var unsafeSql = "SELECT " + database +
+                ".temp_side_effect(id) AS affected FROM " +
+                database + ".visible_users";
+
+            // Independent server-side attack control. Unlike ordinary InnoDB
+            // tables, a session's TEMPORARY MEMORY table can be modified in
+            // READ ONLY mode, and its nontransactional rows survive ROLLBACK.
+            await ExecuteAsync(setup, "SET TRANSACTION READ ONLY", ct);
+            await using (var transaction = await setup.BeginTransactionAsync(ct))
+            {
+                await using var command = setup.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = unsafeSql;
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                command.CommandText = "SELECT COUNT(*) FROM tmp_query_side_effects";
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                await transaction.RollbackAsync(ct);
+            }
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+            await ExecuteAsync(setup, "DROP TEMPORARY TABLE tmp_query_side_effects", ct);
+
+            // The published tool uses Query-only permissions and no table
+            // whitelist. It must not execute an opaque native function whose
+            // physical effects the MySQL READ ONLY fence cannot constrain.
+            var provider = new MySqlProvider();
+            var tool = Tool(provider, SqlAgentToolType.MySQL, target, "");
+            var denied = await tool.ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(denied.Success,
+                "Query-only MCP admitted a MySQL stored function that can write temporary tables.");
+            Assert.Empty(denied.Rows);
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM visible_users", ct)));
+
+            // Both CLR and published MCP entrypoints must have matching policy.
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, target, unsafeSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+
+            var safe = await tool.ExecuteQuerySql(
+                "SELECT ABS(id) AS safe_value FROM " + database + ".visible_users", ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(7, Convert.ToInt32(Assert.Single(safe.Rows)["safe_value"]));
+        }
+        finally
+        {
+            await ExecuteAsync(admin, "DROP DATABASE " + database, CancellationToken.None);
+        }
+    }
+
     [Fact]
     public async Task Firebird_QuotedUdfReadsExcludedPhysicalTableButMcpRejects()
     {
