@@ -160,6 +160,20 @@ public sealed class QueryNativeFunctionLiveTests
                 "Query-only SQL Server key accepted a sysadmin connection with no table whitelist.");
             Assert.Empty(elevatedQuery.Rows);
 
+            // #575: SQL Server and F# Query policy must agree about an empty
+            // allowset. The F# facade treats Count==0 as no whitelist;
+            // the original Host checked only 'is null' for principal proof.
+            // These exercise BOTH physical CLR Query entrypoints using sa.
+            var emptyScope = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, elevated, safeQuery, SqlAgentToolType.MsSqlServer,
+                    Policy(), emptyScope, ct));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, elevated, safeQuery, SqlAgentToolType.MsSqlServer,
+                    Policy(), emptyScope, ct));
+
             var limitedTool = Tool(provider, SqlAgentToolType.MsSqlServer, reader, "");
             var allowed = await limitedTool.ExecuteQuerySql(safeQuery, ct);
             Assert.True(allowed.Success, allowed.Error?.Message);
