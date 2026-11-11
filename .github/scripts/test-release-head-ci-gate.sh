@@ -15,7 +15,7 @@ case "$2" in
     [[ "$#" == 4 && "$3" == --jq && "$4" == .commit.sha && "${MOCK_MAIN_API_FAIL:-0}" != 1 ]] || exit 31
     printf '%s\n' "${MOCK_MAIN_SHA:-$GITHUB_SHA}"
     ;;
-  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100") | 
+  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100" | 
   "repos/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&per_page=100")
     [[ "${MOCK_RUN_API_FAIL:-0}" != 1 ]] || exit 32
     if [[ "${MOCK_NO_RUN:-0}" == 1 ]]; then
@@ -30,7 +30,7 @@ case "$2" in
         "${MOCK_RUN_SHA:-$GITHUB_SHA}" "${MOCK_RUN_BRANCH:-main}" "${MOCK_RUN_EVENT:-push}" "${MOCK_RUN_CONCLUSION:-success}"
     fi
     ;;
-  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100") | 
+  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100" | 
   "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&per_page=100")
     [[ "${MOCK_BASELINE_RUN_API_FAIL:-0}" != 1 ]] || exit 35
     if [[ "${MOCK_NO_BASELINE_RUN:-0}" == 1 ]]; then
