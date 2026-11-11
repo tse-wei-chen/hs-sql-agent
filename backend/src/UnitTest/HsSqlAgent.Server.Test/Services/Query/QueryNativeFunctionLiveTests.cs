@@ -372,6 +372,107 @@ public sealed class QueryNativeFunctionLiveTests
         }
     }
 
+    // #575: Oracle's PRAGMA AUTONOMOUS_TRANSACTION commits independently of
+    // an outer READ ONLY Query transaction and survives its ROLLBACK. Test
+    // both the physical native control and the published no-whitelist MCP.
+    [Fact]
+    public async Task Oracle_QueryOnlyNoWhitelist_RejectsAutonomousTransactionFunction()
+    {
+        var connectionString = RequireConnection("TEST_ORACLE_CONNECTION", "Oracle 26ai");
+        var ct = TestContext.Current.CancellationToken;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        var users = "QAUSR_" + suffix;
+        var effects = "QAOUT_" + suffix;
+        var function = "QAFN_" + suffix;
+        var table = "SQLCORE." + users;
+        var unsafeSql = "SELECT SQLCORE." + function + "(ID) AS RESULT FROM " + table;
+        await using var setup = new OracleConnection(connectionString);
+        await setup.OpenAsync(ct);
+        var created = 0;
+        try
+        {
+            await ExecuteAsync(setup,
+                "CREATE TABLE " + users + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            created = 1;
+            await ExecuteAsync(setup,
+                "CREATE TABLE " + effects + " (ID NUMBER(10) PRIMARY KEY)", ct);
+            created = 2;
+            await ExecuteAsync(setup,
+                "INSERT INTO " + users + " VALUES (1)", ct);
+            await ExecuteAsync(setup, "COMMIT", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION " + function + "(P_ID NUMBER) RETURN NUMBER IS " +
+                "PRAGMA AUTONOMOUS_TRANSACTION; " +
+                "BEGIN " +
+                "INSERT INTO " + effects + "(ID) VALUES(P_ID); " +
+                "COMMIT; RETURN P_ID; END;", ct);
+            created = 3;
+            await AwaitOracleReadOnlyDdlVisibilityAsync(connectionString, table, ct);
+
+            var provider = new OracleProvider();
+            var nativeSource = Assert.IsAssignableFrom<IProviderDmlPreviewTransactionSource>(provider);
+            await using (var native = provider.Connections.Create(connectionString))
+            {
+                await native.OpenAsync(ct);
+                await using var readOnly = await nativeSource.PreviewTransactions.BeginAsync(
+                    native, SqlAgentToolType.Oracle, IsolationLevel.ReadCommitted, ct);
+                await using var command = native.CreateCommand();
+                command.Transaction = readOnly;
+                command.CommandText = unsafeSql;
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                await readOnly.RollbackAsync(ct);
+            }
+
+            // Independent connection proves durable physical COMMIT despite
+            // the outer read-only transaction and its successful rollback.
+            await using (var witness = new OracleConnection(connectionString))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM " + effects, ct)));
+            }
+            await ExecuteAsync(setup, "DELETE FROM " + effects, ct);
+            await ExecuteAsync(setup, "COMMIT", ct);
+
+            // Query-only MCP without TableWhitelist must not be a shortcut
+            // to execute arbitrary schema-qualified native routines.
+            var denied = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(denied.Success,
+                "Query-only Oracle executed an autonomous function and durably mutated the DB.");
+            Assert.Empty(denied.Rows);
+            await using (var witness = new OracleConnection(connectionString))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM " + effects, ct)));
+            }
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, connectionString, unsafeSql, SqlAgentToolType.Oracle,
+                    Policy(), allowedTables: null, ct));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, connectionString, unsafeSql, SqlAgentToolType.Oracle,
+                    Policy(), allowedTables: null, ct));
+            var safe = await Tool(provider, SqlAgentToolType.Oracle,
+                connectionString, allowedTable: null).ExecuteQuerySql(
+                    "SELECT ABS(ID) AS POSITIVE FROM " + table, ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(safe.Rows)["POSITIVE"]));
+        }
+        finally
+        {
+            if (created >= 3)
+                await ExecuteAsync(setup, "DROP FUNCTION " + function, CancellationToken.None);
+            if (created >= 2)
+                await ExecuteAsync(setup, "DROP TABLE " + effects + " PURGE", CancellationToken.None);
+            if (created >= 1)
+                await ExecuteAsync(setup, "DROP TABLE " + users + " PURGE", CancellationToken.None);
+        }
+    }
+
     // Oracle resolves unqualified ABS as its built-in despite a schema UDF
     // named ABS. The explicitly qualified UDF does reach excluded data and
     // must remain rejected by F# Policy and published MCP Query.
