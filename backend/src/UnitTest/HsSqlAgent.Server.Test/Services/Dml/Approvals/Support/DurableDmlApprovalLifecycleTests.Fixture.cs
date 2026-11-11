@@ -277,14 +277,16 @@ public sealed partial class DurableDmlApprovalLifecycleTests
         }
 
         public DurableDmlWitnessVerificationService CreateWitnessInspection(
-            IServiceProvider scopedServices, IDmlTargetCommitWitness? witness) =>
+            IServiceProvider scopedServices, IDmlTargetCommitWitness? witness,
+            IDmlTargetExecutionFence? fence = null) =>
             new(
                 scopedServices.GetRequiredService<AdminContext>(),
                 scopedServices.GetRequiredService<ICryptoService>(),
                 scopedServices.GetRequiredService<Common.Services.SecretProtectionSettings>(),
                 ProviderFactory.Object,
                 ConnectionStringFactory.Object,
-                witness);
+                witness,
+                fence);
 
         public DurableDmlApprovalLifecycle CreateLifecycle(
             IServiceProvider scopedServices,
