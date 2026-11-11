@@ -180,7 +180,9 @@ module internal RewritePipeline =
                 let functionSafety =
                     let runtime = VerifiedTarget.runtime options.Target
                     match options.AllowedTables, runtime with
-                    | None, TargetRuntime.MySqlRuntime ->
+                    | None, TargetRuntime.MySqlRuntime when options.Policy.RequireProvenMySqlNativeFunctions ->
+                        // Only the physical Host Query-only boundary opts in;
+                        // standalone SqlCore compilation keeps native grammar.
                         // MySQL READ ONLY transactions still permit writes to
                         // session-local TEMPORARY tables. A native stored function
                         // can mutate a pooled session without a table whitelist;
