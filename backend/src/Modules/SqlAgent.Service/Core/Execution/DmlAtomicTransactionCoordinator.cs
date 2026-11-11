@@ -2,7 +2,6 @@ using static SqlAgent.Service.Core.Execution.DmlCompiledCommandExecution;
 using System.Collections.Immutable;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
-using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
 
