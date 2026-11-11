@@ -500,11 +500,16 @@ public sealed class QueryNativeFunctionLiveTests
             Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
                 setup, "SELECT COUNT(*) FROM side_effects", ct)));
 
-            // Empty TableWhitelist is deliberate: tests the default
-            // Query-only key boundary, not the F# whitelist policy.
+            // Empty TableWhitelist is deliberate: the generic F# SQL
+            // grammar still accepts qualified MySQL native functions.
+            // Only the physical Host Query runtime opts into the stricter
+            // side-effect policy; this must not be an accidental loss of
+            // generic SqlCore syntax/compiler support.
             var provider = new MySqlProvider();
-            var compiled = new TypedQueryRuntime().Compile(provider, unsafeSql,
-                SqlAgentToolType.MySQL, Policy(), allowedTables: null);
+            var compiled = SqlCoreFacade.CompileQuery(
+                unsafeSql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("native-mysql-grammar"),
+                new SqlExecutionPlanPolicy(Policy().QueryMaxRows));
             Assert.Equal(SqlStatementKind.Select, compiled.Kind);
             var tool = Tool(provider, SqlAgentToolType.MySQL, target, "");
             var blocked = await tool.ExecuteQuerySql(unsafeSql, ct);
