@@ -1596,15 +1596,33 @@ type SqlPlanValidationContext private (
         SqlPlanValidationContext(policyVersion, allowedTables, dmlResultRowAssurance,
                                  schemaSnapshot, sqliteUpdateFromKeyAssurance, assurance)
 
+/// Compiler policy, not a claim that the physical database has no effects.
+/// RejectOpaqueQualifiedOrQuoted covers only native-identifier syntax; opaque
+/// unqualified functions, views and external effects require separate Host
+/// assurances. Standalone SqlCore defaults to retaining all source grammar.
+type SqlQueryNativeFunctionPolicy =
+    | PreserveCompilerGrammar = 0
+    | RejectOpaqueQualifiedOrQuoted = 1
+
 [<Sealed>]
-type SqlExecutionPlanPolicy(queryMaxRows: int, requireProvenMySqlNativeFunctions: bool) =
-    // Keep the existing public constructor/ABI: generic SqlCore consumers
-    // retain full native function grammar unless explicitly opting into the
-    // physical Host Query-only safety boundary.
-    new(queryMaxRows: int) = SqlExecutionPlanPolicy(queryMaxRows, false)
+type SqlExecutionPlanPolicy(queryMaxRows: int, nativeFunctionPolicy: SqlQueryNativeFunctionPolicy) =
+    do
+        if not (Enum.IsDefined(nativeFunctionPolicy)) then
+            invalidArg "nativeFunctionPolicy" "Unknown native Query function policy."
+    // Compatibility constructor retained for clients that compiled against
+    // #615's public CLR surface; new callers use the provider-neutral enum.
+    new(queryMaxRows: int, requireProvenMySqlNativeFunctions: bool) =
+        SqlExecutionPlanPolicy(
+            queryMaxRows,
+            if requireProvenMySqlNativeFunctions then SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted
+            else SqlQueryNativeFunctionPolicy.PreserveCompilerGrammar)
+    new(queryMaxRows: int) =
+        SqlExecutionPlanPolicy(queryMaxRows, SqlQueryNativeFunctionPolicy.PreserveCompilerGrammar)
     new() = SqlExecutionPlanPolicy(0)
     member _.QueryMaxRows = queryMaxRows
-    member _.RequireProvenMySqlNativeFunctions = requireProvenMySqlNativeFunctions
+    member _.NativeFunctionPolicy = nativeFunctionPolicy
+    member _.RequireProvenMySqlNativeFunctions =
+        nativeFunctionPolicy = SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted
 
 [<Sealed>]
 type QueryExecutionResult(
