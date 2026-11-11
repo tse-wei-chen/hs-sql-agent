@@ -178,15 +178,22 @@ module internal RewritePipeline =
         let authorized =
             RewriteResourceBudget.withStage "Policy" SqlDiagnosticStage.Policy (fun () ->
                 let functionSafety =
-                    if Option.isNone options.AllowedTables then
+                    let runtime = VerifiedTarget.runtime options.Target
+                    match options.AllowedTables, runtime with
+                    | None, TargetRuntime.MySqlRuntime ->
+                        // MySQL READ ONLY transactions still permit writes to
+                        // session-local TEMPORARY tables. A native stored function
+                        // can mutate a pooled session without a table whitelist;
+                        // unlike ordinary built-ins its effects are not proven.
+                        RewriteQueryPolicy.RejectOpaqueNativeFunctions SqlAgentToolType.MySQL
+                    | None, _ ->
                         RewriteQueryPolicy.UnrestrictedFunctions
-                    else
-                        match VerifiedTarget.runtime options.Target with
-                        | TargetRuntime.PostgreSqlRuntime -> RewriteQueryPolicy.ProvenPostgresFunctions
-                        | runtime ->
-                            // Other providers have no PostgreSQL-style physical read-only
-                            // fence and no proof of native UDF hidden table effects.
-                            RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider runtime)
+                    | Some _, TargetRuntime.PostgreSqlRuntime ->
+                        RewriteQueryPolicy.ProvenPostgresFunctions
+                    | Some _, other ->
+                        // A table whitelist only sees declared query relations,
+                        // not opaque provider-native function bodies.
+                        RewriteQueryPolicy.RejectOpaqueNativeFunctions(TargetRuntime.provider other)
                 RewriteQueryPipeline.authorize options.Policy.QueryRows functionSafety validated)
         RewriteResourceBudget.withStage "Rendering" SqlDiagnosticStage.RenderingInvariant (fun () ->
             RewriteQueryPipeline.render renderWithDiagnostic authorized)
