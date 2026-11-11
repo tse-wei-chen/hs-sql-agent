@@ -22,7 +22,8 @@ public sealed class DurableDmlWitnessVerificationService(
     Common.Services.SecretProtectionSettings secretProtection,
     ISqlProviderFactory sqlProviderFactory,
     ISqlConnectionStringFactory connectionStringFactory,
-    IDmlTargetCommitWitness? targetWitness = null)
+    IDmlTargetCommitWitness? targetWitness = null,
+    IDmlTargetExecutionFence? targetFence = null)
 {
     private const string Match = "CommittedWitnessMatch";
     private const string NotObserved = "NotObserved";
@@ -31,6 +32,10 @@ public sealed class DurableDmlWitnessVerificationService(
     private const string ReadUnavailable = "ReadUnavailable";
     private const string ApprovalChanged = "ApprovalChanged";
     private const string NotConfigured = "WitnessNotConfigured";
+    private const string FenceNotConfigured = "FenceNotConfigured";
+    private const string FenceNotObserved = "FenceNotObserved";
+    private const string FenceEvidenceMismatch = "FenceEvidenceMismatch";
+    private const string UnsupportedFenceProtocol = "UnsupportedFenceProtocol";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
 
     public async Task<DmlTargetCommitWitnessInspection?> InspectAsync(
@@ -68,6 +73,7 @@ public sealed class DurableDmlWitnessVerificationService(
         var keyBytes = Common.Services.CryptoService.DecodeKey(secretProtection.DmlFingerprintKey);
 
         string connectionString;
+        var requiresFence = false;
         try
         {
             var plain = cryptoService.DecryptText(state.ProtectedExecutionPayload, "dml-payload:" + state.RequestId);
@@ -76,6 +82,17 @@ public sealed class DurableDmlWitnessVerificationService(
             // witness inspection. An old flat payload is explicitly upcast;
             // unknown envelope versions never allow a target connection probe.
             var resume = DurableDmlResumePayloadCodec.Deserialize(plain);
+            // A versioned target-fenced approval requires BOTH committed
+            // admission and witness. Never silently downgrade an unknown
+            // future protocol to the legacy witness-only verifier.
+            if (resume.FenceProtocol is not null
+                && resume.FenceProtocol != DurableDmlApprovalLifecycle.TargetFenceProtocol)
+                return Result(UnsupportedFenceProtocol);
+            requiresFence = resume.FenceProtocol == DurableDmlApprovalLifecycle.TargetFenceProtocol;
+            if (requiresFence
+                && (targetFence is not RelationalDmlTargetExecutionFence
+                    || targetWitness is not RelationalDmlTargetCommitWitness))
+                return Result(FenceNotConfigured);
             if (resume.DbManagementId != state.DbManagementId
                 || resume.AccessKeyId != state.AccessKeyId
                 || resume.SourceDialect != provider)
@@ -117,13 +134,24 @@ public sealed class DurableDmlWitnessVerificationService(
 
             if (observed is null)
                 status = NotObserved;
-            else if (observed.Length == 64 && observed.All(Uri.IsHexDigit)
-                && CryptographicOperations.FixedTimeEquals(
-                    Convert.FromHexString(state.EvidenceFingerprint),
-                    Convert.FromHexString(observed)))
+            else if (!MatchesEvidenceFingerprint(observed, state.EvidenceFingerprint))
+                status = EvidenceMismatch;
+            else if (!requiresFence)
                 status = Match;
             else
-                status = EvidenceMismatch;
+            {
+                // The same target connection used for the committed Witness
+                // must also read the immutable, committed fence admission.
+                // Missing, Revoked, or wrong-digest entries never confirm a
+                // fenced COMMIT (the coordinator enforces identical parity).
+                var admitted = await targetFence!.ReadAsync(
+                    connection, provider, requestId, deadline.Token);
+                status = admitted is null ? FenceNotObserved
+                    : admitted.EntryKind == RelationalDmlTargetExecutionFence.AdmissionKind
+                      && MatchesEvidenceFingerprint(
+                          admitted.EvidenceFingerprint, state.EvidenceFingerprint)
+                        ? Match : FenceEvidenceMismatch;
+            }
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -160,6 +188,15 @@ public sealed class DurableDmlWitnessVerificationService(
             || latest.DatabaseIdentity != state.DatabaseIdentity)
             return Result(ApprovalChanged);
         return Result(status);
+    }
+
+    private static bool MatchesEvidenceFingerprint(string? actual, string? expected)
+    {
+        if (actual is not { Length: 64 } || expected is not { Length: 64 }
+            || !actual.All(Uri.IsHexDigit) || !expected.All(Uri.IsHexDigit))
+            return false;
+        return CryptographicOperations.FixedTimeEquals(
+            Convert.FromHexString(actual), Convert.FromHexString(expected));
     }
 }
 
