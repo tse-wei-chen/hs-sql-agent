@@ -19,19 +19,25 @@ if [[ "$main_sha" != "$sha" ]]; then
     exit 1
 fi
 
-# Check GitHub's run filters AND the returned run identity. A pull_request,
-# release-triggered or different-SHA workflow cannot authorize publication.
-if ! runs="$(gh api "repos/$repo/actions/workflows/test.yml/runs?head_sha=$sha&branch=main&event=push&status=success&per_page=100")"; then
+# Inspect *all* runs for the release SHA, not only successful ones. GitHub's
+# status=success filter can hide a newer failed/pending attempt, leaving an
+# older green run to incorrectly authorize publication. The newest matching
+# run ID (creation order) must itself be completed and successful.
+# Pull-request, release-triggered or different-SHA runs never qualify.
+if ! runs="$(gh api "repos/$repo/actions/workflows/test.yml/runs?head_sha=$sha&branch=main&event=push&per_page=100")"; then
     echo '::error::Cannot read the exact-commit Tests workflow evidence.' >&2
     exit 1
 fi
 if ! run_id="$(jq -er --arg sha "$sha" '
     if (.workflow_runs | type) == "array" then
       [.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main"
-        and .event == "push" and .status == "completed" and .conclusion == "success")
-        | .id | select(type == "number")] | first // empty
+        and .event == "push")]
+      | max_by(.id)
+      | select(.status == "completed" and .conclusion == "success"
+          and (.id | type) == "number")
+      | .id
     else empty end' <<< "$runs")"; then
-    echo '::error::No successful main push Tests run for the exact release SHA.' >&2
+    echo '::error::Newest main push Tests run for this SHA is missing, pending or unsuccessful.' >&2
     exit 1
 fi
 
@@ -61,17 +67,20 @@ fi
 # The benchmark comparison must also attest THIS promoted main commit.
 # A successful PR run or a workflow_dispatch self-comparison does not prove
 # that the actual release SHA passed the baseline on main.
-if ! baseline_runs="$(gh api "repos/$repo/actions/workflows/sqlcore-comparison.yml/runs?head_sha=$sha&branch=main&event=push&status=success&per_page=100")"; then
+if ! baseline_runs="$(gh api "repos/$repo/actions/workflows/sqlcore-comparison.yml/runs?head_sha=$sha&branch=main&event=push&per_page=100")"; then
     echo '::error::Cannot read the exact-commit SqlCore comparison evidence.' >&2
     exit 1
 fi
 if ! baseline_run_id="$(jq -er --arg sha "$sha" '
     if (.workflow_runs | type) == "array" then
       [.workflow_runs[] | select(.head_sha == $sha and .head_branch == "main"
-        and .event == "push" and .status == "completed" and .conclusion == "success")
-        | .id | select(type == "number")] | first // empty
+        and .event == "push")]
+      | max_by(.id)
+      | select(.status == "completed" and .conclusion == "success"
+          and (.id | type) == "number")
+      | .id
     else empty end' <<< "$baseline_runs")"; then
-    echo '::error::No successful main push SqlCore comparison for this release SHA.' >&2
+    echo '::error::Newest main push SqlCore comparison for this SHA is missing, pending or unsuccessful.' >&2
     exit 1
 fi
 if ! baseline_jobs="$(gh api "repos/$repo/actions/runs/$baseline_run_id/jobs?per_page=100")"; then

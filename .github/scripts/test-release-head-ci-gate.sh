@@ -15,19 +15,27 @@ case "$2" in
     [[ "$#" == 4 && "$3" == --jq && "$4" == .commit.sha && "${MOCK_MAIN_API_FAIL:-0}" != 1 ]] || exit 31
     printf '%s\n' "${MOCK_MAIN_SHA:-$GITHUB_SHA}"
     ;;
-  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100")
+  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100" | "repos/tse-wei-chen/hs-sql-agent/actions/workflows/test.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&per_page=100")
     [[ "${MOCK_RUN_API_FAIL:-0}" != 1 ]] || exit 32
     if [[ "${MOCK_NO_RUN:-0}" == 1 ]]; then
       printf '{"workflow_runs":[]}\n'
+    elif [[ "${MOCK_LATEST_TEST_STATUS:-}" != "" && "$2" != *'&status=success&'* ]]; then
+      # GitHub's status=success filter hides a newer failed/pending run, leaving
+      # the older successful run as false publication evidence.
+      printf '{"workflow_runs":[{"id":1987,"head_sha":"%s","head_branch":"main","event":"push","status":"%s","conclusion":%s},{"id":987,"head_sha":"%s","head_branch":"main","event":"push","status":"completed","conclusion":"success"}]}\n' \
+        "$GITHUB_SHA" "$MOCK_LATEST_TEST_STATUS" "${MOCK_LATEST_TEST_CONCLUSION:-null}" "$GITHUB_SHA"
     else
       printf '{"workflow_runs":[{"id":987,"head_sha":"%s","head_branch":"%s","event":"%s","status":"completed","conclusion":"%s"}]}\n' \
         "${MOCK_RUN_SHA:-$GITHUB_SHA}" "${MOCK_RUN_BRANCH:-main}" "${MOCK_RUN_EVENT:-push}" "${MOCK_RUN_CONCLUSION:-success}"
     fi
     ;;
-  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100")
+  "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success&per_page=100" | "repos/tse-wei-chen/hs-sql-agent/actions/workflows/sqlcore-comparison.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&per_page=100")
     [[ "${MOCK_BASELINE_RUN_API_FAIL:-0}" != 1 ]] || exit 35
     if [[ "${MOCK_NO_BASELINE_RUN:-0}" == 1 ]]; then
       printf '{"workflow_runs":[]}\n'
+    elif [[ "${MOCK_LATEST_BASELINE_STATUS:-}" != "" && "$2" != *'&status=success&'* ]]; then
+      printf '{"workflow_runs":[{"id":1988,"head_sha":"%s","head_branch":"main","event":"push","status":"%s","conclusion":%s},{"id":988,"head_sha":"%s","head_branch":"main","event":"push","status":"completed","conclusion":"success"}]}\n' \
+        "$GITHUB_SHA" "$MOCK_LATEST_BASELINE_STATUS" "${MOCK_LATEST_BASELINE_CONCLUSION:-null}" "$GITHUB_SHA"
     else
       printf '{"workflow_runs":[{"id":988,"head_sha":"%s","head_branch":"%s","event":"%s","status":"completed","conclusion":"%s"}]}\n' \
         "${MOCK_BASELINE_SHA:-$GITHUB_SHA}" "${MOCK_BASELINE_BRANCH:-main}" "${MOCK_BASELINE_EVENT:-push}" "${MOCK_BASELINE_CONCLUSION:-success}"
@@ -82,6 +90,20 @@ expect_allow() {
   fi
 }
 expect_allow 'all 18 successful jobs at exact main SHA'
+# RED: a previous success cannot authorize publication when a newer run for
+# the *same* main SHA has failed or is still in progress.
+export MOCK_LATEST_TEST_STATUS=completed MOCK_LATEST_TEST_CONCLUSION='"failure"'
+expect_deny 'newer Tests run failed despite older successful run'
+unset MOCK_LATEST_TEST_CONCLUSION
+export MOCK_LATEST_TEST_STATUS=in_progress
+expect_deny 'newer Tests run is still in progress'
+unset MOCK_LATEST_TEST_STATUS
+export MOCK_LATEST_BASELINE_STATUS=completed MOCK_LATEST_BASELINE_CONCLUSION='"failure"'
+expect_deny 'newer SqlCore comparison failed despite older successful run'
+unset MOCK_LATEST_BASELINE_CONCLUSION
+export MOCK_LATEST_BASELINE_STATUS=in_progress
+expect_deny 'newer SqlCore comparison is still in progress'
+unset MOCK_LATEST_BASELINE_STATUS
 export MOCK_NO_BASELINE_RUN=1
 expect_deny 'missing exact-main SqlCore baseline'
 unset MOCK_NO_BASELINE_RUN
@@ -156,4 +178,4 @@ expect_deny 'other repo'
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
 export GITHUB_SHA=invalid
 expect_deny 'invalid SHA'
-echo 'Exact release-head Tests gate: 26 scenarios passed.'
+echo 'Exact release-head Tests gate: 30 scenarios passed.'
