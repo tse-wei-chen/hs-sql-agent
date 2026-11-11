@@ -84,14 +84,74 @@ public sealed class RestrictedNativeFunctionQueryTests
     }
 
     [Fact]
-    public void UnrestrictedQuery_NativeFunctionNamesRetainExistingCompilerBehavior()
+    public void MySqlQueryWithoutWhitelist_RejectsOpaqueNativeFunctionAtPolicyStage()
     {
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MySQL);
 
+        const string sql = "SELECT app.temp_side_effect(id) AS affected FROM app.users";
+        var error = Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().Compile(
+                provider.Object, sql, SqlAgentToolType.MySQL,
+                Policy, allowedTables: null));
+
+        Assert.Contains("not proven", error.Message, StringComparison.OrdinalIgnoreCase);
+        var diagnostic = Assert.IsType<SqlDiagnostic>(
+            error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+        Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().CompileWithFacts(
+                provider.Object, sql, SqlAgentToolType.MySQL,
+                Policy, allowedTables: null, targetProfile: null));
+    }
+
+    [Fact]
+    public void MySqlQueryWithEmptyAllowset_AlsoEnforcesNativeFunctionEffects()
+    {
+        // The F# facade deliberately normalizes an empty allowset to 'no
+        // whitelist'. Physical Host policy must not treat it differently
+        // from null when deciding whether to trust a native stored function.
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MySQL);
+        var empty = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().Compile(
+                provider.Object,
+                "SELECT app.temp_side_effect(id) FROM app.users",
+                SqlAgentToolType.MySQL, Policy, empty));
+    }
+
+    [Fact]
+    public void StandaloneSqlCore_MySqlNativeFunctionGrammarRetainsDefaultCompatibility()
+    {
+        const string sql = "SELECT app.temp_side_effect(id) AS affected FROM app.users";
+        var regular = SqlCoreFacade.CompileQuery(
+            sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
+            new SqlPlanValidationContext("generic-compiler"),
+            new SqlExecutionPlanPolicy(20));
+        Assert.Contains("temp_side_effect", regular.Sql, StringComparison.OrdinalIgnoreCase);
+
+        // The physical Query Host opts into the same typed F# Policy at the
+        // public facade boundary without altering standalone SqlCore grammar.
+        var error = Assert.Throws<UnauthorizedAccessException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("host-query-guard"),
+                new SqlExecutionPlanPolicy(20, requireProvenMySqlNativeFunctions: true)));
+        Assert.IsType<SqlDiagnostic>(error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+    }
+
+    [Fact]
+    public void UnrestrictedSqlServerQuery_NativeFunctionNamesRetainExistingCompilerBehavior()
+    {
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MsSqlServer);
+
         var compiled = new TypedQueryRuntime().Compile(
-            provider.Object, "SELECT app.leak_secret() AS leaked FROM app.users",
-            SqlAgentToolType.MySQL, Policy, allowedTables: null);
+            provider.Object, "SELECT dbo.leak_secret() AS leaked FROM dbo.users",
+            SqlAgentToolType.MsSqlServer, Policy, allowedTables: null);
 
         Assert.Contains("leak_secret", compiled.Sql, StringComparison.OrdinalIgnoreCase);
     }

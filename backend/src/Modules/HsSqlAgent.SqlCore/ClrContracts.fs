@@ -1597,9 +1597,14 @@ type SqlPlanValidationContext private (
                                  schemaSnapshot, sqliteUpdateFromKeyAssurance, assurance)
 
 [<Sealed>]
-type SqlExecutionPlanPolicy(queryMaxRows: int) =
+type SqlExecutionPlanPolicy(queryMaxRows: int, requireProvenMySqlNativeFunctions: bool) =
+    // Keep the existing public constructor/ABI: generic SqlCore consumers
+    // retain full native function grammar unless explicitly opting into the
+    // physical Host Query-only safety boundary.
+    new(queryMaxRows: int) = SqlExecutionPlanPolicy(queryMaxRows, false)
     new() = SqlExecutionPlanPolicy(0)
     member _.QueryMaxRows = queryMaxRows
+    member _.RequireProvenMySqlNativeFunctions = requireProvenMySqlNativeFunctions
 
 [<Sealed>]
 type QueryExecutionResult(

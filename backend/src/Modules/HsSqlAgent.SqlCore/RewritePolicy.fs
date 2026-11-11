@@ -24,12 +24,13 @@ module internal RewritePolicy =
     type ExecutionPolicy =
         { UpdateSafety: MutationSafety
           DeleteSafety: MutationSafety
-          QueryRows: RowCap }
+          QueryRows: RowCap
+          RequireProvenMySqlNativeFunctions: bool }
         member this.AllowUnboundedUpdate = this.UpdateSafety = AllowAllRows
         member this.AllowUnboundedDelete = this.DeleteSafety = AllowAllRows
         member this.QueryMaxRows = match this.QueryRows with Unlimited -> 0 | MaxRows count -> PositiveRowCount.value count
 
-    let safeDefaults = { UpdateSafety = RequirePredicate; DeleteSafety = RequirePredicate; QueryRows = Unlimited }
+    let safeDefaults = { UpdateSafety = RequirePredicate; DeleteSafety = RequirePredicate; QueryRows = Unlimited; RequireProvenMySqlNativeFunctions = false }
 
     let private diagnosticDataKey = "HsSqlAgent.SqlCore.Diagnostic"
 

@@ -500,11 +500,16 @@ public sealed class QueryNativeFunctionLiveTests
             Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
                 setup, "SELECT COUNT(*) FROM side_effects", ct)));
 
-            // Empty TableWhitelist is deliberate: tests the default
-            // Query-only key boundary, not the F# whitelist policy.
+            // Empty TableWhitelist is deliberate: the generic F# SQL
+            // grammar still accepts qualified MySQL native functions.
+            // Only the physical Host Query runtime opts into the stricter
+            // side-effect policy; this must not be an accidental loss of
+            // generic SqlCore syntax/compiler support.
             var provider = new MySqlProvider();
-            var compiled = new TypedQueryRuntime().Compile(provider, unsafeSql,
-                SqlAgentToolType.MySQL, Policy(), allowedTables: null);
+            var compiled = SqlCoreFacade.CompileQuery(
+                unsafeSql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("native-mysql-grammar"),
+                new SqlExecutionPlanPolicy(Policy().QueryMaxRows));
             Assert.Equal(SqlStatementKind.Select, compiled.Kind);
             var tool = Tool(provider, SqlAgentToolType.MySQL, target, "");
             var blocked = await tool.ExecuteQuerySql(unsafeSql, ct);
@@ -533,6 +538,125 @@ public sealed class QueryNativeFunctionLiveTests
         }
         finally
         {
+            await ExecuteAsync(admin, "DROP DATABASE " + database, CancellationToken.None);
+        }
+    }
+
+    // #575: MySQL READ ONLY permits writes to an EXISTING TEMPORARY table.
+    // Connector/NET with ConnectionReset=false can pass that session-local
+    // object through a real pool to the production MCP Query connection.
+    [Fact]
+    public async Task MySql_QueryOnlyNoWhitelist_CannotInvokeTempTableWritingFunction()
+    {
+        var source = RequireConnection("TEST_MYSQL_CONNECTION", "MySQL 8.4");
+        var ct = TestContext.Current.CancellationToken;
+        var database = "hsqltmp_" + Guid.NewGuid().ToString("N")[..12];
+        await using var admin = new MySqlConnection(source);
+        await admin.OpenAsync(ct);
+        await ExecuteAsync(admin, "CREATE DATABASE " + database, ct);
+        try
+        {
+            var target = new MySqlConnectionStringBuilder(source)
+            {
+                Database = database,
+                Pooling = false
+            }.ConnectionString;
+            await using var setup = new MySqlConnection(target);
+            await setup.OpenAsync(ct);
+            await ExecuteAsync(setup,
+                "CREATE TABLE visible_users(id INT PRIMARY KEY) ENGINE=InnoDB", ct);
+            await ExecuteAsync(setup, "INSERT INTO visible_users VALUES(7)", ct);
+            await ExecuteAsync(setup,
+                "CREATE FUNCTION temp_side_effect(p_id INT) RETURNS INT " +
+                "DETERMINISTIC MODIFIES SQL DATA " +
+                "BEGIN " +
+                "INSERT INTO tmp_query_side_effects(id) VALUES(p_id); " +
+                "RETURN (SELECT COUNT(*) FROM tmp_query_side_effects); " +
+                "END", ct);
+
+            var unsafeSql = "SELECT " + database +
+                ".temp_side_effect(id) AS affected FROM " +
+                database + ".visible_users";
+            const string createTemp =
+                "CREATE TEMPORARY TABLE tmp_query_side_effects " +
+                "(id INT PRIMARY KEY) ENGINE=MEMORY";
+
+            // Independent physical positive control: native read-only
+            // transaction DOES allow a UDF to insert into a preexisting
+            // TEMPORARY MEMORY table. Its contents survive ROLLBACK.
+            await ExecuteAsync(setup, createTemp, ct);
+            await ExecuteAsync(setup, "SET TRANSACTION READ ONLY", ct);
+            await using (var transaction = await setup.BeginTransactionAsync(ct))
+            {
+                await using var command = setup.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = unsafeSql;
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                command.CommandText = "SELECT COUNT(*) FROM tmp_query_side_effects";
+                Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
+                await transaction.RollbackAsync(ct);
+            }
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(
+                setup, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+            await ExecuteAsync(setup, "DROP TEMPORARY TABLE tmp_query_side_effects", ct);
+
+            // Real production first-party MySqlProvider/Connector.NET pool.
+            // With session reset disabled, the next logical connection shares
+            // the same physical MySQL session, including its temporary table.
+            var pooled = new MySqlConnectionStringBuilder(target)
+            {
+                Pooling = true,
+                ConnectionReset = false,
+                MaximumPoolSize = 1
+            }.ConnectionString;
+            long sessionId;
+            await using (var warm = new MySqlConnection(pooled))
+            {
+                await warm.OpenAsync(ct);
+                sessionId = Convert.ToInt64(await ScalarAsync(
+                    warm, "SELECT CONNECTION_ID()", ct));
+                await ExecuteAsync(warm, createTemp, ct);
+            }
+            await using (var witness = new MySqlConnection(pooled))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(sessionId, Convert.ToInt64(await ScalarAsync(
+                    witness, "SELECT CONNECTION_ID()", ct)));
+                Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+            }
+
+            // Query-only MCP, no whitelist. The compiled SELECT must not be
+            // treated as proof that its opaque function has no temp effects.
+            var provider = new MySqlProvider();
+            var tool = Tool(provider, SqlAgentToolType.MySQL, pooled, "");
+            var denied = await tool.ExecuteQuerySql(unsafeSql, ct);
+            Assert.False(denied.Success,
+                "Query-only MCP admitted a native function writing to a pooled session TEMPORARY table.");
+            Assert.Empty(denied.Rows);
+            await using (var witness = new MySqlConnection(pooled))
+            {
+                await witness.OpenAsync(ct);
+                Assert.Equal(sessionId, Convert.ToInt64(await ScalarAsync(
+                    witness, "SELECT CONNECTION_ID()", ct)));
+                Assert.Equal(0, Convert.ToInt32(await ScalarAsync(
+                    witness, "SELECT COUNT(*) FROM tmp_query_side_effects", ct)));
+                await ExecuteAsync(witness,
+                    "DROP TEMPORARY TABLE tmp_query_side_effects", ct);
+            }
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, target, unsafeSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+            var safe = await tool.ExecuteQuerySql(
+                "SELECT ABS(id) AS safe_value FROM " + database + ".visible_users", ct);
+            Assert.True(safe.Success, safe.Error?.Message);
+            Assert.Equal(7, Convert.ToInt32(Assert.Single(safe.Rows)["safe_value"]));
+        }
+        finally
+        {
+            MySqlConnection.ClearAllPools();
             await ExecuteAsync(admin, "DROP DATABASE " + database, CancellationToken.None);
         }
     }

@@ -587,11 +587,13 @@ module internal RewriteFacadeAdapter =
         | values when values.Count = 0 -> None
         | values -> Some(values |> Seq.toList)
 
-    let private queryPolicy queryMaxRows =
+    let private queryPolicy (policy: SqlExecutionPlanPolicy) =
         let queryRows =
-            if queryMaxRows <= 0 then RowCap.Unlimited
-            else RowCap.MaxRows(PositiveRowCount.create queryMaxRows)
-        { RewritePolicy.safeDefaults with QueryRows = queryRows }
+            if policy.QueryMaxRows <= 0 then RowCap.Unlimited
+            else RowCap.MaxRows(PositiveRowCount.create policy.QueryMaxRows)
+        { RewritePolicy.safeDefaults with
+            QueryRows = queryRows
+            RequireProvenMySqlNativeFunctions = policy.RequireProvenMySqlNativeFunctions }
 
     let private mutationSafety requireWhere allowFullTable =
         if not requireWhere && allowFullTable then MutationSafety.AllowAllRows
@@ -856,7 +858,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(validationContext)
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
-        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy.QueryMaxRows) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null null sql
+        let command = compile source target sourceProfile targetProfile null null validationContext.PolicyVersion (queryPolicy executionPolicy) (allowedTables validationContext.AllowedTables) validationContext.SchemaSnapshot null null sql
         if command.Kind <> SqlStatementKind.Query then
             let error = ArgumentException("CompileQuery requires a SELECT statement.", "sql")
             attachReclassifiedEvidence
@@ -872,7 +874,7 @@ module internal RewriteFacadeAdapter =
         ArgumentNullException.ThrowIfNull(executionPolicy)
         ArgumentException.ThrowIfNullOrWhiteSpace(validationContext.PolicyVersion)
         if String.IsNullOrWhiteSpace(sql) then invalidArg "sql" "SQL text cannot be empty."
-        let queryExecutionPolicy = queryPolicy executionPolicy.QueryMaxRows
+        let queryExecutionPolicy = queryPolicy executionPolicy
         let allowed = allowedTables validationContext.AllowedTables
         let evidenceContext =
             compileEvidenceContext source target sourceProfile targetProfile null null validationContext.PolicyVersion queryExecutionPolicy allowed validationContext.SchemaSnapshot
@@ -1038,7 +1040,7 @@ module internal RewriteFacadeAdapter =
                 null
                 null
                 validationContext.PolicyVersion
-                (queryPolicy executionPolicy.QueryMaxRows)
+                (queryPolicy executionPolicy)
                 (allowedTables validationContext.AllowedTables)
                 validationContext.SchemaSnapshot
                 null
