@@ -36,7 +36,8 @@ try
         case "verify":
         {
             var directory = Option(args, "--directory");
-            var evidence = Governance.Verify(directory, Option(args, "--suite"));
+            var evidence = Governance.Verify(directory, Option(args, "--suite"),
+                requireComplete: Array.IndexOf(args, "--require-complete") >= 0);
             Directory.CreateDirectory(directory);
             File.WriteAllText(Path.Combine(directory, "summary.json"), JsonSerializer.Serialize(evidence, options) + "\n");
             Console.WriteLine(JsonSerializer.Serialize(evidence, options));

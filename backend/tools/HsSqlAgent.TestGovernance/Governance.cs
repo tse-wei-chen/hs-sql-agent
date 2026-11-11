@@ -65,7 +65,8 @@ public static class Governance
                 || !body.Contains("--report-xunit-trx", StringComparison.Ordinal)
                 || !body.Contains($"--results-directory artifacts/test-evidence/{job}", StringComparison.Ordinal)
                 || !body.Contains("HsSqlAgent.TestGovernance", StringComparison.Ordinal)
-                || !body.Contains($"verify --directory artifacts/test-evidence/{job}", StringComparison.Ordinal))
+                || !body.Contains($"verify --directory artifacts/test-evidence/{job}", StringComparison.Ordinal)
+                || !body.Contains("--require-complete", StringComparison.Ordinal))
             {
                 errors.Add($"{job}: missing native MTP TRX/Cobertura collection or validation");
             }
@@ -97,7 +98,11 @@ public static class Governance
         return results.Order(StringComparer.Ordinal).ToArray();
     }
 
-    public static EvidenceReport Verify(string directory, string suite)
+    // Preserve reporting-only callers; strict no-skip evidence is an explicit CI contract.
+    public static EvidenceReport Verify(string directory, string suite) =>
+        Verify(directory, suite, requireComplete: false);
+
+    public static EvidenceReport Verify(string directory, string suite, bool requireComplete)
     {
         if (string.IsNullOrWhiteSpace(suite))
             throw new GovernanceException("An explicit test suite name is required");
@@ -114,12 +119,19 @@ public static class Governance
         var failed = IntAttribute(counters, "failed");
         var notExecuted = IntAttribute(counters, "notExecuted", required: false);
 
-        if (!(total > 0 && executed > 0 && passed > 0 && failed == 0
-              && total >= executed && executed >= passed && notExecuted >= 0))
+        // Never accept contradictory counters, including incomplete accounting
+        // of skipped cases. The legacy reporting API may report genuine skips.
+        if (total <= 0 || executed <= 0 || passed <= 0 || failed != 0
+            || executed != passed || total != (long)executed + notExecuted)
         {
             throw new GovernanceException(
-                $"{suite}: empty or failed test run (total={total}, executed={executed}, passed={passed}, failed={failed})");
+                $"{suite}: empty or failed test run (total={total}, executed={executed}, passed={passed}, failed={failed}, notExecuted={notExecuted})");
         }
+
+        // Required offline CI suites opt into stronger release evidence.
+        if (requireComplete && notExecuted != 0)
+            throw new GovernanceException(
+                $"{suite}: required suite skipped {notExecuted} test case(s); full execution is mandatory");
 
         var coverage = XDocument.Load(ExactlyOne(directory,
             f => Path.GetFileName(f).StartsWith("coverage.cobertura", StringComparison.Ordinal)
