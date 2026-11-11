@@ -233,8 +233,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         var value = await command.ExecuteScalarAsync(cancellationToken);
         return value switch
         {
-            long 0 or int 0 => false,
-            long 1 or int 1 => true,
+            0L or 0 => false,
+            1L or 1 => true,
             _ => throw new InvalidOperationException(
                 "SQLite Query could not attest the physical read-only connection setting.")
         };
