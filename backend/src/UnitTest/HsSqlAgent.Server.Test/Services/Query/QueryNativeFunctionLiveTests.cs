@@ -178,6 +178,16 @@ public sealed class QueryNativeFunctionLiveTests
             var allowed = await limitedTool.ExecuteQuerySql(safeQuery, ct);
             Assert.True(allowed.Success, allowed.Error?.Message);
             Assert.Equal(3, Convert.ToInt32(Assert.Single(allowed.Rows)["id"]));
+            // Empty and null scopes must be equivalent for both privileged
+            // rejection and the legitimate least-privilege reader positive.
+            var emptyReader = await new TypedQueryRuntime().ExecuteAsync(
+                provider, reader, safeQuery, SqlAgentToolType.MsSqlServer,
+                Policy(), emptyScope, ct);
+            Assert.Equal(3, Convert.ToInt32(Assert.Single(emptyReader.Rows)["id"]));
+            var emptyFactsReader = await new TypedQueryRuntime().ExecuteWithFactsAsync(
+                provider, reader, safeQuery, SqlAgentToolType.MsSqlServer,
+                Policy(), emptyScope, ct);
+            Assert.Equal(3, Convert.ToInt32(Assert.Single(emptyFactsReader.Execution.Rows)["id"]));
             var denied = await limitedTool.ExecuteQuerySql(
                 "SELECT id FROM dbo.secret", ct);
             Assert.False(denied.Success,
