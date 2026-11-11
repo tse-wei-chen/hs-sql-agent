@@ -30,7 +30,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/common-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test --suite Common.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/common-test --suite Common.Test --require-complete
       - name: Upload Common.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -77,7 +77,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/infrastructure-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test --suite Infrastructure.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/infrastructure-test --suite Infrastructure.Test --require-complete
       - name: Upload Infrastructure.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -104,7 +104,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/auth-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test --suite Auth.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/auth-test --suite Auth.Test --require-complete
       - name: Upload Auth.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -131,7 +131,7 @@ jobs:
           --coverlet --coverlet-output-format cobertura
           --results-directory artifacts/test-evidence/admin-test
       - name: Require nonempty xUnit TRX and production-code coverage
-        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test --suite Admin.Test
+        run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/admin-test --suite Admin.Test --require-complete
       - name: Upload Admin.Test TRX and instrumented source coverage
         if: always()
         uses: actions/upload-artifact@v4
