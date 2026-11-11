@@ -73,3 +73,63 @@ open.
 MySQL 8.4 reference:
 https://dev.mysql.com/doc/refman/8.4/en/set-transaction.html
 https://dev.mysql.com/doc/refman/8.4/en/commit.html
+
+
+## #575 / #615 — MySQL session TEMPORARY table side effects through Query-only native functions
+
+**Do not extrapolate from the ordinary InnoDB write fence.** MySQL 8.4
+`SET TRANSACTION READ ONLY` permits writes to session-local `TEMPORARY`
+tables. `MEMORY` tables are nontransactional, so their writes may also remain
+visible in the same server session after a `ROLLBACK`. A no-whitelist Query
+key is not independent authorization to execute opaque database functions.
+
+**Initial falsified hypothesis:** a first test-only CI experiment attempted
+to `CREATE TEMPORARY TABLE` from inside a stored function called under
+`READ ONLY`. The native MySQL 8.4 engine returned `Cannot execute statement
+in a READ ONLY transaction` before the application's Query guard was
+exercised. That test failure was **not** counted as a behavioral RED and
+cannot be used as evidence of an exploit.
+
+**Corrected real native experiment:** instead, create the temporary table
+*before* the transaction on the same connection, then call a qualified stored
+function that inserts into the existing temporary table.
+
+1. A real `READ ONLY` MySQL 8.4 native transaction invokes
+   `database.temp_side_effect(id)` and writes one row to a
+   `TEMPORARY ENGINE=MEMORY` table.
+2. The session still sees that row after `ROLLBACK` (independent positive
+   proof of a nontransactional physical effect).
+3. The official MySql.Data provider's real pool with explicitly disabled
+   `ConnectionReset` and pool size 1 reuses the same `CONNECTION_ID()`
+   with that temporary table still present.
+4. The published Query-only MCP tool, with no Table Whitelist, originally
+   accepted the native function and did not refuse the unsafe Query.
+   [Test-only RED CI run #42998106503](https://github.com/tse-wei-chen/hs-sql-agent/actions/runs/42998106503)
+   fails at the concrete published-MCP safety assertion **after** all the
+   native control and same-session checks passed; **2 other mandatory
+   MySQL native-function integration cases passed, 0 skipped**.
+5. `RewritePipeline.finishQueryBound` now selects the existing closed
+   `RejectOpaqueNativeFunctions(MySQL)` policy *also* when no table
+   whitelist is supplied. A qualified/quoted MySQL native function
+   rejects at the Policy stage with
+   `SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN`, before any SQL is executed.
+   Ordinary unqualified core built-ins remain permitted, and this does
+   not change the SQL dialect parser or six-provider grammar.
+6. A unit contract covers the compiler and compiler-with-facts paths,
+   while the original SQL Server unrestricted native-function behavior
+   remains unchanged. The dedicated live MySQL 8.4 CI validates the
+   compiled published MCP path with real temp session effects.
+
+**Boundary:** This selectively refuses **qualified/quoted** native
+MySQL function names on no-whitelist Query. Unknown/unqualified function
+resolution, external native UDFs, routines reached by views or different
+execution identities, functions that open another connection and any
+privileged definer effects remain unproven. It is not a general MySQL
+read-only sandbox or permission proof. Hosts must use database accounts
+with least privilege and restrict install/EXECUTE of unsafe native
+functions. #575 remains open and 3.1.0 publication stays blocked.
+
+References:
+- https://dev.mysql.com/doc/refman/8.4/en/commit.html
+- https://dev.mysql.com/doc/refman/8.4/en/create-temporary-table.html
+- https://dev.mysql.com/doc/connector-net/en/connector-net-8-0-connection-options.html
