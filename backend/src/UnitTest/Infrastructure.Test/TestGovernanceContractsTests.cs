@@ -90,6 +90,15 @@ public sealed class TestGovernanceContractsTests
     }
 
     [Fact]
+    public void OwnershipGate_RejectsMissingMandatoryZeroSkipFlag()
+    {
+        using var fixture = new TemporaryRepository();
+        fixture.CreateProjectsAndWorkflow(omitStrict: true);
+        var error = Assert.Throws<GovernanceException>(() => Governance.Audit(fixture.Root));
+        Assert.Contains("common-test: missing", error.Message);
+    }
+
+    [Fact]
     public void OwnershipGate_RejectsNoOpAssertTrueTrue()
     {
         using var fixture = new TemporaryRepository();
@@ -148,7 +157,7 @@ public sealed class TestGovernanceContractsTests
                 $"<coverage lines-covered=\"{covered}\" lines-valid=\"{valid}\" line-rate=\"0.5\" />");
         }
 
-        public void CreateProjectsAndWorkflow(bool skipCommon = false)
+        public void CreateProjectsAndWorkflow(bool skipCommon = false, bool omitStrict = false)
         {
             string[] jobs = ["common-test", "infrastructure-test", "auth-test", "admin-test"];
             string[] projects = ["Common.Test", "Infrastructure.Test", "Auth.Test", "Admin.Test"];
@@ -161,7 +170,8 @@ public sealed class TestGovernanceContractsTests
                 workflow += $"  {jobs[i]}:\n    steps:\n";
                 if (!skipCommon || i > 0)
                     workflow += $"      - run: dotnet test --project {path} --report-xunit-trx --coverlet --results-directory artifacts/test-evidence/{jobs[i]}\n";
-                workflow += $"      - run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/{jobs[i]} --suite {projects[i]}\n";
+                var strict = omitStrict && i == 0 ? "" : " --require-complete";
+                workflow += $"      - run: dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- verify --directory artifacts/test-evidence/{jobs[i]} --suite {projects[i]}{strict}\n";
             }
             Write(".github/workflows/test.yml", workflow);
         }
