@@ -77,6 +77,150 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task AtomicSqliteRefusal_AfterFirstPhysicalInsert_RollsBackBothChanges()
+    {
+        var file = Path.Combine(Path.GetTempPath(),
+            "hsa-refused-atomic-" + Guid.NewGuid().ToString("N") + ".db");
+        var cs = "Data Source=" + file + ";Pooling=False";
+        try
+        {
+            string version;
+            await using (var setup = new SqliteConnection(cs))
+            {
+                await setup.OpenAsync(TestContext.Current.CancellationToken);
+                version = setup.ServerVersion.Trim();
+                await using var ddl = setup.CreateCommand();
+                ddl.CommandText = """
+                    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+                    CREATE TRIGGER ignore_second BEFORE INSERT ON users
+                    WHEN NEW.id = 2
+                    BEGIN
+                        SELECT RAISE(IGNORE);
+                    END;
+                    """;
+                await ddl.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            var connectionFactory = new SqliteConnectionFactory();
+            var preview = new DmlCoordinator(connectionFactory);
+            var first = CreateInsertPlan(1L, "Alice", "refusal-rollback-v1");
+            var second = CreateInsertPlan(2L, "Bob", "refusal-rollback-v1");
+            var firstPreview = await preview.PreviewAsync(cs, first,
+                ApprovalContextFingerprint, TestContext.Current.CancellationToken, version);
+            var secondPreview = await preview.PreviewAsync(cs, second,
+                ApprovalContextFingerprint, TestContext.Current.CancellationToken, version);
+
+            // Statement 1 inserts a real target row; the SQLite BEFORE INSERT
+            // trigger ignores statement 2, producing 0 rather than approved 1.
+            // This is a normal refusal path, not an exception-driven rollback.
+            var result = await new DmlAtomicTransactionCoordinator(connectionFactory)
+                .CommitAsync(cs, [first, second], [firstPreview, secondPreview],
+                    TestContext.Current.CancellationToken, version);
+            Assert.False(result.Committed);
+            Assert.Equal(0, result.AffectedRows);
+            Assert.Contains("statement 2", result.Message, StringComparison.OrdinalIgnoreCase);
+
+            await using var witness = new SqliteConnection(cs);
+            await witness.OpenAsync(TestContext.Current.CancellationToken);
+            await using var count = witness.CreateCommand();
+            count.CommandText = "SELECT count(*) FROM users";
+            Assert.Equal(0L, Convert.ToInt64(
+                await count.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+        }
+        finally
+        {
+            if (File.Exists(file)) File.Delete(file);
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitRefusalRollback_UnacknowledgedNativeRollbackMustNotReturnSafeFalse()
+    {
+        // This is the existing ordinary (non-exceptional) refusal branch of
+        // atomic DML: even a deliberate row-set rejection must not report a
+        // safe rollback when the native driver never acknowledges ROLLBACK.
+        var transaction = new ProbedRollbackTransaction(ignoreCancellation: true);
+        Task<DmlCommitResult>? operation = null;
+        try
+        {
+            operation = InvokeExplicitRefusalRollback(
+                transaction, TestContext.Current.CancellationToken);
+            var unknown = await Assert.ThrowsAsync<DmlRollbackOutcomeUnknownException>(
+                () => operation.WaitAsync(TimeSpan.FromSeconds(14),
+                    TestContext.Current.CancellationToken));
+            Assert.IsAssignableFrom<OperationCanceledException>(unknown.RollbackFailure);
+            Assert.Equal(1, transaction.RollbackCalls);
+            Assert.True(transaction.NativeRollbackToken.CanBeCanceled);
+            Assert.True(transaction.NativeRollbackToken.IsCancellationRequested);
+            Assert.Contains("replay", unknown.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            // Release the deliberately blocked fake even on RED, so CI never
+            // leaks a task waiting for an ACK. Don't let its final exception
+            // overwrite the assertion failure.
+            transaction.AcknowledgeRollback();
+            if (operation is not null)
+            {
+                try { await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitRefusalRollback_AlreadyCancelledRequestStillCleansUp()
+    {
+        using var request = new CancellationTokenSource();
+        request.Cancel();
+        var transaction = new ProbedRollbackTransaction(ignoreCancellation: false);
+        var result = await InvokeExplicitRefusalRollback(transaction, request.Token);
+        Assert.False(result.Committed);
+        Assert.Contains("rolled back", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, transaction.RollbackCalls);
+        Assert.True(transaction.NativeRollbackToken.CanBeCanceled);
+        Assert.NotEqual(request.Token, transaction.NativeRollbackToken);
+        Assert.False(transaction.NativeRollbackToken.IsCancellationRequested);
+    }
+
+    private static Task<DmlCommitResult> InvokeExplicitRefusalRollback(
+        DbTransaction transaction, CancellationToken requestToken)
+    {
+        var method = typeof(DmlAtomicTransactionCoordinator).GetMethod(
+            "RollbackAsync",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return Assert.IsAssignableFrom<Task<DmlCommitResult>>(method.Invoke(null,
+            [transaction, 1, "approved row set changed", requestToken]));
+    }
+
+    private sealed class ProbedRollbackTransaction(bool ignoreCancellation) : DbTransaction
+    {
+        private readonly TaskCompletionSource _ack =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RollbackCalls { get; private set; }
+        public CancellationToken NativeRollbackToken { get; private set; }
+        public override IsolationLevel IsolationLevel => IsolationLevel.Serializable;
+        protected override DbConnection DbConnection => throw new NotSupportedException();
+        public override void Commit() => throw new NotSupportedException();
+        public override void Rollback() => throw new NotSupportedException();
+
+        public override Task RollbackAsync(CancellationToken cancellationToken = default)
+        {
+            RollbackCalls++;
+            NativeRollbackToken = cancellationToken;
+            return ignoreCancellation
+                ? _ack.Task
+                : cancellationToken.IsCancellationRequested
+                    ? Task.FromCanceled(cancellationToken)
+                    : Task.CompletedTask;
+        }
+
+        public void AcknowledgeRollback() => _ack.TrySetResult();
+    }
+
     [Theory]
     [InlineData("swapped")]
     [InlineData("row-count")]

@@ -271,7 +271,7 @@ public sealed class DmlCoordinator(
 
             if (plan.MaxAffectedRows > 0 && currentRows.Count > plan.MaxAffectedRows)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
                 return new DmlCommitResult(
                     false,
                     0,
@@ -283,7 +283,7 @@ public sealed class DmlCoordinator(
             if (plan.ApprovalMode is DmlApprovalMode.InsertConflictDoNothing or DmlApprovalMode.InsertConflictDoUpdate or DmlApprovalMode.SqlServerMergeNotMatchedInsert
                 && currentRows.Count > 1)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
                 return new DmlCommitResult(false, 0,
                     "Native conflict skip cancelled: target key is no longer uniquely identifiable.");
             }
@@ -300,7 +300,7 @@ public sealed class DmlCoordinator(
                     approvedChallenge.RowSetFingerprint,
                     StringComparison.Ordinal))
             {
-                await transaction.RollbackAsync(cancellationToken);
+                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
                 return new DmlCommitResult(
                     false,
                     0,
@@ -323,7 +323,7 @@ public sealed class DmlCoordinator(
 
             if (execution.AffectedRows != approvedChallenge.AffectedRows)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
                 return new DmlCommitResult(
                     false,
                     0,
@@ -346,6 +346,14 @@ public sealed class DmlCoordinator(
                 ReturnedRows = execution.ReturnedRows
             };
             return acknowledgedCommit;
+        }
+        catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+        {
+            // An explicit refusal already attempted bounded cleanup. NEVER
+            // issue a second blind ROLLBACK after the native ACK was lost.
+            // Preserve its typed non-replayable uncertainty across disposal.
+            primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+            throw;
         }
         catch (Exception failure)
         {
@@ -488,7 +496,7 @@ public sealed class DmlCoordinator(
 
         if (execution.AffectedRows != approvedChallenge.AffectedRows)
         {
-            await transaction.RollbackAsync(cancellationToken);
+            await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
             return new DmlCommitResult(
                 false,
                 0,

@@ -76,6 +76,20 @@ internal static class DmlTransactionFailureRecovery
             throw new DmlRollbackOutcomeUnknownException(failure, rollbackFailure);
     }
 
+    // Ordinary commit-time approval refusal is still a transaction cleanup
+    // boundary. Return Committed=false only after native ROLLBACK was actually
+    // acknowledged. Request cancellation never cancels the cleanup budget.
+    // Failure is terminal and non-replayable: a timed-out ROLLBACK may still
+    // execute later, so do not interpret it as a confirmed rollback.
+    internal static async Task RollbackForRefusalAsync(DbTransaction transaction)
+    {
+        var refusal = new InvalidOperationException(
+            "Approved DML was refused during commit-time evidence revalidation. " +
+            "Native ROLLBACK acknowledgement is required before reporting a safe refusal.");
+        await RollbackWithoutMaskingAsync(transaction, refusal);
+        ThrowIfRollbackUnconfirmed(refusal);
+    }
+
     internal static async Task RollbackWithoutMaskingAsync(
         DbTransaction transaction,
         Exception originalFailure)

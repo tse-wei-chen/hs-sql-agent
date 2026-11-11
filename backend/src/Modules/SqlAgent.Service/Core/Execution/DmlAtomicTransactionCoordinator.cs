@@ -219,6 +219,13 @@ internal sealed class DmlAtomicTransactionCoordinator(
             };
             return acknowledgedCommit;
         }
+        catch (DmlRollbackOutcomeUnknownException unconfirmedRollback)
+        {
+            // A refused batch already issued one bounded ROLLBACK. Do not
+            // send a second mutation-control command if its ACK is unknown.
+            primaryFailure = ExceptionDispatchInfo.Capture(unconfirmedRollback);
+            throw;
+        }
         catch (Exception failure)
         {
             await DmlTransactionFailureRecovery.RollbackWithoutMaskingAsync(transaction, failure);
@@ -258,7 +265,9 @@ internal sealed class DmlAtomicTransactionCoordinator(
         string reason,
         CancellationToken cancellationToken)
     {
-        await transaction.RollbackAsync(cancellationToken);
+        // A rejected approved batch is not a confirmed rollback until the
+        // target acknowledges it. The client's request token may be canceled.
+        await DmlTransactionFailureRecovery.RollbackForRefusalAsync(transaction);
         return new DmlCommitResult(
             false,
             0,
