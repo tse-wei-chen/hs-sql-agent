@@ -78,6 +78,63 @@ public sealed class DmlAtomicTransactionCoordinatorTests
     }
 
     [Fact]
+    public async Task AtomicSqliteRefusal_AfterFirstPhysicalInsert_RollsBackBothChanges()
+    {
+        var file = Path.Combine(Path.GetTempPath(),
+            "hsa-refused-atomic-" + Guid.NewGuid().ToString("N") + ".db");
+        var cs = "Data Source=" + file + ";Pooling=False";
+        try
+        {
+            string version;
+            await using (var setup = new SqliteConnection(cs))
+            {
+                await setup.OpenAsync(TestContext.Current.CancellationToken);
+                version = setup.ServerVersion.Trim();
+                await using var ddl = setup.CreateCommand();
+                ddl.CommandText = """
+                    CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+                    CREATE TRIGGER ignore_second BEFORE INSERT ON users
+                    WHEN NEW.id = 2
+                    BEGIN
+                        SELECT RAISE(IGNORE);
+                    END;
+                    """;
+                await ddl.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            var connectionFactory = new SqliteConnectionFactory();
+            var preview = new DmlCoordinator(connectionFactory);
+            var first = CreateInsertPlan(1L, "Alice", "refusal-rollback-v1");
+            var second = CreateInsertPlan(2L, "Bob", "refusal-rollback-v1");
+            var firstPreview = await preview.PreviewAsync(cs, first,
+                ApprovalContextFingerprint, TestContext.Current.CancellationToken, version);
+            var secondPreview = await preview.PreviewAsync(cs, second,
+                ApprovalContextFingerprint, TestContext.Current.CancellationToken, version);
+
+            // Statement 1 inserts a real target row; the SQLite BEFORE INSERT
+            // trigger ignores statement 2, producing 0 rather than approved 1.
+            // This is a normal refusal path, not an exception-driven rollback.
+            var result = await new DmlAtomicTransactionCoordinator(connectionFactory)
+                .CommitAsync(cs, [first, second], [firstPreview, secondPreview],
+                    TestContext.Current.CancellationToken, version);
+            Assert.False(result.Committed);
+            Assert.Equal(0, result.AffectedRows);
+            Assert.Contains("statement 2", result.Message, StringComparison.OrdinalIgnoreCase);
+
+            await using var witness = new SqliteConnection(cs);
+            await witness.OpenAsync(TestContext.Current.CancellationToken);
+            await using var count = witness.CreateCommand();
+            count.CommandText = "SELECT count(*) FROM users";
+            Assert.Equal(0L, Convert.ToInt64(
+                await count.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+        }
+        finally
+        {
+            if (File.Exists(file)) File.Delete(file);
+        }
+    }
+
+    [Fact]
     public async Task ExplicitRefusalRollback_UnacknowledgedNativeRollbackMustNotReturnSafeFalse()
     {
         // This is the existing ordinary (non-exceptional) refusal branch of
