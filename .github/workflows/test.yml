@@ -575,6 +575,20 @@ jobs:
           grep -Eq 'skipped:[[:space:]]*0([[:space:]]|$)' /tmp/hsa-native-postgres-commit-disconnect.log
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
+      - name: Require real PostgreSQL 16 post-COMMIT wire EOF and durable Fence Witness
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj \
+            --filter 'FullyQualifiedName~DmlNativePostgresPostCommitAckLossTests' \
+            | tee /tmp/hsa-postgres-postcommit-wire-eof.log
+          # An unmatched test filter can exit zero. The physical target
+          # transaction and proxy must run: exactly 1 pass, 0 skip/fail.
+          grep -Eq 'succeeded:[[:space:]]*1([[:space:]]|$)' /tmp/hsa-postgres-postcommit-wire-eof.log
+          grep -Eq 'failed:[[:space:]]*0([[:space:]]|$)' /tmp/hsa-postgres-postcommit-wire-eof.log
+          grep -Eq 'skipped:[[:space:]]*0([[:space:]]|$)' /tmp/hsa-postgres-postcommit-wire-eof.log
+        env:
+          TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify PostgreSQL 16 physical Custom DML 24-way load and cancellation
         run: >
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
@@ -606,7 +620,7 @@ jobs:
         env:
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Run remaining SQL service tests
-        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests'
+        run: dotnet test --project backend/src/UnitTest/SqlAgent.Test/SqlAgent.Test.csproj --filter 'FullyQualifiedName~SqlAgent.Test.Services&FullyQualifiedName!~GrammarMatrixTests&FullyQualifiedName!~MutationMatrixTests&FullyQualifiedName!~NegativeBindingPolicyMatrixTests&FullyQualifiedName!~NegativeTargetCapabilityMatrixTests&FullyQualifiedName!~NegativeTablePolicyMatrixTests&FullyQualifiedName!~SqlGrammarBombardmentCoverageTests&FullyQualifiedName!~DmlTargetFenceSqlServerIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerLiveDdlParityTests&FullyQualifiedName!~SqlCoreSqlServerApplyLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithMutationCteLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithInsertSelectLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerWithJoinedMutationSingletonLiveParityTests&FullyQualifiedName!~SqlCoreSqlServerLiveUniqueKeyAttestationTests&FullyQualifiedName!~SqlCoreSqlServerCompositeCteLiveProofTests&FullyQualifiedName!~DmlSqlServerInsertSelectApprovalTests&FullyQualifiedName!~SqlCoreSqlServerMergeHoldLockLiveTests&FullyQualifiedName!~SqlCoreFirebirdLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleLiveDdlParityTests&FullyQualifiedName!~SqlCoreOracleInboundForeignKeyLiveParityTests&FullyQualifiedName!~SqlCoreOracleRenameConstraintLiveParityTests&FullyQualifiedName!~SqlCoreOracle26JoinedMutationLiveParityTests&FullyQualifiedName!~SqlCoreOracleLateralDerived121LiveParityTests&FullyQualifiedName!~SqlCoreOracleApplyLiveParityTests&FullyQualifiedName!~SqlCoreFilteredCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreFilteredDistinctCountSqlServerLiveTests&FullyQualifiedName!~SqlCoreSqlServerWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreOracleWindowNullTreatmentLiveTests&FullyQualifiedName!~SqlCoreFirebirdInt128ExactNumericLiveParityTests&FullyQualifiedName!~DmlNativePostgresPostCommitAckLossTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test"
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test"
