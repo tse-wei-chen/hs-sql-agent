@@ -265,10 +265,11 @@ public sealed class SqlitePhysicalHostInjectionTests
     // evidence: the callback can execute DML on the SAME open SQLite handle.
     // The raw native control proves this is a real write, not a mocked executor.
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
     public async Task QueryOnlyWithoutWhitelist_CannotWriteThroughSameConnectionSqliteCallback(
-        bool withFacts)
+        bool withFacts, bool publishedMcp)
     {
         await WithDatabaseAsync(async connectionString =>
         {
@@ -313,20 +314,34 @@ public sealed class SqlitePhysicalHostInjectionTests
             Assert.Equal(0, await CountRowsWithIdAsync(connectionString, 987, ct));
 
             var before = await PhysicalSnapshotAsync(connectionString);
-            var error = await Record.ExceptionAsync(async () =>
+            if (publishedMcp)
             {
-                if (withFacts)
-                    await runtime.ExecuteWithFactsAsync(
-                        provider.Object, connectionString, sql,
-                        SqlAgentToolType.Sqlite, ReadPolicy(),
-                        allowedTables: null, cancellationToken: ct);
-                else
-                    await runtime.ExecuteAsync(
-                        provider.Object, connectionString, sql,
-                        SqlAgentToolType.Sqlite, ReadPolicy(),
-                        allowedTables: null, cancellationToken: ct);
-            });
-            Assert.NotNull(error);
+                // Published Query-only MCP uses the same physical runtime
+                // without a table whitelist, not merely a direct CLR call.
+                var response = await CreateTool(
+                    connectionString, provider.Object, unrestrictedQuery: true)
+                    .ExecuteQuerySql(sql, ct);
+                Assert.False(response.Success,
+                    "Published Query-only MCP executed a native SQLite callback write.");
+                Assert.Empty(response.Rows);
+            }
+            else
+            {
+                var error = await Record.ExceptionAsync(async () =>
+                {
+                    if (withFacts)
+                        await runtime.ExecuteWithFactsAsync(
+                            provider.Object, connectionString, sql,
+                            SqlAgentToolType.Sqlite, ReadPolicy(),
+                            allowedTables: null, cancellationToken: ct);
+                    else
+                        await runtime.ExecuteAsync(
+                            provider.Object, connectionString, sql,
+                            SqlAgentToolType.Sqlite, ReadPolicy(),
+                            allowedTables: null, cancellationToken: ct);
+                });
+                Assert.NotNull(error);
+            }
             Assert.Equal(0, await CountRowsWithIdAsync(connectionString, 987, ct));
             Assert.Equal(before, await PhysicalSnapshotAsync(connectionString));
 
@@ -413,13 +428,16 @@ public sealed class SqlitePhysicalHostInjectionTests
         QueryTimeoutSeconds = 10
     };
 
-    private static SqlAgentTool CreateTool(string connectionString, ISqlProvider? overrideProvider = null)
+    private static SqlAgentTool CreateTool(
+        string connectionString, ISqlProvider? overrideProvider = null,
+        bool unrestrictedQuery = false)
     {
         var context = new DefaultHttpContext();
         context.Items[McpContextItemKeys.SqlProvider] = "Sqlite";
         context.Items[McpContextItemKeys.SqlConnectionString] = connectionString;
         context.Items[McpContextItemKeys.AllowedTools] = "execute_query_sql";
-        context.Items[McpContextItemKeys.TableWhitelist] = "main.users";
+        context.Items[McpContextItemKeys.TableWhitelist] =
+            unrestrictedQuery ? string.Empty : "main.users";
         context.Items[McpContextItemKeys.AccessKeyId] = 7;
         context.Items[McpContextItemKeys.DbManagementId] = 11;
         context.Items[McpContextItemKeys.DatabaseName] = "main";
