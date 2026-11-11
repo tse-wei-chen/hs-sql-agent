@@ -144,7 +144,14 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         IReadOnlySet<string>? effectiveTables) =>
         new(
             securityPolicy.QueryMaxRows,
-            provider == SqlAgentToolType.MySQL && effectiveTables is null
+            effectiveTables is null
+                && provider is (SqlAgentToolType.MySQL
+                    or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
+                // All three use a native read-only Query transaction, but
+                // cannot prove purity of an arbitrary schema-qualified native
+                // routine: MySQL TEMPORARY writes and Oracle/Firebird
+                // autonomous or external side effects escape that guarantee.
+                // Host-only typed policy; standalone SqlCore grammar unchanged.
                 ? SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted
                 : SqlQueryNativeFunctionPolicy.PreserveCompilerGrammar);
 
