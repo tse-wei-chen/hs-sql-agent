@@ -599,14 +599,16 @@ jobs:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify PostgreSQL 16 physical Custom DML 24-way load and cancellation
         run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~PostgresPhysicalLoadIntegrationTests'
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~PostgresPhysicalLoadIntegrationTests'
         env:
           TEST_POSTGRES_CONNECTION: "Host=localhost;Port=5432;Database=test;Username=test;Password=test;Pooling=false"
       - name: Verify MySQL 8.4 physical Custom DML 24-way load and cancellation
         run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~MySqlPhysicalLoadIntegrationTests'
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~MySqlPhysicalLoadIntegrationTests'
         env:
           TEST_MYSQL_CONNECTION: "Server=localhost;Port=3306;Database=test;User=root;Password=test;Pooling=false"
       - name: Verify MySQL 8.4 real physical DML lost COMMIT ROLLBACK acknowledgements and Custom MCP Audit
@@ -702,8 +704,9 @@ jobs:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server 2022 physical Custom DML 24-way load and cancellation
         run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~SqlServerPhysicalLoadIntegrationTests'
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~SqlServerPhysicalLoadIntegrationTests'
         env:
           TEST_SQLSERVER_CONNECTION: "Server=localhost,1433;Database=master;User Id=sa;Password=Strong_Password_123!;TrustServerCertificate=True;Encrypt=False;Pooling=False;Connect Timeout=5"
       - name: Verify SQL Server physical native-function Query whitelist fence
@@ -818,8 +821,9 @@ jobs:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
       - name: Verify Firebird 5 physical Custom DML 24-way load and cancellation
         run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~FirebirdPhysicalLoadIntegrationTests'
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~FirebirdPhysicalLoadIntegrationTests'
         env:
           TEST_FIREBIRD_CONNECTION: "DataSource=localhost;Port=3050;Database=/var/lib/firebird/data/sqlcore_p6.fdb;User=SYSDBA;Password=Strong_Password_123!;Charset=UTF8;Dialect=3;Pooling=false"
       - name: Verify Firebird 5 physical native-function Query whitelist fence
@@ -873,8 +877,9 @@ jobs:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify Oracle 26ai physical Custom DML 24-way load and cancellation
         run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~OraclePhysicalLoadIntegrationTests'
+          bash .github/scripts/require-physical-test-cases.sh 6
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~OraclePhysicalLoadIntegrationTests'
         env:
           TEST_ORACLE_CONNECTION: "User Id=sqlcore;Password=Strong_Password_123!;Data Source=localhost:1521/FREEPDB1;Pooling=false;Connection Timeout=5"
       - name: Verify Oracle 26ai physical native-function Query whitelist fence
