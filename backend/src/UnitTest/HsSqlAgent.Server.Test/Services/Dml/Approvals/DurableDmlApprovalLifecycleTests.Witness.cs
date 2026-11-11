@@ -379,6 +379,94 @@ public sealed partial class DurableDmlApprovalLifecycleTests
         Assert.False(result.MatchingCommitWitness);
     }
 
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("revoked")]
+    [InlineData("wrong-fingerprint")]
+    public async Task FencedApproval_IndependentWitnessCannotConfirmWithoutMatchingAdmission(
+        string fenceScenario)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ct = TestContext.Current.CancellationToken;
+        var witness = new RelationalDmlTargetCommitWitness();
+        var fence = new RelationalDmlTargetExecutionFence();
+        var approval = await PersistPendingInsertAsync(fixture,
+            new TypedDmlRuntime(targetCommitWitness: witness, targetExecutionFence: fence));
+
+        await using var scope = fixture.Services.CreateAsyncScope();
+        var admin = scope.ServiceProvider.GetRequiredService<AdminContext>();
+        var state = await admin.DmlApprovalRequests.SingleAsync(ct);
+        Assert.Equal(DurableDmlApprovalLifecycle.TargetFenceProtocol,
+            DurableDmlResumePayloadCodec.Deserialize(
+                scope.ServiceProvider.GetRequiredService<ICryptoService>()
+                    .DecryptText(state.ProtectedExecutionPayload,
+                        "dml-payload:" + approval.RequestId)!).FenceProtocol);
+        state.Status = "OutcomeUnknown";
+        state.Reason = "Native COMMIT reply unavailable.";
+        await admin.SaveChangesAsync(ct);
+        admin.ChangeTracker.Clear();
+
+        // Deliberately prepare a real on-disk SQLite target with one forged
+        // committed witness but NO valid target-enlisted fence admission.
+        // A witness alone must not be promoted to a fenced COMMIT proof.
+        await using (var target = new SqliteConnection(fixture.TargetConnectionString))
+        {
+            await target.OpenAsync(ct);
+            await using (var ddl = target.CreateCommand())
+            {
+                ddl.CommandText = """
+                    CREATE TABLE HS_SQL_AGENT_DML_WITNESS (
+                        REQUEST_ID VARCHAR(64) PRIMARY KEY,
+                        EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL);
+                    CREATE TABLE HS_SQL_AGENT_DML_FENCE (
+                        REQUEST_ID VARCHAR(64) PRIMARY KEY,
+                        EVIDENCE_FINGERPRINT VARCHAR(64) NOT NULL,
+                        ENTRY_KIND VARCHAR(8) NOT NULL);
+                    """;
+                await ddl.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var seedWitness = target.CreateCommand())
+            {
+                seedWitness.CommandText = """
+                    INSERT INTO HS_SQL_AGENT_DML_WITNESS
+                        (REQUEST_ID, EVIDENCE_FINGERPRINT)
+                    VALUES (@request, @evidence)
+                    """;
+                seedWitness.Parameters.AddWithValue("@request", approval.RequestId);
+                seedWitness.Parameters.AddWithValue("@evidence", state.EvidenceFingerprint);
+                await seedWitness.ExecuteNonQueryAsync(ct);
+            }
+
+            if (fenceScenario != "missing")
+            {
+                await using var seedFence = target.CreateCommand();
+                seedFence.CommandText = """
+                    INSERT INTO HS_SQL_AGENT_DML_FENCE
+                        (REQUEST_ID, EVIDENCE_FINGERPRINT, ENTRY_KIND)
+                    VALUES (@request, @evidence, @kind)
+                    """;
+                seedFence.Parameters.AddWithValue("@request", approval.RequestId);
+                seedFence.Parameters.AddWithValue("@evidence",
+                    fenceScenario == "wrong-fingerprint"
+                        ? new string('F', 64) : state.EvidenceFingerprint);
+                seedFence.Parameters.AddWithValue("@kind",
+                    fenceScenario == "revoked" ? "Revoked" : "Admitted");
+                await seedFence.ExecuteNonQueryAsync(ct);
+            }
+        }
+
+        // RED on develop: the independent inspector only reads the matching
+        // witness and reports CommittedWitnessMatch for all three cases.
+        var inspection = fixture.CreateWitnessInspection(scope.ServiceProvider, witness);
+        var result = await inspection.InspectAsync(approval.RequestId, ct);
+        Assert.NotNull(result);
+        Assert.False(result.MatchingCommitWitness,
+            "A fenced approval requires BOTH a matching Witness and a committed Admitted fence row.");
+        Assert.NotEqual("CommittedWitnessMatch", result.WitnessStatus);
+        Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+    }
+
     private sealed class CallbackWitness(Func<Task<string?>> callback) : IDmlTargetCommitWitness
     {
         public Task WriteAsync(System.Data.Common.DbConnection connection,
