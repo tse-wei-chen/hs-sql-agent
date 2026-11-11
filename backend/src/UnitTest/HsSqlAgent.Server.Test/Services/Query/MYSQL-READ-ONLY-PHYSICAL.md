@@ -136,3 +136,35 @@ References:
 - https://dev.mysql.com/doc/refman/8.4/en/commit.html
 - https://dev.mysql.com/doc/refman/8.4/en/create-temporary-table.html
 - https://dev.mysql.com/doc/connector-net/en/connector-net-8-0-connection-options.html
+
+
+## #575 / #619 — Unqualified MySQL stored-function resolution: pre-existing fail-closed proof
+
+A new real MySQL 8.4 test extension uses the **same** stored function, durable
+first-party MySql.Data pool and `TEMPORARY ENGINE=MEMORY` table as #615.
+An independently executed **unqualified** `temp_side_effect(id)` under native
+`SET TRANSACTION READ ONLY` writes the session's existing TEMPORARY table;
+the row survives native `ROLLBACK`. This is the physical attack positive
+control and proves that the unqualified name resolves to an effectful function
+in the active database, not a made-up compile-only example.
+
+On the published Query-only MCP tool with no Table Whitelist, that unqualified
+call **already failed closed**. A test-only run initially expected the CLR
+runtime to throw the narrower Policy exception
+`UnauthorizedAccessException` and therefore failed **because the actual
+pre-existing F# Normalization rejection is `SqlCompilationException`**:
+`Function 'TEMP_SIDE_EFFECT' is not registered for source dialect MySQL;
+normalization remains fail-closed.` See
+[run 43021274561](https://github.com/tse-wei-chen/hs-sql-agent/actions/runs/43021274561).
+**This was not a security RED and no runtime/compiler policy fix is warranted.**
+The corrected test asserts a typed normalization rejection in **both CLR
+Query and QueryWithFacts entrypoints**, MCP failure/no rows and independent
+post-call physical temp-row count zero. It also retains a real benign
+`ABS(id)` positive Query test.
+
+The assurance is bounded: unregistered *unqualified stored-function names*
+fail during the F# normalization used by these Host Query entrypoints; it
+does not certify that every registered or syntax-special unqualified function
+has no effects, nor that a function introduced through a view, a different
+execution identity or an external connection is restricted. No claim of a
+general-purpose native UDF sandbox is made.

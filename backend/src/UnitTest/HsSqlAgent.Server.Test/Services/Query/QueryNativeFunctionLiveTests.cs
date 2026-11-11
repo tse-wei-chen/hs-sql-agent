@@ -601,6 +601,12 @@ public sealed class QueryNativeFunctionLiveTests
             var unsafeSql = "SELECT " + database +
                 ".temp_side_effect(id) AS affected FROM " +
                 database + ".visible_users";
+            // Unqualified calls resolve to stored functions in the active
+            // database too. Unlike qualified names, today's native-identifier
+            // safety restriction does not inspect these opaque functions.
+            var unqualifiedSql =
+                "SELECT temp_side_effect(id) AS affected FROM " +
+                database + ".visible_users";
             const string createTemp =
                 "CREATE TEMPORARY TABLE tmp_query_side_effects " +
                 "(id INT PRIMARY KEY) ENGINE=MEMORY";
@@ -614,7 +620,7 @@ public sealed class QueryNativeFunctionLiveTests
             {
                 await using var command = setup.CreateCommand();
                 command.Transaction = transaction;
-                command.CommandText = unsafeSql;
+                command.CommandText = unqualifiedSql;
                 Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
                 command.CommandText = "SELECT COUNT(*) FROM tmp_query_side_effects";
                 Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync(ct)));
@@ -658,6 +664,13 @@ public sealed class QueryNativeFunctionLiveTests
             Assert.False(denied.Success,
                 "Query-only MCP admitted a native function writing to a pooled session TEMPORARY table.");
             Assert.Empty(denied.Rows);
+            // RED: an unqualified stored function is just as effectful in the
+            // real MySQL 8.4 Query-only pooled READ ONLY transaction. This
+            // must be rejected BEFORE execution, not merely rolled back.
+            var unqualifiedDenied = await tool.ExecuteQuerySql(unqualifiedSql, ct);
+            Assert.False(unqualifiedDenied.Success,
+                "Query-only MySQL admitted an unqualified stored function that mutates a pooled TEMPORARY table.");
+            Assert.Empty(unqualifiedDenied.Rows);
             await using (var witness = new MySqlConnection(pooled))
             {
                 await witness.OpenAsync(ct);
@@ -673,6 +686,25 @@ public sealed class QueryNativeFunctionLiveTests
                 new TypedQueryRuntime().ExecuteAsync(
                     provider, target, unsafeSql, SqlAgentToolType.MySQL,
                     Policy(), allowedTables: null, ct));
+            // This is an existing *compiler* fail-closed guarantee, not a
+            // new Host Policy rejection: unknown unqualified function names
+            // cannot normalize to a modeled MySQL function. Verify both
+            // physical CLR entrypoints fail before reaching the database.
+            var directRejection = await Assert.ThrowsAsync<SqlCompilationException>(() =>
+                new TypedQueryRuntime().ExecuteAsync(
+                    provider, target, unqualifiedSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+            Assert.Contains("not registered for source dialect MySQL",
+                directRejection.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(directRejection.Diagnostic);
+            var factsRejection = await Assert.ThrowsAsync<SqlCompilationException>(() =>
+                new TypedQueryRuntime().ExecuteWithFactsAsync(
+                    provider, target, unqualifiedSql, SqlAgentToolType.MySQL,
+                    Policy(), allowedTables: null, ct));
+            Assert.Contains("not registered for source dialect MySQL",
+                factsRejection.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.NotNull(factsRejection.Diagnostic);
+
             var safe = await tool.ExecuteQuerySql(
                 "SELECT ABS(id) AS safe_value FROM " + database + ".visible_users", ct);
             Assert.True(safe.Success, safe.Error?.Message);
