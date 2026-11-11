@@ -38,6 +38,21 @@ public sealed class DurableDmlWitnessVerificationService(
     private const string UnsupportedFenceProtocol = "UnsupportedFenceProtocol";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(15);
 
+    // Preserve the published six-argument CLR constructor. Making the new
+    // optional targetFence a seventh primary-constructor argument otherwise
+    // removes the original metadata signature and breaks existing NuGet hosts.
+    public DurableDmlWitnessVerificationService(
+        AdminContext adminContext,
+        ICryptoService cryptoService,
+        Common.Services.SecretProtectionSettings secretProtection,
+        ISqlProviderFactory sqlProviderFactory,
+        ISqlConnectionStringFactory connectionStringFactory,
+        IDmlTargetCommitWitness? targetWitness = null)
+        : this(adminContext, cryptoService, secretProtection,
+            sqlProviderFactory, connectionStringFactory, targetWitness, targetFence: null)
+    {
+    }
+
     public async Task<DmlTargetCommitWitnessInspection?> InspectAsync(
         string requestId, CancellationToken cancellationToken)
     {
