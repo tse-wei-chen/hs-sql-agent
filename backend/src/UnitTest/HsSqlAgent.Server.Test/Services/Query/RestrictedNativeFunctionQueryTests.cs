@@ -141,6 +141,22 @@ public sealed class RestrictedNativeFunctionQueryTests
                 new SqlPlanValidationContext("host-query-guard"),
                 new SqlExecutionPlanPolicy(20, requireProvenMySqlNativeFunctions: true)));
         Assert.IsType<SqlDiagnostic>(error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+
+        var restriction = new SqlExecutionPlanPolicy(
+            20, SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted);
+        Assert.Equal(SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted,
+            restriction.NativeFunctionPolicy);
+        Assert.Equal(restriction.NativeFunctionPolicy,
+            new SqlExecutionPlanPolicy(20, requireProvenMySqlNativeFunctions: true)
+                .NativeFunctionPolicy);
+        var typedError = Assert.Throws<UnauthorizedAccessException>(() =>
+            SqlCoreFacade.CompileQuery(
+                sql, SqlAgentToolType.MySQL, SqlAgentToolType.MySQL,
+                new SqlPlanValidationContext("typed-native-function-boundary"),
+                restriction));
+        Assert.Equal(
+            Assert.IsType<SqlDiagnostic>(error.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code,
+            Assert.IsType<SqlDiagnostic>(typedError.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code);
     }
 
     [Fact]
