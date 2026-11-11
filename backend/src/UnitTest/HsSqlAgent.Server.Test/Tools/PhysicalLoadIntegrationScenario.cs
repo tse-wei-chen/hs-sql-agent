@@ -370,8 +370,7 @@ internal sealed class PhysicalGatedTargetCommand(PhysicalGatedTargetConnection o
         {
             PhysicalGatedTargetTransaction wrapped => wrapped.Inner,
             DbTransaction native => native,
-            null => null,
-            _ => throw new InvalidOperationException("Unexpected transaction provider.")
+            null => null
         };
     }
     protected override DbParameterCollection DbParameterCollection => inner.Parameters;
