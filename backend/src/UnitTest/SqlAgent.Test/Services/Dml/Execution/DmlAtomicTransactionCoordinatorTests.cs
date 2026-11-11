@@ -77,6 +77,93 @@ public sealed class DmlAtomicTransactionCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task ExplicitRefusalRollback_UnacknowledgedNativeRollbackMustNotReturnSafeFalse()
+    {
+        // This is the existing ordinary (non-exceptional) refusal branch of
+        // atomic DML: even a deliberate row-set rejection must not report a
+        // safe rollback when the native driver never acknowledges ROLLBACK.
+        var transaction = new ProbedRollbackTransaction(ignoreCancellation: true);
+        Task<DmlCommitResult>? operation = null;
+        try
+        {
+            operation = InvokeExplicitRefusalRollback(
+                transaction, TestContext.Current.CancellationToken);
+            var unknown = await Assert.ThrowsAsync<DmlRollbackOutcomeUnknownException>(
+                () => operation.WaitAsync(TimeSpan.FromSeconds(14),
+                    TestContext.Current.CancellationToken));
+            Assert.IsAssignableFrom<OperationCanceledException>(unknown.RollbackFailure);
+            Assert.Equal(1, transaction.RollbackCalls);
+            Assert.True(transaction.NativeRollbackToken.CanBeCanceled);
+            Assert.True(transaction.NativeRollbackToken.IsCancellationRequested);
+            Assert.Contains("replay", unknown.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            // Release the deliberately blocked fake even on RED, so CI never
+            // leaks a task waiting for an ACK. Don't let its final exception
+            // overwrite the assertion failure.
+            transaction.AcknowledgeRollback();
+            if (operation is not null)
+            {
+                try { await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch (Exception) { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExplicitRefusalRollback_AlreadyCancelledRequestStillCleansUp()
+    {
+        using var request = new CancellationTokenSource();
+        request.Cancel();
+        var transaction = new ProbedRollbackTransaction(ignoreCancellation: false);
+        var result = await InvokeExplicitRefusalRollback(transaction, request.Token);
+        Assert.False(result.Committed);
+        Assert.Contains("rolled back", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, transaction.RollbackCalls);
+        Assert.True(transaction.NativeRollbackToken.CanBeCanceled);
+        Assert.NotEqual(request.Token, transaction.NativeRollbackToken);
+        Assert.False(transaction.NativeRollbackToken.IsCancellationRequested);
+    }
+
+    private static Task<DmlCommitResult> InvokeExplicitRefusalRollback(
+        DbTransaction transaction, CancellationToken requestToken)
+    {
+        var method = typeof(DmlAtomicTransactionCoordinator).GetMethod(
+            "RollbackAsync",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return Assert.IsType<Task<DmlCommitResult>>(method.Invoke(null,
+            [transaction, 1, "approved row set changed", requestToken]));
+    }
+
+    private sealed class ProbedRollbackTransaction(bool ignoreCancellation) : DbTransaction
+    {
+        private readonly TaskCompletionSource _ack =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int RollbackCalls { get; private set; }
+        public CancellationToken NativeRollbackToken { get; private set; }
+        public override IsolationLevel IsolationLevel => IsolationLevel.Serializable;
+        protected override DbConnection DbConnection => throw new NotSupportedException();
+        public override void Commit() => throw new NotSupportedException();
+        public override void Rollback() => throw new NotSupportedException();
+
+        public override Task RollbackAsync(CancellationToken cancellationToken = default)
+        {
+            RollbackCalls++;
+            NativeRollbackToken = cancellationToken;
+            return ignoreCancellation
+                ? _ack.Task
+                : cancellationToken.IsCancellationRequested
+                    ? Task.FromCanceled(cancellationToken)
+                    : Task.CompletedTask;
+        }
+
+        public void AcknowledgeRollback() => _ack.TrySetResult();
+    }
+
     [Theory]
     [InlineData("swapped")]
     [InlineData("row-count")]
