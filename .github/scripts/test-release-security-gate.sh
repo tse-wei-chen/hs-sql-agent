@@ -9,9 +9,19 @@ trap 'rm -rf "$tmp"' EXIT
 cat > "$tmp/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$#" -eq 4 && "$1" == api && "$2" == repos/tse-wei-chen/hs-sql-agent/issues/575 && "$3" == --jq && "$4" == .state ]] || exit 32
+[[ "$1" == api && "$2" == repos/tse-wei-chen/hs-sql-agent/issues/575 ]] || exit 32
 [[ "${MOCK_ISSUE_API_FAIL:-}" != 1 ]] || exit 33
-printf '%s\n' "${MOCK_ISSUE_STATE:-open}"
+if [[ "$#" -eq 4 && "$3" == --jq && "$4" == .state ]]; then
+    # Historical behavior: state-only inspection allows an incomplete close.
+    printf '%s\n' "${MOCK_ISSUE_STATE:-open}"
+elif [[ "$#" -eq 2 ]]; then
+    # Full issue response is necessary to check closure reason and checklist.
+    printf '{"state":"%s","state_reason":"%s","body":"%s"}\n' \
+        "${MOCK_ISSUE_STATE:-open}" "${MOCK_ISSUE_REASON:-completed}" \
+        "${MOCK_ISSUE_BODY:-- [x] completed gate}"
+else
+    exit 32
+fi
 MOCK
 chmod +x "$tmp/gh"
 export PATH="$tmp:$PATH"
@@ -54,7 +64,22 @@ export GITHUB_REPOSITORY=someone/else
 expect_deny v3.1.0
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
 
-# Closure is a necessary release precondition, not a substitute for CI.
+# Test-first RED: mere closure is not equivalent to all release gates passing.
+export MOCK_ISSUE_REASON=not_planned
+expect_deny v3.1.0
+unset MOCK_ISSUE_REASON
+export MOCK_ISSUE_BODY='- [x] reviewed, - [ ] live validation remains'
+expect_deny v3.1.0
+unset MOCK_ISSUE_BODY
+export MOCK_ISSUE_BODY='- [ ] outstanding live-provider proof'
+expect_deny v3.1.0
+unset MOCK_ISSUE_BODY
+export MOCK_ISSUE_BODY=''
+expect_deny v3.1.0
+unset MOCK_ISSUE_BODY
+
+# Completed closure with verified, nonempty checklist is necessary, but not
+# sufficient to publish without the separate exact-head Tests/baseline gate.
 expect_allow v3.1.0
 expect_allow 3.1.0-beta
 
@@ -63,4 +88,4 @@ export MOCK_ISSUE_STATE=open
 expect_allow v3.0.0
 expect_allow 3.1.1
 
-echo "3.1.0 release blocker regression: 12 scenarios passed."
+echo "3.1.0 release blocker regression: 16 scenarios passed."
