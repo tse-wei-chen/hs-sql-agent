@@ -134,7 +134,7 @@ public sealed class DmlAtomicTransactionCoordinatorTests
             "RollbackAsync",
             System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
         Assert.NotNull(method);
-        return Assert.IsType<Task<DmlCommitResult>>(method.Invoke(null,
+        return Assert.IsAssignableFrom<Task<DmlCommitResult>>(method.Invoke(null,
             [transaction, 1, "approved row set changed", requestToken]));
     }
 
