@@ -39,7 +39,7 @@ internal static class PhysicalLoadIntegrationScenario
     // rather than assuming a semaphore count equals physical DB connections.
     internal static async Task UnderLoadAsync(
         Func<Task<IPhysicalLoadFixture>> fixtureFactory,
-        Func<PhysicalPhysicalTargetConnectionGate, ISqlProvider> providerFactory,
+        Func<PhysicalTargetConnectionGate, ISqlProvider> providerFactory,
         string approvalIdentity,
         int pauseOnPhysicalOpen)
     {
@@ -113,7 +113,7 @@ internal static class PhysicalLoadIntegrationScenario
 
     internal static async Task CancellationAsync(
         Func<Task<IPhysicalLoadFixture>> fixtureFactory,
-        Func<PhysicalPhysicalTargetConnectionGate, ISqlProvider> providerFactory,
+        Func<PhysicalTargetConnectionGate, ISqlProvider> providerFactory,
         string approvalIdentity,
         int pauseOnPhysicalOpen)
     {
@@ -189,210 +189,210 @@ internal static class PhysicalLoadIntegrationScenario
     }
 }
 
-    internal sealed class PhysicalTargetConnectionGate(int pauseOnPhysicalOpen)
+internal sealed class PhysicalTargetConnectionGate(int pauseOnPhysicalOpen)
+{
+    private readonly TaskCompletionSource<bool> _resume =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _created;
+    private int _open;
+    private int _peak;
+    private int _pauseNextOpen;
+
+    public TaskCompletionSource<bool> HeldOpen { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int FactoryCreates => Volatile.Read(ref _created);
+    public int ActivePhysicalTargetConnections => Volatile.Read(ref _open);
+    public int PeakPhysicalTargetConnections => Volatile.Read(ref _peak);
+
+    public int NextConnectionOrdinal() => Interlocked.Increment(ref _created);
+    public void ArmForNextOpen() => Interlocked.Exchange(ref _pauseNextOpen, 1);
+
+    private void RecordPhysicalOpen()
     {
-        private readonly TaskCompletionSource<bool> _resume =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _created;
-        private int _open;
-        private int _peak;
-        private int _pauseNextOpen;
-
-        public TaskCompletionSource<bool> HeldOpen { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public int FactoryCreates => Volatile.Read(ref _created);
-        public int ActivePhysicalTargetConnections => Volatile.Read(ref _open);
-        public int PeakPhysicalTargetConnections => Volatile.Read(ref _peak);
-
-        public int NextConnectionOrdinal() => Interlocked.Increment(ref _created);
-        public void ArmForNextOpen() => Interlocked.Exchange(ref _pauseNextOpen, 1);
-
-        private void RecordPhysicalOpen()
+        var count = Interlocked.Increment(ref _open);
+        var previousPeak = Volatile.Read(ref _peak);
+        while (count > previousPeak)
         {
-            var count = Interlocked.Increment(ref _open);
-            var previousPeak = Volatile.Read(ref _peak);
-            while (count > previousPeak)
-            {
-                var observed = Interlocked.CompareExchange(ref _peak, count, previousPeak);
-                if (observed == previousPeak) break;
-                previousPeak = observed;
-            }
-
+            var observed = Interlocked.CompareExchange(ref _peak, count, previousPeak);
+            if (observed == previousPeak) break;
+            previousPeak = observed;
         }
 
-        public void OnOpenedSync() => RecordPhysicalOpen();
-
-        public async Task OnOpenedAsync(int ordinal, CancellationToken token)
-        {
-            if (ordinal == pauseOnPhysicalOpen || Interlocked.Exchange(ref _pauseNextOpen, 0) == 1)
-            {
-                HeldOpen.TrySetResult(true);
-                await _resume.Task.WaitAsync(token);
-            }
-        }
-
-        public void OnClosed() => Interlocked.Decrement(ref _open);
-        public void Release() => _resume.TrySetResult(true);
     }
 
+    public void OnOpenedSync() => RecordPhysicalOpen();
 
-    internal sealed class PhysicalGatedTargetConnection(
-        DbConnection inner, PhysicalTargetConnectionGate gate, int ordinal) : DbConnection
+    public async Task OnOpenedAsync(int ordinal, CancellationToken token)
     {
-        private int _open;
-        [AllowNull]
-        public override string ConnectionString
+        if (ordinal == pauseOnPhysicalOpen || Interlocked.Exchange(ref _pauseNextOpen, 0) == 1)
         {
-            get => inner.ConnectionString;
-            set => inner.ConnectionString = value ?? string.Empty;
+            HeldOpen.TrySetResult(true);
+            await _resume.Task.WaitAsync(token);
         }
-        internal DbConnection Inner => inner;
-        public override string Database => inner.Database;
-        public override string DataSource => inner.DataSource;
-        public override string ServerVersion => inner.ServerVersion;
-        public override ConnectionState State => inner.State;
-        public override int ConnectionTimeout => inner.ConnectionTimeout;
-        public override void Open()
+    }
+
+    public void OnClosed() => Interlocked.Decrement(ref _open);
+    public void Release() => _resume.TrySetResult(true);
+}
+
+
+internal sealed class PhysicalGatedTargetConnection(
+    DbConnection inner, PhysicalTargetConnectionGate gate, int ordinal) : DbConnection
+{
+    private int _open;
+    [AllowNull]
+    public override string ConnectionString
+    {
+        get => inner.ConnectionString;
+        set => inner.ConnectionString = value ?? string.Empty;
+    }
+    internal DbConnection Inner => inner;
+    public override string Database => inner.Database;
+    public override string DataSource => inner.DataSource;
+    public override string ServerVersion => inner.ServerVersion;
+    public override ConnectionState State => inner.State;
+    public override int ConnectionTimeout => inner.ConnectionTimeout;
+    public override void Open()
+    {
+        inner.Open();
+        MarkOpen();
+    }
+    public override async Task OpenAsync(CancellationToken cancellationToken)
+    {
+        await inner.OpenAsync(cancellationToken);
+        MarkOpen();
+        await gate.OnOpenedAsync(ordinal, cancellationToken);
+    }
+    private void MarkOpen()
+    {
+        if (Interlocked.Exchange(ref _open, 1) != 0)
+            throw new InvalidOperationException("A physical target connection opened twice.");
+        gate.OnOpenedSync();
+    }
+    private void MarkClosed()
+    {
+        if (Interlocked.Exchange(ref _open, 0) == 1)
+            gate.OnClosed();
+    }
+    public override void Close()
+    {
+        inner.Close();
+        MarkClosed();
+    }
+    public override void ChangeDatabase(string databaseName) => inner.ChangeDatabase(databaseName);
+
+    protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
+        new PhysicalGatedTargetTransaction(this, (DbTransaction)inner.BeginTransaction(isolationLevel));
+
+    protected override DbCommand CreateDbCommand() =>
+        new PhysicalGatedTargetCommand(this, inner.CreateCommand());
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
         {
-            inner.Open();
-            MarkOpen();
-        }
-        public override async Task OpenAsync(CancellationToken cancellationToken)
-        {
-            await inner.OpenAsync(cancellationToken);
-            MarkOpen();
-            await gate.OnOpenedAsync(ordinal, cancellationToken);
-        }
-        private void MarkOpen()
-        {
-            if (Interlocked.Exchange(ref _open, 1) != 0)
-                throw new InvalidOperationException("A physical target connection opened twice.");
-            gate.OnOpenedSync();
-        }
-        private void MarkClosed()
-        {
-            if (Interlocked.Exchange(ref _open, 0) == 1)
-                gate.OnClosed();
-        }
-        public override void Close()
-        {
-            inner.Close();
+            inner.Dispose();
             MarkClosed();
         }
-        public override void ChangeDatabase(string databaseName) => inner.ChangeDatabase(databaseName);
-
-        protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel) =>
-            new PhysicalGatedTargetTransaction(this, (DbTransaction)inner.BeginTransaction(isolationLevel));
-
-        protected override DbCommand CreateDbCommand() =>
-            new PhysicalGatedTargetCommand(this, inner.CreateCommand());
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                inner.Dispose();
-                MarkClosed();
-            }
-            base.Dispose(disposing);
-        }
-        public override async ValueTask DisposeAsync()
-        {
-            await inner.DisposeAsync();
-            MarkClosed();
-        }
+        base.Dispose(disposing);
     }
-
-    internal sealed class PhysicalGatedTargetTransaction(
-        PhysicalGatedTargetConnection owner, DbTransaction inner)
-        : DbTransaction
+    public override async ValueTask DisposeAsync()
     {
-        internal DbTransaction Inner => inner;
-        public override IsolationLevel IsolationLevel => inner.IsolationLevel;
-        protected override DbConnection DbConnection => owner;
-        public override void Commit() => inner.Commit();
-        public override Task CommitAsync(CancellationToken cancellationToken = default) =>
-            inner.CommitAsync(cancellationToken);
-        public override void Rollback() => inner.Rollback();
-        public override Task RollbackAsync(CancellationToken cancellationToken = default) =>
-            inner.RollbackAsync(cancellationToken);
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) inner.Dispose();
-            base.Dispose(disposing);
-        }
-        public override ValueTask DisposeAsync() => inner.DisposeAsync();
+        await inner.DisposeAsync();
+        MarkClosed();
     }
+}
 
-    internal sealed class PhysicalGatedTargetCommand(PhysicalGatedTargetConnection owner, DbCommand inner) : DbCommand
+internal sealed class PhysicalGatedTargetTransaction(
+    PhysicalGatedTargetConnection owner, DbTransaction inner)
+    : DbTransaction
+{
+    internal DbTransaction Inner => inner;
+    public override IsolationLevel IsolationLevel => inner.IsolationLevel;
+    protected override DbConnection DbConnection => owner;
+    public override void Commit() => inner.Commit();
+    public override Task CommitAsync(CancellationToken cancellationToken = default) =>
+        inner.CommitAsync(cancellationToken);
+    public override void Rollback() => inner.Rollback();
+    public override Task RollbackAsync(CancellationToken cancellationToken = default) =>
+        inner.RollbackAsync(cancellationToken);
+    protected override void Dispose(bool disposing)
     {
-        [AllowNull]
-        public override string CommandText
-        {
-            get => inner.CommandText;
-            set => inner.CommandText = value ?? string.Empty;
-        }
-        public override int CommandTimeout
-        {
-            get => inner.CommandTimeout;
-            set => inner.CommandTimeout = value;
-        }
-        public override CommandType CommandType
-        {
-            get => inner.CommandType;
-            set => inner.CommandType = value;
-        }
-        public override bool DesignTimeVisible
-        {
-            get => inner.DesignTimeVisible;
-            set => inner.DesignTimeVisible = value;
-        }
-        public override UpdateRowSource UpdatedRowSource
-        {
-            get => inner.UpdatedRowSource;
-            set => inner.UpdatedRowSource = value;
-        }
-        protected override DbConnection? DbConnection
-        {
-            get => owner;
-            set
-            {
-                if (value is PhysicalGatedTargetConnection wrapped)
-                    inner.Connection = wrapped.Inner;
-                else
-                    inner.Connection = (DbConnection?)value;
-            }
-        }
-        protected override DbTransaction? DbTransaction
-        {
-            get => inner.Transaction;
-            set => inner.Transaction = value switch
-            {
-                PhysicalGatedTargetTransaction wrapped => wrapped.Inner,
-                DbTransaction native => native,
-                null => null,
-                _ => throw new InvalidOperationException("Unexpected transaction provider.")
-            };
-        }
-        protected override DbParameterCollection DbParameterCollection => inner.Parameters;
-        public override void Cancel() => inner.Cancel();
-        public override int ExecuteNonQuery() => inner.ExecuteNonQuery();
-        public override object? ExecuteScalar() => inner.ExecuteScalar();
-        public override Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken) =>
-            inner.ExecuteNonQueryAsync(cancellationToken);
-        public override Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken) =>
-            inner.ExecuteScalarAsync(cancellationToken);
-        public override void Prepare() => inner.Prepare();
-        protected override DbParameter CreateDbParameter() => inner.CreateParameter();
-        protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) =>
-            inner.ExecuteReader(behavior);
-        protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(
-            CommandBehavior behavior, CancellationToken cancellationToken) =>
-            await inner.ExecuteReaderAsync(behavior, cancellationToken);
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) inner.Dispose();
-            base.Dispose(disposing);
-        }
-        public override ValueTask DisposeAsync() => inner.DisposeAsync();
+        if (disposing) inner.Dispose();
+        base.Dispose(disposing);
     }
+    public override ValueTask DisposeAsync() => inner.DisposeAsync();
+}
+
+internal sealed class PhysicalGatedTargetCommand(PhysicalGatedTargetConnection owner, DbCommand inner) : DbCommand
+{
+    [AllowNull]
+    public override string CommandText
+    {
+        get => inner.CommandText;
+        set => inner.CommandText = value ?? string.Empty;
+    }
+    public override int CommandTimeout
+    {
+        get => inner.CommandTimeout;
+        set => inner.CommandTimeout = value;
+    }
+    public override CommandType CommandType
+    {
+        get => inner.CommandType;
+        set => inner.CommandType = value;
+    }
+    public override bool DesignTimeVisible
+    {
+        get => inner.DesignTimeVisible;
+        set => inner.DesignTimeVisible = value;
+    }
+    public override UpdateRowSource UpdatedRowSource
+    {
+        get => inner.UpdatedRowSource;
+        set => inner.UpdatedRowSource = value;
+    }
+    protected override DbConnection? DbConnection
+    {
+        get => owner;
+        set
+        {
+            if (value is PhysicalGatedTargetConnection wrapped)
+                inner.Connection = wrapped.Inner;
+            else
+                inner.Connection = (DbConnection?)value;
+        }
+    }
+    protected override DbTransaction? DbTransaction
+    {
+        get => inner.Transaction;
+        set => inner.Transaction = value switch
+        {
+            PhysicalGatedTargetTransaction wrapped => wrapped.Inner,
+            DbTransaction native => native,
+            null => null,
+            _ => throw new InvalidOperationException("Unexpected transaction provider.")
+        };
+    }
+    protected override DbParameterCollection DbParameterCollection => inner.Parameters;
+    public override void Cancel() => inner.Cancel();
+    public override int ExecuteNonQuery() => inner.ExecuteNonQuery();
+    public override object? ExecuteScalar() => inner.ExecuteScalar();
+    public override Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken) =>
+        inner.ExecuteNonQueryAsync(cancellationToken);
+    public override Task<object?> ExecuteScalarAsync(CancellationToken cancellationToken) =>
+        inner.ExecuteScalarAsync(cancellationToken);
+    public override void Prepare() => inner.Prepare();
+    protected override DbParameter CreateDbParameter() => inner.CreateParameter();
+    protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior) =>
+        inner.ExecuteReader(behavior);
+    protected override async Task<DbDataReader> ExecuteDbDataReaderAsync(
+        CommandBehavior behavior, CancellationToken cancellationToken) =>
+        await inner.ExecuteReaderAsync(behavior, cancellationToken);
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) inner.Dispose();
+        base.Dispose(disposing);
+    }
+    public override ValueTask DisposeAsync() => inner.DisposeAsync();
+}
