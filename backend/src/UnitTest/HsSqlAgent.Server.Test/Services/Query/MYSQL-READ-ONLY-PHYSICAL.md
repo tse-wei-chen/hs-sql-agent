@@ -108,20 +108,23 @@ function that inserts into the existing temporary table.
    fails at the concrete published-MCP safety assertion **after** all the
    native control and same-session checks passed; **2 other mandatory
    MySQL native-function integration cases passed, 0 skipped**.
-5. `RewritePipeline.finishQueryBound` now selects the existing closed
-   `RejectOpaqueNativeFunctions(MySQL)` policy *also* when no table
-   whitelist is supplied. A qualified/quoted MySQL native function
-   rejects at the Policy stage with
-   `SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN`, before any SQL is executed.
-   Ordinary unqualified core built-ins remain permitted, and this does
-   not change the SQL dialect parser or six-provider grammar.
+5. **Only physical Host Query** opts into the existing closed
+   `RejectOpaqueNativeFunctions(MySQL)` policy via the typed
+   `SqlExecutionPlanPolicy.RequireProvenMySqlNativeFunctions` signal when
+   the table whitelist is absent. A qualified/quoted MySQL native
+   function rejects at Policy with `SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN`,
+   before any SQL is executed. The default standalone `SqlCoreFacade`
+   compiler **retains** native function grammar and its existing public
+   one-argument execution-policy constructor. Ordinary unqualified core
+   built-ins remain allowed for the Host; no provider grammar is removed.
 6. A unit contract covers the compiler and compiler-with-facts paths,
    while the original SQL Server unrestricted native-function behavior
    remains unchanged. The dedicated live MySQL 8.4 CI validates the
    compiled published MCP path with real temp session effects.
 
 **Boundary:** This selectively refuses **qualified/quoted** native
-MySQL function names on no-whitelist Query. Unknown/unqualified function
+MySQL function names on no-whitelist **Host Query**, while standalone SqlCore
+compilation remains opt-in and full-fidelity. Unknown/unqualified function
 resolution, external native UDFs, routines reached by views or different
 execution identities, functions that open another connection and any
 privileged definer effects remain unproven. It is not a general MySQL
