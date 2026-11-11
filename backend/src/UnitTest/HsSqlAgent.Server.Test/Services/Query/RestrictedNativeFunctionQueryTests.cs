@@ -84,14 +84,37 @@ public sealed class RestrictedNativeFunctionQueryTests
     }
 
     [Fact]
-    public void UnrestrictedQuery_NativeFunctionNamesRetainExistingCompilerBehavior()
+    public void MySqlQueryWithoutWhitelist_RejectsOpaqueNativeFunctionAtPolicyStage()
     {
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MySQL);
 
+        const string sql = "SELECT app.temp_side_effect(id) AS affected FROM app.users";
+        var error = Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().Compile(
+                provider.Object, sql, SqlAgentToolType.MySQL,
+                Policy, allowedTables: null));
+
+        Assert.Contains("not proven", error.Message, StringComparison.OrdinalIgnoreCase);
+        var diagnostic = Assert.IsType<SqlDiagnostic>(
+            error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+        Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+        Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            new TypedQueryRuntime().CompileWithFacts(
+                provider.Object, sql, SqlAgentToolType.MySQL,
+                Policy, allowedTables: null, targetProfile: null));
+    }
+
+    [Fact]
+    public void UnrestrictedSqlServerQuery_NativeFunctionNamesRetainExistingCompilerBehavior()
+    {
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MsSqlServer);
+
         var compiled = new TypedQueryRuntime().Compile(
-            provider.Object, "SELECT app.leak_secret() AS leaked FROM app.users",
-            SqlAgentToolType.MySQL, Policy, allowedTables: null);
+            provider.Object, "SELECT dbo.leak_secret() AS leaked FROM dbo.users",
+            SqlAgentToolType.MsSqlServer, Policy, allowedTables: null);
 
         Assert.Contains("leak_secret", compiled.Sql, StringComparison.OrdinalIgnoreCase);
     }
