@@ -3,7 +3,6 @@ using System.Collections.Immutable;
 using System.Data;
 using System.Data.Common;
 using System.Runtime.ExceptionServices;
-using Dapper;
 
 namespace SqlAgent.Service.Core.Execution;
 
