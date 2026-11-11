@@ -380,11 +380,12 @@ public sealed partial class DurableDmlApprovalLifecycleTests
     }
 
     [Theory]
-    [InlineData("missing")]
-    [InlineData("revoked")]
-    [InlineData("wrong-fingerprint")]
-    public async Task FencedApproval_IndependentWitnessCannotConfirmWithoutMatchingAdmission(
-        string fenceScenario)
+    [InlineData("missing", "FenceNotObserved")]
+    [InlineData("revoked", "FenceEvidenceMismatch")]
+    [InlineData("wrong-fingerprint", "FenceEvidenceMismatch")]
+    [InlineData("admitted", "CommittedWitnessMatch")]
+    public async Task FencedApproval_IndependentWitnessRequiresMatchingAdmittedFence(
+        string fenceScenario, string expectedStatus)
     {
         await using var fixture = await Fixture.CreateAsync();
         var ct = TestContext.Current.CancellationToken;
@@ -456,15 +457,28 @@ public sealed partial class DurableDmlApprovalLifecycleTests
             }
         }
 
-        // RED on develop: the independent inspector only reads the matching
-        // witness and reports CommittedWitnessMatch for all three cases.
-        var inspection = fixture.CreateWitnessInspection(scope.ServiceProvider, witness);
+        // RED on develop: the independent inspector only read a matching
+        // Witness and reported CommittedWitnessMatch for missing, revoked and
+        // wrong-fingerprint admissions.
+        var inspection = fixture.CreateWitnessInspection(scope.ServiceProvider, witness, fence);
         var result = await inspection.InspectAsync(approval.RequestId, ct);
         Assert.NotNull(result);
-        Assert.False(result.MatchingCommitWitness,
-            "A fenced approval requires BOTH a matching Witness and a committed Admitted fence row.");
-        Assert.NotEqual("CommittedWitnessMatch", result.WitnessStatus);
+        Assert.Equal(expectedStatus, result.WitnessStatus);
+        Assert.Equal(fenceScenario == "admitted", result.MatchingCommitWitness);
         Assert.Equal(0L, await fixture.CountTargetRowsAsync());
+
+        if (fenceScenario == "admitted")
+        {
+            // Even if the two physical rows are valid, a restart without
+            // the configured verifier must not silently downgrade v1 to
+            // legacy witness-only proof.
+            var missingVerifier = fixture.CreateWitnessInspection(
+                scope.ServiceProvider, witness);
+            var unavailable = await missingVerifier.InspectAsync(approval.RequestId, ct);
+            Assert.NotNull(unavailable);
+            Assert.Equal("FenceNotConfigured", unavailable.WitnessStatus);
+            Assert.False(unavailable.MatchingCommitWitness);
+        }
     }
 
     private sealed class CallbackWitness(Func<Task<string?>> callback) : IDmlTargetCommitWitness
