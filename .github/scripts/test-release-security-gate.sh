@@ -18,7 +18,7 @@ elif [[ "$#" -eq 2 ]]; then
     # Full issue response is necessary to check closure reason and checklist.
     printf '{"state":"%s","state_reason":"%s","body":"%s"}\n' \
         "${MOCK_ISSUE_STATE:-open}" "${MOCK_ISSUE_REASON:-completed}" \
-        "${MOCK_ISSUE_BODY:-- [x] completed gate}"
+        "${MOCK_ISSUE_BODY-- [x] completed gate}"
 else
     exit 32
 fi
@@ -68,7 +68,7 @@ export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
 export MOCK_ISSUE_REASON=not_planned
 expect_deny v3.1.0
 unset MOCK_ISSUE_REASON
-export MOCK_ISSUE_BODY='- [x] reviewed, - [ ] live validation remains'
+export MOCK_ISSUE_BODY='- [x] reviewed\n- [ ] live validation remains'
 expect_deny v3.1.0
 unset MOCK_ISSUE_BODY
 export MOCK_ISSUE_BODY='- [ ] outstanding live-provider proof'
