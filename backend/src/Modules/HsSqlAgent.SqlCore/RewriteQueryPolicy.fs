@@ -25,7 +25,7 @@ module internal RewriteQueryPolicy =
                 deny
                     "SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN"
                     span
-                    ("Query with a table whitelist cannot authorize provider-native function '"
+                    ("Query cannot authorize provider-native function '"
                      + FunctionName.value call.Name
                      + "' for " + string provider
                      + ": its function effects and hidden relation access are not proven. "
