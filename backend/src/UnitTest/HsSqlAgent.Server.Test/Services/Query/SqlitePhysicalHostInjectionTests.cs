@@ -260,6 +260,96 @@ public sealed class SqlitePhysicalHostInjectionTests
         });
     }
 
+    // #575: a Query-only key with no table whitelist may compile a quoted
+    // host-registered SQLite function. The SELECT AST is not physical read-only
+    // evidence: the callback can execute DML on the SAME open SQLite handle.
+    // The raw native control proves this is a real write, not a mocked executor.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueryOnlyWithoutWhitelist_CannotWriteThroughSameConnectionSqliteCallback(
+        bool withFacts)
+    {
+        await WithDatabaseAsync(async connectionString =>
+        {
+            var ct = TestContext.Current.CancellationToken;
+            await using var connection = new SqliteConnection(connectionString);
+            connection.CreateFunction("write_from_query", () =>
+            {
+                using var sideEffect = connection.CreateCommand();
+                sideEffect.CommandText =
+                    "INSERT INTO main.users(id, name) VALUES (987, 'unauthorized-write')";
+                return sideEffect.ExecuteNonQuery();
+            });
+            await connection.OpenAsync(ct);
+
+            const string sql = "SELECT \"write_from_query\"() AS touched";
+            var factory = new Mock<IDbConnectionFactory>();
+            factory.Setup(x => x.Create(connectionString)).Returns(connection);
+            var provider = new Mock<ISqlProvider>();
+            provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            provider.SetupGet(x => x.Connections).Returns(factory.Object);
+            provider.SetupGet(x => x.Errors).Returns(new SqliteProvider().Errors);
+
+            var runtime = new TypedQueryRuntime();
+            var compiled = runtime.Compile(
+                provider.Object, sql, SqlAgentToolType.Sqlite,
+                ReadPolicy(), allowedTables: null);
+            Assert.Contains("write_from_query", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+
+            // Physical RED positive control: ordinary native SELECT invokes the
+            // same registered function and commits a row without any DML tool.
+            await using (var direct = connection.CreateCommand())
+            {
+                direct.CommandText = sql;
+                Assert.Equal(1, Convert.ToInt32(await direct.ExecuteScalarAsync(ct)));
+            }
+            Assert.Equal(1, await CountRowsWithIdAsync(connectionString, 987, ct));
+            await using (var cleanup = connection.CreateCommand())
+            {
+                cleanup.CommandText = "DELETE FROM main.users WHERE id = 987";
+                Assert.Equal(1, await cleanup.ExecuteNonQueryAsync(ct));
+            }
+            Assert.Equal(0, await CountRowsWithIdAsync(connectionString, 987, ct));
+
+            var before = await PhysicalSnapshotAsync(connectionString);
+            var error = await Record.ExceptionAsync(async () =>
+            {
+                if (withFacts)
+                    await runtime.ExecuteWithFactsAsync(
+                        provider.Object, connectionString, sql,
+                        SqlAgentToolType.Sqlite, ReadPolicy(),
+                        allowedTables: null, cancellationToken: ct);
+                else
+                    await runtime.ExecuteAsync(
+                        provider.Object, connectionString, sql,
+                        SqlAgentToolType.Sqlite, ReadPolicy(),
+                        allowedTables: null, cancellationToken: ct);
+            });
+            Assert.NotNull(error);
+            Assert.Equal(0, await CountRowsWithIdAsync(connectionString, 987, ct));
+            Assert.Equal(before, await PhysicalSnapshotAsync(connectionString));
+
+            // Legitimate native SQLite built-ins must continue to work.
+            var safe = await new TypedQueryRuntime().ExecuteAsync(
+                new SqliteProvider(), connectionString,
+                "SELECT ABS(id) AS amount FROM main.users WHERE id = 1",
+                SqlAgentToolType.Sqlite, ReadPolicy(), allowedTables: null, ct);
+            Assert.Equal(1, Convert.ToInt32(Assert.Single(safe.Rows)["amount"]));
+        });
+    }
+
+    private static async Task<long> CountRowsWithIdAsync(
+        string connectionString, int id, CancellationToken cancellationToken)
+    {
+        await using var witness = new SqliteConnection(connectionString);
+        await witness.OpenAsync(cancellationToken);
+        await using var count = witness.CreateCommand();
+        count.CommandText = "SELECT COUNT(*) FROM main.users WHERE id = $id";
+        count.Parameters.AddWithValue("$id", id);
+        return Convert.ToInt64(await count.ExecuteScalarAsync(cancellationToken));
+    }
+
     [Fact]
     public async Task InjectionShapedString_IsBoundAsOneLiteralAndRemainsQueryable()
     {
