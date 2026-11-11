@@ -215,10 +215,88 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
         }
     }
 
+    // SQLite's compiled SELECT family cannot prove that a host-registered function
+    // will not issue INSERT/UPDATE/DELETE through this same physical connection.
+    // PRAGMA query_only is a connection-local SQLite engine write fence, not a
+    // function sandbox: a callback could modify the setting, open another writable
+    // connection, or perform external effects. Embedding hosts must still restrict
+    // function registrations and the underlying SQLite file permissions.
+    //
+    // Capture and restore the prior value so Query does not silently leave a
+    // host-owned or pooled physical connection in a different permission mode.
+    private static async Task<bool> ReadSqliteQueryOnlyAsync(
+        DbConnection connection, int timeoutSeconds, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA query_only";
+        command.CommandTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value switch
+        {
+            long 0 or int 0 => false,
+            long 1 or int 1 => true,
+            _ => throw new InvalidOperationException(
+                "SQLite Query could not attest the physical read-only connection setting.")
+        };
+    }
+
+    private static async Task SetSqliteQueryOnlyAsync(
+        DbConnection connection, bool enabled, int timeoutSeconds,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = enabled ? "PRAGMA query_only = ON" : "PRAGMA query_only = OFF";
+        command.CommandTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<QueryExecutionResult> ExecuteSqliteReadOnlyQueryAsync(
+        CompiledSqlCommand command, DbConnection connection, int timeoutSeconds,
+        CancellationToken cancellationToken)
+    {
+        var alreadyReadOnly = await ReadSqliteQueryOnlyAsync(
+            connection, timeoutSeconds, cancellationToken);
+        var changed = false;
+        try
+        {
+            if (!alreadyReadOnly)
+            {
+                // Even a provider exception during the setting operation may
+                // leave the pragma applied. Always attempt independent cleanup.
+                changed = true;
+                await SetSqliteQueryOnlyAsync(
+                    connection, true, timeoutSeconds, cancellationToken);
+            }
+
+            if (!await ReadSqliteQueryOnlyAsync(connection, timeoutSeconds, cancellationToken))
+                throw new InvalidOperationException(
+                    "SQLite Query requires an attested physical read-only connection.");
+
+            return await QueryExecutor.ExecuteQueryAsync(
+                command, connection, timeoutSeconds, cancellationToken);
+        }
+        finally
+        {
+            if (changed)
+            {
+                // The caller's cancellation must not leave a reusable host
+                // connection permanently query_only. A short independent
+                // cleanup bound also avoids awaiting a misbehaving provider
+                // indefinitely. A failed restore fails closed.
+                using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await SetSqliteQueryOnlyAsync(connection, false, timeoutSeconds, cleanup.Token)
+                    .WaitAsync(cleanup.Token);
+                if (await ReadSqliteQueryOnlyAsync(connection, timeoutSeconds, cleanup.Token))
+                    throw new InvalidOperationException(
+                        "SQLite Query failed to restore the physical connection setting.");
+            }
+        }
+    }
+
     // PostgreSQL SELECT is not intrinsically read-only: VOLATILE functions can write
     // relations or advance sequences. The server enforces an actual transaction fence,
     // including inside user-defined functions; compiler function lists are not authority.
-    // Other providers keep their current execution path until independently proven.
+    // A read-only transaction does not prove safety of independent connections or external UDF effects.
     private static async Task<QueryExecutionResult> ExecuteVerifiedQueryAsync(
         ISqlProvider provider,
         CompiledSqlCommand command,
@@ -237,7 +315,11 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
                 connection, timeoutSeconds, cancellationToken);
 
         if (provider.Type == SqlAgentToolType.Sqlite)
+        {
             await VerifySqliteBuiltInFunctionIdentityAsync(connection, cancellationToken);
+            return await ExecuteSqliteReadOnlyQueryAsync(
+                command, connection, timeoutSeconds, cancellationToken);
+        }
 
         // A MySQL SELECT may invoke a stored function that writes normal
         // tables, including through a Query-only MCP key with no whitelist.
