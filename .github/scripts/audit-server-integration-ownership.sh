@@ -97,7 +97,7 @@ case "$mode" in
 
         # Separate destructive Docker cases must be excluded from the
         # ordinary shard *and* positively selected in the dedicated step.
-        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests ProviderTcpPartitionTestcontainersTests; do
+        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests ProviderTcpPartitionTestcontainersTests RedisIndependentPrimariesTestcontainersTests; do
             if [[ -z "${unique_suites[$suite]:-}" ]]; then
                 echo "::error::Missing mandatory fault suite from manifest: $suite" >&2
                 failures=$((failures + 1))
@@ -168,6 +168,20 @@ case "$mode" in
                 failures=$((failures + 1))
             fi
         done
+
+        split_selector="FullyQualifiedName~RedisIndependentPrimariesTestcontainersTests"
+        split_job="$(awk '
+            $0 == "  server-test:" { found = 1; next }
+            found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+            found { print }
+        ' "$workflow")"
+        split_step="$(selector_step "$split_job" "$split_selector")"
+        if [[ -z "${unique_assignments[RedisIndependentPrimariesTestcontainersTests:server-test:$split_selector]:-}"
+            || -z "$split_step"
+            || "$split_step" != *"require-physical-test-cases.sh 1"* ]]; then
+            echo "::error::Mandatory physical Redis split-brain negative control is missing its exact one-case gate." >&2
+            failures=$((failures + 1))
+        fi
 
         # PostgreSQL and SQLite end-to-end Host Query negative controls
         # are security-critical physical evidence. They must not be silently
