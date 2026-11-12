@@ -68,7 +68,7 @@ assert_rejected "unit shard disconnected from manifest"
 
 reset_fixtures
 # The Docker gate must prove the exact number of physical tests.
-sed -i 's/require-physical-test-cases.sh 2/require-physical-test-cases.sh 0/g' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
+sed -i 's/require-physical-test-cases.sh 1/require-physical-test-cases.sh 0/g' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
 assert_rejected "physical case-count gate removed"
 
 echo "All 7 negative ownership-audit regressions were rejected."
