@@ -322,12 +322,16 @@ internal static class RuntimeDoctorAnalyzer
             var failureMode = configuration[$"{section}:FailureMode"] ?? "FailClosed";
             if (!failureMode.Equals("FailClosed", StringComparison.OrdinalIgnoreCase))
             {
-                checks.Add(Warning(
-                    $"coordination.{section.ToLowerInvariant()}-failure-mode",
-                    "Coordination",
-                    $"{section} failure mode",
-                    $"{section} uses Redis with failure mode '{failureMode}'.",
-                    "Use FailClosed when shared coordination is a security or concurrency boundary."));
+                var id = $"coordination.{section.ToLowerInvariant()}-failure-mode";
+                var title = $"{section} failure mode";
+                var detail = $"{section} uses Redis with failure mode '{failureMode}'.";
+                var action = "Use FailClosed when shared coordination is a security or concurrency boundary.";
+                // Redis SQL admission cannot promise MaxConcurrentSql while
+                // falling open; this is an invalid security configuration,
+                // not an optional performance warning.
+                checks.Add(section == "SqlConcurrency"
+                    ? Error(id, "Coordination", title, detail, action)
+                    : Warning(id, "Coordination", title, detail, action));
             }
         }
     }
