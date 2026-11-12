@@ -4,7 +4,6 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
-using DotNet.Testcontainers.Networks;
 using HsSqlAgent.Provider.PostgreSql;
 using HsSqlAgent.Server.Services;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,15 +17,16 @@ using Xunit;
 namespace HsSqlAgent.Server.Test.Services;
 
 /// <summary>
-/// A real Docker network and proxy in front of two independent databases.
+/// A real TCP proxy in front of two independent Docker-backed databases.
 /// The test application reaches PostgreSQL / Redis exclusively through
 /// Toxiproxy, while physical witnesses use their direct Docker host ports.
+/// The proxy reaches mapped host ports through Docker host-gateway; no custom
+/// Docker network or Testcontainers network lifecycle is required.
 /// </summary>
 public sealed class NetworkFaultFixture : IAsyncLifetime
 {
     private const int PostgresProxyPort = 8666;
     private const int RedisProxyPort = 8667;
-    private readonly INetwork _network = new NetworkBuilder().Build();
 
     private readonly PostgreSqlContainer _postgres;
     private readonly IContainer _redis;
@@ -38,18 +38,14 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
             .WithDatabase("hsql_network")
             .WithUsername("fault_operator")
             .WithPassword("Fault_2026_Test!")
-            .WithNetwork(_network)
-            .WithNetworkAliases("fault-postgres")
             .Build();
         _redis = new ContainerBuilder("redis:7-alpine")
-            .WithNetwork(_network)
-            .WithNetworkAliases("fault-redis")
             .WithPortBinding(6379, true)
             .WithWaitStrategy(Wait.ForUnixContainer()
                 .UntilInternalTcpPortIsAvailable(6379))
             .Build();
         _proxy = new ContainerBuilder("ghcr.io/shopify/toxiproxy:2.12.0")
-            .WithNetwork(_network)
+            .WithExtraHost("host.docker.internal", "host-gateway")
             .WithPortBinding(8474, true)
             .WithPortBinding(PostgresProxyPort, true)
             .WithPortBinding(RedisProxyPort, true)
@@ -61,12 +57,13 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
     public async ValueTask InitializeAsync()
     {
         var ct = TestContext.Current.CancellationToken;
-        await _network.CreateAsync(ct);
         await Task.WhenAll(_postgres.StartAsync(ct), _redis.StartAsync(ct));
         await _proxy.StartAsync(ct);
         using var admin = AdminClient();
-        await CreateProxyAsync(admin, "postgres", PostgresProxyPort, "fault-postgres:5432", ct);
-        await CreateProxyAsync(admin, "redis", RedisProxyPort, "fault-redis:6379", ct);
+        await CreateProxyAsync(admin, "postgres", PostgresProxyPort,
+            "host.docker.internal:" + _postgres.GetMappedPublicPort(5432), ct);
+        await CreateProxyAsync(admin, "redis", RedisProxyPort,
+            "host.docker.internal:" + _redis.GetMappedPublicPort(6379), ct);
     }
 
     public async ValueTask DisposeAsync()
@@ -74,7 +71,6 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
         await _proxy.DisposeAsync();
         await _redis.DisposeAsync();
         await _postgres.DisposeAsync();
-        await _network.DisposeAsync();
     }
 
     public string DirectPostgres(string application) =>
