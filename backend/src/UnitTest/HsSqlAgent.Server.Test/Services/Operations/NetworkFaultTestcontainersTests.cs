@@ -1,0 +1,359 @@
+using System.Diagnostics;
+using System.Net.Http.Json;
+using Admin.Service.Interfaces;
+using Admin.Service.Models;
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Containers;
+using DotNet.Testcontainers.Networks;
+using HsSqlAgent.Provider.PostgreSql;
+using HsSqlAgent.Server.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Npgsql;
+using SqlAgent.Service.Core.Execution;
+using StackExchange.Redis;
+using Testcontainers.PostgreSql;
+using Xunit;
+
+namespace HsSqlAgent.Server.Test.Services;
+
+/// <summary>
+/// A real Docker network and proxy in front of two independent databases.
+/// The test application reaches PostgreSQL / Redis exclusively through
+/// Toxiproxy, while physical witnesses use their direct Docker host ports.
+/// </summary>
+public sealed class NetworkFaultFixture : IAsyncLifetime
+{
+    private const int PostgresProxyPort = 8666;
+    private const int RedisProxyPort = 8667;
+    private readonly INetwork _network = new NetworkBuilder().Build();
+
+    private readonly PostgreSqlContainer _postgres;
+    private readonly IContainer _redis;
+    private readonly IContainer _proxy;
+
+    public NetworkFaultFixture()
+    {
+        _postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithDatabase("hsql_network")
+            .WithUsername("fault_operator")
+            .WithPassword("Fault_2026_Test!")
+            .WithNetwork(_network)
+            .WithNetworkAliases("fault-postgres")
+            .Build();
+        _redis = new ContainerBuilder("redis:7-alpine")
+            .WithNetwork(_network)
+            .WithNetworkAliases("fault-redis")
+            .WithPortBinding(6379, true)
+            .WithWaitStrategy(Wait.ForUnixContainer()
+                .UntilInternalTcpPortIsAvailable(6379))
+            .Build();
+        _proxy = new ContainerBuilder("ghcr.io/shopify/toxiproxy:2.12.0")
+            .WithNetwork(_network)
+            .WithPortBinding(8474, true)
+            .WithPortBinding(PostgresProxyPort, true)
+            .WithPortBinding(RedisProxyPort, true)
+            .WithWaitStrategy(Wait.ForUnixContainer()
+                .UntilInternalTcpPortIsAvailable(8474))
+            .Build();
+    }
+
+    public async ValueTask InitializeAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await _network.CreateAsync(ct);
+        await Task.WhenAll(_postgres.StartAsync(ct), _redis.StartAsync(ct));
+        await _proxy.StartAsync(ct);
+        using var admin = AdminClient();
+        await CreateProxyAsync(admin, "postgres", PostgresProxyPort, "fault-postgres:5432", ct);
+        await CreateProxyAsync(admin, "redis", RedisProxyPort, "fault-redis:6379", ct);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _proxy.DisposeAsync();
+        await _redis.DisposeAsync();
+        await _postgres.DisposeAsync();
+        await _network.DisposeAsync();
+    }
+
+    public string DirectPostgres(string application) =>
+        new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString())
+        {
+            ApplicationName = application,
+            Pooling = false,
+            CommandTimeout = 90,
+            Timeout = 10
+        }.ConnectionString;
+
+    public string ProxiedPostgres(string application) =>
+        new NpgsqlConnectionStringBuilder(DirectPostgres(application))
+        {
+            Host = _proxy.Hostname,
+            Port = _proxy.GetMappedPublicPort(PostgresProxyPort)
+        }.ConnectionString;
+
+    public string DirectRedis() =>
+        _redis.Hostname + ":" + _redis.GetMappedPublicPort(6379)
+        + ",abortConnect=false,connectTimeout=1000,asyncTimeout=1000,syncTimeout=1000";
+
+    public string ProxiedRedis() =>
+        _proxy.Hostname + ":" + _proxy.GetMappedPublicPort(RedisProxyPort)
+        + ",abortConnect=false,connectTimeout=1000,asyncTimeout=1000,syncTimeout=1000";
+
+    public async Task SetProxyAsync(string name, bool enabled, CancellationToken ct)
+    {
+        using var admin = AdminClient();
+        using var response = await admin.PostAsJsonAsync(
+            "proxies/" + name, new { enabled }, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private HttpClient AdminClient() => new()
+    {
+        BaseAddress = new Uri("http://" + _proxy.Hostname + ":"
+            + _proxy.GetMappedPublicPort(8474) + "/"),
+        Timeout = TimeSpan.FromSeconds(10)
+    };
+
+    private static async Task CreateProxyAsync(
+        HttpClient admin, string name, int listen, string upstream, CancellationToken ct)
+    {
+        using var response = await admin.PostAsJsonAsync("proxies", new
+        {
+            name,
+            listen = "0.0.0.0:" + listen,
+            upstream,
+            enabled = true
+        }, ct);
+        response.EnsureSuccessStatusCode();
+    }
+}
+
+/// <summary>
+/// #575 live TCP-partition tests, not synthetic exceptions and not a
+/// simulated lost acknowledgement injected after the native driver returns.
+/// Physical witnesses bypass the proxy and independently observe the DB.
+/// This does NOT prove a COMMIT response was lost after durable success.
+/// </summary>
+public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
+    : IClassFixture<NetworkFaultFixture>
+{
+    [Fact]
+    public async Task Postgres_QueryNativeSocketCut_FailsAndRecoversWithoutChangingServer()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var application = "hsql_proxy_query_" + Guid.NewGuid().ToString("N")[..8];
+        await using var witness = new NpgsqlConnection(fixture.DirectPostgres("proxy_query_witness"));
+        await witness.OpenAsync(ct);
+        var runtime = new TypedQueryRuntime();
+        var policy = new SecurityPolicyModel { QueryMaxRows = 10, QueryTimeoutSeconds = 90 };
+
+        var running = runtime.ExecuteAsync(new PostgresProvider(),
+            fixture.ProxiedPostgres(application), "SELECT pg_catalog.pg_sleep(60)",
+            SqlAgentToolType.Postgres, policy, allowedTables: null, ct);
+        await WaitForNativeBackendAsync(witness, application, "pg_sleep", false, ct);
+        try
+        {
+            // Disable the real TCP proxy, rather than killing PostgreSQL or
+            // mocking a DbCommand. An independent witness remains healthy.
+            await fixture.SetProxyAsync("postgres", false, ct);
+            Assert.Equal(1, Convert.ToInt32(await ScalarAsync(witness, "SELECT 1", ct)));
+            var failure = await Record.ExceptionAsync(async () =>
+                _ = await running.WaitAsync(TimeSpan.FromSeconds(20), ct));
+            Assert.NotNull(failure);
+            Assert.IsNotType<TimeoutException>(failure);
+        }
+        finally
+        {
+            await fixture.SetProxyAsync("postgres", true, CancellationToken.None);
+        }
+
+        // The same production Query runtime must work after transport restoration.
+        _ = await runtime.ExecuteAsync(new PostgresProvider(),
+            fixture.ProxiedPostgres("hsql_proxy_recovered_" + Guid.NewGuid().ToString("N")[..8]),
+            "SELECT 1", SqlAgentToolType.Postgres, policy, allowedTables: null, ct);
+    }
+
+    [Fact]
+    public async Task Postgres_TcpCutDuringRealCommit_UnknownNeverReplayAndNoPartialRows()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var application = "hsql_proxy_commit_" + Guid.NewGuid().ToString("N")[..8];
+        var schema = "proxy_dml_" + Guid.NewGuid().ToString("N")[..9];
+        var sqlTarget = fixture.ProxiedPostgres(application);
+        await using var witness = new NpgsqlConnection(fixture.DirectPostgres("proxy_commit_witness"));
+        await witness.OpenAsync(ct);
+
+        await ExecuteAsync(witness, "CREATE SCHEMA " + schema, ct);
+        await ExecuteAsync(witness,
+            "CREATE TABLE " + schema + ".parents (id integer primary key)", ct);
+        await ExecuteAsync(witness,
+            "INSERT INTO " + schema + ".parents VALUES (1)", ct);
+        await ExecuteAsync(witness,
+            "CREATE TABLE " + schema + ".items (id integer primary key, " +
+            "parent_id integer REFERENCES " + schema + ".parents(id) " +
+            "DEFERRABLE INITIALLY DEFERRED)", ct);
+
+        var runtime = new TypedDmlRuntime();
+        var provider = new PostgresProvider();
+        var policy = new SecurityPolicyModel
+        {
+            DmlMaxAffectedRows = 16,
+            RequireWhereForUpdate = true,
+            RequireWhereForDelete = true
+        };
+        var actor = new DmlApprovalExecutionContext(
+            "mcp-key:7", "db-management:42", SqlAgentToolType.Postgres, witness.Database);
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            schema + ".items"
+        };
+        var sql = "INSERT INTO " + schema + ".items(id,parent_id) VALUES(100,1);" +
+                  "INSERT INTO " + schema + ".items(id,parent_id) VALUES(101,1)";
+        var parsed = await runtime.ParseDmlBatchWithVerifiedRuntimeProfileAsync(
+            provider, sqlTarget, sql, SqlAgentToolType.Postgres, ct);
+        var session = await runtime.PreviewTransactionAsync(
+            provider, sqlTarget, parsed, policy, allowed, actor, ct);
+
+        await using var blocker = new NpgsqlConnection(fixture.DirectPostgres("proxy_commit_blocker"));
+        await blocker.OpenAsync(ct);
+        await using var blocked = await blocker.BeginTransactionAsync(ct);
+        await using (var lockCommand = new NpgsqlCommand(
+            "SELECT id FROM " + schema + ".parents WHERE id=1 FOR UPDATE",
+            blocker, blocked))
+            Assert.Equal(1, Convert.ToInt32(await lockCommand.ExecuteScalarAsync(ct)));
+
+        var committing = runtime.CommitTransactionAsync(
+            provider, sqlTarget, session, policy, allowed, actor, ct);
+        try
+        {
+            // The independent DB sees the actual native COMMIT waiting on a
+            // deferred FK lock. Cut *only* the TCP middlebox at that boundary.
+            await WaitForNativeBackendAsync(witness, application, "COMMIT", true, ct);
+            Assert.False(committing.IsCompleted);
+            await fixture.SetProxyAsync("postgres", false, ct);
+            var failure = await Record.ExceptionAsync(async () =>
+                _ = await committing.WaitAsync(TimeSpan.FromSeconds(25), ct));
+            Assert.IsType<DmlCommitOutcomeUnknownException>(failure);
+        }
+        finally
+        {
+            await blocked.RollbackAsync(CancellationToken.None);
+            await fixture.SetProxyAsync("postgres", true, CancellationToken.None);
+        }
+
+        // Depending on when the backend observes the broken socket, COMMIT may
+        // durably finish or abort. Both are admissible; a partial transaction
+        // or a reported definite failure is not. A third connection observes.
+        var rows = Convert.ToInt64(await ScalarAsync(
+            witness, "SELECT count(*) FROM " + schema + ".items", ct));
+        Assert.True(rows is 0L or 2L,
+            "The real network fault exposed a partially committed atomic DML transaction.");
+        var replay = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.CommitTransactionAsync(
+                provider, sqlTarget, session, policy, allowed, actor, ct));
+        Assert.Contains("consumed", replay.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(rows, Convert.ToInt64(await ScalarAsync(
+            witness, "SELECT count(*) FROM " + schema + ".items", ct)));
+    }
+
+    [Fact]
+    public async Task Redis_TcpPartitionRevokesExistingLease_AndFailsClosedAcrossInstances()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var key = "hsql:redis-network-fault:" + Guid.NewGuid().ToString("N");
+        await using var physicalWitness = await ConnectionMultiplexer.ConnectAsync(
+            fixture.DirectRedis());
+        var physical = physicalWitness.GetDatabase();
+        var state = new Mock<ISecurityPolicyRuntimeState>();
+        state.Setup(x => x.GetCurrent()).Returns(
+            new SecurityPolicyModel { MaxConcurrentSql = 1 });
+        var options = new RedisSqlConcurrencyOptions(
+            fixture.ProxiedRedis(), key, TimeSpan.FromSeconds(3),
+            RateLimiterFailureMode.FailClosed);
+        await using var first = new RedisSqlExecutionConcurrencyLimiter(
+            state.Object, options, NullLogger<RedisSqlExecutionConcurrencyLimiter>.Instance);
+        await using var second = new RedisSqlExecutionConcurrencyLimiter(
+            state.Object, options, NullLogger<RedisSqlExecutionConcurrencyLimiter>.Instance);
+
+        var lease = await first.TryAcquireAsync(ct);
+        Assert.NotNull(lease);
+        await using (lease)
+        {
+            var revoked = Assert.IsAssignableFrom<IRevocableSqlExecutionLease>(lease);
+            Assert.Equal(1L, await physical.SortedSetLengthAsync(key));
+            Assert.Null(await second.TryAcquireAsync(ct));
+
+            try
+            {
+                await fixture.SetProxyAsync("redis", false, ct);
+                // Redis stays up; only the transport paths of both limiter
+                // processes are severed. The DB witness can still read key.
+                Assert.Equal(1L, await physical.SortedSetLengthAsync(key));
+                await Task.Delay(TimeSpan.FromMilliseconds(3500), ct);
+                Assert.True(revoked.RevocationToken.IsCancellationRequested);
+                var refused = await second.TryAcquireAsync(ct)
+                    .AsTask().WaitAsync(TimeSpan.FromSeconds(12), ct);
+                Assert.Null(refused);
+            }
+            finally
+            {
+                await fixture.SetProxyAsync("redis", true, CancellationToken.None);
+            }
+            Assert.True(revoked.RevocationToken.IsCancellationRequested,
+                "A network partition cannot un-revoke an admitted SQL operation.");
+        }
+
+        // Let stale Redis expiry/release settle before a new independent
+        // process acquires. Reconnect cannot resurrect the old lease token.
+        await using var resumed = new RedisSqlExecutionConcurrencyLimiter(
+            state.Object, options, NullLogger<RedisSqlExecutionConcurrencyLimiter>.Instance);
+        await using var next = await resumed.TryAcquireAsync(ct);
+        Assert.NotNull(next);
+    }
+
+    private static async Task<int> WaitForNativeBackendAsync(
+        NpgsqlConnection witness, string app, string queryFragment,
+        bool commit, CancellationToken ct)
+    {
+        var elapsed = Stopwatch.StartNew();
+        while (elapsed.Elapsed < TimeSpan.FromSeconds(20))
+        {
+            await using var command = new NpgsqlCommand("""
+                SELECT pid FROM pg_catalog.pg_stat_activity
+                WHERE application_name = @app
+                  AND state = 'active'
+                  AND pid <> pg_catalog.pg_backend_pid()
+                  AND (CASE WHEN @commit THEN query ~* '^COMMIT'
+                       ELSE query ILIKE '%' || @fragment || '%' END)
+                  AND (NOT @commit OR wait_event_type = 'Lock')
+                LIMIT 1
+                """, witness);
+            command.Parameters.AddWithValue("app", app);
+            command.Parameters.AddWithValue("commit", commit);
+            command.Parameters.AddWithValue("fragment", queryFragment);
+            var value = await command.ExecuteScalarAsync(ct);
+            if (value is int pid)
+                return pid;
+            await Task.Delay(100, ct);
+        }
+        throw new TimeoutException(
+            "No native PostgreSQL " + (commit ? "COMMIT lock wait" : "running SQL")
+            + " reached the physical witness; network fault was not proven.");
+    }
+
+    private static async Task ExecuteAsync(
+        NpgsqlConnection connection, string sql, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task<object?> ScalarAsync(
+        NpgsqlConnection connection, string sql, CancellationToken ct)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+        return await command.ExecuteScalarAsync(ct);
+    }
+}
