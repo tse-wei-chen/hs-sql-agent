@@ -67,7 +67,11 @@ multiple explicit positive owners in the manifest.
    invokes `require-physical-test-cases.sh 4`, which refuses zero matches,
    unexpected test-count changes, failures, and skips. Update the count only
    when the intentional physical corpus changes and verify real Docker logs.
-5. Run `bash .github/scripts/audit-server-integration-ownership.sh` and
+5. Run `bash .github/scripts/test-server-integration-ownership-audit.sh` to
+   verify the ownership guard rejects seven deliberate broken CI/manifest
+   scenarios, rather than only passing a valid manifest. This is mandatory
+   in the `server-test` CI job and does not mutate checked-out sources.
+6. Run `bash .github/scripts/audit-server-integration-ownership.sh` and
    `bash .github/scripts/audit-server-integration-ownership.sh --default-filter`
    locally, then verify all 18 required Tests jobs and SqlCore baseline on the
    **exact final PR SHA** before merging to `develop`.
