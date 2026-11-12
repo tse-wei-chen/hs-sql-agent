@@ -24,7 +24,8 @@ verify_reports() {
   nuget_high="$(jq '[.projects[]?.frameworks[]? | (.topLevelPackages[]?, .transitivePackages[]?) |
                     (.vulnerabilities // [])[] |
                     select((.severity | tostring | ascii_downcase) == "high"
-                           or (.severity | tostring | ascii_downcase) == "critical")] | length' "$nuget_report")"
+                           or (.severity | tostring | ascii_downcase) == "critical"
+                           or ((.severity | type) == "number" and .severity >= 2))] | length' "$nuget_report")"
   jq -e '(.metadata.vulnerabilities | type == "object") and (.error == null)' "$node_report" >/dev/null || {
     echo "::error::pnpm registry audit failed or returned no usable advisory metadata." >&2
     exit 1
