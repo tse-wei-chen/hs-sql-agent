@@ -34,6 +34,7 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
 
     public NetworkFaultFixture()
     {
+        Mark("fixture construction begins");
         _postgres = new PostgreSqlBuilder("postgres:16-alpine")
             .WithDatabase("hsql_network")
             .WithUsername("fault_operator")
@@ -52,25 +53,40 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
             .WithWaitStrategy(Wait.ForUnixContainer()
                 .UntilInternalTcpPortIsAvailable(8474))
             .Build();
+        Mark("fixture construction complete");
     }
+
+    internal static void Mark(string stage) =>
+        File.AppendAllText(Path.Combine(Path.GetTempPath(), "hsql-network-fault-trace.log"),
+            DateTimeOffset.UtcNow.ToString("O") + " " + stage + Environment.NewLine);
 
     public async ValueTask InitializeAsync()
     {
         var ct = TestContext.Current.CancellationToken;
-        await Task.WhenAll(_postgres.StartAsync(ct), _redis.StartAsync(ct));
+        Mark("PostgreSQL container start");
+        await _postgres.StartAsync(ct);
+        Mark("PostgreSQL container ready");
+        await _redis.StartAsync(ct);
+        Mark("Redis container ready");
         await _proxy.StartAsync(ct);
+        Mark("Toxiproxy container ready");
         using var admin = AdminClient();
         await CreateProxyAsync(admin, "postgres", PostgresProxyPort,
             "host.docker.internal:" + _postgres.GetMappedPublicPort(5432), ct);
         await CreateProxyAsync(admin, "redis", RedisProxyPort,
             "host.docker.internal:" + _redis.GetMappedPublicPort(6379), ct);
+        Mark("both TCP routes ready");
     }
 
     public async ValueTask DisposeAsync()
     {
+        Mark("fixture disposal starts");
         await _proxy.DisposeAsync();
+        Mark("Toxiproxy disposed");
         await _redis.DisposeAsync();
+        Mark("Redis disposed");
         await _postgres.DisposeAsync();
+        Mark("PostgreSQL disposed");
     }
 
     public string DirectPostgres(string application) =>
@@ -139,6 +155,7 @@ public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
     public async Task Postgres_QueryNativeSocketCut_FailsAndRecoversWithoutChangingServer()
     {
         var ct = TestContext.Current.CancellationToken;
+        NetworkFaultFixture.Mark("Query physical case starts");
         var application = "hsql_proxy_query_" + Guid.NewGuid().ToString("N")[..8];
         await using var witness = new NpgsqlConnection(fixture.DirectPostgres("proxy_query_witness"));
         await witness.OpenAsync(ct);
@@ -149,20 +166,24 @@ public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
             fixture.ProxiedPostgres(application), "SELECT pg_catalog.pg_sleep(60)",
             SqlAgentToolType.Postgres, policy, allowedTables: null, ct);
         await WaitForNativeBackendAsync(witness, application, "pg_sleep", false, ct);
+        NetworkFaultFixture.Mark("Query native backend observed");
         try
         {
             // Disable the real TCP proxy, rather than killing PostgreSQL or
             // mocking a DbCommand. An independent witness remains healthy.
             await fixture.SetProxyAsync("postgres", false, ct);
+            NetworkFaultFixture.Mark("PostgreSQL TCP route disabled");
             Assert.Equal(1, Convert.ToInt32(await ScalarAsync(witness, "SELECT 1", ct)));
             var failure = await Record.ExceptionAsync(async () =>
                 _ = await running.WaitAsync(TimeSpan.FromSeconds(20), ct));
             Assert.NotNull(failure);
             Assert.IsNotType<TimeoutException>(failure);
+            NetworkFaultFixture.Mark("Query transport failure asserted");
         }
         finally
         {
             await fixture.SetProxyAsync("postgres", true, CancellationToken.None);
+            NetworkFaultFixture.Mark("PostgreSQL TCP route restored");
         }
 
         // The same production Query runtime must work after transport restoration.
@@ -175,6 +196,7 @@ public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
     public async Task Redis_TcpPartitionRevokesExistingLease_AndFailsClosedAcrossInstances()
     {
         var ct = TestContext.Current.CancellationToken;
+        NetworkFaultFixture.Mark("Redis physical case starts");
         var key = "hsql:redis-network-fault:" + Guid.NewGuid().ToString("N");
         await using var physicalWitness = await ConnectionMultiplexer.ConnectAsync(
             fixture.DirectRedis());
@@ -201,6 +223,7 @@ public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
             try
             {
                 await fixture.SetProxyAsync("redis", false, ct);
+                NetworkFaultFixture.Mark("Redis TCP route disabled");
                 // Redis stays up; only the transport paths of both limiter
                 // processes are severed. The DB witness can still read key.
                 Assert.Equal(1L, await physical.SortedSetLengthAsync(key));
@@ -213,6 +236,7 @@ public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
             finally
             {
                 await fixture.SetProxyAsync("redis", true, CancellationToken.None);
+                NetworkFaultFixture.Mark("Redis TCP route restored");
             }
             Assert.True(revoked.RevocationToken.IsCancellationRequested,
                 "A network partition cannot un-revoke an admitted SQL operation.");
