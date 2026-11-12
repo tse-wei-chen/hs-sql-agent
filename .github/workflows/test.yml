@@ -179,11 +179,17 @@ jobs:
       - name: Prepull dedicated TCP-fault proxy image
         run: timeout --signal=INT --kill-after=10s 90s docker pull ghcr.io/shopify/toxiproxy:2.12.0
 
-      - name: Verify two physical PostgreSQL and Redis TCP-partition cases
+      - name: Verify actual PostgreSQL Query TCP cut through a proxy
         run: |
-          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 2 \
+          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
-            'FullyQualifiedName~NetworkFaultTestcontainersTests'
+            'FullyQualifiedName~NetworkFaultTestcontainersTests.Postgres_QueryNativeSocketCut'
+
+      - name: Verify Redis lease revocation under real TCP partition
+        run: |
+          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~NetworkFaultTestcontainersTests.Redis_TcpPartition'
 
       - name: Show Docker container status if physical network tests fail
         if: failure()
