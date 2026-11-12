@@ -160,15 +160,20 @@ jobs:
       - name: Verify released v2.0.6 Admin Store migration baseline is immutable
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
-      - name: Run server unit tests (excluding explicit Redis integration suite)
-        run: dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~RedisDmlApprovalIntegrationTests&FullyQualifiedName!~RedisSqlConcurrencyIntegrationTests&FullyQualifiedName!~SqlCoreSqlServerDdlHostLiveTests&FullyQualifiedName!~SqlServerMergeMatchedDeleteApprovalLiveTests&FullyQualifiedName!~SqlServerMergeMatchedUpdateApprovalLiveTests&FullyQualifiedName!~SqlServerMergeNotMatchedInsertApprovalLiveTests&FullyQualifiedName!~FirebirdDdlLiveTests&FullyQualifiedName!~MySqlDdlLiveTests&FullyQualifiedName!~OracleDdlLiveTests&FullyQualifiedName!~QueryNativeFunctionLiveTests&FullyQualifiedName!~PostgresPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~PostgresPhysicalLoadIntegrationTests&FullyQualifiedName!~MySqlPhysicalLoadIntegrationTests&FullyQualifiedName!~MySqlPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~SqlServerPhysicalLoadIntegrationTests&FullyQualifiedName!~OraclePhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~OraclePhysicalLoadIntegrationTests&FullyQualifiedName!~FirebirdPhysicalUnknownOutcomeIntegrationTests&FullyQualifiedName!~FirebirdPhysicalLoadIntegrationTests&FullyQualifiedName!~PostgresNativeFaultTestcontainersTests&FullyQualifiedName!~RedisProcessOutageTestcontainersTests'
+      - name: Run Server unit shard from audited integration ownership manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
+          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
       - name: Verify real Testcontainers PostgreSQL 16 native socket faults and Redis 7 process outage
         # Mandatory Docker-backed physical proof: do not hide these cases in
         # generic tests or count mock ACK loss as a transport failure.
         run: >
-          dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          --filter 'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+          bash .github/scripts/require-physical-test-cases.sh
+          4 backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
 
 
   redis-approval-integration:
