@@ -49,6 +49,20 @@ public class SqlConcurrencyRegistrationTests
         Assert.Contains("connection string is required", exception.Message);
     }
 
+    [Fact]
+    public void AddHsSqlAgent_RejectsRedisFailOpenBecauseItBypassesSqlAdmission()
+    {
+        var options = CreateOptions();
+        options.SqlConcurrencyProvider = "Redis";
+        options.SqlConcurrencyConnectionString = "localhost:6379";
+        options.SqlConcurrencyFailureMode = "FailOpen";
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => new ServiceCollection().AddHsSqlAgent(options));
+        Assert.Contains("FailClosed", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("SQL", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static HsSqlAgentServiceOptions CreateOptions() => new()
     {
         AdminConnectionString = "Data Source=:memory:",
