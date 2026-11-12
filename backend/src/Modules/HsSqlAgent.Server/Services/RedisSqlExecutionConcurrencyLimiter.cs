@@ -134,13 +134,13 @@ public sealed class RedisSqlExecutionConcurrencyLimiter :
         }
         catch (Exception exception) when (exception is RedisException or TimeoutException)
         {
-            // Redis failure modes apply only to active requests. Cancellation
-            // must not be converted into FailOpen admission (or a Redis error).
+            // There is no safe unfenced SQL admission during a Redis failure.
+            // Even a legacy direct constructor using FailOpen must NOT mint a
+            // NoOpLease: doing so silently violates MaxConcurrentSql.
+            // Preserve request cancellation instead of downgrading it.
             cancellationToken.ThrowIfCancellationRequested();
-            _logger.LogError(exception, "Redis SQL concurrency limiter is unavailable.");
-            return _options.FailureMode == RateLimiterFailureMode.FailOpen
-                ? NoOpLease.Instance
-                : null;
+            _logger.LogError(exception, "Redis SQL concurrency limiter is unavailable; SQL admission denied.");
+            return null;
         }
     }
 
