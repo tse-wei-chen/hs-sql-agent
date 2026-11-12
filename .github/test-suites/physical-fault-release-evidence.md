@@ -41,6 +41,17 @@ client is refused. This **does not** make Redis asynchronous replication,
 Sentinel/Cluster leader promotion, or independent split-brain primaries into
 linearizable lease/fencing services.
 
+**Actual split-brain negative control:** two independent real Redis 7
+Testcontainers primaries, each with `MaxConcurrentSql=1` and the same
+logical key, both grant one lease to independently connected limiter instances.
+A second client sharing the first primary is correctly denied. This is
+deliberate real counterevidence to any claim of quorum-fenced Redis HA.
+Standard-host registration rejects explicit Sentinel `serviceName` or
+multi-endpoint Redis SQL coordination; no product guarantee is made for
+undetectable DNS/proxy failover or asynchronous promotion behind one endpoint.
+Runtime Doctor marks explicit unsupported topologies as Error. Do **not**
+set up split-brain routing for SQL concurrency.
+
 ## Remaining release blockers (do not overstate this batch)
 
 1. Query least privilege: six-provider DB roles, unqualified/UDF/SQL CLR and autonomous/external effects still require bounded negative proofs or explicit documented unsupported behavior. Existing real native-function tests are necessary but do not certify all effects.
