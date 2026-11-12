@@ -108,8 +108,8 @@ case "$mode" in
             echo "::error::Default Server unit shard is not driven by the audited manifest." >&2
             failures=$((failures + 1))
         fi
-        if ! grep -Fq -- 'require-physical-test-cases.sh 4' "$workflow"; then
-            echo "::error::Four-case backend/process fault step is missing." >&2
+        if ! grep -Fq -- 'require-physical-test-cases.sh 5' "$workflow"; then
+            echo "::error::Five-case backend/process fault step including FailOpen regression is missing." >&2
             failures=$((failures + 1))
         fi
         if [[ "$(grep -Fc 'require-physical-test-cases.sh 1' "$workflow")" -lt 2 ]]; then
