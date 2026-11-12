@@ -46,7 +46,8 @@ assert_rejected "stale class name"
 
 reset_fixtures
 # Duplicate ownership is not a valid way to disguise an unowned suite.
-grep '^RedisDmlApprovalIntegrationTests' "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST" >> "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST"
+duplicate="$(grep '^RedisDmlApprovalIntegrationTests' "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST")"
+printf '%s\\n' "$duplicate" >> "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST"
 assert_rejected "duplicate ownership assignment"
 
 reset_fixtures
