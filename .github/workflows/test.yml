@@ -73,6 +73,9 @@ jobs:
       - name: Verify develop-only candidate gate rejects stale or incomplete evidence
         shell: bash
         run: bash .github/scripts/test-develop-release-candidate.sh
+      - name: Require executable SQL syntax-parity on develop and main push
+        shell: bash
+        run: bash .github/scripts/test-release-push-parity.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
