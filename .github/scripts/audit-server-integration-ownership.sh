@@ -1,75 +1,111 @@
 #!/usr/bin/env bash
-# CI contract: no server integration suite may be silently excluded from the
-# default test job without a corresponding mandatory positive selection.
+# The ownership manifest is the *single* source for Server's excluded suites.
+# Its positive selectors must belong to real mandatory workflow jobs.
 set -euo pipefail
 
-workflow="${1:-.github/workflows/test.yml}"
+manifest=".github/test-suites/server-integration.tsv"
+workflow=".github/workflows/test.yml"
 test_root="backend/src/UnitTest/HsSqlAgent.Server.Test"
-if [[ ! -f "$workflow" || ! -d "$test_root" ]]; then
-  echo "Missing workflow or server test project" >&2
-  exit 1
+mode="${1:---audit}"
+
+if [[ ! -f "$manifest" || ! -f "$workflow" || ! -d "$test_root" ]]; then
+    echo "::error::Server integration ownership inputs are missing." >&2
+    exit 1
 fi
 
-# The default job must have exactly one exclusion expression. Never rely on
-# grep matching a class in its own negative filter as proof it actually ran.
-default_line="$(grep -F "run: dotnet test --project $test_root/HsSqlAgent.Server.Test.csproj --filter 'FullyQualifiedName!~" "$workflow" || true)"
-if [[ -z "$default_line" || "$(printf '%s\n' "$default_line" | wc -l)" -ne 1 ]]; then
-  echo "Expected exactly one explicit default Server test exclusion filter" >&2
-  exit 1
+declare -A unique_suites=()
+declare -A unique_assignments=()
+declare -a exclusions=()
+declare -a classes=()
+declare -a jobs=()
+declare -a selectors=()
+
+while IFS=$'\t' read -r suite job selector extra || [[ -n "${suite:-}" ]]; do
+    [[ -z "$suite" || "$suite" == \#* ]] && continue
+    if [[ -n "${extra:-}" || ! "$suite" =~ ^[A-Za-z][A-Za-z0-9_]*$
+          || ! "$job" =~ ^[a-z][a-z0-9-]*$
+          || ! "$selector" =~ ^FullyQualifiedName~[A-Za-z0-9_.]+$ ]]; then
+        echo "::error::Malformed Server integration assignment: $suite / $job / $selector" >&2
+        exit 1
+    fi
+    if [[ -n "${unique_assignments[$suite:$job:$selector]:-}" ]]; then
+        echo "::error::Duplicate integration ownership: $suite / $job" >&2
+        exit 1
+    fi
+    unique_assignments["$suite:$job:$selector"]=1
+    if [[ -z "${unique_suites[$suite]:-}" ]]; then
+        unique_suites["$suite"]=1
+        exclusions+=("FullyQualifiedName!~$suite")
+    fi
+    classes+=("$suite")
+    jobs+=("$job")
+    selectors+=("$selector")
+done < "$manifest"
+
+if (( ${#exclusions[@]} == 0 )); then
+    echo "::error::An empty integration manifest would run destructive tests in the unit shard." >&2
+    exit 1
 fi
 
-failures=0
-IFS='&' read -ra exclusions <<< "${default_line#*--filter }"
-for fragment in "${exclusions[@]}"; do
-  class="${fragment#*FullyQualifiedName!~}"
-  class="${class%\'}"
-  if [[ "$class" == "$fragment" || -z "$class" ]]; then
-    echo "Unexpected Server exclusion fragment: $fragment" >&2
-    failures=$((failures + 1))
-    continue
-  fi
-  # Positive selection can live in a different job (e.g. Redis, Oracle).
-  # Native-function suites select per-provider method prefixes, not the
-  # entire mixed-provider class, and must cover all five live providers.
-  if [[ "$class" == "QueryNativeFunctionLiveTests" ]]; then
-    for provider in MySql SqlServer Oracle Firebird; do
-      if ! grep -Fq "FullyQualifiedName~QueryNativeFunctionLiveTests.${provider}_" "$workflow"; then
-        echo "Missing positive native-function selection: $provider" >&2
-        failures=$((failures + 1))
-      fi
-    done
-    # This mixed-provider class currently contains four provider prefixes.
-    continue
-  fi
-  if ! grep -Fq "FullyQualifiedName~${class}" "$workflow"; then
-    echo "Orphan Server exclusion (never positively selected): $class" >&2
-    failures=$((failures + 1))
-  fi
-  if ! grep -Rlq --include='*.cs' "class ${class}\\b" "$test_root"; then
-    echo "Stale Server exclusion (test class no longer exists): $class" >&2
-    failures=$((failures + 1))
-  fi
-done
+case "$mode" in
+    --default-filter)
+        # Stable manifest ordering retains the exact pre-refactor VSTest selection.
+        joined="$(IFS='&'; echo "${exclusions[*]}")"
+        printf '%s\n' "$joined"
+        ;;
+    --audit)
+        failures=0
+        for i in "${!classes[@]}"; do
+            suite="${classes[i]}"
+            job="${jobs[i]}"
+            selector="${selectors[i]}"
+            if [[ "$selector" != "FullyQualifiedName~$suite"
+                  && "$selector" != "FullyQualifiedName~$suite."* ]]; then
+                echo "::error::Selector escapes suite '$suite': $selector" >&2
+                failures=$((failures + 1))
+            fi
+            # Do not trust arbitrary string occurrences elsewhere in YAML:
+            # the positive selector must be inside its named workflow job.
+            job_block="$(awk -v job="$job" '
+                $0 == "  " job ":" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            if [[ -z "$job_block" || "$job_block" != *"$selector"* ]]; then
+                echo "::error::No required positive selector '$selector' in CI job '$job'." >&2
+                failures=$((failures + 1))
+            fi
+            if ! grep -RlEq --include='*.cs'                 "class[[:space:]]+$suite([^[:alnum:]_]|$)" "$test_root"; then
+                echo "::error::Stale integration class '$suite' in manifest." >&2
+                failures=$((failures + 1))
+            fi
+        done
 
-# Dedicated Docker-backed fault tests must not be accidentally included in
-# the generic unit suite or silently removed from their own required job.
-for class in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests; do
-  if [[ "$default_line" != *"FullyQualifiedName!~${class}"* ]]; then
-    echo "Physical fault test not isolated from generic Server suite: $class" >&2
-    failures=$((failures + 1))
-  fi
-  if ! grep -Fq "FullyQualifiedName~${class}" "$workflow"; then
-    echo "Physical fault test has no positive mandatory CI selection: $class" >&2
-    failures=$((failures + 1))
-  fi
-done
-if ! grep -Fq "Verify real Testcontainers PostgreSQL 16 native socket faults and Redis 7 process outage" "$workflow"; then
-  echo "Missing dedicated physical-fault CI step" >&2
-  failures=$((failures + 1))
-fi
+        # Separate destructive Docker cases must be excluded from the
+        # ordinary shard *and* positively selected in the dedicated step.
+        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests; do
+            if [[ -z "${unique_suites[$suite]:-}" ]]; then
+                echo "::error::Missing mandatory fault suite from manifest: $suite" >&2
+                failures=$((failures + 1))
+            fi
+        done
 
-if (( failures > 0 )); then
-  echo "Server integration ownership audit failed: $failures error(s)" >&2
-  exit 1
-fi
-echo "Server integration ownership audit passed: all explicit exclusions have positive CI owners."
+        if ! grep -Fq 'bash .github/scripts/audit-server-integration-ownership.sh --default-filter' "$workflow"; then
+            echo "::error::Default Server unit shard is not driven by the audited manifest." >&2
+            failures=$((failures + 1))
+        fi
+        if ! grep -Fq -- 'require-physical-test-cases.sh 4' "$workflow"; then
+            echo "::error::Mandatory Testcontainers step lacks its exact 4-case no-skip proof." >&2
+            failures=$((failures + 1))
+        fi
+        if (( failures > 0 )); then
+            echo "::error::Server integration ownership audit failed ($failures errors)." >&2
+            exit 1
+        fi
+        echo "Server integration ownership passed: ${#unique_suites[@]} suites, ${#classes[@]} explicit CI assignments."
+        ;;
+    *)
+        echo "Usage: bash $0 [--audit|--default-filter]" >&2
+        exit 2
+        ;;
+esac
