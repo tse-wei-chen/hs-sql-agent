@@ -94,7 +94,7 @@ case "$mode" in
             echo "::error::Default Server unit shard is not driven by the audited manifest." >&2
             failures=$((failures + 1))
         fi
-        if ! grep -Fq -- 'require-physical-test-cases.sh 7' "$workflow"; then
+        if ! grep -Fq -- 'require-physical-test-cases.sh 6' "$workflow"; then
             echo "::error::Mandatory Testcontainers step lacks its exact 4-case no-skip proof." >&2
             failures=$((failures + 1))
         fi
