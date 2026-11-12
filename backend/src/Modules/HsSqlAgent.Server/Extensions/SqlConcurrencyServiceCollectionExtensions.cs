@@ -27,6 +27,13 @@ internal static class SqlConcurrencyServiceCollectionExtensions
         if (!Enum.TryParse<RateLimiterFailureMode>(failureMode, true, out var parsedFailureMode))
             throw new InvalidOperationException(
                 $"Unsupported SQL concurrency failure mode '{failureMode}'. Supported modes: FailClosed, FailOpen.");
+        // SQL concurrency is an admission/safety boundary. If Redis is unavailable,
+        // allowing an unlimited fallback lease defeats MaxConcurrentSql. Keep the
+        // failure-mode enum for compatibility with independent rate limiting,
+        // but never register an unfenced SQL concurrency limiter.
+        if (parsedFailureMode != RateLimiterFailureMode.FailClosed)
+            throw new InvalidOperationException(
+                "Redis SQL concurrency requires FailClosed; FailOpen is unsupported because it bypasses MaxConcurrentSql.");
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("SqlConcurrency key is required.");
         if (leaseSeconds < 2)
