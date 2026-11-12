@@ -70,6 +70,9 @@ jobs:
         run: bash .github/scripts/test-release-security-gate.sh
       - name: Verify exact release-head Tests gate rejects missing or failed CI
         run: bash .github/scripts/test-release-head-ci-gate.sh
+      - name: Verify develop-only candidate gate rejects stale or incomplete evidence
+        shell: bash
+        run: bash .github/scripts/test-develop-release-candidate.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
