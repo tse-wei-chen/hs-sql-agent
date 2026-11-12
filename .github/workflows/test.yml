@@ -73,6 +73,9 @@ jobs:
       - name: Verify develop-only candidate gate rejects stale or incomplete evidence
         shell: bash
         run: bash .github/scripts/test-develop-release-candidate.sh
+      - name: Require executable SQL syntax-parity on develop and main push
+        shell: bash
+        run: bash .github/scripts/test-release-push-parity.sh
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -1139,7 +1142,9 @@ jobs:
         working-directory: frontend
 
   sql-syntax-parity:
-    if: github.event_name == 'pull_request'
+    # The 18-job release gate requires a successful parity job on actual
+    # develop/main pushes, not a silently skipped PR-only check.
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1238,12 +1243,21 @@ jobs:
           --configuration Release --no-build --
           verify-negative artifacts/parity/head/HsSqlAgent.SqlCore.dll
           backend/src/UnitTest/SqlAgent.Test/SyntaxCorpus/sql-negative-syntax-contract.json
-      - name: Build base main SqlCore
+      - name: Build comparable base SqlCore
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # A push has no pull_request.base.sha. Compare the new commit
+          # with its immediately previous branch SHA; for PRs retain the
+          # original target-branch base. Never self-compare.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || '' }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ||
+                "$BASE_SHA" == "0000000000000000000000000000000000000000" ||
+                "$BASE_SHA" == "$GITHUB_SHA" ]]; then
+            echo "::error::SQL syntax parity requires a valid distinct PR base or previous branch push SHA." >&2
+            exit 1
+          fi
           git fetch origin "$BASE_SHA" --depth=1
           git worktree add --detach /tmp/hs-sql-agent-main "$BASE_SHA"
           dotnet build /tmp/hs-sql-agent-main/backend/src/Modules/HsSqlAgent.SqlCore/HsSqlAgent.SqlCore.fsproj \
