@@ -48,8 +48,10 @@ internal static class SqlConcurrencyServiceCollectionExtensions
         }
         catch (Exception error) when (error is ArgumentException or FormatException)
         {
+            // Never preserve the parser exception as an inner exception:
+            // some configuration errors may include endpoint credentials.
             throw new InvalidOperationException(
-                "SqlConcurrency Redis connection string is invalid.", error);
+                "SqlConcurrency Redis connection string is invalid.");
         }
         if (!string.IsNullOrWhiteSpace(parsedConnection.ServiceName)
             || parsedConnection.EndPoints.Count != 1)
