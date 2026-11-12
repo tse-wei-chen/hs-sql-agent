@@ -15,7 +15,12 @@ namespace HsSqlAgent.Server.Test.Services;
 /// transaction ACK loss, pg_terminate_backend severs the real Npgsql socket.
 /// These tests do not claim that a cleanly completed COMMIT loses its ACK.
 /// </summary>
-public sealed class PostgresNativeFaultTestcontainersTests : IAsyncLifetime
+/// <summary>
+/// Shared xUnit class fixture: one real PostgreSQL 16 Testcontainer for all
+/// three native-fault cases, with unique per-test application names and
+/// independent witness connections.
+/// </summary>
+public sealed class PostgresNativeFaultFixture : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine")
         .WithDatabase("hsql_faults")
@@ -28,13 +33,26 @@ public sealed class PostgresNativeFaultTestcontainersTests : IAsyncLifetime
 
     public ValueTask DisposeAsync() => _postgres.DisposeAsync();
 
+    public string ConnectionString(string application) =>
+        new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString())
+        {
+            ApplicationName = application,
+            Pooling = false,
+            CommandTimeout = 90,
+            Timeout = 10
+        }.ConnectionString;
+}
+
+public sealed class PostgresNativeFaultTestcontainersTests(PostgresNativeFaultFixture fixture)
+    : IClassFixture<PostgresNativeFaultFixture>
+{
     [Fact]
     public async Task Query_ServerTerminatesActualRunningNativeCommand_NoRowsAreReturned()
     {
         var ct = TestContext.Current.CancellationToken;
         var app = "hsql_query_kill_" + Guid.NewGuid().ToString("N")[..12];
-        var target = ConnectionString(app);
-        await using var witness = new NpgsqlConnection(ConnectionString("hsql_query_witness"));
+        var target = fixture.ConnectionString(app);
+        await using var witness = new NpgsqlConnection(fixture.ConnectionString("hsql_query_witness"));
         await witness.OpenAsync(ct);
 
         var executing = new TypedQueryRuntime().ExecuteAsync(
@@ -65,12 +83,12 @@ public sealed class PostgresNativeFaultTestcontainersTests : IAsyncLifetime
     {
         var ct = TestContext.Current.CancellationToken;
         var app = "hsql_query_cancel_" + Guid.NewGuid().ToString("N")[..12];
-        await using var witness = new NpgsqlConnection(ConnectionString("hsql_cancel_witness"));
+        await using var witness = new NpgsqlConnection(fixture.ConnectionString("hsql_cancel_witness"));
         await witness.OpenAsync(ct);
         using var queryCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var executing = new TypedQueryRuntime().ExecuteAsync(
-            new PostgresProvider(), ConnectionString(app),
+            new PostgresProvider(), fixture.ConnectionString(app),
             "SELECT pg_catalog.pg_sleep(60)",
             SqlAgentToolType.Postgres, QueryPolicy(), allowedTables: null,
             queryCancellation.Token);
@@ -97,9 +115,9 @@ public sealed class PostgresNativeFaultTestcontainersTests : IAsyncLifetime
     {
         var ct = TestContext.Current.CancellationToken;
         var app = "hsql_commit_kill_" + Guid.NewGuid().ToString("N")[..12];
-        var target = ConnectionString(app);
+        var target = fixture.ConnectionString(app);
         var schema = "dmlfault_" + Guid.NewGuid().ToString("N")[..10];
-        await using var witness = new NpgsqlConnection(ConnectionString("hsql_commit_witness"));
+        await using var witness = new NpgsqlConnection(fixture.ConnectionString("hsql_commit_witness"));
         await witness.OpenAsync(ct);
 
         await ExecuteAsync(witness, "CREATE SCHEMA " + schema, ct);
@@ -136,7 +154,7 @@ public sealed class PostgresNativeFaultTestcontainersTests : IAsyncLifetime
         var session = await runtime.PreviewTransactionAsync(
             provider, target, parsed, policy, allowed, actor, ct);
 
-        await using var blocker = new NpgsqlConnection(ConnectionString("hsql_commit_blocker"));
+        await using var blocker = new NpgsqlConnection(fixture.ConnectionString("hsql_commit_blocker"));
         await blocker.OpenAsync(ct);
         await using var lockTransaction = await blocker.BeginTransactionAsync(ct);
         await using (var lockCommand = new NpgsqlCommand(
@@ -178,15 +196,6 @@ public sealed class PostgresNativeFaultTestcontainersTests : IAsyncLifetime
         Assert.Equal(0L, Convert.ToInt64(await ScalarAsync(
             witness, "SELECT count(*) FROM " + schema + ".items", ct)));
     }
-
-    private string ConnectionString(string application) =>
-        new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString())
-        {
-            ApplicationName = application,
-            Pooling = false,
-            CommandTimeout = 90,
-            Timeout = 10
-        }.ConnectionString;
 
     private static SecurityPolicyModel QueryPolicy() => new()
     {
