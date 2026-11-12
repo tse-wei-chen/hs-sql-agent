@@ -128,6 +128,34 @@ case "$mode" in
                 failures=$((failures + 1))
             fi
         done
+        # The already-implemented physical UDF / identity negative controls are
+        # release security evidence, not optional filtered smoke tests. Require
+        # each provider's exact test count, no-failure and no-skip gate.
+        for spec in \
+            "sqlagent-test:FullyQualifiedName~QueryNativeFunctionLiveTests.MySql_:3" \
+            "sqlagent-fence-sqlserver:FullyQualifiedName~QueryNativeFunctionLiveTests.SqlServer_:2" \
+            "sqlagent-oracle-ddl-parity:FullyQualifiedName~QueryNativeFunctionLiveTests.Oracle_:4" \
+            "sqlagent-firebird-ddl-parity:FullyQualifiedName~QueryNativeFunctionLiveTests.Firebird_:1"; do
+            IFS=: read -r job selector expected <<< "$spec"
+            if [[ -z "${unique_assignments[QueryNativeFunctionLiveTests:$job:$selector]:-}" ]]; then
+                echo "::error::Missing mandatory native Query security suite: $spec" >&2
+                failures=$((failures + 1))
+                continue
+            fi
+            job_block="$(awk -v job="$job" '
+                $0 == "  " job ":" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            expected_fragment="require-physical-test-cases.sh $expected
+          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
+          '$selector'"
+            if [[ "$job_block" != *"$expected_fragment"* ]]; then
+                echo "::error::Native Query security test '$spec' is missing its exact-case no-skip gate." >&2
+                failures=$((failures + 1))
+            fi
+        done
+
         if (( failures > 0 )); then
             echo "::error::Server integration ownership audit failed ($failures errors)." >&2
             exit 1
