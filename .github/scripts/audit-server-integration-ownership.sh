@@ -116,6 +116,17 @@ case "$mode" in
                 echo "::error::Missing mandatory provider TCP-partition assignment: $assignment" >&2
                 failures=$((failures + 1))
             fi
+            # Reject a provider step that mentions the selector but no longer
+            # verifies exactly one passed, zero failed and zero skipped.
+            provider_block="$(awk -v job="$job" '
+                $0 == "  " job ":" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            if [[ "$provider_block" != *"require-physical-test-cases.sh 1"* ]]; then
+                echo "::error::Provider $job lacks a mandatory one-case no-skip physical gate." >&2
+                failures=$((failures + 1))
+            fi
         done
         if (( failures > 0 )); then
             echo "::error::Server integration ownership audit failed ($failures errors)." >&2
