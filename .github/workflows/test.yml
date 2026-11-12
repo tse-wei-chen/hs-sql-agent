@@ -170,13 +170,13 @@ jobs:
           filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
-      - name: Verify real Testcontainers PostgreSQL 16 native socket faults and Redis 7 process outage
+      - name: Verify real Testcontainers PostgreSQL/Redis native faults and Toxiproxy TCP partitions
         # Mandatory Docker-backed physical proof: do not hide these cases in
         # generic tests or count mock ACK loss as a transport failure.
         run: |
-          bash .github/scripts/require-physical-test-cases.sh 4 \
+          bash .github/scripts/require-physical-test-cases.sh 7 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
-            'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+            'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests|FullyQualifiedName~NetworkFaultTestcontainersTests'
 
 
   redis-approval-integration:
