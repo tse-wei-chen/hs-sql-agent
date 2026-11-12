@@ -1,4 +1,5 @@
 using HsSqlAgent.Server.Services;
+using StackExchange.Redis;
 
 namespace HsSqlAgent.Server.Extensions;
 
@@ -34,6 +35,26 @@ internal static class SqlConcurrencyServiceCollectionExtensions
         if (parsedFailureMode != RateLimiterFailureMode.FailClosed)
             throw new InvalidOperationException(
                 "Redis SQL concurrency requires FailClosed; FailOpen is unsupported because it bypasses MaxConcurrentSql.");
+        // A TTL sorted-set lease is not a consensus-fenced token. Redis
+        // Sentinel or multi-primary/Cluster failover can lose an acknowledged
+        // lease during asynchronous promotion, making two independent SQL
+        // operations believe they both own MaxConcurrentSql=1. Refuse those
+        // explicitly configured topologies rather than advertising a strong
+        // distributed guarantee that this limiter cannot establish.
+        ConfigurationOptions parsedConnection;
+        try
+        {
+            parsedConnection = ConfigurationOptions.Parse(connectionString);
+        }
+        catch (Exception error) when (error is ArgumentException or FormatException)
+        {
+            throw new InvalidOperationException(
+                "SqlConcurrency Redis connection string is invalid.", error);
+        }
+        if (!string.IsNullOrWhiteSpace(parsedConnection.ServiceName)
+            || parsedConnection.EndPoints.Count != 1)
+            throw new InvalidOperationException(
+                "Redis Sentinel, Cluster or multi-endpoint failover is unsupported for SQL concurrency leases; use one authoritative standalone Redis primary, or a separate quorum-fenced coordinator.");
         if (string.IsNullOrWhiteSpace(key))
             throw new InvalidOperationException("SqlConcurrency key is required.");
         if (leaseSeconds < 2)
