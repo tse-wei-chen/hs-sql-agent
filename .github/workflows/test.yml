@@ -70,6 +70,24 @@ jobs:
         run: bash .github/scripts/test-release-security-gate.sh
       - name: Verify exact release-head Tests gate rejects missing or failed CI
         run: bash .github/scripts/test-release-head-ci-gate.sh
+      - name: Prove dependency advisory parser fails closed against missing and high-risk results
+        shell: bash
+        run: bash .github/scripts/test-dependency-security-audit.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Activate pinned frontend package manager
+        run: corepack enable pnpm
+      - name: Verify current NuGet and production pnpm dependency advisories
+        shell: bash
+        run: bash .github/scripts/audit-dependency-security.sh
+      - name: Upload exact-head NuGet and pnpm advisory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-dependency-advisory-evidence
+          path: artifacts/security/
+          if-no-files-found: error
       - name: Run Infrastructure.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
