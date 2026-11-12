@@ -123,7 +123,10 @@ case "$mode" in
                 found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
                 found { print }
             ' "$workflow")"
-            if [[ "$provider_block" != *"require-physical-test-cases.sh 1"* ]]; then
+            expected_fragment="require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            '$selector'"
+            if [[ "$provider_block" != *"$expected_fragment"* ]]; then
                 echo "::error::Provider $job lacks a mandatory one-case no-skip physical gate." >&2
                 failures=$((failures + 1))
             fi
