@@ -188,6 +188,12 @@ jobs:
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
 
+      - name: Require physical Redis split-brain counterexample (unsupported quorum guarantee)
+        run: |
+          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~RedisIndependentPrimariesTestcontainersTests'
+
       - name: Prepull dedicated TCP-fault proxy image
         run: timeout --signal=INT --kill-after=10s 90s docker pull ghcr.io/shopify/toxiproxy:2.12.0
 
