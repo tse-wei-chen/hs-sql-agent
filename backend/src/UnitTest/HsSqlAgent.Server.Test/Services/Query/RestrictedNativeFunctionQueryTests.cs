@@ -159,6 +159,49 @@ public sealed class RestrictedNativeFunctionQueryTests
             Assert.IsType<SqlDiagnostic>(typedError.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code);
     }
 
+    [Theory]
+    [InlineData(SqlAgentToolType.Oracle,
+        "SELECT APP.AUTONOMOUS_WRITE(ID) AS RESULT FROM APP.USERS")]
+    [InlineData(SqlAgentToolType.Firebird,
+        "SELECT PKG.AUTONOMOUS_WRITE(ID) AS RESULT FROM USERS")]
+    public void ReadOnlyNativeTransactionProvider_NoWhitelistCannotAuthorizeOpaqueFunction(
+        SqlAgentToolType providerType, string sql)
+    {
+        var provider = new Mock<ISqlProvider>();
+        provider.SetupGet(x => x.Type).Returns(providerType);
+        var emptyAllowset = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (IReadOnlySet<string>? tables in new IReadOnlySet<string>?[] { null, emptyAllowset })
+        {
+            var error = Assert.Throws<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().Compile(
+                    provider.Object, sql, providerType, Policy, tables));
+            var diagnostic = Assert.IsType<SqlDiagnostic>(
+                error.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+            Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
+            Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+            Assert.Throws<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().CompileWithFacts(
+                    provider.Object, sql, providerType, Policy, tables, targetProfile: null));
+        }
+
+        // This is not a SqlCore grammar regression: standalone compilation
+        // and explicit CLR policy opt-out can still represent native SQL.
+        var generic = SqlCoreFacade.CompileQuery(
+            sql, providerType, providerType,
+            new SqlPlanValidationContext("generic-native-grammar"),
+            new SqlExecutionPlanPolicy(20));
+        Assert.Contains("AUTONOMOUS_WRITE", generic.Sql, StringComparison.OrdinalIgnoreCase);
+
+        var builtIn = new TypedQueryRuntime().Compile(
+            provider.Object,
+            providerType == SqlAgentToolType.Oracle
+                ? "SELECT ABS(ID) AS RESULT FROM APP.USERS"
+                : "SELECT ABS(ID) AS RESULT FROM USERS",
+            providerType, Policy, allowedTables: null);
+        Assert.Contains("ABS(", builtIn.Sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void UnrestrictedSqlServerQuery_NativeFunctionNamesRetainExistingCompilerBehavior()
     {

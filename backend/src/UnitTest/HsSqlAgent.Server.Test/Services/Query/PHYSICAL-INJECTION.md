@@ -217,3 +217,44 @@ is **not** contained by this fence. Proper host function registration policy
 and SQLite file permissions remain necessary; the test does not prove
 cross-connection or six-provider read-only behavior. #575 and the 3.1.0
 publication blocker remain open.
+
+
+## Oracle 26ai autonomous Query function escapes outer READ ONLY (#620)
+
+A real mandatory-live Oracle 26ai test exercises the first-party published
+MCP Query-only tool with **no Table Whitelist**. The actual Oracle database
+contains a function with `PRAGMA AUTONOMOUS_TRANSACTION` that INSERTs into a
+separate durable table and explicitly COMMITs. A direct native
+`SET TRANSACTION READ ONLY` control invokes the function through SELECT, then
+ROLLBACKs the outer transaction. An independent real Oracle connection sees
+the committed row: Oracle autonomous routines are not constrained by the
+outer transaction's rollback.
+
+**Behavioral RED:** Test-only [Tests #43023053980](https://github.com/tse-wei-chen/hs-sql-agent/actions/runs/43023053980)
+physically proved that the same published Query-only MCP request returned
+success and allowed the autonomous function's durable write. The dedicated
+Oracle 26ai native Query suite was **3 passed / 1 failed / 0 skipped** at the
+precise `Assert.False(denied.Success)` safety assertion; the native direct
+positive, physical witness, cleanup and DB fixture had already succeeded.
+
+**Bounded fix:** Reuse `SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted`
+for the Host's no-whitelist Oracle Query path. This typed F# Policy rejects
+opaque **qualified/quoted** function identities before DB execution and emits
+the existing `SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN` diagnostic.
+MySQL keeps the same restriction for its TEMPORARY-table exception; Firebird
+Host Query uses the same conservative policy because a provider-native READ
+ONLY transaction alone is not proof against externally executed PSQL routines.
+Standalone SqlCore compilation (including generic native function grammar)
+remains unaffected. Ordinary modeled `ABS` Query remains operational.
+
+**Limits:** This is not a proof of side-effect freedom for every unqualified
+native function, a dynamically registered extension, a view, a privileged
+definer or an external connection. Oracle physically proves an autonomous
+commit bypass for qualified calls; Firebird prevention shares the policy but
+must not be presented as a successful Firebird autonomous exploit without an
+independent Firebird-positive attack control. Restrict actual database
+credentials to least privilege and do not grant arbitrary callable external
+functions to Query-only identities. #575 and v3.1.0 publication remain blocked.
+
+Oracle reference:
+https://docs.oracle.com/en/database/oracle/oracle-database/26/lnpls/autonomous-transactions.html
