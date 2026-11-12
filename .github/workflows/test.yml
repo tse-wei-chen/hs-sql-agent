@@ -170,6 +170,18 @@ jobs:
           filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
+      - name: Require PostgreSQL 16 physical Query least-privilege and native UDF guard (11 cases, no skips)
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~PostgresPhysicalHostInjectionTests'
+
+      - name: Require file-backed SQLite physical Query and callback guard (11 cases, no skips)
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~SqlitePhysicalHostInjectionTests'
+
       - name: Verify existing real PostgreSQL backend and Redis process fault baselines
         run: |
           timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 4 \
