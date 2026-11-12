@@ -22,6 +22,25 @@ This matrix records **what mandatory CI proves**, not what compilation or mock e
 - All four cases use live native provider connections, actual Docker databases and a physically separate Testcontainers proxy. They do not use synthetic provider exceptions, and they are not mislabeled as **in-flight COMMIT reply loss** or **distributed failover**.
 - Missing DB credentials or a missing service is a **hard CI failure**. CI does not accept no-match filters or skipped physical cases.
 
+## Follow-up: mandatory physical Query and Redis FailOpen evidence
+
+The next security batch promotes existing end-to-end PostgreSQL 16 Testcontainers
+Query Host controls to **11 mandatory cases**, and file-backed SQLite Host
+negative controls to **11 mandatory cases**. The four remaining native-provider
+UDF/permissions tests already run **3 + 2 + 4 + 1 = 10** mandatory cases.
+All six providers therefore have an explicitly owned non-skippable physical
+Query negative/positive suite. Exact counts must be verified on the final PR
+head; these counts are not certifications of arbitrary third-party code.
+
+Redis SQL admission is now **fail-closed regardless of a legacy caller's
+FailOpen option**, and dependency injection refuses to register a Redis-backed
+SQL limiter with FailOpen. Runtime Doctor reports it as Error. The real Redis
+process-stop Testcontainers test explicitly exercises both FailClosed and
+legacy FailOpen options and checks the existing token is revoked and a second
+client is refused. This **does not** make Redis asynchronous replication,
+Sentinel/Cluster leader promotion, or independent split-brain primaries into
+linearizable lease/fencing services.
+
 ## Remaining release blockers (do not overstate this batch)
 
 1. Query least privilege: six-provider DB roles, unqualified/UDF/SQL CLR and autonomous/external effects still require bounded negative proofs or explicit documented unsupported behavior. Existing real native-function tests are necessary but do not certify all effects.
