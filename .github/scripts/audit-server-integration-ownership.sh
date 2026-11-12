@@ -169,6 +169,31 @@ case "$mode" in
             fi
         done
 
+        # PostgreSQL and SQLite end-to-end Host Query negative controls
+        # are security-critical physical evidence. They must not be silently
+        # shifted back into the ordinary shard or filtered to zero cases.
+        for spec in \
+            "PostgresPhysicalHostInjectionTests:11" \
+            "SqlitePhysicalHostInjectionTests:11"; do
+            IFS=: read -r suite expected <<< "$spec"
+            selector="FullyQualifiedName~$suite"
+            if [[ -z "${unique_assignments[$suite:server-test:$selector]:-}" ]]; then
+                echo "::error::Missing mandatory physical Host Query suite: $suite" >&2
+                failures=$((failures + 1))
+                continue
+            fi
+            server_block="$(awk '
+                $0 == "  server-test:" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            step_block="$(selector_step "$server_block" "$selector")"
+            if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh $expected"* ]]; then
+                echo "::error::Physical Host Query suite $suite must prove exactly $expected cases with zero skips." >&2
+                failures=$((failures + 1))
+            fi
+        done
+
         if (( failures > 0 )); then
             echo "::error::Server integration ownership audit failed ($failures errors)." >&2
             exit 1
