@@ -22,6 +22,61 @@ This matrix records **what mandatory CI proves**, not what compilation or mock e
 - All four cases use live native provider connections, actual Docker databases and a physically separate Testcontainers proxy. They do not use synthetic provider exceptions, and they are not mislabeled as **in-flight COMMIT reply loss** or **distributed failover**.
 - Missing DB credentials or a missing service is a **hard CI failure**. CI does not accept no-match filters or skipped physical cases.
 
+## Follow-up: mandatory physical Query and Redis FailOpen evidence
+
+The next security batch promotes existing end-to-end PostgreSQL 16 Testcontainers
+Query Host controls to **11 mandatory cases**, and file-backed SQLite Host
+negative controls to **11 mandatory cases**. The four remaining native-provider
+UDF/permissions tests already run **3 + 2 + 4 + 1 = 10** mandatory cases.
+All six providers therefore have an explicitly owned non-skippable physical
+Query negative/positive suite. Exact counts must be verified on the final PR
+head; these counts are not certifications of arbitrary third-party code.
+
+Redis SQL admission is now **fail-closed regardless of a legacy caller's
+FailOpen option**, and dependency injection refuses to register a Redis-backed
+SQL limiter with FailOpen. Runtime Doctor reports it as Error. The real Redis
+process-stop Testcontainers test explicitly exercises both FailClosed and
+legacy FailOpen options and checks the existing token is revoked and a second
+client is refused. This **does not** make Redis asynchronous replication,
+Sentinel/Cluster leader promotion, or independent split-brain primaries into
+linearizable lease/fencing services.
+
+**Actual split-brain negative control:** two independent real Redis 7
+Testcontainers primaries, each with `MaxConcurrentSql=1` and the same
+logical key, both grant one lease to independently connected limiter instances.
+A second client sharing the first primary is correctly denied. This is
+deliberate real counterevidence to any claim of quorum-fenced Redis HA.
+Standard-host registration rejects explicit Sentinel `serviceName` or
+multi-endpoint Redis SQL coordination; no product guarantee is made for
+undetectable DNS/proxy failover or asynchronous promotion behind one endpoint.
+Runtime Doctor marks explicit unsupported topologies as Error. Do **not**
+set up split-brain routing for SQL concurrency.
+
+## Release dependency, compiler and static-analysis evidence
+
+Within the existing `infrastructure-test` job (retaining **18 required Tests
+jobs**), a pinned .NET 10 CLI package advisory scan and a production
+`pnpm audit` query current advisory feeds. The reports are uploaded as the
+`security-dependency-advisory-evidence` artifact alongside a real Release
+build of the ToolBox Host + referenced C# and F# modules and its full warning
+log/count. The security parser has nine offline positive/negative regressions;
+a missing/malformed advisory response or unreviewed high/critical advisory
+fails CI. Low/moderate advisories remain visible for release review.
+
+**Scope limits:** advisory feeds identify known CVEs at scan time, not an
+exhaustive supply-chain or exploitability proof. Compiler warnings are
+recorded, not silently suppressed; this is an observational warning baseline
+pending explicit review of any nonzero count. The CodeQL workflow's Actions,
+C# and JavaScript/TypeScript scans **do not semantically analyze F#**. F# safety
+requires the dedicated SQL grammar, capability, and differential/parity proof
+corpora plus physical tests; do not claim CodeQL certified F# behavior.
+
+No `develop` PR run authorizes release. The existing publish preflight still
+requires that the **actual promoted `main` push SHA** has all 18 required
+Tests jobs and a successful SqlCore baseline, in addition to a completed
+and fully checked #575 release gate. Evidence artifacts must be taken from
+that exact final SHA before release publication.
+
 ## Remaining release blockers (do not overstate this batch)
 
 1. Query least privilege: six-provider DB roles, unqualified/UDF/SQL CLR and autonomous/external effects still require bounded negative proofs or explicit documented unsupported behavior. Existing real native-function tests are necessary but do not certify all effects.

@@ -62,11 +62,10 @@ public class RedisSqlExecutionConcurrencyLimiterTests
     }
 
     [Theory]
-    [InlineData(RateLimiterFailureMode.FailOpen, true)]
-    [InlineData(RateLimiterFailureMode.FailClosed, false)]
-    public async Task TryAcquireAsync_ShouldHonorFailureMode(
-        RateLimiterFailureMode failureMode,
-        bool shouldReturnLease)
+    [InlineData(RateLimiterFailureMode.FailOpen)]
+    [InlineData(RateLimiterFailureMode.FailClosed)]
+    public async Task TryAcquireAsync_RedisFailureNeverGrantsUnfencedSql(
+        RateLimiterFailureMode failureMode)
     {
         var database = new Mock<IDatabase>();
         database
@@ -80,9 +79,7 @@ public class RedisSqlExecutionConcurrencyLimiterTests
 
         var lease = await limiter.TryAcquireAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(shouldReturnLease, lease is not null);
-        if (lease is not null)
-            await lease.DisposeAsync();
+        Assert.Null(lease);
     }
 
 

@@ -55,6 +55,37 @@ Published custom tools can be **Query** or **DML** tools. Query tools use the sa
 
 SQL support is intentionally bounded by proven semantics. See the [SQL Support Reference](https://sql-agent.net/en/docs/sql-compiler/sql-support) for the current contract.
 
+## Security deployment boundaries (3.1)
+
+**Query-only MCP permissions are not equivalent to database-level read-only access.**
+Deploy each database target using a dedicated, least-privileged DB principal with
+SELECT access only to the intended relations, and deny untrusted native
+UDF/routine EXECUTE, external I/O, elevated definer/impersonation roles and
+cross-database access. The typed F# compiler and Host connection-local read-only
+fences provide additional protections but cannot sandbox arbitrary native code,
+external callbacks or separate connections. SQLite embedding hosts must not
+register write-capable callbacks on Query handles. See the
+[six-provider Query security deployment contract](.github/test-suites/query-security-deployment-contract.md)
+for required DB identities, explicit unsupported routine effects, and physical
+security test boundaries.
+
+**Distributed SQL admission:** `MaxConcurrentSql` bounds admitted operations,
+not all physical database sessions or driver pools. Redis-backed
+`SqlConcurrency` requires `FailureMode=FailClosed`; `FailOpen` is refused
+at registration and never grants an unfenced SQL lease even via legacy direct
+construction. The current Redis TTL sorted-set lease is supported against
+a single authoritative standalone Redis primary. Redis Sentinel, Cluster,
+multi-endpoint failover, split-brain fencing and a global physical pool ceiling
+are **not supported as strong consistency guarantees**; the standard host
+rejects explicitly configured Sentinel/multi-endpoint SQL coordination.
+The real two-primary Testcontainers counterexample is recorded in the
+[physical evidence matrix](.github/test-suites/physical-fault-release-evidence.md).
+
+**DML uncertainty:** a lost native COMMIT/ROLLBACK acknowledgement is not
+proof of success or failure. An `outcome_unknown` response is non-retryable;
+preserve the approval request ID and reconcile durable DB state before any
+new approval. Do not automatically replay.
+
 ## Quick Start
 
 ```bash

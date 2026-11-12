@@ -97,7 +97,7 @@ case "$mode" in
 
         # Separate destructive Docker cases must be excluded from the
         # ordinary shard *and* positively selected in the dedicated step.
-        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests ProviderTcpPartitionTestcontainersTests; do
+        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests ProviderTcpPartitionTestcontainersTests RedisIndependentPrimariesTestcontainersTests; do
             if [[ -z "${unique_suites[$suite]:-}" ]]; then
                 echo "::error::Missing mandatory fault suite from manifest: $suite" >&2
                 failures=$((failures + 1))
@@ -108,8 +108,8 @@ case "$mode" in
             echo "::error::Default Server unit shard is not driven by the audited manifest." >&2
             failures=$((failures + 1))
         fi
-        if ! grep -Fq -- 'require-physical-test-cases.sh 4' "$workflow"; then
-            echo "::error::Four-case backend/process fault step is missing." >&2
+        if ! grep -Fq -- 'require-physical-test-cases.sh 5' "$workflow"; then
+            echo "::error::Five-case backend/process fault step including FailOpen regression is missing." >&2
             failures=$((failures + 1))
         fi
         if [[ "$(grep -Fc 'require-physical-test-cases.sh 1' "$workflow")" -lt 2 ]]; then
@@ -165,6 +165,45 @@ case "$mode" in
             step_block="$(selector_step "$job_block" "$selector")"
             if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh $expected"* ]]; then
                 echo "::error::Native Query security test '$spec' is missing its exact-case no-skip gate." >&2
+                failures=$((failures + 1))
+            fi
+        done
+
+        split_selector="FullyQualifiedName~RedisIndependentPrimariesTestcontainersTests"
+        split_job="$(awk '
+            $0 == "  server-test:" { found = 1; next }
+            found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+            found { print }
+        ' "$workflow")"
+        split_step="$(selector_step "$split_job" "$split_selector")"
+        if [[ -z "${unique_assignments[RedisIndependentPrimariesTestcontainersTests:server-test:$split_selector]:-}"
+            || -z "$split_step"
+            || "$split_step" != *"require-physical-test-cases.sh 1"* ]]; then
+            echo "::error::Mandatory physical Redis split-brain negative control is missing its exact one-case gate." >&2
+            failures=$((failures + 1))
+        fi
+
+        # PostgreSQL and SQLite end-to-end Host Query negative controls
+        # are security-critical physical evidence. They must not be silently
+        # shifted back into the ordinary shard or filtered to zero cases.
+        for spec in \
+            "PostgresPhysicalHostInjectionTests:11" \
+            "SqlitePhysicalHostInjectionTests:11"; do
+            IFS=: read -r suite expected <<< "$spec"
+            selector="FullyQualifiedName~$suite"
+            if [[ -z "${unique_assignments[$suite:server-test:$selector]:-}" ]]; then
+                echo "::error::Missing mandatory physical Host Query suite: $suite" >&2
+                failures=$((failures + 1))
+                continue
+            fi
+            server_block="$(awk '
+                $0 == "  server-test:" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            step_block="$(selector_step "$server_block" "$selector")"
+            if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh $expected"* ]]; then
+                echo "::error::Physical Host Query suite $suite must prove exactly $expected cases with zero skips." >&2
                 failures=$((failures + 1))
             fi
         done

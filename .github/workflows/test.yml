@@ -70,6 +70,38 @@ jobs:
         run: bash .github/scripts/test-release-security-gate.sh
       - name: Verify exact release-head Tests gate rejects missing or failed CI
         run: bash .github/scripts/test-release-head-ci-gate.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Activate pinned frontend package manager
+        run: corepack enable pnpm
+      - name: Record production Host and F# compiler warning baseline on exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/security
+          dotnet restore backend/src/ToolBox/ToolBox.csproj --verbosity quiet
+          dotnet build backend/src/ToolBox/ToolBox.csproj --no-restore --configuration Release --verbosity minimal \
+            2>&1 | tee artifacts/security/compiler-build.log
+          grep -E '(warning (CS|FS|NU)[0-9]+:)' artifacts/security/compiler-build.log \
+            | sort -u > artifacts/security/compiler-warnings.txt || true
+          count="$(wc -l < artifacts/security/compiler-warnings.txt)"
+          printf '{"warnings":%s,"scope":"ToolBox Release plus referenced CSharp and FSharp modules","source":"exact CI HEAD"}\n' "$count" \
+            > artifacts/security/compiler-warning-summary.json
+          echo "Compiler warnings for this release evidence run: $count"
+      - name: Prove dependency advisory parser fails closed against missing and high-risk results
+        shell: bash
+        run: bash .github/scripts/test-dependency-security-audit.sh
+      - name: Verify current NuGet and production pnpm dependency advisories
+        shell: bash
+        run: bash .github/scripts/audit-dependency-security.sh
+      - name: Upload exact-head NuGet and pnpm advisory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-dependency-advisory-evidence
+          path: artifacts/security/
+          if-no-files-found: error
       - name: Run Infrastructure.Test with real test and coverage evidence
         run: >
           dotnet test --project backend/src/UnitTest/Infrastructure.Test/Infrastructure.Test.csproj
@@ -170,11 +202,29 @@ jobs:
           filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
-      - name: Verify existing real PostgreSQL backend and Redis process fault baselines
+      - name: Require PostgreSQL 16 physical Query least-privilege and native UDF guard (11 cases, no skips)
         run: |
-          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 4 \
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~PostgresPhysicalHostInjectionTests'
+
+      - name: Require file-backed SQLite physical Query and callback guard (11 cases, no skips)
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 11 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~SqlitePhysicalHostInjectionTests'
+
+      - name: Verify real PostgreSQL native faults and Redis process outage including legacy FailOpen hardening
+        run: |
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 5 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+
+      - name: Require physical Redis split-brain counterexample (unsupported quorum guarantee)
+        run: |
+          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~RedisIndependentPrimariesTestcontainersTests'
 
       - name: Prepull dedicated TCP-fault proxy image
         run: timeout --signal=INT --kill-after=10s 90s docker pull ghcr.io/shopify/toxiproxy:2.12.0

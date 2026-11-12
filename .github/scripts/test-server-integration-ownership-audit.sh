@@ -34,6 +34,9 @@ default_filter="$(bash "$audit" --default-filter)"
 [[ "$default_filter" == *"FullyQualifiedName!~RedisProcessOutageTestcontainersTests"* ]]
 [[ "$default_filter" == *"FullyQualifiedName!~NetworkFaultTestcontainersTests"* ]]
 [[ "$default_filter" == *"FullyQualifiedName!~ProviderTcpPartitionTestcontainersTests"* ]]
+[[ "$default_filter" == *"FullyQualifiedName!~PostgresPhysicalHostInjectionTests"* ]]
+[[ "$default_filter" == *"FullyQualifiedName!~SqlitePhysicalHostInjectionTests"* ]]
+[[ "$default_filter" == *"FullyQualifiedName!~RedisIndependentPrimariesTestcontainersTests"* ]]
 echo "PASS: valid ownership manifest and derived default filter"
 
 reset_fixtures
@@ -96,4 +99,16 @@ reset_fixtures
 sed -i '/^      - name: Verify Oracle 26ai physical native-function/,/^      - name: Require Oracle real TCP-partition/s/require-physical-test-cases.sh 4/require-physical-test-cases.sh 0/' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
 assert_rejected "Oracle native-function no-skip gate removed"
 
-echo "All 11 negative ownership-audit regressions were rejected."
+reset_fixtures
+sed -i '/^PostgresPhysicalHostInjectionTests[[:space:]]/d' "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST"
+assert_rejected "PostgreSQL physical Query security test ownership removed"
+
+reset_fixtures
+sed -i '/^      - name: Require file-backed SQLite physical Query/,/^      - name: Verify existing real PostgreSQL/s/require-physical-test-cases.sh 11/require-physical-test-cases.sh 0/' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
+assert_rejected "SQLite physical Query security exact count removed"
+
+reset_fixtures
+sed -i '/^RedisIndependentPrimariesTestcontainersTests[[:space:]]/d' "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST"
+assert_rejected "Redis split-brain negative evidence removed from mandatory physical matrix"
+
+echo "All 14 negative ownership-audit regressions were rejected."

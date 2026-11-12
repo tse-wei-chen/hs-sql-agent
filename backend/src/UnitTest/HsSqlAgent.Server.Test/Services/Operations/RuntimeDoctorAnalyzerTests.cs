@@ -141,6 +141,46 @@ public sealed class RuntimeDoctorAnalyzerTests
         Assert.Contains(result.Checks, check => check.Id == "coordination.mode" && check.Status == "Warning");
     }
 
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("Production")]
+    public void Analyze_RedisSqlConcurrencyFailOpen_IsSecurityError(string environment)
+    {
+        var values = BuildHealthyBase();
+        values["SqlConcurrency:Provider"] = "Redis";
+        values["SqlConcurrency:ConnectionString"] = "redis:6379";
+        values["SqlConcurrency:FailureMode"] = "FailOpen";
+
+        var result = RuntimeDoctorAnalyzer.Analyze(
+            BuildConfiguration(values), environment, 1, 1, 1);
+
+        var check = Assert.Single(result.Checks,
+            x => x.Id == "coordination.sqlconcurrency-failure-mode");
+        Assert.Equal("Error", check.Status);
+        Assert.Equal("Error", result.OverallStatus);
+        Assert.Contains("FailClosed", check.Action ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("localhost:26379,serviceName=sql-master")]
+    [InlineData("localhost:6379,localhost:6380")]
+    public void Analyze_UnfencedRedisFailoverTopology_IsSecurityError(string connection)
+    {
+        var values = BuildHealthyBase();
+        values["SqlConcurrency:Provider"] = "Redis";
+        values["SqlConcurrency:ConnectionString"] = connection;
+        values["SqlConcurrency:FailureMode"] = "FailClosed";
+
+        var result = RuntimeDoctorAnalyzer.Analyze(
+            BuildConfiguration(values), "Production", 1, 1, 1);
+        var check = Assert.Single(result.Checks,
+            x => x.Id == "coordination.sqlconcurrency-topology");
+        Assert.Equal("Error", check.Status);
+        Assert.Equal("Error", result.OverallStatus);
+        Assert.DoesNotContain(connection, JsonSerializer.Serialize(result));
+    }
+
     [Fact]
     public void Analyze_WebhookApprovalRequiresCompleteSignedConfiguration()
     {
