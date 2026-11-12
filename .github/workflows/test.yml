@@ -182,9 +182,9 @@ jobs:
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~SqlitePhysicalHostInjectionTests'
 
-      - name: Verify existing real PostgreSQL backend and Redis process fault baselines
+      - name: Verify real PostgreSQL native faults and Redis process outage including legacy FailOpen hardening
         run: |
-          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 4 \
+          timeout --signal=INT --kill-after=10s 180s bash .github/scripts/require-physical-test-cases.sh 5 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
 
