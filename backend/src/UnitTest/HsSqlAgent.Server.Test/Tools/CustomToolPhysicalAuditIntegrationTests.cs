@@ -5,6 +5,7 @@ using Admin.Service.Interfaces;
 using Admin.Service.Models;
 using Admin.Service.Services;
 using HsSqlAgent.Approvals;
+using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Provider.Sqlite;
 using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
@@ -135,7 +136,7 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
         }
     }
 
-    private sealed class Fixture : IAsyncDisposable
+    private sealed class Fixture : IPhysicalLoadFixture
     {
         private const string MutationSql =
             "INSERT INTO main.items (id, note) VALUES (100, 'sensitive_note');" +
@@ -235,6 +236,17 @@ public sealed partial class CustomToolPhysicalAuditIntegrationTests
                 concurrencyLimiter ?? new SqlExecutionConcurrencyLimiter(policy),
                 dmlApprovalProvider: approvalProvider);
         }
+
+        // Test-only provider-neutral view for the shared six-dialect physical
+        // MCP admission and cancellation test harness.
+        CustomToolProxy IPhysicalLoadFixture.CreateProxy(
+            IDmlApprovalProvider approvalProvider,
+            IAuditService? auditService,
+            ISqlProvider? targetProvider,
+            ISqlExecutionConcurrencyLimiter? concurrencyLimiter) =>
+            CreateProxy(
+                approvalProvider, auditService, (SqliteProvider?)targetProvider,
+                concurrencyLimiter);
 
         public async Task<long> CountRowsAsync()
         {
