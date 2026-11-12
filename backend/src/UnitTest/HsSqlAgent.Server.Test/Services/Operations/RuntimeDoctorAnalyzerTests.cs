@@ -141,6 +141,27 @@ public sealed class RuntimeDoctorAnalyzerTests
         Assert.Contains(result.Checks, check => check.Id == "coordination.mode" && check.Status == "Warning");
     }
 
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("Production")]
+    public void Analyze_RedisSqlConcurrencyFailOpen_IsSecurityError(string environment)
+    {
+        var values = BuildHealthyBase();
+        values["SqlConcurrency:Provider"] = "Redis";
+        values["SqlConcurrency:ConnectionString"] = "redis:6379";
+        values["SqlConcurrency:FailureMode"] = "FailOpen";
+
+        var result = RuntimeDoctorAnalyzer.Analyze(
+            BuildConfiguration(values), environment, 1, 1, 1);
+
+        var check = Assert.Single(result.Checks,
+            x => x.Id == "coordination.sqlconcurrency-failure-mode");
+        Assert.Equal("Error", check.Status);
+        Assert.Equal("Error", result.OverallStatus);
+        Assert.Contains("FailClosed", check.Action ?? string.Empty,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Analyze_WebhookApprovalRequiresCompleteSignedConfiguration()
     {
