@@ -16,8 +16,11 @@ namespace HsSqlAgent.Server.Test.Services;
 /// </summary>
 public sealed class RedisProcessOutageTestcontainersTests
 {
-    [Fact]
-    public async Task RedisProcessStops_HeldPhysicalLeaseRevoked_AndNextInstanceFailsClosed()
+    [Theory]
+    [InlineData(RateLimiterFailureMode.FailClosed)]
+    [InlineData(RateLimiterFailureMode.FailOpen)]
+    public async Task RedisProcessStops_HeldPhysicalLeaseRevoked_AndNextInstanceFailsClosed(
+        RateLimiterFailureMode requestedFailureMode)
     {
         var ct = TestContext.Current.CancellationToken;
         await using var redis = new ContainerBuilder("redis:7-alpine")
@@ -34,9 +37,12 @@ public sealed class RedisProcessOutageTestcontainersTests
         var policy = new Mock<ISecurityPolicyRuntimeState>();
         policy.Setup(x => x.GetCurrent()).Returns(
             new SecurityPolicyModel { MaxConcurrentSql = 1 });
+        // A caller that constructs a legacy FailOpen options record directly
+        // still must not receive an unbounded admission during a real outage.
+        // Public DI registration separately rejects FailOpen before startup.
         var options = new RedisSqlConcurrencyOptions(
             connectionString, key, TimeSpan.FromSeconds(3),
-            RateLimiterFailureMode.FailClosed);
+            requestedFailureMode);
 
         await using var physicalWitness = await ConnectionMultiplexer.ConnectAsync(connectionString);
         await using var first = new RedisSqlExecutionConcurrencyLimiter(
