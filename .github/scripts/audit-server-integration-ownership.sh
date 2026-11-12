@@ -94,12 +94,14 @@ case "$mode" in
             echo "::error::Default Server unit shard is not driven by the audited manifest." >&2
             failures=$((failures + 1))
         fi
-        for expected in 4 2; do
-            if ! grep -Fq -- "require-physical-test-cases.sh $expected" "$workflow"; then
-                echo "::error::Mandatory physical integration step lacks its exact ${expected}-case no-skip proof." >&2
-                failures=$((failures + 1))
-            fi
-        done
+        if ! grep -Fq -- 'require-physical-test-cases.sh 4' "$workflow"; then
+            echo "::error::Four-case backend/process fault step is missing." >&2
+            failures=$((failures + 1))
+        fi
+        if [[ "$(grep -Fc 'require-physical-test-cases.sh 1' "$workflow")" -lt 2 ]]; then
+            echo "::error::PostgreSQL and Redis TCP-partition cases must run as two isolated mandatory one-case steps." >&2
+            failures=$((failures + 1))
+        fi
         if (( failures > 0 )); then
             echo "::error::Server integration ownership audit failed ($failures errors)." >&2
             exit 1
