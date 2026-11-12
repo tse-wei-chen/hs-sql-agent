@@ -52,6 +52,31 @@ undetectable DNS/proxy failover or asynchronous promotion behind one endpoint.
 Runtime Doctor marks explicit unsupported topologies as Error. Do **not**
 set up split-brain routing for SQL concurrency.
 
+## Release dependency, compiler and static-analysis evidence
+
+Within the existing `infrastructure-test` job (retaining **18 required Tests
+jobs**), a pinned .NET 10 CLI package advisory scan and a production
+`pnpm audit` query current advisory feeds. The reports are uploaded as the
+`security-dependency-advisory-evidence` artifact alongside a real Release
+build of the ToolBox Host + referenced C# and F# modules and its full warning
+log/count. The security parser has nine offline positive/negative regressions;
+a missing/malformed advisory response or unreviewed high/critical advisory
+fails CI. Low/moderate advisories remain visible for release review.
+
+**Scope limits:** advisory feeds identify known CVEs at scan time, not an
+exhaustive supply-chain or exploitability proof. Compiler warnings are
+recorded, not silently suppressed; this is an observational warning baseline
+pending explicit review of any nonzero count. The CodeQL workflow's Actions,
+C# and JavaScript/TypeScript scans **do not semantically analyze F#**. F# safety
+requires the dedicated SQL grammar, capability, and differential/parity proof
+corpora plus physical tests; do not claim CodeQL certified F# behavior.
+
+No `develop` PR run authorizes release. The existing publish preflight still
+requires that the **actual promoted `main` push SHA** has all 18 required
+Tests jobs and a successful SqlCore baseline, in addition to a completed
+and fully checked #575 release gate. Evidence artifacts must be taken from
+that exact final SHA before release publication.
+
 ## Remaining release blockers (do not overstate this batch)
 
 1. Query least privilege: six-provider DB roles, unqualified/UDF/SQL CLR and autonomous/external effects still require bounded negative proofs or explicit documented unsupported behavior. Existing real native-function tests are necessary but do not certify all effects.
