@@ -170,13 +170,24 @@ jobs:
           filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
-      - name: Verify real Testcontainers PostgreSQL/Redis native faults and Toxiproxy TCP partitions
-        # Mandatory Docker-backed physical proof: do not hide these cases in
-        # generic tests or count mock ACK loss as a transport failure.
+      - name: Verify existing real PostgreSQL backend and Redis process fault baselines
         run: |
-          timeout --signal=INT --kill-after=30s 240s bash .github/scripts/require-physical-test-cases.sh 6 \
+          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 4 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
-            'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests|FullyQualifiedName~NetworkFaultTestcontainersTests'
+            'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+
+      - name: Prepull dedicated TCP-fault proxy image
+        run: timeout --signal=INT --kill-after=10s 90s docker pull ghcr.io/shopify/toxiproxy:2.12.0
+
+      - name: Verify two physical PostgreSQL and Redis TCP-partition cases
+        run: |
+          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 2 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~NetworkFaultTestcontainersTests'
+
+      - name: Show Docker container status if physical network tests fail
+        if: failure()
+        run: docker ps -a --format 'table {{.Image}}\t{{.Status}}\t{{.Names}}'
 
 
   redis-approval-integration:
