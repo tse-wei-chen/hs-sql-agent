@@ -17,6 +17,7 @@ This matrix records **what mandatory CI proves**, not what compilation or mock e
 ## Mandatory gate
 
 - Four **exactly one case, zero failed, zero skipped** provider partition checks are owned by existing dedicated CI jobs. The server integration manifest excludes the class from the ordinary shard, and the ownership auditor rejects missing assignments or missing exact-case gates.
+- The existing native Query/UDF security controls are now separately mandatory and no-skip: MySQL **3**, SQL Server **2**, Oracle **4**, Firebird **1** actual live cases (10 total). The audit also rejects missing security assignments and an altered per-provider expected count. Their bounded proof is **not** universal third-party function purity.
 - For each case the **production typed Query first succeeds through Toxiproxy**, then an independent real native DB witness succeeds. Only then is the TCP proxy disabled. The Query must fail while the direct database remains healthy; after restoration, another production Query must succeed.
 - All four cases use live native provider connections, actual Docker databases and a physically separate Testcontainers proxy. They do not use synthetic provider exceptions, and they are not mislabeled as **in-flight COMMIT reply loss** or **distributed failover**.
 - Missing DB credentials or a missing service is a **hard CI failure**. CI does not accept no-match filters or skipped physical cases.
