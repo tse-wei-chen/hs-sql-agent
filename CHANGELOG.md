@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [3.1.0] - Unreleased
 
+### Develop-only release readiness / security gate convergence (#575)
+
+- Introduce a **read-only 3.1.0 develop Release Candidate Gate**. Each `develop` push now runs the existing 18-job Tests workflow and the complete SqlCore baseline on its exact SHA. A separate bounded candidate workflow checks the latest matching results, mandatory job identities, nonempty security dependency/compiler artifacts and 3.1.0 version/evidence contracts; an invalid or missing check fails closed. The candidate proof explicitly sets `publicationAuthorized=false`.
+- Retain the existing strict `main` publish preflight with no exceptions: owner-authorized promotion remains separate, followed by exact promoted-main Tests/SqlCore checks and fully completed #575. This change does **not** promote, tag, publish or close the issue.
+- Consolidate the real six-provider Query negative/positive, Redis split-brain, true TCP-partition versus synthetic DML acknowledgement-loss, and dependency/CVE/compiler-warning evidence into [the 3.1.0 candidate acceptance matrix](.github/test-suites/RELEASE-CANDIDATE-3.1.0.md). The recorded 215 distinct compiler warnings remain a reviewable baseline, not a warning-free claim.
+- Security improvements already delivered in #628–#630: mandatory exact-count physical native Query tests for all six providers; real network cut/recovery for five remote SQL providers; Redis fail-closed SQL admission even under old `FailOpen` settings; unsupported Redis Sentinel/multi-endpoint SQL lease coordination is rejected rather than advertised as HA-safe. No promise of arbitrary UDF purity, a global DB-pool limit or quorum-fenced Redis failover.
+
+
+
 ### Firebird 5 physical Custom DML SQL lease/load and cancellation proof (#599)
 
 - Add mandatory-live Firebird 5 SQL admission/physical-open tests through the published Custom MCP two-statement DML route, backed by real native `FirebirdSql.Data.FirebirdClient` transactions. Instrument the runtime-profile preflight, first preview/metadata open and the first target connection opened after external DML approval.
