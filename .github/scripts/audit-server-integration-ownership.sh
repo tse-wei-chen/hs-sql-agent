@@ -38,7 +38,7 @@ for fragment in "${exclusions[@]}"; do
         failures=$((failures + 1))
       fi
     done
-    # PostgreSQL native-function tests run in the default SQL service job.
+    # This mixed-provider class currently contains four provider prefixes.
     continue
   fi
   if ! grep -Fq "FullyQualifiedName~${class}" "$workflow"; then
