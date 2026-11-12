@@ -178,4 +178,4 @@ export GH_TOKEN=offline-token
 export GITHUB_REPOSITORY=somebody/fork
 expect_deny 'not upstream repository'
 export GITHUB_REPOSITORY=tse-wei-chen/hs-sql-agent
-echo "Develop-only release-candidate verifier: 18 positive/negative controls passed."
+echo "Develop-only release-candidate verifier: 19 positive/negative controls passed."
