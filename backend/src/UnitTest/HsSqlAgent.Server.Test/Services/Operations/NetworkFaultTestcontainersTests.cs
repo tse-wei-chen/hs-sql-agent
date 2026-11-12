@@ -22,6 +22,9 @@ namespace HsSqlAgent.Server.Test.Services;
 /// The test application reaches PostgreSQL / Redis exclusively through
 /// Toxiproxy, while physical witnesses use their direct Docker host ports.
 /// </summary>
+[CollectionDefinition("PhysicalNetworkFaults")]
+public sealed class PhysicalNetworkFaultsCollection : ICollectionFixture<NetworkFaultFixture>;
+
 public sealed class NetworkFaultFixture : IAsyncLifetime
 {
     private const int PostgresProxyPort = 8666;
@@ -136,8 +139,8 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
 /// Physical witnesses bypass the proxy and independently observe the DB.
 /// This does NOT prove a COMMIT response was lost after durable success.
 /// </summary>
+[Collection("PhysicalNetworkFaults")]
 public sealed class NetworkFaultTestcontainersTests(NetworkFaultFixture fixture)
-    : IClassFixture<NetworkFaultFixture>
 {
     [Fact]
     public async Task Postgres_QueryNativeSocketCut_FailsAndRecoversWithoutChangingServer()
