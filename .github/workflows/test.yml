@@ -170,10 +170,10 @@ jobs:
       - name: Verify real Testcontainers PostgreSQL 16 native socket faults and Redis 7 process outage
         # Mandatory Docker-backed physical proof: do not hide these cases in
         # generic tests or count mock ACK loss as a transport failure.
-        run: >
-          bash .github/scripts/require-physical-test-cases.sh
-          4 backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+        run: |
+          bash .github/scripts/require-physical-test-cases.sh 4 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
 
 
   redis-approval-integration:
