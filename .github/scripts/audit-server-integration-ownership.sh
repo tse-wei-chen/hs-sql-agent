@@ -47,6 +47,20 @@ if (( ${#exclusions[@]} == 0 )); then
     exit 1
 fi
 
+# Return the one YAML step containing the exact test selector, never another
+# step in the same provider job that happens to use the same test count.
+selector_step() {
+    local block="$1" selector="$2"
+    awk -v needle="$selector" '
+        /^      - name:/ {
+            if (index(step, needle)) { print step; found = 1; exit }
+            step = ""
+        }
+        { step = step $0 "\n" }
+        END { if (!found && index(step, needle)) print step }
+    ' <<< "$block"
+}
+
 case "$mode" in
     --default-filter)
         # Stable manifest ordering retains the exact pre-refactor VSTest selection.
@@ -123,10 +137,8 @@ case "$mode" in
                 found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
                 found { print }
             ' "$workflow")"
-            expected_fragment="require-physical-test-cases.sh 1 \
-            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
-            '$selector'"
-            if [[ "$provider_block" != *"$expected_fragment"* ]]; then
+            step_block="$(selector_step "$provider_block" "$selector")"
+            if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh 1"* ]]; then
                 echo "::error::Provider $job lacks a mandatory one-case no-skip physical gate." >&2
                 failures=$((failures + 1))
             fi
@@ -150,10 +162,8 @@ case "$mode" in
                 found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
                 found { print }
             ' "$workflow")"
-            expected_fragment="require-physical-test-cases.sh $expected
-          backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj
-          '$selector'"
-            if [[ "$job_block" != *"$expected_fragment"* ]]; then
+            step_block="$(selector_step "$job_block" "$selector")"
+            if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh $expected"* ]]; then
                 echo "::error::Native Query security test '$spec' is missing its exact-case no-skip gate." >&2
                 failures=$((failures + 1))
             fi
