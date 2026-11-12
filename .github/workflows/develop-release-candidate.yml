@@ -1,0 +1,65 @@
+name: Develop 3.1.0 release candidate (read-only)
+
+# This is a pre-publication candidate signal. It NEVER promotes to main,
+# creates tags, closes issues, publishes NuGet or uploads Docker images.
+# On develop push, Tests and SqlCore baseline run independently for the same
+# SHA; this gate waits a bounded time for their exact commit evidence.
+on:
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: develop-release-candidate
+  cancel-in-progress: true
+
+jobs:
+  release-candidate:
+    name: release-candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove negative candidate-gate cases cannot be accepted
+        shell: bash
+        run: bash .github/scripts/test-develop-release-candidate.sh
+      - name: Verify exact current develop push and all required security evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            status=0
+            bash .github/scripts/verify-develop-release-candidate.sh \
+              > /tmp/release-candidate-verification.log 2>&1 || status=$?
+            case "$status" in
+              0)
+                cat /tmp/release-candidate-verification.log
+                exit 0
+                ;;
+              75)
+                if (( attempt == 60 )); then
+                  echo "::error::Candidate evidence did not finish within 30 minutes." >&2
+                  cat /tmp/release-candidate-verification.log
+                  exit 1
+                fi
+                echo "Waiting for exact develop Tests/SqlCore push evidence (attempt $attempt/60)"
+                sleep 30
+                ;;
+              *)
+                cat /tmp/release-candidate-verification.log
+                exit 1
+                ;;
+            esac
+          done
+      - name: Upload read-only candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: develop-3.1.0-release-candidate-proof
+          path: artifacts/release-candidate/develop-3.1.0.json
+          if-no-files-found: warn

@@ -2,7 +2,7 @@ name: SqlCore baseline comparison
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request: {}
   workflow_dispatch:
 
@@ -22,20 +22,20 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           path: head
-      - name: Require previous main revision for push comparison
+      - name: Require previous revision for branch push comparison
         if: github.event_name == 'push'
         env:
           PREVIOUS_MAIN_SHA: ${{ github.event.before }}
         shell: bash
         run: |
           if [[ ! "$PREVIOUS_MAIN_SHA" =~ ^[0-9a-f]{40}$ || "$PREVIOUS_MAIN_SHA" == "0000000000000000000000000000000000000000" ]]; then
-            echo "::error::A main push comparison requires the previous main commit." >&2
+            echo "::error::A push comparison requires the previous same-branch commit." >&2
             exit 1
           fi
       - uses: actions/checkout@v4
         with:
-          # A main push compares newly promoted compiler code with the
-          # previous main revision; comparing main against itself proves nothing.
+          # A branch push compares newly committed compiler code with its
+          # previous same-branch revision; comparing a SHA with itself proves nothing.
           ref: ${{ github.event.pull_request.base.sha || (github.event_name == 'push' && github.event.before) || 'main' }}
           path: base
       - uses: actions/setup-dotnet@v4
