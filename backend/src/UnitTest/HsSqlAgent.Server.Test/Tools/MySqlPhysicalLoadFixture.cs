@@ -1,8 +1,5 @@
 using Admin.Service.Data;
-using Admin.Service.Data.Entites;
 using Admin.Service.Interfaces;
-using Admin.Service.Models;
-using Admin.Service.Services;
 using HsSqlAgent.Approvals;
 using HsSqlAgent.Provider.Abstractions;
 using HsSqlAgent.Provider.MySql;
@@ -10,10 +7,7 @@ using HsSqlAgent.Server.Services;
 using HsSqlAgent.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
-using Moq;
 using MySql.Data.MySqlClient;
-using SqlAgent.Service.Interfaces;
 using Xunit;
 
 namespace HsSqlAgent.Server.Test.Tools;
@@ -83,30 +77,12 @@ public sealed partial class MySqlPhysicalLoadIntegrationTests
                 await command.ExecuteNonQueryAsync(ct);
             }
 
-            var auditContext = new AdminContext(
-                new DbContextOptionsBuilder<AdminContext>()
-                    .UseSqlite(new SqliteConnectionStringBuilder
-                    {
-                        DataSource = auditPath
-                    }.ToString()).Options);
-            await auditContext.Database.EnsureCreatedAsync(ct);
-
-            var http = new DefaultHttpContext
-            {
-                TraceIdentifier = "mysql-load-mcp-request"
-            };
-            http.Items[Common.Models.McpContextItemKeys.SqlProvider] = "MySQL";
-            http.Items[Common.Models.McpContextItemKeys.SqlConnectionString] = connection;
-            http.Items[Common.Models.McpContextItemKeys.AccessKeyId] = 7;
-            http.Items[Common.Models.McpContextItemKeys.DbManagementId] = 42;
-            http.Items[Common.Models.McpContextItemKeys.DatabaseName] =
-                new MySqlConnectionStringBuilder(connection).Database;
-            http.Items[Common.Models.McpContextItemKeys.AllowedTools] = "archive_order";
-            http.Items[Common.Models.McpContextItemKeys.TableWhitelist] = schema + ".items";
-            var accessor = new Mock<IHttpContextAccessor>();
-            accessor.SetupGet(x => x.HttpContext).Returns(http);
-
-            return new Fixture(schema, connection, auditPath, auditContext, accessor.Object);
+            var auditContext = await PhysicalLoadMcpFixtureSupport.CreateAuditContextAsync(
+                auditPath, ct);
+            var accessor = PhysicalLoadMcpFixtureSupport.CreateAccessor(
+                "MySQL", connection, new MySqlConnectionStringBuilder(connection).Database, schema + ".items",
+                "mysql-load-mcp-request");
+            return new Fixture(schema, connection, auditPath, auditContext, accessor);
         }
 
         public CustomToolProxy CreateProxy(
@@ -118,33 +94,10 @@ public sealed partial class MySqlPhysicalLoadIntegrationTests
                 + ".items(id,note) VALUES(100,'sensitive_note');"
                 + "INSERT INTO " + _schema
                 + ".items(id,note) VALUES(101,'second_value')";
-            var tools = new Mock<ICustomSqlToolService>();
-            tools.Setup(x => x.GetPublishedToolByNameAsync(
-                    "archive_order", 42, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new CustomSqlTool
-                {
-                    Name = "archive_order",
-                    Type = "DML",
-                    SqlTemplate = sql
-                });
-            var factory = new Mock<ISqlProviderFactory>();
-            factory.Setup(x => x.GetProvider(SqlAgentToolType.MySQL))
-                .Returns(targetProvider ?? new MySqlProvider());
-            var state = new SecurityPolicyRuntimeState();
-            state.SetCurrent(new SecurityPolicyModel
-            {
-                DmlMaxAffectedRows = 16,
-                MaxConcurrentSql = 1,
-                RequireWhereForUpdate = true,
-                RequireWhereForDelete = true
-            });
-            return new CustomToolProxy(
-                "archive_order", tools.Object, _accessor, factory.Object,
-                auditService ?? new AuditService(_auditContext, _accessor),
-                Mock.Of<IQueryValueParserService>(),
-                state,
-                concurrencyLimiter ?? new SqlExecutionConcurrencyLimiter(state),
-                dmlApprovalProvider: approvalProvider);
+            return PhysicalLoadMcpFixtureSupport.CreateProxy(
+                sql, SqlAgentToolType.MySQL, targetProvider ?? new MySqlProvider(),
+                _accessor, _auditContext, approvalProvider, auditService,
+                concurrencyLimiter);
         }
 
         // Only the shared physical load harness uses the provider-neutral
