@@ -84,7 +84,7 @@ jobs:
           dotnet build backend/src/ToolBox/ToolBox.csproj --no-restore --configuration Release --verbosity minimal \
             2>&1 | tee artifacts/security/compiler-build.log
           grep -E '(warning (CS|FS|NU)[0-9]+:)' artifacts/security/compiler-build.log \
-            > artifacts/security/compiler-warnings.txt || true
+            | sort -u > artifacts/security/compiler-warnings.txt || true
           count="$(wc -l < artifacts/security/compiler-warnings.txt)"
           printf '{"warnings":%s,"scope":"ToolBox Release plus referenced CSharp and FSharp modules","source":"exact CI HEAD"}\n' "$count" \
             > artifacts/security/compiler-warning-summary.json
