@@ -162,6 +162,25 @@ public sealed class RuntimeDoctorAnalyzerTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("localhost:26379,serviceName=sql-master")]
+    [InlineData("localhost:6379,localhost:6380")]
+    public void Analyze_UnfencedRedisFailoverTopology_IsSecurityError(string connection)
+    {
+        var values = BuildHealthyBase();
+        values["SqlConcurrency:Provider"] = "Redis";
+        values["SqlConcurrency:ConnectionString"] = connection;
+        values["SqlConcurrency:FailureMode"] = "FailClosed";
+
+        var result = RuntimeDoctorAnalyzer.Analyze(
+            BuildConfiguration(values), "Production", 1, 1, 1);
+        var check = Assert.Single(result.Checks,
+            x => x.Id == "coordination.sqlconcurrency-topology");
+        Assert.Equal("Error", check.Status);
+        Assert.Equal("Error", result.OverallStatus);
+        Assert.DoesNotContain(connection, JsonSerializer.Serialize(result));
+    }
+
     [Fact]
     public void Analyze_WebhookApprovalRequiresCompleteSignedConfiguration()
     {
