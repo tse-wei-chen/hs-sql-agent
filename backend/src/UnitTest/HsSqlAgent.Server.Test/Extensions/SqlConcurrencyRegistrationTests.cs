@@ -63,6 +63,21 @@ public class SqlConcurrencyRegistrationTests
         Assert.Contains("SQL", error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("localhost:26379,serviceName=sql-master")]
+    [InlineData("localhost:6379,localhost:6380")]
+    public void AddHsSqlAgent_RejectsUnfencedRedisFailoverTopologies(string connectionString)
+    {
+        var options = CreateOptions();
+        options.SqlConcurrencyProvider = "Redis";
+        options.SqlConcurrencyConnectionString = connectionString;
+
+        var error = Assert.Throws<InvalidOperationException>(
+            () => new ServiceCollection().AddHsSqlAgent(options));
+        Assert.Contains("unsupported", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Redis", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static HsSqlAgentServiceOptions CreateOptions() => new()
     {
         AdminConnectionString = "Data Source=:memory:",
