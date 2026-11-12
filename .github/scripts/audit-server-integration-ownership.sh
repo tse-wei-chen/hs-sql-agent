@@ -3,9 +3,9 @@
 # Its positive selectors must belong to real mandatory workflow jobs.
 set -euo pipefail
 
-manifest=".github/test-suites/server-integration.tsv"
-workflow=".github/workflows/test.yml"
-test_root="backend/src/UnitTest/HsSqlAgent.Server.Test"
+manifest="${HS_SQL_AGENT_SERVER_SUITE_MANIFEST:-.github/test-suites/server-integration.tsv}"
+workflow="${HS_SQL_AGENT_SERVER_SUITE_WORKFLOW:-.github/workflows/test.yml}"
+test_root="${HS_SQL_AGENT_SERVER_SUITE_TEST_ROOT:-backend/src/UnitTest/HsSqlAgent.Server.Test}"
 mode="${1:---audit}"
 
 if [[ ! -f "$manifest" || ! -f "$workflow" || ! -d "$test_root" ]]; then
