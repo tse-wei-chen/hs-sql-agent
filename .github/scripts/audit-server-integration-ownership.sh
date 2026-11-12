@@ -83,7 +83,7 @@ case "$mode" in
 
         # Separate destructive Docker cases must be excluded from the
         # ordinary shard *and* positively selected in the dedicated step.
-        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests; do
+        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests; do
             if [[ -z "${unique_suites[$suite]:-}" ]]; then
                 echo "::error::Missing mandatory fault suite from manifest: $suite" >&2
                 failures=$((failures + 1))
@@ -95,7 +95,11 @@ case "$mode" in
             failures=$((failures + 1))
         fi
         if ! grep -Fq -- 'require-physical-test-cases.sh 4' "$workflow"; then
-            echo "::error::Mandatory Testcontainers step lacks its exact 4-case no-skip proof." >&2
+            echo "::error::Four-case backend/process fault step is missing." >&2
+            failures=$((failures + 1))
+        fi
+        if [[ "$(grep -Fc 'require-physical-test-cases.sh 1' "$workflow")" -lt 2 ]]; then
+            echo "::error::PostgreSQL and Redis TCP-partition cases must run as two isolated mandatory one-case steps." >&2
             failures=$((failures + 1))
         fi
         if (( failures > 0 )); then

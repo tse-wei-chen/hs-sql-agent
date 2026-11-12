@@ -170,13 +170,32 @@ jobs:
           filter="$(bash .github/scripts/audit-server-integration-ownership.sh --default-filter)"
           dotnet test --project backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj --filter "$filter"
 
-      - name: Verify real Testcontainers PostgreSQL 16 native socket faults and Redis 7 process outage
-        # Mandatory Docker-backed physical proof: do not hide these cases in
-        # generic tests or count mock ACK loss as a transport failure.
+      - name: Verify existing real PostgreSQL backend and Redis process fault baselines
         run: |
-          bash .github/scripts/require-physical-test-cases.sh 4 \
+          timeout --signal=INT --kill-after=10s 150s bash .github/scripts/require-physical-test-cases.sh 4 \
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~PostgresNativeFaultTestcontainersTests|FullyQualifiedName~RedisProcessOutageTestcontainersTests'
+
+      - name: Prepull dedicated TCP-fault proxy image
+        run: timeout --signal=INT --kill-after=10s 90s docker pull ghcr.io/shopify/toxiproxy:2.12.0
+
+      - name: Verify actual PostgreSQL Query TCP cut through a proxy
+        run: |
+          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~NetworkFaultTestcontainersTests.Postgres_QueryNativeSocketCut'
+
+      - name: Verify Redis lease revocation under real TCP partition
+        run: |
+          timeout --signal=INT --kill-after=10s 90s bash .github/scripts/require-physical-test-cases.sh 1 \
+            backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
+            'FullyQualifiedName~NetworkFaultTestcontainersTests.Redis_TcpPartition'
+
+      - name: Show physical fixture stage and Docker status on failure
+        if: failure()
+        run: |
+          cat /tmp/hsql-network-fault-trace.log || true
+          docker ps -a --format 'table {{.Image}}\t{{.Status}}\t{{.Names}}'
 
 
   redis-approval-integration:
