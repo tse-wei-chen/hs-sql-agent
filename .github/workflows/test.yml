@@ -191,9 +191,11 @@ jobs:
             backend/src/UnitTest/HsSqlAgent.Server.Test/HsSqlAgent.Server.Test.csproj \
             'FullyQualifiedName~NetworkFaultTestcontainersTests.Redis_TcpPartition'
 
-      - name: Show Docker container status if physical network tests fail
+      - name: Show physical fixture stage and Docker status on failure
         if: failure()
-        run: docker ps -a --format 'table {{.Image}}\t{{.Status}}\t{{.Names}}'
+        run: |
+          cat /tmp/hsql-network-fault-trace.log || true
+          docker ps -a --format 'table {{.Image}}\t{{.Status}}\t{{.Names}}'
 
 
   redis-approval-integration:
