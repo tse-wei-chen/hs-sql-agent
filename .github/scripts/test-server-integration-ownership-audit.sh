@@ -33,6 +33,7 @@ default_filter="$(bash "$audit" --default-filter)"
 [[ "$default_filter" == *"FullyQualifiedName!~PostgresNativeFaultTestcontainersTests"* ]]
 [[ "$default_filter" == *"FullyQualifiedName!~RedisProcessOutageTestcontainersTests"* ]]
 [[ "$default_filter" == *"FullyQualifiedName!~NetworkFaultTestcontainersTests"* ]]
+[[ "$default_filter" == *"FullyQualifiedName!~ProviderTcpPartitionTestcontainersTests"* ]]
 echo "PASS: valid ownership manifest and derived default filter"
 
 reset_fixtures
@@ -71,4 +72,28 @@ reset_fixtures
 sed -i 's/require-physical-test-cases.sh 1/require-physical-test-cases.sh 0/g' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
 assert_rejected "physical case-count gate removed"
 
-echo "All 7 negative ownership-audit regressions were rejected."
+reset_fixtures
+# Removing one of the four providers must not be confused with the three
+# other positive assignments to the same test class.
+sed -i '/^ProviderTcpPartitionTestcontainersTests[[:space:]]*sqlagent-oracle-ddl-parity[[:space:]]/d' "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST"
+assert_rejected "Oracle omitted from mandatory four-provider TCP matrix"
+
+reset_fixtures
+# Merely invoking the test filter is not enough: the exact no-skip physical
+# case count must be enforced in every required owner.
+sed -i '/^      - name: Require Firebird real TCP-partition/,/^      - name: Verify live Firebird/s/require-physical-test-cases.sh 1/require-physical-test-cases.sh 0/' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
+assert_rejected "Firebird one-case gate disabled"
+
+reset_fixtures
+# Native Query authorization/function side-effect tests cannot silently vanish
+# from a provider even if the transport case in that job remains green.
+sed -i '/^QueryNativeFunctionLiveTests[[:space:]]*sqlagent-test[[:space:]]/d' "$HS_SQL_AGENT_SERVER_SUITE_MANIFEST"
+assert_rejected "missing mandatory MySQL native-function least-privilege suite"
+
+reset_fixtures
+# The Oracle security control needs all four live cases, not zero matches or
+# an incomplete subset of happy-path cases.
+sed -i '/^      - name: Verify Oracle 26ai physical native-function/,/^      - name: Require Oracle real TCP-partition/s/require-physical-test-cases.sh 4/require-physical-test-cases.sh 0/' "$HS_SQL_AGENT_SERVER_SUITE_WORKFLOW"
+assert_rejected "Oracle native-function no-skip gate removed"
+
+echo "All 11 negative ownership-audit regressions were rejected."

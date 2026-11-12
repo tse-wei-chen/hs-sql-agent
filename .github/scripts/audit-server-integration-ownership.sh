@@ -47,6 +47,20 @@ if (( ${#exclusions[@]} == 0 )); then
     exit 1
 fi
 
+# Return the one YAML step containing the exact test selector, never another
+# step in the same provider job that happens to use the same test count.
+selector_step() {
+    local block="$1" selector="$2"
+    awk -v needle="$selector" '
+        /^      - name:/ {
+            if (index(step, needle)) { print step; found = 1; exit }
+            step = ""
+        }
+        { step = step $0 "\n" }
+        END { if (!found && index(step, needle)) print step }
+    ' <<< "$block"
+}
+
 case "$mode" in
     --default-filter)
         # Stable manifest ordering retains the exact pre-refactor VSTest selection.
@@ -83,7 +97,7 @@ case "$mode" in
 
         # Separate destructive Docker cases must be excluded from the
         # ordinary shard *and* positively selected in the dedicated step.
-        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests; do
+        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests ProviderTcpPartitionTestcontainersTests; do
             if [[ -z "${unique_suites[$suite]:-}" ]]; then
                 echo "::error::Missing mandatory fault suite from manifest: $suite" >&2
                 failures=$((failures + 1))
@@ -102,6 +116,59 @@ case "$mode" in
             echo "::error::PostgreSQL and Redis TCP-partition cases must run as two isolated mandatory one-case steps." >&2
             failures=$((failures + 1))
         fi
+        # A single proxy test class is partitioned across four dedicated
+        # real-provider jobs. Assert every required assignment exists; the
+        # mere presence of one class name is not four-provider evidence.
+        for assignment in \
+            "sqlagent-test:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.MySql_" \
+            "sqlagent-fence-sqlserver:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.SqlServer_" \
+            "sqlagent-oracle-ddl-parity:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Oracle_" \
+            "sqlagent-firebird-ddl-parity:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Firebird_"; do
+            job="${assignment%%:*}"
+            selector="${assignment#*:}"
+            if [[ -z "${unique_assignments[ProviderTcpPartitionTestcontainersTests:$job:$selector]:-}" ]]; then
+                echo "::error::Missing mandatory provider TCP-partition assignment: $assignment" >&2
+                failures=$((failures + 1))
+            fi
+            # Reject a provider step that mentions the selector but no longer
+            # verifies exactly one passed, zero failed and zero skipped.
+            provider_block="$(awk -v job="$job" '
+                $0 == "  " job ":" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            step_block="$(selector_step "$provider_block" "$selector")"
+            if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh 1"* ]]; then
+                echo "::error::Provider $job lacks a mandatory one-case no-skip physical gate." >&2
+                failures=$((failures + 1))
+            fi
+        done
+        # The already-implemented physical UDF / identity negative controls are
+        # release security evidence, not optional filtered smoke tests. Require
+        # each provider's exact test count, no-failure and no-skip gate.
+        for spec in \
+            "sqlagent-test:FullyQualifiedName~QueryNativeFunctionLiveTests.MySql_:3" \
+            "sqlagent-fence-sqlserver:FullyQualifiedName~QueryNativeFunctionLiveTests.SqlServer_:2" \
+            "sqlagent-oracle-ddl-parity:FullyQualifiedName~QueryNativeFunctionLiveTests.Oracle_:4" \
+            "sqlagent-firebird-ddl-parity:FullyQualifiedName~QueryNativeFunctionLiveTests.Firebird_:1"; do
+            IFS=: read -r job selector expected <<< "$spec"
+            if [[ -z "${unique_assignments[QueryNativeFunctionLiveTests:$job:$selector]:-}" ]]; then
+                echo "::error::Missing mandatory native Query security suite: $spec" >&2
+                failures=$((failures + 1))
+                continue
+            fi
+            job_block="$(awk -v job="$job" '
+                $0 == "  " job ":" { found = 1; next }
+                found && /^  [A-Za-z][A-Za-z0-9-]*:/ { exit }
+                found { print }
+            ' "$workflow")"
+            step_block="$(selector_step "$job_block" "$selector")"
+            if [[ -z "$step_block" || "$step_block" != *"require-physical-test-cases.sh $expected"* ]]; then
+                echo "::error::Native Query security test '$spec' is missing its exact-case no-skip gate." >&2
+                failures=$((failures + 1))
+            fi
+        done
+
         if (( failures > 0 )); then
             echo "::error::Server integration ownership audit failed ($failures errors)." >&2
             exit 1
