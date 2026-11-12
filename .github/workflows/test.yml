@@ -70,6 +70,20 @@ jobs:
         run: bash .github/scripts/test-release-security-gate.sh
       - name: Verify exact release-head Tests gate rejects missing or failed CI
         run: bash .github/scripts/test-release-head-ci-gate.sh
+      - name: Record production Host and F# compiler warning baseline on exact HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/security
+          dotnet restore backend/src/ToolBox/ToolBox.csproj --verbosity quiet
+          dotnet build backend/src/ToolBox/ToolBox.csproj --no-restore --configuration Release --verbosity minimal \
+            2>&1 | tee artifacts/security/compiler-build.log
+          grep -E '(warning (CS|FS|NU)[0-9]+:)' artifacts/security/compiler-build.log \
+            > artifacts/security/compiler-warnings.txt || true
+          count="$(wc -l < artifacts/security/compiler-warnings.txt)"
+          printf '{"warnings":%s,"scope":"ToolBox Release plus referenced CSharp and FSharp modules","source":"exact CI HEAD"}\n' "$count" \
+            > artifacts/security/compiler-warning-summary.json
+          echo "Compiler warnings for this release evidence run: $count"
       - name: Prove dependency advisory parser fails closed against missing and high-risk results
         shell: bash
         run: bash .github/scripts/test-dependency-security-audit.sh
