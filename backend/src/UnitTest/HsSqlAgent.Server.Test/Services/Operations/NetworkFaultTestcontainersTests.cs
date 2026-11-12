@@ -51,7 +51,11 @@ public sealed class NetworkFaultFixture : IAsyncLifetime
             .WithPortBinding(PostgresProxyPort, true)
             .WithPortBinding(RedisProxyPort, true)
             .WithWaitStrategy(Wait.ForUnixContainer()
-                .UntilInternalTcpPortIsAvailable(8474))
+                // The Toxiproxy image has no shell for an in-container TCP probe.
+                // Probe the published HTTP control endpoint instead.
+                .UntilHttpRequestIsSucceeded(request => request
+                    .ForPort(8474)
+                    .ForPath("/version")))
             .Build();
         Mark("fixture construction complete");
     }
