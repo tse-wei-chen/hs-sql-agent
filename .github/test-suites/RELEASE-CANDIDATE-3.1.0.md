@@ -18,6 +18,14 @@ to `main` is a separate, owner-authorized action.
 | Dependencies and compiler | Actual current NuGet and production pnpm advisory results; missing/invalid scan or high/critical vulnerability fails closed; compiler warning baseline recorded, not erased; low/moderate reviewed explicitly before promotion | Existing infrastructure-test `audit-dependency-security.sh` and uploaded compiler log |
 | Source and publication contract | `VersionPrefix=3.1.0`, `CHANGELOG.md` contains `[3.1.0] - Unreleased`; supported DB identities/limitations documented; exact-`main` release gates unchanged | `verify-develop-release-candidate.sh`, Query security contract, issue #575 |
 
+**Push syntax-parity contract:** the 18th `sql-syntax-parity` job MUST
+actually execute, not report `skipped`, on both `develop` and `main` pushes.
+For PRs the comparable base remains `pull_request.base.sha`; on a branch push
+it must use the *previous branch commit* `github.event.before` and reject
+empty/zero/self base SHAs. The four negative ownership regressions run in
+`infrastructure-test`. Without this contract the strict 18/18 release gate
+could never authorize an actual push, even when PR CI was green.
+
 The `Develop 3.1.0 release candidate (read-only)` workflow is triggered by a
 **push to `develop`** and waits (bounded to 30 minutes) for the two independent
 `develop`-push CI workflows. It refuses stale SHA, wrong repo/branch,
