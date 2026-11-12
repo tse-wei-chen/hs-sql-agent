@@ -83,7 +83,7 @@ case "$mode" in
 
         # Separate destructive Docker cases must be excluded from the
         # ordinary shard *and* positively selected in the dedicated step.
-        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests; do
+        for suite in PostgresNativeFaultTestcontainersTests RedisProcessOutageTestcontainersTests NetworkFaultTestcontainersTests ProviderTcpPartitionTestcontainersTests; do
             if [[ -z "${unique_suites[$suite]:-}" ]]; then
                 echo "::error::Missing mandatory fault suite from manifest: $suite" >&2
                 failures=$((failures + 1))
@@ -102,6 +102,21 @@ case "$mode" in
             echo "::error::PostgreSQL and Redis TCP-partition cases must run as two isolated mandatory one-case steps." >&2
             failures=$((failures + 1))
         fi
+        # A single proxy test class is partitioned across four dedicated
+        # real-provider jobs. Assert every required assignment exists; the
+        # mere presence of one class name is not four-provider evidence.
+        for assignment in \
+            "sqlagent-test:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.MySql_" \
+            "sqlagent-fence-sqlserver:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.SqlServer_" \
+            "sqlagent-oracle-ddl-parity:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Oracle_" \
+            "sqlagent-firebird-ddl-parity:FullyQualifiedName~ProviderTcpPartitionTestcontainersTests.Firebird_"; do
+            job="${assignment%%:*}"
+            selector="${assignment#*:}"
+            if [[ -z "${unique_assignments[ProviderTcpPartitionTestcontainersTests:$job:$selector]:-}" ]]; then
+                echo "::error::Missing mandatory provider TCP-partition assignment: $assignment" >&2
+                failures=$((failures + 1))
+            fi
+        done
         if (( failures > 0 )); then
             echo "::error::Server integration ownership audit failed ($failures errors)." >&2
             exit 1
