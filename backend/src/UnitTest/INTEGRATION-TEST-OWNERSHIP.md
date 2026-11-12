@@ -19,8 +19,13 @@ covered. Do not replace physical tests with mocked acknowledgement exceptions.
 | SQL grammar matrices | `SqlAgent.Test/Services/SqlCore` | `sqlagent-syntax-matrix` and SQL service jobs | Compiler and provider-specific live jobs | Positive/negative grammar contracts |
 | SqlCore regression baseline | `HsSqlAgent.SqlCore` and test governance | `SqlCore baseline comparison` | Exact PR/develop comparison | Preserve six-provider grammar and validation parity |
 
-The exact job names and positive selectors in `.github/workflows/test.yml`
-remain authoritative; update this inventory when CI ownership changes.
+The machine-readable `.github/test-suites/server-integration.tsv` is the
+**single source** for Server's excluded test classes and their positive job
+owners. `.github/workflows/test.yml` owns their actual invocations. The
+`audit-server-integration-ownership.sh` script validates both and prints the
+default negative filter with `--default-filter`; the CI job never hand-edits
+an exclusion string. A class with methods split by database dialect has
+multiple explicit positive owners in the manifest.
 
 ## Rules for new integration tests
 
@@ -46,11 +51,33 @@ remain authoritative; update this inventory when CI ownership changes.
 7. **Separate unit tests, native integration, and destructive fault tests**
    in reporting. Run a focused RED then GREEN before expensive full CI.
 
+## Adding or moving a Server physical suite
+
+1. Give the test a class name describing the database/fault boundary. The
+   default Server test shard includes new classes **unless** they appear in
+   the manifest; do not depend on a CI skip to hide a missing dependency.
+2. If the suite needs a real external service, add a tab-separated
+   `class<TAB>owning-job<TAB>positive-selector` row to the manifest. For
+   provider-specific methods in one class, add one row for **each** provider
+   job, as for `QueryNativeFunctionLiveTests`.
+3. Add or retain that exact `FullyQualifiedName~...` positive filter under
+   the selected job in `.github/workflows/test.yml`. The audit deliberately
+   checks the owning job body rather than a coincidental selector elsewhere.
+4. For the destructive PostgreSQL 16 / Redis 7 Testcontainers suite the job
+   invokes `require-physical-test-cases.sh 4`, which refuses zero matches,
+   unexpected test-count changes, failures, and skips. Update the count only
+   when the intentional physical corpus changes and verify real Docker logs.
+5. Run `bash .github/scripts/audit-server-integration-ownership.sh` and
+   `bash .github/scripts/audit-server-integration-ownership.sh --default-filter`
+   locally, then verify all 18 required Tests jobs and SqlCore baseline on the
+   **exact final PR SHA** before merging to `develop`.
+
 ## Remaining cleanup and security work
 
-- Replace the Server default negative-filter wall with declarative
-  suite traits/collections or separate test assemblies, without changing
-  which tests execute. Do this incrementally with exact test-count parity.
+- The Server YAML negative-filter wall has been replaced by the audited
+  ownership manifest. Longer-term, migrate to assembly/class traits or
+  dedicated physical test projects **with identical test case counts**;
+  manifest entries remain required until that migration is measured.
 - Consolidate repeated per-provider connection/fixture setup and test
   cleanup. Do not share mutable physical sessions between tests.
 - Add independent tests for network partition via a proxy, post-durable
