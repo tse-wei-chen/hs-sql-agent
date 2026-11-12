@@ -154,6 +154,9 @@ jobs:
       - name: Guard domain-organized test layout
         run: |
           dotnet run --project backend/tools/HsSqlAgent.TestGovernance -- layout --root .
+      - name: Audit mandatory Server integration suite ownership and exclusions
+        shell: bash
+        run: bash .github/scripts/audit-server-integration-ownership.sh
       - name: Verify released v2.0.6 Admin Store migration baseline is immutable
         shell: bash
         run: bash .github/scripts/verify-v2-admin-migration-baseline.sh
