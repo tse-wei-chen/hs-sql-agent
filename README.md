@@ -64,7 +64,10 @@ UDF/routine EXECUTE, external I/O, elevated definer/impersonation roles and
 cross-database access. The typed F# compiler and Host connection-local read-only
 fences provide additional protections but cannot sandbox arbitrary native code,
 external callbacks or separate connections. SQLite embedding hosts must not
-register write-capable callbacks on Query handles.
+register write-capable callbacks on Query handles. See the
+[six-provider Query security deployment contract](.github/test-suites/query-security-deployment-contract.md)
+for required DB identities, explicit unsupported routine effects, and physical
+security test boundaries.
 
 **Distributed SQL admission:** `MaxConcurrentSql` bounds admitted operations,
 not all physical database sessions or driver pools. Redis-backed
