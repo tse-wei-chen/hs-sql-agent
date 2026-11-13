@@ -2,7 +2,7 @@
 
 **Release stage: PREPARE / develop only.** This is a finite, reproducible
 security and integration acceptance plan. A green release-candidate check
-does **not** merge into `main`, close #575, create a Git tag, publish NuGet
+does **not** merge into `main`, create a Git tag, publish NuGet
 packages, create a GitHub Release, or push an OCI/Docker image. Promotion
 to `main` is a separate, owner-authorized action.
 
@@ -74,11 +74,22 @@ provide independent bounded coverage, not an F# CodeQL claim.
 
 ## What is deliberately not performed at this stage
 
-The existing **publication** gates still require an owner-approved promotion
-to `main`, successful **18/18 Tests + SqlCore baseline on the *actual promoted
-main push SHA***, and completed/fully-checked #575. Those facts do not exist
-while the user is preparing release solely on `develop`. Therefore the
-candidate gate does **not** close #575, overwrite/check the final main-only
-checkbox, authorize NuGet or Docker publication, or bypass either existing
-release gate. Mark this stage READY only when the exact-`develop` candidate
+**Two-stage release contract (no implicit main authorization):** #575 owns
+bounded six-provider safety, supported-mode limitations and exact-`develop`
+Release Candidate evidence. It can be marked `completed` **only after**
+those gates actually pass on the merged develop SHA; a completed #575 alone
+does not permit a release. The independent owner/publication issue
+[#634](https://github.com/tse-wei-chen/hs-sql-agent/issues/634) must remain
+open until the owner explicitly approves main promotion and verifies the
+*actual* promoted main push SHA: 18/18 named Tests jobs and a successful
+SqlCore baseline. The 3.1.0 publication preflight now requires **both**
+#575 and #634 `closed/completed` with every checkbox checked, *plus* the
+unchanged strict exact-main CI gate. Any open/unchecked issue fails closed.
+Neither issue closure nor a read-only candidate workflow merges main, creates
+tags, publishes packages, or bypasses credential/registry preflights.
+
+Mark this develop candidate READY only when the exact-`develop` candidate
 workflow finishes green; otherwise treat it as BLOCKED and inspect its logs.
+The physical Query/UDF and Redis/ACK-loss evidence is scoped to explicitly
+supported configurations; unsupported HA, global pool/failover and arbitrary
+external effects must not be advertised as proven.
