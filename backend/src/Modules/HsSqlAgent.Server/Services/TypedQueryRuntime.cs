@@ -304,18 +304,28 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
                 throw new InvalidOperationException(
                     "SQLite Query cannot attest a compiled function signature.");
 
-            var name = signature[..open];
-            // Some SQLite opcode forms prefix the function name with a
-            // numeric execution context, e.g. 0:function_name(2).
-            var separator = name.LastIndexOf(':');
-            if (separator >= 0)
-                name = name[(separator + 1)..];
-            if (name.Length == 0)
+            var fullName = signature[..open];
+            if (fullName.Length == 0)
                 throw new InvalidOperationException(
                     "SQLite Query cannot attest an empty function identity.");
 
+            // Colon is legal *inside* a quoted SQLite function name. Never
+            // drop its prefix: doing so allowed an invoked external-writing
+            // callback to evade the physical registry comparison. Some
+            // engine opcodes may also prefix a numeric execution context,
+            // e.g. 0:func(1); accept that alias only in ADDITION to the full
+            // identity, never as a substitute for it.
+            var separator = fullName.IndexOf(':');
+            var hasNumericContext = separator > 0 &&
+                int.TryParse(fullName.AsSpan(0, separator), out _);
+            var contextName = hasNumericContext
+                ? fullName[(separator + 1)..]
+                : fullName;
+
             if (callbacks.Any(callback =>
-                string.Equals(callback.Name, name, StringComparison.OrdinalIgnoreCase)
+                (string.Equals(callback.Name, fullName, StringComparison.OrdinalIgnoreCase)
+                    || (hasNumericContext && string.Equals(
+                        callback.Name, contextName, StringComparison.OrdinalIgnoreCase)))
                 && (callback.Arguments == arguments || callback.Arguments == -1)))
                 throw new UnauthorizedAccessException(
                     "SQLite Query cannot execute an application-defined function "
