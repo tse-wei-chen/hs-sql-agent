@@ -146,12 +146,15 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
             securityPolicy.QueryMaxRows,
             effectiveTables is null
                 && provider is (SqlAgentToolType.MySQL
+                    or SqlAgentToolType.MsSqlServer
                     or SqlAgentToolType.Oracle or SqlAgentToolType.Firebird)
-                // All three use a native read-only Query transaction, but
-                // cannot prove purity of an arbitrary schema-qualified native
-                // routine: MySQL TEMPORARY writes and Oracle/Firebird
-                // autonomous or external side effects escape that guarantee.
-                // Host-only typed policy; standalone SqlCore grammar unchanged.
+                // Read-only transaction fences (MySQL/Oracle/Firebird) cannot
+                // prove separate-connection or external routine purity.
+                // SQL Server's live effective-principal attestation is also
+                // not a semantic proof of EXECUTE AS/CLR/cross-database UDFs,
+                // nor protection against a permission race. Reject opaque
+                // native function identities before opening any connection.
+                // This is Host-only policy: standalone SqlCore grammar remains.
                 ? SqlQueryNativeFunctionPolicy.RejectOpaqueQualifiedOrQuoted
                 : SqlQueryNativeFunctionPolicy.PreserveCompilerGrammar);
 

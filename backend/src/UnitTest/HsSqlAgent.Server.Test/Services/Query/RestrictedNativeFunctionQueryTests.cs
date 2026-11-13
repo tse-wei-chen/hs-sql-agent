@@ -203,15 +203,45 @@ public sealed class RestrictedNativeFunctionQueryTests
     }
 
     [Fact]
-    public void UnrestrictedSqlServerQuery_NativeFunctionNamesRetainExistingCompilerBehavior()
+    public void SqlServerQueryWithoutWhitelist_RejectsOpaqueNativeFunctionOnBothClrPaths()
     {
+        // A DB permission probe only attests the connected principal at one
+        // instant. Do not compile a provider-native routine call when Query
+        // has no table whitelist: privileged EXECUTE AS, CLR and cross-database
+        // module effects are not established by the SELECT AST.
         var provider = new Mock<ISqlProvider>();
         provider.SetupGet(x => x.Type).Returns(SqlAgentToolType.MsSqlServer);
+        const string opaqueSql = "SELECT dbo.leak_secret() AS leaked FROM dbo.users";
+        var empty = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var compiled = new TypedQueryRuntime().Compile(
-            provider.Object, "SELECT dbo.leak_secret() AS leaked FROM dbo.users",
-            SqlAgentToolType.MsSqlServer, Policy, allowedTables: null);
+        foreach (IReadOnlySet<string>? allowed in new IReadOnlySet<string>?[] { null, empty })
+        {
+            var diagnosticException = Assert.Throws<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().Compile(
+                    provider.Object, opaqueSql, SqlAgentToolType.MsSqlServer,
+                    Policy, allowed));
+            var diagnostic = Assert.IsType<SqlDiagnostic>(
+                diagnosticException.Data["HsSqlAgent.SqlCore.Diagnostic"]);
+            Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN", diagnostic.Code);
+            Assert.Equal(SqlDiagnosticStage.Policy, diagnostic.Stage);
 
-        Assert.Contains("leak_secret", compiled.Sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Throws<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().CompileWithFacts(
+                    provider.Object, opaqueSql, SqlAgentToolType.MsSqlServer,
+                    Policy, allowed, targetProfile: null));
+
+            var builtIn = new TypedQueryRuntime().Compile(
+                provider.Object, "SELECT ABS(id) AS amount FROM dbo.users",
+                SqlAgentToolType.MsSqlServer, Policy, allowed);
+            Assert.Contains("ABS(", builtIn.Sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Host-only policy cannot silently narrow the public standalone
+        // SqlCore grammar used for analysis and non-MCP consumers.
+        var standalone = SqlCoreFacade.CompileQuery(
+            opaqueSql, SqlAgentToolType.MsSqlServer, SqlAgentToolType.MsSqlServer,
+            new SqlPlanValidationContext("standalone-sqlserver-grammar"),
+            new SqlExecutionPlanPolicy(20));
+        Assert.Contains("leak_secret", standalone.Sql, StringComparison.OrdinalIgnoreCase);
     }
 }

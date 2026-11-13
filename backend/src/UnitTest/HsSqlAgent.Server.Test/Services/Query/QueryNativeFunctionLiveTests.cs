@@ -75,8 +75,26 @@ public sealed class QueryNativeFunctionLiveTests
             var sql = "SELECT dbo.leak_secret() AS leaked FROM dbo.users";
             Assert.Equal(Secret, (await ScalarAsync(setup, sql, ct))?.ToString());
             var before = await PhysicalCountAsync(setup, "dbo.users", "dbo.secrets", ct);
+
+            // The same opaque function must be denied at the compiler policy
+            // boundary even with no whitelist; the physical principal guard
+            // must not be the only reason this privileged login is rejected.
+            var provider = new MsSqlServerProvider();
+            var noWhitelist = Assert.Throws<UnauthorizedAccessException>(() =>
+                new TypedQueryRuntime().Compile(
+                    provider, sql, SqlAgentToolType.MsSqlServer, Policy(),
+                    allowedTables: null));
+            Assert.Equal("SQL_POLICY_NATIVE_QUERY_FUNCTION_NOT_PROVEN",
+                Assert.IsType<SqlDiagnostic>(
+                    noWhitelist.Data["HsSqlAgent.SqlCore.Diagnostic"]).Code);
+            var noWhitelistTool = await Tool(provider, SqlAgentToolType.MsSqlServer,
+                target, allowedTable: null).ExecuteQuerySql(sql, ct);
+            Assert.False(noWhitelistTool.Success);
+            Assert.Empty(noWhitelistTool.Rows);
+            Assert.DoesNotContain(Secret, noWhitelistTool.ToString());
+
             await AssertMcpDeniesAsync(
-                new MsSqlServerProvider(), SqlAgentToolType.MsSqlServer,
+                provider, SqlAgentToolType.MsSqlServer,
                 target, "dbo.users", sql, "SELECT id FROM dbo.users", ct);
             Assert.Equal(before, await PhysicalCountAsync(setup, "dbo.users", "dbo.secrets", ct));
         }
