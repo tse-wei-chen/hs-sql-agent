@@ -193,7 +193,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
     // PRAGMA function_list is read from the *same connection* as execution.
     // Inspect rows in CLR code, not SQL joins/functions that might themselves be
     // overridden. No user SQL is parsed or interpolated into this attestation.
-    private static async Task VerifySqliteBuiltInFunctionIdentityAsync(
+    private static async Task<List<(string Name, int Arguments)>> VerifySqliteBuiltInFunctionIdentityAsync(
         DbConnection connection,
         CancellationToken cancellationToken)
     {
@@ -240,6 +240,87 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
                     + "the active connection registers a colliding application-defined function. "
                     + "Use a connection without built-in function overrides.");
         }
+
+        return callbacks;
+    }
+
+    // A SQLite Query SELECT can call an embedding-host callback that opens a
+    // completely separate writable connection. PRAGMA query_only on the
+    // original physical connection cannot prevent those writes. Do not infer
+    // function purity from SELECT, readonly transactions or name spelling.
+    //
+    // EXPLAIN compiles (does not execute) the exact authorized, parameterized
+    // SQL on the SAME physical connection after query_only is enabled. Every
+    // invoked function opcode is compared with that connection's actual
+    // PRAGMA function_list identities. Uncalled extensions remain permitted;
+    // a called application-defined function is denied BEFORE any Query row
+    // can execute. A malformed/unsupported proof fails closed.
+    private static async Task VerifySqliteInvokedHostCallbacksAsync(
+        CompiledSqlCommand compiled,
+        DbConnection connection,
+        IReadOnlyList<(string Name, int Arguments)> callbacks,
+        int timeoutSeconds,
+        CancellationToken cancellationToken)
+    {
+        if (callbacks.Count == 0)
+            return;
+
+        await using var explain = connection.CreateCommand();
+        explain.CommandText = "EXPLAIN " + compiled.Sql;
+        explain.CommandTimeout = timeoutSeconds > 0 ? timeoutSeconds : 30;
+        foreach (var parameter in compiled.Parameters)
+        {
+            var name = parameter.Name.Trim();
+            if (name.Length == 0)
+                throw new InvalidOperationException(
+                    "SQLite Query cannot attest an unnamed compiled parameter.");
+            var bound = explain.CreateParameter();
+            bound.ParameterName = name[0] is '@' or ':' or '$' ? name : "@" + name;
+            bound.Value = parameter.Value ?? DBNull.Value;
+            explain.Parameters.Add(bound);
+        }
+
+        await using var reader = await explain.ExecuteReaderAsync(cancellationToken);
+        if (reader.FieldCount < 6)
+            throw new InvalidOperationException(
+                "SQLite Query cannot attest the compiled function execution program.");
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var opcode = reader.GetString(1);
+            if (opcode is not ("Function" or "PureFunc" or "AggStep"
+                or "AggFinal" or "AggValue" or "AggInverse"))
+                continue;
+
+            if (reader.IsDBNull(5))
+                throw new InvalidOperationException(
+                    "SQLite Query cannot attest a function opcode without an identity.");
+            var signature = reader.GetString(5);
+            var open = signature.LastIndexOf('(');
+            var close = signature.LastIndexOf(')');
+            if (open <= 0 || close != signature.Length - 1
+                || !int.TryParse(signature.AsSpan(open + 1, close - open - 1),
+                    out var arguments))
+                throw new InvalidOperationException(
+                    "SQLite Query cannot attest a compiled function signature.");
+
+            var name = signature[..open];
+            // Some SQLite opcode forms prefix the function name with a
+            // numeric execution context, e.g. 0:function_name(2).
+            var separator = name.LastIndexOf(':');
+            if (separator >= 0)
+                name = name[(separator + 1)..];
+            if (name.Length == 0)
+                throw new InvalidOperationException(
+                    "SQLite Query cannot attest an empty function identity.");
+
+            if (callbacks.Any(callback =>
+                string.Equals(callback.Name, name, StringComparison.OrdinalIgnoreCase)
+                && (callback.Arguments == arguments || callback.Arguments == -1)))
+                throw new UnauthorizedAccessException(
+                    "SQLite Query cannot execute an application-defined function "
+                    + "on a connection with unproven callback side effects.");
+        }
     }
 
     // SQLite's compiled SELECT family cannot prove that a host-registered function
@@ -279,6 +360,7 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
 
     private static async Task<QueryExecutionResult> ExecuteSqliteReadOnlyQueryAsync(
         CompiledSqlCommand command, DbConnection connection, int timeoutSeconds,
+        IReadOnlyList<(string Name, int Arguments)> callbacks,
         CancellationToken cancellationToken)
     {
         var alreadyReadOnly = await ReadSqliteQueryOnlyAsync(
@@ -299,6 +381,8 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
                 throw new InvalidOperationException(
                     "SQLite Query requires an attested physical read-only connection.");
 
+            await VerifySqliteInvokedHostCallbacksAsync(
+                command, connection, callbacks, timeoutSeconds, cancellationToken);
             return await QueryExecutor.ExecuteQueryAsync(
                 command, connection, timeoutSeconds, cancellationToken);
         }
@@ -343,9 +427,10 @@ public sealed class TypedQueryRuntime(ISqlCompileEvidenceObserver? compileEviden
 
         if (provider.Type == SqlAgentToolType.Sqlite)
         {
-            await VerifySqliteBuiltInFunctionIdentityAsync(connection, cancellationToken);
+            var callbacks = await VerifySqliteBuiltInFunctionIdentityAsync(
+                connection, cancellationToken);
             return await ExecuteSqliteReadOnlyQueryAsync(
-                command, connection, timeoutSeconds, cancellationToken);
+                command, connection, timeoutSeconds, callbacks, cancellationToken);
         }
 
         // A MySQL SELECT may invoke a stored function that writes normal
