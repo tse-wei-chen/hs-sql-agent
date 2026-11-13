@@ -9,19 +9,23 @@ trap 'rm -rf "$tmp"' EXIT
 cat > "$tmp/gh" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$1" == api && "$2" == repos/tse-wei-chen/hs-sql-agent/issues/575 ]] || exit 32
-[[ "${MOCK_ISSUE_API_FAIL:-}" != 1 ]] || exit 33
-if [[ "$#" -eq 4 && "$3" == --jq && "$4" == .state ]]; then
-    # Historical behavior: state-only inspection allows an incomplete close.
-    printf '%s\n' "${MOCK_ISSUE_STATE:-open}"
-elif [[ "$#" -eq 2 ]]; then
-    # Full issue response is necessary to check closure reason and checklist.
-    printf '{"state":"%s","state_reason":"%s","body":"%s"}\n' \
-        "${MOCK_ISSUE_STATE:-open}" "${MOCK_ISSUE_REASON:-completed}" \
-        "${MOCK_ISSUE_BODY-- [x] completed gate}"
-else
-    exit 32
-fi
+[[ "$1" == api && "$#" -eq 2 ]] || exit 32
+case "$2" in
+  repos/tse-wei-chen/hs-sql-agent/issues/575)
+    [[ "${MOCK_ISSUE_API_FAIL:-0}" != 1 ]] || exit 33
+    state="${MOCK_ISSUE_STATE:-open}"
+    reason="${MOCK_ISSUE_REASON:-completed}"
+    body="${MOCK_ISSUE_BODY-- [x] completed develop security gate}"
+    ;;
+  repos/tse-wei-chen/hs-sql-agent/issues/634)
+    [[ "${MOCK_PUB_API_FAIL:-0}" != 1 ]] || exit 34
+    state="${MOCK_PUB_STATE:-closed}"
+    reason="${MOCK_PUB_REASON:-completed}"
+    body="${MOCK_PUB_BODY-- [x] owner authorized main promotion and release}"
+    ;;
+  *) exit 32 ;;
+esac
+printf '{"state":"%s","state_reason":"%s","body":"%s"}\n' "$state" "$reason" "$body"
 MOCK
 chmod +x "$tmp/gh"
 export PATH="$tmp:$PATH"
@@ -83,9 +87,32 @@ unset MOCK_ISSUE_BODY
 expect_allow v3.1.0
 expect_allow 3.1.0-beta
 
+# Owner-gated publication issue #634 is a distinct, required security
+# preflight. A completed develop gate #575 alone MUST NOT authorize 3.1.0.
+export MOCK_ISSUE_STATE=closed
+export MOCK_PUB_STATE=open
+expect_deny v3.1.0
+expect_deny 3.1.0-rc.1
+export MOCK_PUB_STATE=closed
+export MOCK_PUB_REASON=not_planned
+expect_deny v3.1.0
+unset MOCK_PUB_REASON
+export MOCK_PUB_BODY='- [x] main passed\\n- [ ] owner did not approve release'
+expect_deny v3.1.0
+unset MOCK_PUB_BODY
+export MOCK_PUB_BODY=''
+expect_deny v3.1.0
+unset MOCK_PUB_BODY
+export MOCK_PUB_API_FAIL=1
+expect_deny v3.1.0
+unset MOCK_PUB_API_FAIL
+
+# Both security/develop completion and owner/publication sign-off needed.
+expect_allow v3.1.0
+
 # Never change the release policy of earlier, unrelated versions.
 export MOCK_ISSUE_STATE=open
 expect_allow v3.0.0
 expect_allow 3.1.1
 
-echo "3.1.0 release blocker regression: 16 scenarios passed."
+echo "3.1.0 two-issue publication blocker regression: 23 scenarios passed."
