@@ -31,12 +31,12 @@ for issue_number in 575 634; do
         exit 1
     fi
     if ! jq -e '
-        .state == "closed"
-        and .state_reason == "completed"
-        and (.body | type == "string")
-        and (.body | split("\\n") | any(.[]; test("^[ \\t]*[-*][ \\t]+\\[[xX]\\]")))
-        and (.body | split("\\n") | all(.[]; test("^[ \\t]*[-*][ \\t]+\\[[ \\t]+\\]") | not))
-    ' <<< "$issue" >/dev/null; then
+    .state == "closed"
+    and .state_reason == "completed"
+    and (.body | type == "string")
+    and (.body | split("\n") | any(.[]; test("^[ \\t]*[-*][ \\t]+\\[[xX]\\]")))
+    and (.body | split("\n") | all(.[]; test("^[ \\t]*[-*][ \\t]+\\[[ \\t]+\\]") | not))
+' <<< "$issue" >/dev/null; then
         echo "::error::Security/publication gate #$issue_number must be completed with a nonempty, fully checked checklist; refusing v3.1.0 publication." >&2
         exit 1
     fi
