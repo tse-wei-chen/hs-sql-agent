@@ -97,7 +97,7 @@ export MOCK_PUB_STATE=closed
 export MOCK_PUB_REASON=not_planned
 expect_deny v3.1.0
 unset MOCK_PUB_REASON
-export MOCK_PUB_BODY='- [x] main passed\\n- [ ] owner did not approve release'
+export MOCK_PUB_BODY='- [x] main passed\n- [ ] owner did not approve release'
 expect_deny v3.1.0
 unset MOCK_PUB_BODY
 export MOCK_PUB_BODY=''
