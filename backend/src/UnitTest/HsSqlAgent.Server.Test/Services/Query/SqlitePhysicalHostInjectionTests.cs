@@ -351,6 +351,71 @@ public sealed class SqlitePhysicalHostInjectionTests
                 "SELECT ABS(id) AS amount FROM main.users WHERE id = 1",
                 SqlAgentToolType.Sqlite, ReadPolicy(), allowedTables: null, ct);
             Assert.Equal(1, Convert.ToInt32(Assert.Single(safe.Rows)["amount"]));
+
+            // A second SQLite handle escapes PRAGMA query_only on the Query
+            // connection. A host-registered function can commit to that other
+            // handle even if the outer SELECT is read-only. This physical RED
+            // control is deliberately different from the same-connection case.
+            await using var external = new SqliteConnection(connectionString);
+            external.CreateFunction("external_write_from_query", () =>
+            {
+                using var writer = new SqliteConnection(connectionString);
+                writer.Open();
+                using var insert = writer.CreateCommand();
+                insert.CommandText =
+                    "INSERT INTO main.users(id, name) VALUES (988, 'external-callback-write')";
+                return insert.ExecuteNonQuery();
+            });
+            await external.OpenAsync(ct);
+            const string externalSql = "SELECT \"external_write_from_query\"() AS touched";
+            var externalCompiled = runtime.Compile(
+                provider.Object, externalSql, SqlAgentToolType.Sqlite,
+                ReadPolicy(), allowedTables: null);
+            Assert.Contains("external_write_from_query", externalCompiled.Sql,
+                StringComparison.OrdinalIgnoreCase);
+
+            await using (var control = external.CreateCommand())
+            {
+                control.CommandText = externalSql;
+                Assert.Equal(1, Convert.ToInt32(await control.ExecuteScalarAsync(ct)));
+            }
+            Assert.Equal(1, await CountRowsWithIdAsync(connectionString, 988, ct));
+            await using (var cleanupConnection = new SqliteConnection(connectionString))
+            {
+                await cleanupConnection.OpenAsync(ct);
+                await using var cleanup = cleanupConnection.CreateCommand();
+                cleanup.CommandText = "DELETE FROM main.users WHERE id = 988";
+                Assert.Equal(1, await cleanup.ExecuteNonQueryAsync(ct));
+            }
+            Assert.Equal(0, await CountRowsWithIdAsync(connectionString, 988, ct));
+
+            var externalFactory = new Mock<IDbConnectionFactory>();
+            externalFactory.Setup(x => x.Create(connectionString)).Returns(external);
+            var externalProvider = new Mock<ISqlProvider>();
+            externalProvider.SetupGet(x => x.Type).Returns(SqlAgentToolType.Sqlite);
+            externalProvider.SetupGet(x => x.Connections).Returns(externalFactory.Object);
+            externalProvider.SetupGet(x => x.Errors).Returns(new SqliteProvider().Errors);
+
+            if (publishedMcp)
+            {
+                var denied = await CreateTool(
+                    connectionString, externalProvider.Object, unrestrictedQuery: true)
+                    .ExecuteQuerySql(externalSql, ct);
+                Assert.False(denied.Success,
+                    "A Query-only key executed a host callback that wrote through another connection.");
+                Assert.Empty(denied.Rows);
+            }
+            else
+            {
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() => withFacts
+                    ? new TypedQueryRuntime().ExecuteWithFactsAsync(
+                        externalProvider.Object, connectionString, externalSql,
+                        SqlAgentToolType.Sqlite, ReadPolicy(), allowedTables: null, ct)
+                    : new TypedQueryRuntime().ExecuteAsync(
+                        externalProvider.Object, connectionString, externalSql,
+                        SqlAgentToolType.Sqlite, ReadPolicy(), allowedTables: null, ct));
+            }
+            Assert.Equal(0, await CountRowsWithIdAsync(connectionString, 988, ct));
         });
     }
 
