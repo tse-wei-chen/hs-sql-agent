@@ -31,7 +31,9 @@ The Host now checks `PRAGMA function_list` and compiles `EXPLAIN` for the
 *actual authorized, parameterized SELECT* on the **same already-open execution
 connection**, after `query_only` has been attested. The pre-execution
 opcode check rejects a function whose invoked signature is registered as
-application-defined; a non-invoked extension may remain registered and
+application-defined; it compares the **full function name**, including legal
+quoted punctuation such as `:`, before any optional numeric-context P4
+normalization. An unrelated non-invoked extension may remain registered and
 ordinary native built-in function calls continue working. Missing or malformed
 opcode/function identity evidence refuses execution. The original built-in
 override detection and `query_only` cleanup still apply.

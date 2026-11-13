@@ -357,7 +357,10 @@ public sealed class SqlitePhysicalHostInjectionTests
             // handle even if the outer SELECT is read-only. This physical RED
             // control is deliberately different from the same-connection case.
             await using var external = new SqliteConnection(connectionString);
-            external.CreateFunction("external_write_from_query", () =>
+            // A colon is legal in a quoted SQLite function name and appears
+            // in EXPLAIN p4. Stripping everything before ':' would silently
+            // erase the real callback identity and admit external writes.
+            external.CreateFunction("unsafe:external_write_from_query", () =>
             {
                 using var writer = new SqliteConnection(connectionString);
                 writer.Open();
@@ -367,7 +370,7 @@ public sealed class SqlitePhysicalHostInjectionTests
                 return insert.ExecuteNonQuery();
             });
             await external.OpenAsync(ct);
-            const string externalSql = "SELECT \"external_write_from_query\"() AS touched";
+            const string externalSql = "SELECT \"unsafe:external_write_from_query\"() AS touched";
             var externalCompiled = runtime.Compile(
                 provider.Object, externalSql, SqlAgentToolType.Sqlite,
                 ReadPolicy(), allowedTables: null);
