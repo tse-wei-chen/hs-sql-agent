@@ -71,3 +71,7 @@ Release 3.1.0 remains blocked until every #575 checkbox is supported, the
 issue is closed as completed, and the *actual promoted main push SHA* passes
 all 18 Tests jobs and the SqlCore baseline. Develop-PR success is necessary
 but not sufficient. Never bypass this preflight for publication.
+
+## Two-stage v3.1.0 release gates
+
+Develop security acceptance is tracked in #575 with native, limited-scope physical evidence and the read-only exact-develop candidate gate. Owner-authorized main promotion and actual main-push 18/18 Tests + SqlCore baseline belong to #634. The 3.1.0 publication script refuses access unless **both** issues are closed as completed with every task checked, and the independent exact-main SHA gate passes. A completed #575 never authorizes publication, a main merge, or an HA/externally effectful UDF safety claim.

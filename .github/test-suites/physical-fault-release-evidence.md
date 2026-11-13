@@ -84,3 +84,7 @@ that exact final SHA before release publication.
 3. Release verification: six-provider positive and negative ledgers, dependency/CVE and compiler warning review, CodeQL's lack of F# semantic analysis, followed by 18/18 Tests jobs and SqlCore baseline on the actual promoted main push SHA.
 
 **Batch stop rule:** Four added provider physical partition tests pass with zero skips, the existing PostgreSQL/Redis cases remain mandatory, and all 18 jobs plus SqlCore baseline pass for the identical PR head. This closes a bounded real TCP admission-partition evidence gap, **not** the entirety of issue #575 or the v3.1.0 release gate.
+
+## Two-stage v3.1.0 release gates
+
+Develop security acceptance is tracked in #575 with native, limited-scope physical evidence and the read-only exact-develop candidate gate. Owner-authorized main promotion and actual main-push 18/18 Tests + SqlCore baseline belong to #634. The 3.1.0 publication script refuses access unless **both** issues are closed as completed with every task checked, and the independent exact-main SHA gate passes. A completed #575 never authorizes publication, a main merge, or an HA/externally effectful UDF safety claim.
