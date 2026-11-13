@@ -17,7 +17,31 @@ that possess those capabilities.**
 | SQL Server 2022 | Dedicated restricted SQL Login with explicit object SELECT, no DML/DDL, EXECUTE AS/IMPERSONATE, TRUSTWORTHY/UNSAFE assembly privilege, elevated cross-database ownership chains or untrusted CLR EXECUTE | Same-connection effective principal/permission attestation for no-whitelist Query, plus 2-case mandatory native/UDF least-privilege corpus | SQL CLR/external code or privileged cross-database modules outside the attested principal scope |
 | Oracle 26ai | Dedicated CREATE SESSION plus intended object SELECT grants only; no DML/DDL/ANY privileges or EXECUTE on definer-rights/autonomous/external PL/SQL packages; enforce PDB-scoped roles | Native provider READ ONLY transaction and 4-case mandatory real UDF, builtin and autonomous-transaction negative/positive corpus | Privileged autonomous transactions and external packages not restricted at the DB role boundary |
 | Firebird 5 | Dedicated DB user/role with SELECT only on intended relations, no DML/DDL privileges and no EXECUTE on untrusted stored procedures/PSQL/external UDRs | Native READ ONLY transaction and mandatory Firebird real native/UDF whitelist negative control | EXTERNAL/privileged procedures or autonomous effects not sandboxed by the DB role |
-| SQLite | Read-only filesystem permissions and a read-only connection for Query-only targets wherever possible; embedding hosts **must not register writable callbacks** or callbacks opening separate privileged connections | File-backed 11-case mandatory Host Query corpus for hidden tables, overridden builtins, same-connection callback writes, whitelist and legal CTEs; query_only fence plus PRAGMA function_list collision check | Untrusted host callbacks, writable same-process handles, separate writable database connections or external I/O |
+| SQLite | Read-only filesystem permissions and a read-only connection for Query-only targets wherever possible; embedding hosts **must not register writable callbacks** or callbacks opening separate privileged connections | File-backed 11-case mandatory Host Query corpus for hidden tables, overridden builtins, same-connection and **separate-connection callback writes**, whitelist and legal CTEs; query_only fence, built-in collision check, and same-connection EXPLAIN attestation of invoked callback opcodes | Untrusted virtual tables, host code outside invoked SQL function opcodes, writable same-process handles or external I/O outside the inspected Query |
+
+### SQLite callback execution contract
+
+The SQLite engine's `PRAGMA query_only` only fences the Query connection.
+A user-defined function can open a **second writable connection** and commit
+outside that fence. A physical native SELECT using a separately registered
+function demonstrates the counterexample; this is not a hypothetical syntax
+or an exception injected into the driver.
+
+The Host now checks `PRAGMA function_list` and compiles `EXPLAIN` for the
+*actual authorized, parameterized SELECT* on the **same already-open execution
+connection**, after `query_only` has been attested. The pre-execution
+opcode check rejects a function whose invoked signature is registered as
+application-defined; a non-invoked extension may remain registered and
+ordinary native built-in function calls continue working. Missing or malformed
+opcode/function identity evidence refuses execution. The original built-in
+override detection and `query_only` cleanup still apply.
+
+This is a bounded SQL-function invocation defense, **not** a general-purpose
+sandbox for arbitrary host code, virtual-table modules, preparation-time
+callbacks, extension loading, unrelated process writes or writable external
+handles. Deploy SQLite Query using a filesystem/connection-level read-only
+identity where available and prohibit untrusted host extensions; do not
+interpret this guard as authorization for arbitrary external callbacks.
 
 ### Configuration acceptance
 
