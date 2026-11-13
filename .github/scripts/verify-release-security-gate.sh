@@ -20,23 +20,26 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
     exit 1
 fi
 
-# A manually closed issue is not proof that every blocking release gate
-# passed. Require a completed closure and a nonempty, fully checked Markdown
-# checklist. Read the full structured issue in one API request and deny on
-# missing/malformed fields, API failures and unchecked tasks.
-if ! issue="$(gh api "repos/${GITHUB_REPOSITORY}/issues/575")"; then
-    echo "::error::Could not verify security release gate #575; refusing publication." >&2
-    exit 1
-fi
-if ! jq -e '
-    .state == "closed"
-    and .state_reason == "completed"
-    and (.body | type == "string")
-    and (.body | split("\n") | any(.[]; test("^[ \\t]*[-*][ \\t]+\\[[xX]\\]")))
-    and (.body | split("\n") | all(.[]; test("^[ \\t]*[-*][ \\t]+\\[[ \\t]+\\]") | not))
-' <<< "$issue" >/dev/null; then
-    echo "::error::Security release gate #575 must be closed as completed with a nonempty, fully checked checklist; refusing v3.1.0 publication." >&2
-    exit 1
-fi
+# Security completion and publication authorization are distinct trust boundaries.
+# Closing #575 after exact-develop security acceptance must never authorize
+# NuGet/Docker publication without the owner's independently completed #634.
+# Both are required even on a matching main SHA; the separate strict
+# verify-release-head-ci-gate.sh additionally checks that main push.
+for issue_number in 575 634; do
+    if ! issue="$(gh api "repos/${GITHUB_REPOSITORY}/issues/$issue_number")"; then
+        echo "::error::Cannot inspect security/publication gate #$issue_number; refusing v3.1.0 publication." >&2
+        exit 1
+    fi
+    if ! jq -e '
+        .state == "closed"
+        and .state_reason == "completed"
+        and (.body | type == "string")
+        and (.body | split("\\n") | any(.[]; test("^[ \\t]*[-*][ \\t]+\\[[xX]\\]")))
+        and (.body | split("\\n") | all(.[]; test("^[ \\t]*[-*][ \\t]+\\[[ \\t]+\\]") | not))
+    ' <<< "$issue" >/dev/null; then
+        echo "::error::Security/publication gate #$issue_number must be completed with a nonempty, fully checked checklist; refusing v3.1.0 publication." >&2
+        exit 1
+    fi
+done
 
-echo "Security release gate #575 is completed with no unchecked tasks. Continue only with exact-head CI and live-provider evidence verified."
+echo "Security develop gate #575 and owner publication gate #634 are both completed with no unchecked tasks. Exact main-head CI and release evidence remain separately mandatory."
