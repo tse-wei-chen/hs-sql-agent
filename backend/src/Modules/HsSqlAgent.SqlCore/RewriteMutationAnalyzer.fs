@@ -224,7 +224,6 @@ module internal RewriteMutationSourceMatchProof =
         | Literal _ when dialect = SqlAgentToolType.Postgres ->
             Some(FixedLiteral true)
         | _ -> None
-        | _ -> None
 
     let private mandatoryEqualities dialect (relations: Relation list) predicate =
         let pending = ResizeArray<Expr>()
@@ -342,9 +341,9 @@ module internal RewriteMutationSourceMatchProof =
                                     |> List.choose (fun key ->
                                         let translated =
                                             key
-                                            |> List.map (fun component ->
+                                            |> List.map (fun connectedPart ->
                                                 mapping
-                                                |> List.tryFind (fun (sourceName, _) -> sourceName = component)
+                                                |> List.tryFind (fun (sourceName, _) -> sourceName = connectedPart)
                                                 |> Option.map snd)
                                         if translated |> List.forall Option.isSome then
                                             let translated = translated |> List.choose id
@@ -639,16 +638,16 @@ module internal RewriteMutationSourceMatchProof =
             | SqlAgentToolType.MsSqlServer -> true
             | SqlAgentToolType.Oracle ->
                 not (isNull profile)
-                && profile.Provider = SqlAgentToolType.Oracle
-                && not (isNull profile.ServerVersion)
-                && profile.ServerVersion.Major >= 26
+                && (nonNull profile).Provider = SqlAgentToolType.Oracle
+                && not (isNull (nonNull profile).ServerVersion)
+                && (nonNull (nonNull profile).ServerVersion).Major >= 26
             | SqlAgentToolType.Sqlite ->
                 // A source-profile syntax gate is necessary but does not
                 // authorize runtime execution or declare SQLite type rigidity.
                 not (isNull profile)
-                && profile.Provider = SqlAgentToolType.Sqlite
-                && not (isNull profile.ServerVersion)
-                && profile.ServerVersion.CompareTo(Version(3, 33, 0)) >= 0
+                && (nonNull profile).Provider = SqlAgentToolType.Sqlite
+                && not (isNull (nonNull profile).ServerVersion)
+                && (nonNull (nonNull profile).ServerVersion).CompareTo(Version(3, 33, 0)) >= 0
                 // The shared .NET Unicode uppercase transform is not a
                 // general SQLite identifier-collation proof. Restrict the
                 // physical Catalog to exact ASCII canonical identities.

@@ -7,7 +7,7 @@ open HsSqlAgent.SqlCore.Catalog
 /// Persistent, deterministic virtual catalog. It is never a database snapshot,
 /// and unmentioned names in an open-world catalog remain unknown.
 module internal RewriteCatalogModel =
-    let private sameName left right =
+    let private sameName (left: string | null) (right: string | null) =
         String.Equals(left, right, StringComparison.Ordinal)
 
     let private sameIdentity (a: SqlCatalogQualifiedName) (b: SqlCatalogQualifiedName) =
@@ -93,7 +93,7 @@ module internal RewriteCatalogModel =
         let ordered = ResizeArray<SqlCatalogView>()
         while current.Count > 0 do
             RewriteResourceBudget.checkpoint ()
-            let index = current.Min
+            let index = Seq.head current
             current.Remove index |> ignore
             if discovered.Add index then
                 let view = views.[index]
@@ -236,7 +236,7 @@ module internal RewriteCatalogModel =
                     && not (keys |> Seq.exists (fun next ->
                         next.Kind = SqlCatalogConstraintKind.ForeignKey
                         && sameName next.Name c.Name)))
-                |> Seq.map (fun c -> if isNull c.Name then "" else c.Name)
+                |> Seq.map (fun c -> match c.Name with null -> "" | name -> name)
         let possibleNames =
             seq {
                 match prior with
@@ -424,7 +424,7 @@ module internal RewriteCatalogModel =
                                 current.Kind = SqlCatalogConstraintKind.ForeignKey
                                 && sameName old.Name current.Name)))
                         |> Seq.map (fun c ->
-                            if isNull c.Name then "" else c.Name)
+                            match c.Name with null -> "" | name -> name)
                     let possible =
                         Seq.append table.PossibleFkIndexNames droppedNames
                         |> Seq.distinct
@@ -461,7 +461,7 @@ module internal RewriteCatalogModel =
                     && List.forall2
                         (fun a b -> String.Equals(a, b, StringComparison.Ordinal))
                         key (newMembers |> List.take key.Length))
-                |> Seq.map (fun fk -> if isNull fk.Name then "" else fk.Name)
+                |> Seq.map (fun fk -> match fk.Name with null -> "" | name -> name)
             let possible =
                 Seq.append table.PossibleFkIndexNames coveredNames
                 |> Seq.distinct

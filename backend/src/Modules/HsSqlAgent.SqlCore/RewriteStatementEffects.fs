@@ -21,7 +21,7 @@ module internal RewriteStatementEffects =
         (Array.empty<string> |> Array.AsReadOnly) :> IReadOnlyList<string>
 
     let private effect kind operation (objectName: string | null)
-                       (identity: SqlCatalogQualifiedName | null) certainty span dependencies =
+                       (identity: SqlCatalogQualifiedName) certainty span dependencies =
         SqlStatementEffect(kind, operation, objectName, identity, certainty, span, dependencies)
 
     let private catalogOperation = function
@@ -98,12 +98,12 @@ module internal RewriteStatementEffects =
                     with
                     | :? SqlCompilationException as ex
                         when not (isNull ex.Diagnostic)
-                             && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                             && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
                         reraise()
                     | :? InvalidOperationException -> original
             else original
         let references = physicalReferences document
-        let potential kind operation name dependencies =
+        let potential kind operation (name: string | null) dependencies =
             effect kind operation name null SqlCatalogKnowledge.Unknown
                 syntax.Span (readOnly dependencies)
         let reads values =

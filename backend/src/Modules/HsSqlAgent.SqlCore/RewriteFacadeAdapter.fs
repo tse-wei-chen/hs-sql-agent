@@ -358,37 +358,37 @@ module internal RewriteFacadeAdapter =
           MySqlWithUpdateCte =
             (if source = SqlAgentToolType.MySQL
                 && not (isNull sourceProfile)
-                && not (isNull sourceProfile.ServerVersion)
-                && sourceProfile.ServerVersion.CompareTo(Version(8, 0)) < 0 then
-                "SQL capability 'mysql.with_update' requires MySQL source ServerVersion 8.0+; declared version is "
-                + string sourceProfile.ServerVersion + "."
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(8, 0)) < 0 then
+                ("SQL capability 'mysql.with_update' requires MySQL source ServerVersion 8.0+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
              else null)
             |> sourceCapabilityProof
           SqliteWithUpdateCte =
             (if source = SqlAgentToolType.Sqlite
                 && not (isNull sourceProfile)
-                && not (isNull sourceProfile.ServerVersion)
-                && sourceProfile.ServerVersion.CompareTo(Version(3, 8, 3)) < 0 then
-                "SQL capability 'sqlite.with_update' requires SQLite source ServerVersion 3.8.3+; declared version is "
-                + string sourceProfile.ServerVersion + "."
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(3, 8, 3)) < 0 then
+                ("SQL capability 'sqlite.with_update' requires SQLite source ServerVersion 3.8.3+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
              else null)
             |> sourceCapabilityProof
           MySqlWithDeleteCte =
             (if source = SqlAgentToolType.MySQL
                 && not (isNull sourceProfile)
-                && not (isNull sourceProfile.ServerVersion)
-                && sourceProfile.ServerVersion.CompareTo(Version(8, 0)) < 0 then
-                "SQL capability 'mysql.with_delete' requires MySQL source ServerVersion 8.0+; declared version is "
-                + string sourceProfile.ServerVersion + "."
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(8, 0)) < 0 then
+                ("SQL capability 'mysql.with_delete' requires MySQL source ServerVersion 8.0+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
              else null)
             |> sourceCapabilityProof
           SqliteWithDeleteCte =
             (if source = SqlAgentToolType.Sqlite
                 && not (isNull sourceProfile)
-                && not (isNull sourceProfile.ServerVersion)
-                && sourceProfile.ServerVersion.CompareTo(Version(3, 8, 3)) < 0 then
-                "SQL capability 'sqlite.with_delete' requires SQLite source ServerVersion 3.8.3+; declared version is "
-                + string sourceProfile.ServerVersion + "."
+                && not (isNull (nonNull sourceProfile).ServerVersion)
+                && (nonNull (nonNull sourceProfile).ServerVersion).CompareTo(Version(3, 8, 3)) < 0 then
+                ("SQL capability 'sqlite.with_delete' requires SQLite source ServerVersion 3.8.3+; declared version is "
+                + string (nonNull sourceProfile).ServerVersion + "." : string | null)
              else null)
             |> sourceCapabilityProof
           OnConflict = sourceOnConflictProof source sourceProfile

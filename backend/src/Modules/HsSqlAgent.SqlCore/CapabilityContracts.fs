@@ -698,7 +698,7 @@ module internal SqlSqlServerWithMutationCteCapabilityRules =
             match profile with
             | null -> null
             | p when isNull p.ServerVersion -> null
-            | p when p.ServerVersion.CompareTo(MinimumVersion) >= 0 -> null
+            | p when (nonNull p.ServerVersion).CompareTo(MinimumVersion) >= 0 -> null
             | p ->
                 "SQL capability 'sqlserver.with_mutation_cte' requires SQL Server "
                 + side + " ServerVersion " + string MinimumVersion
@@ -724,7 +724,7 @@ module internal SqlMySqlOrdinaryCteCapabilityRules =
             match profile with
             | null -> null
             | p when isNull p.ServerVersion -> null
-            | p when p.ServerVersion.CompareTo(MinimumVersion) >= 0 -> null
+            | p when (nonNull p.ServerVersion).CompareTo(MinimumVersion) >= 0 -> null
             | p ->
                 "SQL capability 'select.cte' requires MySQL " + side
                 + " ServerVersion " + string MinimumVersion
@@ -852,7 +852,7 @@ module internal SqlOracleExceptSourceCapabilityRules =
             | value when value.Provider <> SqlAgentToolType.Oracle ->
                 "SQL capability 'set.except_source' requires Oracle source ServerVersion 21.0+ and a matching Oracle capability profile."
             | value when isNull value.ServerVersion
-                         || value.ServerVersion.CompareTo(MinimumVersion) < 0 ->
+                         || (nonNull value.ServerVersion).CompareTo(MinimumVersion) < 0 ->
                 "SQL capability 'set.except_source' requires Oracle source ServerVersion 21.0+; use MINUS for Oracle 19c and earlier."
             | _ -> null
 
@@ -871,7 +871,7 @@ module internal SqlSetAllCapabilityRules =
     let private hasBinarySort (profile: SqlProviderCapabilityProfile) =
         let settings = profile.SessionSettings
         not (isNull settings)
-        && (settings
+        && (nonNull settings
             |> Seq.exists (fun entry ->
                 String.Equals(entry.Key, "NLS_SORT", StringComparison.OrdinalIgnoreCase)
                 && String.Equals(entry.Value, "BINARY", StringComparison.OrdinalIgnoreCase)))
@@ -881,7 +881,7 @@ module internal SqlSetAllCapabilityRules =
         | null -> false
         | value when value.Provider <> SqlAgentToolType.Oracle -> false
         | value when isNull value.ServerVersion
-                     || value.ServerVersion.CompareTo(OracleMinimumVersion) < 0 -> false
+                     || (nonNull value.ServerVersion).CompareTo(OracleMinimumVersion) < 0 -> false
         | value -> hasBinarySort value
 
     let private validationError operatorName provider profile (side: string) : string | null =
@@ -982,13 +982,13 @@ module internal SqlFetchWithTiesCapabilityRules =
 module internal SqlApplyJoinCapabilityRules =
     let OracleMinimumVersion = Version(12,1)
 
-    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side =
+    let private validationError provider (profile: SqlProviderCapabilityProfile | null) side : string | null =
         match provider with
         | SqlAgentToolType.MsSqlServer ->
             match profile with
             | null -> null
             | p when isNull p.ServerVersion -> null
-            | p when p.ServerVersion.CompareTo(Version(9,0)) < 0 ->
+            | p when (nonNull p.ServerVersion).CompareTo(Version(9,0)) < 0 ->
                 "SQL capability 'select.apply_join' requires SQL Server " + side
                 + " ServerVersion 9.0+; declared version is " + string p.ServerVersion + "."
             | _ -> null
@@ -997,7 +997,7 @@ module internal SqlApplyJoinCapabilityRules =
             | null -> "SQL capability 'select.apply_join' requires explicit Oracle " + side + " ServerVersion 12.1+."
             | p when isNull p.ServerVersion ->
                 "SQL capability 'select.apply_join' requires explicit Oracle " + side + " ServerVersion 12.1+."
-            | p when p.ServerVersion.CompareTo(OracleMinimumVersion) < 0 ->
+            | p when (nonNull p.ServerVersion).CompareTo(OracleMinimumVersion) < 0 ->
                 "SQL capability 'select.apply_join' requires Oracle " + side
                 + " ServerVersion 12.1+; declared version is " + string p.ServerVersion + "."
             | _ -> null
@@ -1007,7 +1007,7 @@ module internal SqlApplyJoinCapabilityRules =
     let SourceValidationError(provider, profile) = validationError provider profile "source"
     let TargetValidationError(provider, profile) = validationError provider profile "target"
 
-    let TargetSyntaxValidationError provider =
+    let TargetSyntaxValidationError provider : string | null =
         match provider with
         | SqlAgentToolType.MsSqlServer | SqlAgentToolType.Oracle -> null
         | _ -> "SQL capability 'select.apply_join' is not supported by target provider " + string provider + "."
@@ -1094,11 +1094,11 @@ module internal SqlWindowNullTreatmentCapabilityRules =
         | Some min, null ->
             "SQL capability 'window.null_treatment' requires an explicit " + side
             + " profile for " + string provider + " ServerVersion " + string min + "+."
-        | Some min, value when value.Provider <> provider ->
+        | Some min, value when (nonNull value).Provider <> provider ->
             "SQL capability 'window.null_treatment' requires a matching " + side
             + " profile for " + string provider + "."
         | Some min, value ->
-            match value.ServerVersion with
+            match (nonNull value).ServerVersion with
             | null ->
                 "SQL capability 'window.null_treatment' requires an explicit " + side
                 + " ServerVersion " + string min + "+."
@@ -1114,7 +1114,7 @@ module internal SqlWindowNullTreatmentCapabilityRules =
         if not (isNull error) || provider <> SqlAgentToolType.MsSqlServer then error
         else
             let fixedBuild = Version(16, 0, 4035, 4)
-            let declared = profile.ServerVersion
+            let declared = nonNull (nonNull profile).ServerVersion
             if declared.Major = 16 && declared.CompareTo(fixedBuild) < 0 then
                 "SQL capability 'window.null_treatment' IGNORE NULLS requires " + side
                 + " SQL Server 2022 CU4 (16.0.4035.4)+; declared " + string declared + "."

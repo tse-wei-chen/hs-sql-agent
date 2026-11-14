@@ -112,17 +112,17 @@ module internal RewriteDdlCompiler =
         if options.SourceDialect <> options.TargetDialect then
             capability "Cross-dialect DDL translation requires a distinct proven native semantic mapping."
         if not (isNull options.SourceProfile) then
-            if options.SourceProfile.Provider <> options.SourceDialect then
+            if (nonNull options.SourceProfile).Provider <> options.SourceDialect then
                 capability "DDL source capability profile does not match the source provider."
         if not (isNull options.TargetProfile) then
-            if options.TargetProfile.Provider <> options.TargetDialect then
+            if (nonNull options.TargetProfile).Provider <> options.TargetDialect then
                 capability "DDL target capability profile does not match the target provider."
         let sourceVersion =
-            if isNull options.SourceProfile then null else options.SourceProfile.ServerVersion
+            if isNull options.SourceProfile then null else (nonNull options.SourceProfile).ServerVersion
         let targetVersion =
-            if isNull options.TargetProfile then null else options.TargetProfile.ServerVersion
+            if isNull options.TargetProfile then null else (nonNull options.TargetProfile).ServerVersion
         if not (isNull sourceVersion)
-           && (isNull targetVersion || targetVersion.CompareTo(sourceVersion) < 0) then
+           && (isNull targetVersion || (nonNull targetVersion).CompareTo(sourceVersion) < 0) then
             capability "Source-version-dependent DDL cannot be lowered without an equal or newer verified target profile."
         match operation with
         | Drop _ when options.SourceDialect <> SqlAgentToolType.Postgres ->
@@ -185,7 +185,7 @@ module internal RewriteDdlCompiler =
                       + " (" + (columns |> List.map q |> String.concat ", ") + ")"
             sql, table, DdlSchemaOperation.CreateIndex,
             DdlPrecondition.RequireTableAndColumnsPresentAndIndexAbsent,
-            columns, indexName, DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false), []
+            columns, (indexName : string | null), DdlExecutionRisk.PotentialLock, DdlSchemaImpact(true, false), []
         | Drop(table, false) when options.TargetDialect = SqlAgentToolType.Postgres ->
             let sql = "DROP TABLE " + qualified table + " RESTRICT"
             sql, table, DdlSchemaOperation.DropTable,
@@ -215,11 +215,11 @@ module internal RewriteDdlCompiler =
                 RewriteResourceBudget.withStage "DdlRendering" SqlDiagnosticStage.RenderingInvariant
                     (fun () -> render options authorized)
             let sourceVersion =
-                if isNull options.SourceProfile then null else options.SourceProfile.ServerVersion
+                if isNull options.SourceProfile then null else (nonNull options.SourceProfile).ServerVersion
             let targetVersion =
-                if isNull options.TargetProfile then null else options.TargetProfile.ServerVersion
+                if isNull options.TargetProfile then null else (nonNull options.TargetProfile).ServerVersion
             let versionText (version: Version | null) =
-                if isNull version then "unknown" else version.ToString()
+                match version with null -> "unknown" | version -> version.ToString()
             let fingerprintInput =
                 String.concat "\n"
                     ["ddl-compiler-v1"
@@ -227,7 +227,7 @@ module internal RewriteDdlCompiler =
                      versionText sourceVersion; versionText targetVersion
                      string operation; string precondition
                      identity.Key; String.concat "," columns
-                     (if isNull indexName then "" else indexName)
+                     (match indexName with null -> "" | name -> name)
                      nativeSql; string risk]
             let fingerprint =
                 SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintInput))

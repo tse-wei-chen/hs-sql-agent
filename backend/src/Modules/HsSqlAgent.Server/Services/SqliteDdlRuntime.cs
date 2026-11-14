@@ -53,11 +53,11 @@ public sealed class SqliteDdlRuntime(
             plan = SqlCoreFacade.CompileDdl(sql,
                 new DdlCompilationOptions(SqlAgentToolType.Sqlite, SqlAgentToolType.Sqlite));
             var change = plan.Changes[0];
-            if (change.ObjectIdentity.Parts.Count != 2
-                || !string.Equals(change.ObjectIdentity.Parts[0], "main", StringComparison.OrdinalIgnoreCase))
+            if (change.ObjectIdentity is not { } identity || identity.Parts.Count != 2
+                || !string.Equals(identity.Parts[0], "main", StringComparison.OrdinalIgnoreCase))
                 return Deny("ddl.main_identity_required",
                     "SQLite execution requires main.table, not TEMP, attached DB or an unresolved name.");
-            table = change.ObjectIdentity.Parts[1];
+            table = identity.Parts[1];
             if (!Allowed(change.Operation))
                 return Deny("ddl.operation_denied", "SQLite DDL operation not enabled by Host.");
             if (!Path.IsPathFullyQualified(actor.DatabaseName))

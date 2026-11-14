@@ -779,7 +779,7 @@ type SqliteUpdateFromKeyAssurance private (
 
     /// The signature binds the attested PK metadata to compiler evidence,
     /// independent of parameter values or SQL text.
-    member _.ProofIdentity =
+    member _.ProofIdentity : string =
         String.Join("|", [| "sqlite-live-pk-v1"; schemaSha256; targetTable; targetPrimaryKey;
                             sourceTable; sourcePrimaryKey; string schemaVersion |])
 
@@ -838,7 +838,7 @@ type SqliteUpdateFromKeyAssurance private (
 
         let version = Convert.ToString(scalar "SELECT sqlite_version()")
         if String.IsNullOrWhiteSpace(version)
-           || Version.Parse(version).CompareTo(Version(3, 33, 0)) < 0 then
+           || Version.Parse(nonNull version).CompareTo(Version(3, 33, 0)) < 0 then
             invalidArg "connection" "SQLite 3.33+ is required for UPDATE FROM."
 
         let verifyPrimaryKey table key =
@@ -1024,17 +1024,19 @@ type SqlServerCteUniqueKeyAssurance private (
     member _.UniqueIndexName = uniqueIndexName
     /// The secondary physical table has its own independently minted
     /// unique-index evidence, never a virtual/catalog-only declaration.
-    member _.JoinedSourceTable =
-        joinedProof |> Option.map (fun proof -> proof.SourceTable)
-        |> Option.defaultValue null
+    member _.JoinedSourceTable : string | null =
+        match joinedProof with
+        | Some proof -> proof.SourceTable
+        | None -> null
     member _.JoinedSourceKeyColumns =
         match joinedProof with
         | Some proof -> proof.SourceKeyColumns
         | None -> Array.AsReadOnly([||] : string array)
-    member _.JoinedSourceProofIdentity =
-        joinedProof |> Option.map (fun proof -> proof.ProofIdentity)
-        |> Option.defaultValue null
-    member _.ProofIdentity =
+    member _.JoinedSourceProofIdentity : string | null =
+        match joinedProof with
+        | Some proof -> proof.ProofIdentity
+        | None -> null
+    member _.ProofIdentity : string =
         String.Join("|", [| "sqlserver-live-exact-key-v9"; pinnedSnapshot.Sha256;
             serverInstanceName; databaseName; databaseGuid.ToString("D");
             string databaseId; string sourceObjectId; string targetObjectId;
@@ -1071,7 +1073,7 @@ type SqlServerCteUniqueKeyAssurance private (
         value
 
     static member private Parts (arg: string) (value: string) =
-        if isNull value then nullArg arg
+        if isNull (box value) then nullArg arg
         match value.Split('.') with
         | [|schema; table|] ->
             SqlServerCteUniqueKeyAssurance.Name arg schema,
@@ -1084,7 +1086,7 @@ type SqlServerCteUniqueKeyAssurance private (
         command.CommandText <- sql
         command
 
-    static member private Bind (command: DbCommand) name (value: obj) =
+    static member private Bind (command: DbCommand) name (value: obj | null) =
         let parameter = command.CreateParameter()
         parameter.ParameterName <- name
         parameter.Value <- value
@@ -1136,7 +1138,7 @@ type SqlServerCteUniqueKeyAssurance private (
                         else
                             let item = reader.GetValue(i)
                             let text = Convert.ToString(item, Globalization.CultureInfo.InvariantCulture)
-                            "v:" + (if isNull text then "" else text)
+                            "v:" + (match text with null -> "" | text -> text)
                     append value
         append tableName
         append (string objectId)
@@ -1502,7 +1504,7 @@ type SqlServerCteUniqueKeyAssurance private (
     /// before executing the write. Locks are transaction-held; no detached
     /// preview-time result can satisfy this commit-time check.
     member this.IsCurrent(connection: DbConnection, transaction: DbTransaction) =
-        if isNull connection || isNull transaction
+        if isNull (box connection) || isNull (box transaction)
            || not (Object.ReferenceEquals(transaction.Connection, connection)) then false
         else
             try

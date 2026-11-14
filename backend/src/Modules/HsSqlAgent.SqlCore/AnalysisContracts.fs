@@ -69,11 +69,11 @@ type SqlStatementEffect internal (
     kind: SqlEffectKind,
     operation: SqlStatementEffectOperation,
     objectName: string | null,
-    objectIdentity: SqlCatalogQualifiedName | null,
+    objectIdentity: SqlCatalogQualifiedName,
     certainty: SqlCatalogKnowledge,
     span: SqlDiagnosticSpan,
     dependencies: IReadOnlyList<string>,
-    constraintName: string) =
+    constraintName: string | null) =
     new(kind, operation, objectName, objectIdentity, certainty, span, dependencies) =
         SqlStatementEffect(kind, operation, objectName, objectIdentity,
                            certainty, span, dependencies, null)
@@ -198,7 +198,7 @@ type SqlSecurityDependency internal (
     principal: string,
     principalKind: SqlSecurityPrincipalKind,
     role: string | null,
-    table: SqlCatalogQualifiedName | null,
+    table: SqlCatalogQualifiedName,
     privilege: Nullable<SqlTablePrivilege>,
     withDelegationOption: bool,
     revokeOptionOnly: bool,
@@ -347,7 +347,7 @@ type SqlProceduralDefinition internal (
     bodyStatements: IReadOnlyList<SqlProceduralBodyStatement>,
     potentialBodyEffects: SqlEffectKind,
     span: SqlDiagnosticSpan,
-    functionReturn: SqlFunctionReturnContract | null,
+    functionReturn: SqlFunctionReturnContract,
     parameters: IReadOnlyList<SqlFunctionParameterSymbol>) =
     member _.Kind = kind
     member _.Routine = routine
@@ -601,7 +601,7 @@ type SqlScriptAnalysisResult internal (
                              | _ -> None
                          kind |> Option.map (fun value ->
                              SqlScriptDependencyReference(
-                                 index, value, effect.ObjectName, effect.Span))))
+                                 index, value, nonNull effect.ObjectName, effect.Span))))
          |> Seq.collect id
          // Deduplicate only within the same statement, kind and exact source
          // name; case folding would conflate quoted identifiers on some DBs.

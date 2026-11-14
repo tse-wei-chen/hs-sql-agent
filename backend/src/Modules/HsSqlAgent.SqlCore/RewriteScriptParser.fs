@@ -151,7 +151,7 @@ module internal RewriteScriptParser =
         | original ->
             let span =
                 if isNull original.Span then SqlDiagnosticSpan(absoluteStart, statementLength)
-                else SqlDiagnosticSpan(absoluteStart + original.Span.Start, original.Span.Length)
+                else SqlDiagnosticSpan(absoluteStart + (nonNull original.Span).Start, (nonNull original.Span).Length)
             SqlDiagnostic(original.Code, original.Stage, original.Category, original.Message, span)
 
     /// The standalone ParseScript API publishes only its original immutable syntax DTO.
@@ -243,7 +243,7 @@ module internal RewriteScriptParser =
                             with
                             | :? SqlParseException as ex
                                 when not (Object.ReferenceEquals(ex.Diagnostic, null))
-                                     && ex.Diagnostic.Category = SqlDiagnosticCategory.Resource ->
+                                     && (nonNull ex.Diagnostic).Category = SqlDiagnosticCategory.Resource ->
                                 reraise()
                             | :? SqlParseException as ex ->
                                 family, SqlScriptParseStatus.Invalid,

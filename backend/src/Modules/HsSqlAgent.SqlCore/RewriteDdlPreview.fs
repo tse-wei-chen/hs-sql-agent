@@ -132,7 +132,7 @@ module internal RewriteDdlPreview =
                         // absence of index names (Postgres/Oracle/SQL Server etc).
                         // May model the hypothetical delta, but never "satisfied".
                         let index =
-                            SqlCatalogIndex(change.IndexName, readonly change.Columns)
+                            SqlCatalogIndex(nonNull change.IndexName, readonly change.Columns)
                         DdlPreviewPreconditionStatus.Unverified,
                         projected DdlObjectPresence.Present
                             (readonly item.Columns)

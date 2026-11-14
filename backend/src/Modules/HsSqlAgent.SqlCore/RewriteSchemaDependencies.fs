@@ -15,7 +15,7 @@ module internal RewriteSchemaDependencies =
         | Invalid of string
         | Unproven of string
 
-    let private equals left right =
+    let private equals (left: string | null) (right: string | null) =
         String.Equals(left, right, StringComparison.Ordinal)
 
     let private complete (state: SqlCatalogState) =
@@ -84,15 +84,15 @@ module internal RewriteSchemaDependencies =
             match remaining with
             | [] -> List.rev acc
             | first :: others ->
-                let component = reach [first] Set.empty
+                let connectedPart = reach [first] Set.empty
                 let members =
-                    component |> Set.toList |> List.map (fun i -> all[i])
+                    connectedPart |> Set.toList |> List.map (fun i -> all[i])
                 let proof =
                     match members with
                     | [single] -> IndependentFk single
                     | group -> SharedPrefixFkGroup group
                 components
-                    (others |> List.filter (fun i -> not (Set.contains i component)))
+                    (others |> List.filter (fun i -> not (Set.contains i connectedPart)))
                     (proof :: acc)
         components [0 .. all.Length - 1] []
 
@@ -106,7 +106,7 @@ module internal RewriteSchemaDependencies =
             (owner: SqlCatalogTable)
             (proposedName: string)
             (members: string list) =
-        let same (a: string) (b: string) =
+        let same (a: string | null) (b: string | null) =
             String.Equals(a, b, StringComparison.OrdinalIgnoreCase)
         let asciiName (value: string) =
             RewriteCatalogIdentifierProof.isSimpleAsciiIdentifier value
@@ -171,7 +171,7 @@ module internal RewriteSchemaDependencies =
                 let invalidNames =
                     foreignKeys |> List.exists (fun fk ->
                         String.IsNullOrWhiteSpace fk.Name
-                        || not (asciiName fk.Name)
+                        || not (asciiName (nonNull fk.Name))
                         || fk.Columns.Count = 0)
                 let competingSupport =
                     foreignKeys |> List.exists (fun fk ->
@@ -210,8 +210,8 @@ module internal RewriteSchemaDependencies =
                                     startsWith (localColumns fk)
                                         (index.Columns |> Seq.toList)))))
                 let impactedComponents =
-                    graph |> List.filter (fun component ->
-                        mysqlFkComponentMembers component
+                    graph |> List.filter (fun connectedPart ->
+                        mysqlFkComponentMembers connectedPart
                         |> List.exists (fun fk ->
                             startsWith (localColumns fk) members))
                 let independentOwnName name =
@@ -245,7 +245,7 @@ module internal RewriteSchemaDependencies =
                             match c.Kind with
                             | SqlCatalogConstraintKind.PrimaryKey -> Some PrimaryIndex
                             | SqlCatalogConstraintKind.Unique ->
-                                Some(NamedUniqueIndex c.Name)
+                                Some(NamedUniqueIndex (nonNull c.Name))
                             | SqlCatalogConstraintKind.ForeignKey ->
                                 // Same-name promotion is one physical index,
                                 // not two colliding indexes. The prior
@@ -259,7 +259,8 @@ module internal RewriteSchemaDependencies =
                                         && startsWith (c.Columns |> Seq.toList)
                                             (idx.Columns |> Seq.toList)))
                                 if promoted then None
-                                else Some(NamedForeignKeySupportingIndex c.Name))
+                                else Some(NamedForeignKeySupportingIndex (nonNull c.Name))
+                            | _ -> invalidOp "Unrecognized catalog constraint kind.")
                         |> Seq.toList
                     let all =
                         keyNames @
@@ -300,7 +301,7 @@ module internal RewriteSchemaDependencies =
             (state: SqlCatalogState)
             (owner: SqlCatalogTable)
             (indexName: string) =
-        let same (a: string) (b: string) =
+        let same (a: string | null) (b: string | null) =
             String.Equals(a, b, StringComparison.OrdinalIgnoreCase)
         let startsWith (prefix: string list) (candidate: string list) =
             prefix.Length <= candidate.Length

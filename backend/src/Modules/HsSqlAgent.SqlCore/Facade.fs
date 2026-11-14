@@ -221,8 +221,9 @@ module private FacadeResult =
                 SqlCompileEvidence.TryGetFromException(ex))
 
 module private FacadeCompile =
-    let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile) =
+    let validateProfile provider argumentName (profile: SqlProviderCapabilityProfile | null) =
         ArgumentNullException.ThrowIfNull(profile)
+        let profile = nonNull profile
         if profile.Provider <> provider then
             invalidArg
                 argumentName

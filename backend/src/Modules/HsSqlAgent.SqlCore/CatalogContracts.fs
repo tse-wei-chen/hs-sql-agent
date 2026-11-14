@@ -68,17 +68,17 @@ type SqlCatalogConstraintKind =
 
 [<Sealed>]
 type SqlCatalogConstraint internal (
-    name: string,
+    name: string | null,
     kind: SqlCatalogConstraintKind,
     columns: IReadOnlyList<string>,
-    referencedTable: string,
+    referencedTable: string | null,
     referencedColumns: IReadOnlyList<string>,
     referencedIdentity: SqlCatalogQualifiedName) =
     new(name, kind, columns, referencedTable, referencedColumns) =
         SqlCatalogConstraint(
             name, kind, columns, referencedTable, referencedColumns,
             if isNull referencedTable then null
-            else SqlCatalogQualifiedName.SinglePart(referencedTable))
+            else SqlCatalogQualifiedName.SinglePart(nonNull referencedTable))
     new(name, kind, columns, referencedIdentity: SqlCatalogQualifiedName, referencedColumns) =
         SqlCatalogConstraint(
             name, kind, columns,
@@ -206,11 +206,11 @@ type SqlCatalogChange internal (
     operation: SqlCatalogOperation,
     certainty: SqlCatalogKnowledge,
     span: SqlDiagnosticSpan,
-    columnName: string,
+    columnName: string | null,
     tableIdentity: SqlCatalogQualifiedName,
-    constraintName: string) =
+    constraintName: string | null) =
     new(tableName, operation, certainty, span,
-        columnName: string, tableIdentity: SqlCatalogQualifiedName) =
+        columnName: string | null, tableIdentity: SqlCatalogQualifiedName) =
         SqlCatalogChange(tableName, operation, certainty, span, columnName, tableIdentity, null)
     new(tableName, operation, certainty, span) =
         SqlCatalogChange(tableName, operation, certainty, span, null, null, null)

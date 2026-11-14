@@ -469,7 +469,7 @@ module internal RewriteSchemaValidation =
                         Unqualified = unqualified }
                 match join with
                 | OnJoin(_, _, predicate) -> expression catalog ctes combined Span.unknown predicate
-                | UsingJoin _ | NaturalJoin _ | CrossJoin _ -> ()
+                | UsingJoin _ | NaturalJoin _ | CrossJoin _ | ApplyJoin _ -> ()
                 current <- combined
 
             let inspect = expression catalog ctes current Span.unknown

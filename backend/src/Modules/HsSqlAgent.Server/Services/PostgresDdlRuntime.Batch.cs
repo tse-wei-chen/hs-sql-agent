@@ -56,7 +56,10 @@ public sealed partial class PostgresDdlRuntime
                         && !_options.AllowCreateIndex)))
                 return BatchRejected("ddl.batch_dependency_disabled",
                     "Dependent CREATE/ALTER/INDEX batch requires separately enabled operations.");
-            schema = plan.Plans[0].Changes[0].ObjectIdentity.Parts[0];
+            if (plan.Plans.Any(p => p.Changes[0].ObjectIdentity is not { Parts.Count: 2 }))
+                return BatchRejected("ddl.qualified_identity_required",
+                    "Live DDL requires an explicit schema.table for every batch member.");
+            schema = plan.Plans[0].Changes[0].ObjectIdentity!.Parts[0];
             if (!_options.AllowedSchemas.Any(allowed => String.Equals(allowed, schema, StringComparison.Ordinal))
                 || schema is "pg_catalog" or "information_schema"
                 || schema.StartsWith("pg_temp", StringComparison.Ordinal))
@@ -97,7 +100,7 @@ public sealed partial class PostgresDdlRuntime
                 long? namespaceOid = null;
                 for (var i = 0; i < plan.Plans.Count; i++)
                 {
-                    var name = plan.Plans[i].Changes[0].ObjectIdentity.Parts[1];
+                    var name = plan.Plans[i].Changes[0].ObjectIdentity!.Parts[1];
                     var before = await ReadSnapshotAsync(
                         connection, null, schema, name, cancellationToken);
                     if (before.DatabaseName != actor.DatabaseName
