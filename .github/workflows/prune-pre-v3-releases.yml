@@ -1,0 +1,65 @@
+name: Prune pre-v3 GitHub Releases (manual)
+
+# Release deletion is intentionally manual, and never runs for a push or PR.
+# This does NOT delete Git tags or published NuGet packages.
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - ".github/workflows/prune-pre-v3-releases.yml"
+      - ".github/scripts/prune-pre-v3-releases.mjs"
+      - ".github/scripts/prune-pre-v3-releases.test.mjs"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List matching release records without deleting them"
+        type: boolean
+        required: true
+        default: true
+      expected_count:
+        description: "Expected number of pre-v3 releases; fail closed on drift"
+        type: number
+        required: true
+        default: 49
+      confirmation:
+        description: "For real deletion type DELETE PRE-V3 RELEASES"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Unit test release classifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test .github/scripts/prune-pre-v3-releases.test.mjs
+
+  prune:
+    name: Prune releases (explicitly dispatched only)
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Inspect or delete pre-v3 GitHub Release records
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EXPECTED_COUNT: ${{ inputs.expected_count }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: node .github/scripts/prune-pre-v3-releases.mjs
